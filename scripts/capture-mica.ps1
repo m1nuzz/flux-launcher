@@ -77,13 +77,14 @@ try {
 
     $bounds = [System.Windows.Forms.SystemInformation]::VirtualScreen
     $searchX = $bounds.Left + [int]($bounds.Width / 2)
-    $searchY = $bounds.Top + [int]($bounds.Height / 2) - 135
+    $searchY = $bounds.Top + [int]($bounds.Height / 2)
+    $shell = New-Object -ComObject WScript.Shell
+    $shell.AppActivate($process.Id) | Out-Null
+    Start-Sleep -Milliseconds 250
     [FluxWallpaper]::SetCursorPos($searchX, $searchY) | Out-Null
     [FluxWallpaper]::mouse_event(0x0002, 0, 0, 0, [UIntPtr]::Zero)
     [FluxWallpaper]::mouse_event(0x0004, 0, 0, 0, [UIntPtr]::Zero)
     Start-Sleep -Milliseconds 250
-    $shell = New-Object -ComObject WScript.Shell
-    $shell.AppActivate($process.Id) | Out-Null
     $shell.SendKeys("windows")
     Start-Sleep -Seconds 2
     Save-Screenshot "everything-fallback.png"
@@ -110,7 +111,7 @@ try {
         ProcessId = $process.Id
         CapturedAtUtc = (Get-Date).ToUniversalTime().ToString("O")
         WallpaperProbe = $true
-        EverythingFallbackProbe = $true
+        QueryExpandedProbe = $true
         SettingsPanelProbe = $true
     } | ConvertTo-Json | Set-Content -Encoding utf8 (Join-Path $OutputDirectory "environment.json")
 }
