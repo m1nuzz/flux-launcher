@@ -17,7 +17,31 @@ fn default_caret_duration() -> u16 {
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Eq, Serialize)]
 #[serde(default)]
+pub struct HotkeyConfig {
+    pub ctrl: bool,
+    pub alt: bool,
+    pub shift: bool,
+    pub meta: bool,
+    pub key: String,
+}
+
+impl Default for HotkeyConfig {
+    fn default() -> Self {
+        Self {
+            ctrl: false,
+            alt: true,
+            shift: false,
+            meta: false,
+            key: String::from("Space"),
+        }
+    }
+}
+
+#[derive(Clone, Debug, Deserialize, PartialEq, Eq, Serialize)]
+#[serde(default)]
 pub struct Settings {
+    #[serde(default)]
+    pub activation_hotkey: HotkeyConfig,
     #[serde(default = "enabled_by_default")]
     pub ignore_hotkeys_in_fullscreen: bool,
     pub game_mode: bool,
@@ -30,6 +54,7 @@ pub struct Settings {
 impl Default for Settings {
     fn default() -> Self {
         Self {
+            activation_hotkey: HotkeyConfig::default(),
             ignore_hotkeys_in_fullscreen: true,
             game_mode: false,
             smooth_caret: true,
@@ -43,6 +68,9 @@ impl Settings {
         self.smooth_caret_duration_ms = self
             .smooth_caret_duration_ms
             .clamp(MIN_CARET_DURATION_MS, MAX_CARET_DURATION_MS);
+        if self.activation_hotkey.key.trim().is_empty() {
+            self.activation_hotkey = HotkeyConfig::default();
+        }
     }
 
     pub fn config_path() -> PathBuf {
@@ -105,8 +133,9 @@ mod tests {
     }
 
     #[test]
-    fn defaults_protect_fullscreen_and_enable_smooth_caret() {
+    fn defaults_protect_fullscreen_enable_smooth_caret_and_use_alt_space() {
         let settings = Settings::default();
+        assert_eq!(settings.activation_hotkey, HotkeyConfig::default());
         assert!(settings.ignore_hotkeys_in_fullscreen);
         assert!(settings.smooth_caret);
         assert_eq!(settings.smooth_caret_duration_ms, DEFAULT_CARET_DURATION_MS);
@@ -116,6 +145,13 @@ mod tests {
     fn round_trip_preserves_preferences() {
         let path = temporary_path("settings-round-trip");
         let expected = Settings {
+            activation_hotkey: HotkeyConfig {
+                ctrl: true,
+                alt: false,
+                shift: true,
+                meta: false,
+                key: String::from("F12"),
+            },
             ignore_hotkeys_in_fullscreen: false,
             game_mode: true,
             smooth_caret: false,

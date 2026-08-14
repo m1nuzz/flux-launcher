@@ -20,8 +20,13 @@ jobs:
         with:
           targets: x86_64-pc-windows-msvc
 
-      - name: Build Mica probe
-        run: cargo build --release --target x86_64-pc-windows-msvc -p flux-launcher
+      - name: Build launcher and native Flow fixture
+        run: |
+          cargo build --release --target x86_64-pc-windows-msvc -p flux-launcher -p flow-plugin-fixture
+          $pluginRoot = Join-Path $env:APPDATA "FluxLauncher\Plugins\NativeFlowFixture"
+          New-Item -ItemType Directory -Force -Path $pluginRoot | Out-Null
+          Copy-Item ./tests/fixtures/flow-native-plugin/plugin.json (Join-Path $pluginRoot "plugin.json") -Force
+          Copy-Item ./target/x86_64-pc-windows-msvc/release/flow-plugin-fixture.exe (Join-Path $pluginRoot "fixture-plugin.exe") -Force
 
       - name: Capture desktop compositor output
         shell: pwsh

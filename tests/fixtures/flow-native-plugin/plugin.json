@@ -1,0 +1,8 @@
+{
+  "ID": "flux.fixture.native",
+  "Name": "Native Flow Fixture",
+  "Description": "Executable_V2 fixture for Flux Launcher integration tests",
+  "Language": "Executable_V2",
+  "ExecuteFileName": "fixture-plugin.exe",
+  "ActionKeywords": ["*"]
+}

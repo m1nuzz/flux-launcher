@@ -1,5 +1,6 @@
 [workspace]
 members = [
+    "crates/flow-plugin-fixture",
     "crates/flux-core",
     "crates/flux-launcher",
 ]
