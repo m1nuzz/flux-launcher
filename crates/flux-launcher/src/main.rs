@@ -24,7 +24,7 @@ fn main() {
                 .width_match(),
         );
 
-    App::new("Flux Launcher — Mica Probe", 720, 420)
+    App::new("Flux Launcher - Mica Probe", 720, 420)
         .bg(Color::rgba(0, 0, 0, 0))
         .centered()
         .frameless()
