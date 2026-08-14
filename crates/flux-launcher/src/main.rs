@@ -17,8 +17,8 @@ use flux_core::{should_suppress_activation, HotkeyConfig, SearchModel, SearchRes
 use plugins::{FlowPluginWorker, PluginInvocation, PluginQueryResponse};
 use windui::prelude::*;
 
-const WINDOW_WIDTH: i32 = 720;
-const WINDOW_HEIGHT: i32 = 520;
+const WINDOW_WIDTH: i32 = 420;
+const WINDOW_HEIGHT: i32 = 400;
 const SEARCH_INTERVAL: Duration = Duration::from_millis(40);
 const PROVIDER_MIN_QUERY_LEN: usize = 2;
 const MAX_VISIBLE_RESULTS: usize = 8;
@@ -136,6 +136,7 @@ fn main() {
     let game_mode = signal(settings.game_mode);
     let game_mode_status = signal(game_mode_label(settings.game_mode));
     let settings_visible = signal(std::env::var_os("FLUX_OPEN_SETTINGS").is_some());
+    let show_results = signal(false);
     let activation_key = signal(settings.activation_hotkey.key.clone());
     let activation_ctrl = signal(settings.activation_hotkey.ctrl);
     let activation_alt = signal(settings.activation_hotkey.alt);
@@ -153,80 +154,40 @@ fn main() {
     let selected_for_rows = selected_id;
     let actions_for_rows = Rc::clone(&plugin_actions);
 
-    let search_box = Element::text_input(query, "Search files, apps, and commands")
+    let search_box = Element::text_input(query, "Search")
         .leading_icon('>')
         .width_match()
-        .height(52)
-        .font_size(17.0)
-        .corner(12.0)
-        .bg(Color::rgba(255, 255, 255, 26))
-        .border(Color::rgba(255, 255, 255, 60), 1)
-        .padding_xy(14, 0);
+        .height(44)
+        .font_size(15.0)
+        .corner(10.0)
+        .bg(Color::rgba(255, 255, 255, 24))
+        .border(Color::rgba(255, 255, 255, 38), 1)
+        .padding_xy(13, 0);
 
     let result_list = Element::list_signal(
         result_source,
         |result| result.id.clone(),
         move |result| result_row(result, selected_for_rows, Rc::clone(&actions_for_rows)),
     )
-    .weight(1.0)
-    .corner(12.0);
+    .height(286)
+    .corner(12.0)
+    .visible_signal(show_results);
 
     let launcher_surface = Element::col()
-        .fill()
-        .padding(24)
-        .spacing(16)
-        .corner(20.0)
-        .bg(Color::rgba(18, 22, 30, 192))
-        .border(Color::rgba(255, 255, 255, 48), 1)
-        .shadow(Shadow::new(0.0, 18.0, 48.0, Color::rgba(0, 0, 0, 110)))
-        .child(
-            Element::row()
-                .width_match()
-                .child(
-                    Element::col()
-                        .weight(1.0)
-                        .spacing(3)
-                        .child(
-                            Element::label("Flux Launcher")
-                                .font_size(27.0)
-                                .fg(Color::WHITE),
-                        )
-                        .child(
-                            Element::label("Fast local search with native Windows integrations")
-                                .font_size(13.0)
-                                .fg(Color::rgba(235, 241, 255, 180)),
-                        ),
-                )
-                .child(
-                    Element::label(game_mode_status)
-                        .font_size(12.0)
-                        .fg(Color::rgba(235, 241, 255, 205))
-                        .padding_xy(10, 5)
-                        .corner(8.0)
-                        .bg(Color::rgba(91, 155, 255, 70)),
-                ),
-        )
+        .width(364)
+        .padding(10)
+        .spacing(8)
+        .corner(16.0)
+        .bg(Color::rgba(18, 22, 30, 150))
+        .border(Color::rgba(255, 255, 255, 34), 1)
+        .shadow(Shadow::new(0.0, 14.0, 36.0, Color::rgba(0, 0, 0, 92)))
         .child(search_box)
-        .child(result_list)
-        .child(
-            Element::row()
-                .width_match()
-                .child(
-                    Element::label(status)
-                        .font_size(12.0)
-                        .fg(Color::rgba(235, 241, 255, 170))
-                        .weight(1.0),
-                )
-                .child(
-                    Element::label("Ctrl+F12 toggles Game Mode | Settings in tray")
-                        .font_size(12.0)
-                        .fg(Color::rgba(235, 241, 255, 150)),
-                ),
-        );
+        .child(result_list);
 
     let query_for_interval = query;
     let results_for_interval = results;
     let status_for_interval = status;
+    let show_results_for_interval = show_results;
     let sequence_for_interval = current_sequence;
     let providers_for_interval = Rc::clone(&provider_results);
     let actions_for_interval = Rc::clone(&plugin_actions);
@@ -446,10 +407,9 @@ fn main() {
             ),
         );
 
-    let launcher_page = Element::col()
+    let launcher_page = Element::stack()
         .fill()
-        .padding(18)
-        .child(launcher_surface)
+        .child(launcher_surface.align(Align::Center))
         .visible_when(move || !settings_visible.get());
     let settings_page = Element::col()
         .fill()
@@ -467,7 +427,7 @@ fn main() {
         .centered()
         .frameless()
         .resizable(false)
-        .min_size(520, 360)
+        .min_size(380, 260)
         .renderer(Renderer::Auto)
         .backdrop(Backdrop::Mica)
         .content(content)
@@ -477,6 +437,8 @@ fn main() {
                 return;
             }
 
+            let has_query = !next_query.trim().is_empty();
+            show_results_for_interval.set(has_query);
             sequence = sequence.wrapping_add(1);
             sequence_for_interval.set(sequence);
             model.set_query(&next_query);
@@ -486,7 +448,7 @@ fn main() {
                 results_for_interval.set(providers.merged());
             }
             actions_for_interval.borrow_mut().clear();
-            if next_query.trim().len() < PROVIDER_MIN_QUERY_LEN {
+            if !has_query || next_query.trim().len() < PROVIDER_MIN_QUERY_LEN {
                 status_for_interval.set(String::from("Ready"));
             } else {
                 status_for_interval.set(String::from(
