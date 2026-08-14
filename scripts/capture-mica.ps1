@@ -18,8 +18,26 @@ using System.Runtime.InteropServices;
 public static class FluxWallpaper {
     [DllImport("user32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
     public static extern bool SystemParametersInfo(uint action, uint parameter, string value, uint flags);
+    [DllImport("user32.dll", SetLastError = true)]
+    public static extern bool SetCursorPos(int x, int y);
+    [DllImport("user32.dll", SetLastError = true)]
+    public static extern void mouse_event(uint flags, uint dx, uint dy, uint data, UIntPtr extraInfo);
 }
 '@
+
+function Save-Screenshot([string]$FileName) {
+    $bounds = [System.Windows.Forms.SystemInformation]::VirtualScreen
+    $bitmap = New-Object System.Drawing.Bitmap $bounds.Width, $bounds.Height
+    $graphics = [System.Drawing.Graphics]::FromImage($bitmap)
+    try {
+        $graphics.CopyFromScreen($bounds.Left, $bounds.Top, 0, 0, $bounds.Size)
+        $bitmap.Save((Join-Path $OutputDirectory $FileName), [System.Drawing.Imaging.ImageFormat]::Png)
+    }
+    finally {
+        $graphics.Dispose()
+        $bitmap.Dispose()
+    }
+}
 
 $wallpaperPath = Join-Path $OutputDirectory "mica-probe-wallpaper.png"
 $wallpaper = New-Object System.Drawing.Bitmap 1920, 1080
@@ -55,18 +73,20 @@ Start-Sleep -Milliseconds 750
 $process = Start-Process -FilePath $Executable -PassThru
 try {
     Start-Sleep -Seconds 3
+    Save-Screenshot "mica-desktop.png"
 
     $bounds = [System.Windows.Forms.SystemInformation]::VirtualScreen
-    $bitmap = New-Object System.Drawing.Bitmap $bounds.Width, $bounds.Height
-    $graphics = [System.Drawing.Graphics]::FromImage($bitmap)
-    try {
-        $graphics.CopyFromScreen($bounds.Left, $bounds.Top, 0, 0, $bounds.Size)
-        $bitmap.Save((Join-Path $OutputDirectory "mica-desktop.png"), [System.Drawing.Imaging.ImageFormat]::Png)
-    }
-    finally {
-        $graphics.Dispose()
-        $bitmap.Dispose()
-    }
+    $searchX = $bounds.Left + [int]($bounds.Width / 2)
+    $searchY = $bounds.Top + [int]($bounds.Height / 2) - 135
+    [FluxWallpaper]::SetCursorPos($searchX, $searchY) | Out-Null
+    [FluxWallpaper]::mouse_event(0x0002, 0, 0, 0, [UIntPtr]::Zero)
+    [FluxWallpaper]::mouse_event(0x0004, 0, 0, 0, [UIntPtr]::Zero)
+    Start-Sleep -Milliseconds 250
+    $shell = New-Object -ComObject WScript.Shell
+    $shell.AppActivate($process.Id) | Out-Null
+    $shell.SendKeys("windows")
+    Start-Sleep -Seconds 2
+    Save-Screenshot "everything-fallback.png"
 
     $os = Get-CimInstance Win32_OperatingSystem
     [ordered]@{
@@ -77,6 +97,7 @@ try {
         ProcessId = $process.Id
         CapturedAtUtc = (Get-Date).ToUniversalTime().ToString("O")
         WallpaperProbe = $true
+        EverythingFallbackProbe = $true
     } | ConvertTo-Json | Set-Content -Encoding utf8 (Join-Path $OutputDirectory "environment.json")
 }
 finally {

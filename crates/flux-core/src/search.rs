@@ -3,18 +3,30 @@ const MAX_RESULTS: usize = 8;
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum ResultKind {
     Command,
+    File,
     Placeholder,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct SearchResult {
-    pub id: &'static str,
+    pub id: String,
     pub title: String,
     pub subtitle: String,
     pub kind: ResultKind,
+    pub target: Option<String>,
 }
 
 impl SearchResult {
+    pub fn file(path: String, title: String, subtitle: String) -> Self {
+        Self {
+            id: format!("file:{path}"),
+            title,
+            subtitle,
+            kind: ResultKind::File,
+            target: Some(path),
+        }
+    }
+
     pub fn display_text(&self) -> String {
         format!("{}  -  {}", self.title, self.subtitle)
     }
@@ -116,10 +128,11 @@ fn built_in_results(query: &str) -> Vec<SearchResult> {
         })
         .take(MAX_RESULTS)
         .map(|(id, title, subtitle)| SearchResult {
-            id,
+            id: id.to_owned(),
             title: title.to_owned(),
             subtitle: subtitle.to_owned(),
             kind: ResultKind::Command,
+            target: None,
         })
         .collect()
 }
@@ -161,10 +174,11 @@ mod tests {
         model.replace_results(
             (0..16)
                 .map(|index| SearchResult {
-                    id: "fixture",
+                    id: "fixture".to_owned(),
                     title: format!("Result {index}"),
                     subtitle: String::new(),
                     kind: ResultKind::Placeholder,
+                    target: None,
                 })
                 .collect(),
         );

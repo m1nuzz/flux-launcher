@@ -1,18 +1,23 @@
 #![cfg_attr(windows, windows_subsystem = "windows")]
 
+mod everything;
 mod fullscreen;
+mod launch;
 
 use std::time::Duration;
 
+use everything::{EverythingResponse, EverythingWorker};
 use flux_core::{SearchModel, SearchResult, Settings};
 use windui::prelude::*;
 
 const WINDOW_WIDTH: i32 = 720;
 const WINDOW_HEIGHT: i32 = 520;
 const SEARCH_INTERVAL: Duration = Duration::from_millis(40);
+const EVERYTHING_MIN_QUERY_LEN: usize = 2;
 
 fn result_row(result: SearchResult, selected_id: Signal<String>) -> Element {
-    let id = result.id.to_owned();
+    let id = result.id;
+    let target = result.target;
     let title = result.title;
     let subtitle = result.subtitle;
     Element::row()
@@ -34,7 +39,12 @@ fn result_row(result: SearchResult, selected_id: Signal<String>) -> Element {
                 .fg(Color::rgba(235, 241, 255, 180))
                 .align(Align::Center),
         )
-        .on_click(move |_| selected_id.set(id.clone()))
+        .on_click(move |_| {
+            selected_id.set(id.clone());
+            if let Some(target) = target.as_deref() {
+                let _ = launch::open_path(target);
+            }
+        })
 }
 
 fn main() {
@@ -42,6 +52,7 @@ fn main() {
     let query = signal(String::new());
     let selected_id = signal(String::new());
     let status = signal(String::from("Ready"));
+    let current_sequence = signal(0_u64);
 
     let mut model = SearchModel::new();
     let results = signal(model.results().to_vec());
@@ -60,7 +71,7 @@ fn main() {
 
     let result_list = Element::list_signal(
         result_source,
-        |result| result.id,
+        |result| result.id.clone(),
         move |result| result_row(result, selected_for_rows),
     )
     .weight(1.0)
@@ -123,10 +134,29 @@ fn main() {
     let query_for_interval = query;
     let results_for_interval = results;
     let status_for_interval = status;
+    let sequence_for_interval = current_sequence;
     let mut last_query = String::new();
+    let mut sequence = 0_u64;
 
-    App::new("Flux Launcher", WINDOW_WIDTH, WINDOW_HEIGHT)
-        .bg(Color::rgba(0, 0, 0, 0))
+    let mut app = App::new("Flux Launcher", WINDOW_WIDTH, WINDOW_HEIGHT);
+    let query_for_response = query;
+    let results_for_response = results;
+    let status_for_response = status;
+    let sequence_for_response = current_sequence;
+    let everything_sender = app.channel::<EverythingResponse>(move |_, response| {
+        if response.sequence != sequence_for_response.get()
+            || response.query != query_for_response.get()
+        {
+            return;
+        }
+        if response.available {
+            results_for_response.set(response.results);
+        }
+        status_for_response.set(response.status);
+    });
+    let everything_worker = EverythingWorker::spawn(everything_sender);
+
+    app.bg(Color::rgba(0, 0, 0, 0))
         .centered()
         .frameless()
         .resizable(false)
@@ -140,14 +170,16 @@ fn main() {
                 return;
             }
 
+            sequence = sequence.wrapping_add(1);
+            sequence_for_interval.set(sequence);
             model.set_query(&next_query);
-            let count = model.results().len();
             results_for_interval.set(model.results().to_vec());
-            status_for_interval.set(if count == 0 {
-                String::from("No built-in commands match this query")
+            if next_query.trim().len() < EVERYTHING_MIN_QUERY_LEN {
+                status_for_interval.set(String::from("Ready"));
             } else {
-                format!("{count} built-in command result(s)")
-            });
+                status_for_interval.set(String::from("Searching Everything..."));
+                everything_worker.request(sequence, next_query.clone());
+            }
             last_query = next_query;
         })
         .run();

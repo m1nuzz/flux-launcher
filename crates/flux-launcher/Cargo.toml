@@ -13,9 +13,11 @@ flux-core = { path = "../flux-core" }
 windui = { path = "../../vendor/windui", default-features = false, features = ["d2d"] }
 
 [target.'cfg(windows)'.dependencies]
+everything-ipc = "0.1.4"
 windows = { version = "0.62", features = [
     "Win32_Foundation",
     "Win32_Graphics_Dwm",
     "Win32_Graphics_Gdi",
+    "Win32_UI_Shell",
     "Win32_UI_WindowsAndMessaging",
 ] }
