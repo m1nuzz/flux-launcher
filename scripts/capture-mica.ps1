@@ -88,6 +88,19 @@ try {
     Start-Sleep -Seconds 2
     Save-Screenshot "everything-fallback.png"
 
+    $env:FLUX_OPEN_SETTINGS = "1"
+    $settingsProcess = Start-Process -FilePath $Executable -PassThru
+    try {
+        Start-Sleep -Seconds 2
+        Save-Screenshot "settings-panel.png"
+    }
+    finally {
+        if (!$settingsProcess.HasExited) {
+            Stop-Process -Id $settingsProcess.Id -Force
+        }
+        Remove-Item Env:FLUX_OPEN_SETTINGS -ErrorAction SilentlyContinue
+    }
+
     $os = Get-CimInstance Win32_OperatingSystem
     [ordered]@{
         Caption = $os.Caption
@@ -98,6 +111,7 @@ try {
         CapturedAtUtc = (Get-Date).ToUniversalTime().ToString("O")
         WallpaperProbe = $true
         EverythingFallbackProbe = $true
+        SettingsPanelProbe = $true
     } | ConvertTo-Json | Set-Content -Encoding utf8 (Join-Path $OutputDirectory "environment.json")
 }
 finally {

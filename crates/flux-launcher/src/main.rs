@@ -13,7 +13,7 @@ use std::sync::{Arc, RwLock};
 use std::time::Duration;
 
 use everything::{EverythingResponse, EverythingWorker};
-use flux_core::{should_suppress_activation, SearchModel, SearchResult, Settings};
+use flux_core::{should_suppress_activation, HotkeyConfig, SearchModel, SearchResult, Settings};
 use plugins::{FlowPluginWorker, PluginInvocation, PluginQueryResponse};
 use windui::prelude::*;
 
@@ -47,6 +47,40 @@ impl ProviderResults {
             .take(MAX_VISIBLE_RESULTS)
             .cloned()
             .collect()
+    }
+}
+
+fn tray_icon() -> Vec<u8> {
+    let mut pixels = Vec::with_capacity(16 * 16 * 4);
+    for y in 0..16 {
+        for x in 0..16 {
+            let active = (x + y) % 5 < 3;
+            let (red, green, blue) = if active { (78, 139, 255) } else { (28, 39, 62) };
+            pixels.extend([red, green, blue, 255]);
+        }
+    }
+    pixels
+}
+
+fn game_mode_label(enabled: bool) -> String {
+    if enabled {
+        String::from("Game Mode: On")
+    } else {
+        String::from("Game Mode: Off")
+    }
+}
+
+fn set_game_mode(
+    settings: &Arc<RwLock<Settings>>,
+    game_mode: Signal<bool>,
+    status: Signal<String>,
+    enabled: bool,
+) {
+    if let Ok(mut settings) = settings.write() {
+        settings.game_mode = enabled;
+        game_mode.set(enabled);
+        status.set(game_mode_label(enabled));
+        let _ = settings.save();
     }
 }
 
@@ -99,11 +133,17 @@ fn main() {
     let selected_id = signal(String::new());
     let status = signal(String::from("Ready"));
     let current_sequence = signal(0_u64);
-    let game_mode_status = signal(if settings.game_mode {
-        String::from("Game Mode: On")
-    } else {
-        String::from("Game Mode: Off")
-    });
+    let game_mode = signal(settings.game_mode);
+    let game_mode_status = signal(game_mode_label(settings.game_mode));
+    let settings_visible = signal(std::env::var_os("FLUX_OPEN_SETTINGS").is_some());
+    let activation_key = signal(settings.activation_hotkey.key.clone());
+    let activation_ctrl = signal(settings.activation_hotkey.ctrl);
+    let activation_alt = signal(settings.activation_hotkey.alt);
+    let activation_shift = signal(settings.activation_hotkey.shift);
+    let activation_meta = signal(settings.activation_hotkey.meta);
+    let ignore_fullscreen = signal(settings.ignore_hotkeys_in_fullscreen);
+    let smooth_caret = signal(settings.smooth_caret);
+    let caret_duration = signal(settings.smooth_caret_duration_ms.to_string());
 
     let mut model = SearchModel::new();
     let results = signal(model.results().to_vec());
@@ -131,7 +171,7 @@ fn main() {
     .weight(1.0)
     .corner(12.0);
 
-    let surface = Element::col()
+    let launcher_surface = Element::col()
         .fill()
         .padding(24)
         .spacing(16)
@@ -184,7 +224,6 @@ fn main() {
                 ),
         );
 
-    let content = Element::col().fill().padding(18).child(surface);
     let query_for_interval = query;
     let results_for_interval = results;
     let status_for_interval = status;
@@ -244,31 +283,187 @@ fn main() {
     let plugin_worker = FlowPluginWorker::spawn(plugin_sender);
 
     let settings_for_activation = Arc::clone(&shared_settings);
-    let settings_for_game_mode = Arc::clone(&shared_settings);
-    let game_mode_status_for_toggle = game_mode_status;
-    app = app
-        .hotkey(activation_hotkey, move |ctx| {
-            let settings = settings_for_activation
-                .read()
-                .map(|settings| settings.clone())
-                .unwrap_or_default();
-            if !should_suppress_activation(&settings, fullscreen::foreground_is_fullscreen()) {
-                ctx.show_window();
-            }
-        })
-        .hotkey(hotkeys::game_mode_toggle_hotkey(), move |_| {
-            if let Ok(mut settings) = settings_for_game_mode.write() {
-                settings.game_mode = !settings.game_mode;
-                game_mode_status_for_toggle.set(if settings.game_mode {
-                    String::from("Game Mode: On")
-                } else {
-                    String::from("Game Mode: Off")
-                });
-                let _ = settings.save();
-            }
-        });
+    let activation_handle = app.hotkey_handle(activation_hotkey, move |ctx| {
+        let settings = settings_for_activation
+            .read()
+            .map(|settings| settings.clone())
+            .unwrap_or_default();
+        if !should_suppress_activation(&settings, fullscreen::foreground_is_fullscreen()) {
+            ctx.show_window();
+        }
+    });
 
-    app.bg(Color::rgba(0, 0, 0, 0))
+    let settings_for_game_hotkey = Arc::clone(&shared_settings);
+    let game_mode_for_hotkey = game_mode;
+    let game_mode_status_for_hotkey = game_mode_status;
+    app = app.hotkey(hotkeys::game_mode_toggle_hotkey(), move |_| {
+        let enabled = !game_mode_for_hotkey.get();
+        set_game_mode(
+            &settings_for_game_hotkey,
+            game_mode_for_hotkey,
+            game_mode_status_for_hotkey,
+            enabled,
+        );
+    });
+
+    let settings_for_tray_toggle = Arc::clone(&shared_settings);
+    let game_mode_for_tray = game_mode;
+    let game_status_for_tray = game_mode_status;
+    let settings_visible_for_tray = settings_visible;
+    let settings_visible_for_left_click = settings_visible;
+    let tray = Tray::new()
+        .tooltip("Flux Launcher")
+        .icon_rgba(16, 16, &tray_icon())
+        .on_left_click(move |ctx| {
+            settings_visible_for_left_click.set(false);
+            ctx.show_window();
+        })
+        .menu(vec![
+            TrayMenuItem::item("Show launcher", move |ctx| {
+                settings_visible_for_tray.set(false);
+                ctx.show_window();
+            }),
+            TrayMenuItem::item("Settings", move |ctx| {
+                settings_visible.set(true);
+                ctx.show_window();
+            }),
+            TrayMenuItem::separator(),
+            TrayMenuItem::check("Game Mode", game_mode, move |_| {
+                let enabled = !game_mode_for_tray.get();
+                set_game_mode(
+                    &settings_for_tray_toggle,
+                    game_mode_for_tray,
+                    game_status_for_tray,
+                    enabled,
+                );
+            }),
+            TrayMenuItem::separator(),
+            TrayMenuItem::item("Exit", |ctx| ctx.quit()),
+        ]);
+
+    let settings_for_apply = Arc::clone(&shared_settings);
+    let activation_handle_for_apply = activation_handle.clone();
+    let game_mode_status_for_apply = game_mode_status;
+    let settings_visible_for_apply = settings_visible;
+    let settings_panel = Element::col()
+        .fill()
+        .padding(24)
+        .spacing(14)
+        .corner(20.0)
+        .bg(Color::rgba(18, 22, 30, 212))
+        .border(Color::rgba(255, 255, 255, 48), 1)
+        .shadow(Shadow::new(0.0, 18.0, 48.0, Color::rgba(0, 0, 0, 110)))
+        .child(
+            Element::row()
+                .width_match()
+                .child(
+                    Element::col()
+                        .weight(1.0)
+                        .spacing(3)
+                        .child(Element::label("Settings").font_size(25.0).fg(Color::WHITE))
+                        .child(
+                            Element::label("Changes apply immediately and are saved atomically")
+                                .font_size(12.0)
+                                .fg(Color::rgba(235, 241, 255, 180)),
+                        ),
+                )
+                .child(
+                    Element::button("Back")
+                        .neutral()
+                        .on_click(move |_| settings_visible.set(false)),
+                ),
+        )
+        .child(
+            Element::scroll().weight(1.0).child(
+                Element::col()
+                    .width_match()
+                    .spacing(12)
+                    .child(Element::field(
+                        "Activation key",
+                        Element::text_input(activation_key, "Space").width_match(),
+                    ))
+                    .child(
+                        Element::row()
+                            .width_match()
+                            .spacing(10)
+                            .child(Element::checkbox("Ctrl", activation_ctrl))
+                            .child(Element::checkbox("Alt", activation_alt))
+                            .child(Element::checkbox("Shift", activation_shift))
+                            .child(Element::checkbox("Windows", activation_meta)),
+                    )
+                    .child(Element::field(
+                        "Fullscreen protection",
+                        Element::checkbox("Ignore activation while another app is fullscreen", ignore_fullscreen),
+                    ))
+                    .child(Element::field(
+                        "Game Mode",
+                        Element::checkbox("Suppress the launcher until manually disabled", game_mode),
+                    ))
+                    .child(Element::field(
+                        "Smooth Caret",
+                        Element::checkbox("Animate search caret movement", smooth_caret),
+                    ))
+                    .child(Element::field(
+                        "Caret duration (ms)",
+                        Element::text_input(caret_duration, "95").width_match(),
+                    ))
+                    .child(
+                        Element::label("Native Flow plugins: %APPDATA%\\FluxLauncher\\Plugins or FLUX_PLUGIN_DIR")
+                            .font_size(12.0)
+                            .fg(Color::rgba(235, 241, 255, 160)),
+                    )
+                    .child(
+                        Element::button("Apply settings").on_click(move |ctx| {
+                            let duration = caret_duration
+                                .get()
+                                .trim()
+                                .parse::<u16>()
+                                .unwrap_or(95)
+                                .clamp(60, 160);
+                            let configuration = HotkeyConfig {
+                                ctrl: activation_ctrl.get(),
+                                alt: activation_alt.get(),
+                                shift: activation_shift.get(),
+                                meta: activation_meta.get(),
+                                key: activation_key.get(),
+                            };
+                            if let Ok(mut settings) = settings_for_apply.write() {
+                                settings.activation_hotkey = configuration;
+                                settings.ignore_hotkeys_in_fullscreen = ignore_fullscreen.get();
+                                settings.game_mode = game_mode.get();
+                                settings.smooth_caret = smooth_caret.get();
+                                settings.smooth_caret_duration_ms = duration;
+                                settings.normalize();
+                                activation_handle_for_apply
+                                    .set(hotkeys::activation_hotkey(&settings.activation_hotkey));
+                                game_mode_status_for_apply.set(game_mode_label(settings.game_mode));
+                                let _ = settings.save();
+                            }
+                            settings_visible_for_apply.set(false);
+                            ctx.toast_ok("Settings applied");
+                        }),
+                    ),
+            ),
+        );
+
+    let launcher_page = Element::col()
+        .fill()
+        .padding(18)
+        .child(launcher_surface)
+        .visible_when(move || !settings_visible.get());
+    let settings_page = Element::col()
+        .fill()
+        .padding(18)
+        .child(settings_panel)
+        .visible_signal(settings_visible);
+    let content = Element::stack()
+        .fill()
+        .child(launcher_page)
+        .child(settings_page);
+
+    app.tray(tray)
+        .hide_on_close()
+        .bg(Color::rgba(0, 0, 0, 0))
         .centered()
         .frameless()
         .resizable(false)
