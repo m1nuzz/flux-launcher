@@ -199,6 +199,26 @@ impl HotkeyHandle {
     }
 }
 
+/// A runtime handle for requesting a logical client-area size.
+///
+/// Size requests are consumed by the platform after event dispatch, which avoids
+/// re-entering a native window procedure from UI callbacks.
+#[derive(Clone)]
+pub struct WindowSizeHandle {
+    queue: Rc<RefCell<Option<(i32, i32)>>>,
+}
+
+impl WindowSizeHandle {
+    /// Request a non-zero logical client-area size for the current window.
+    pub fn set(&self, width: i32, height: i32) {
+        if width <= 0 || height <= 0 {
+            return;
+        }
+        *self.queue.borrow_mut() = Some((width, height));
+        crate::anim::request_repaint();
+    }
+}
+
 pub struct App {
     cfg: WindowConfig,
     render: Option<RenderClosure>,
@@ -218,6 +238,8 @@ pub struct App {
     bg_explicit: bool,
     /// 运行期热键操作队列（`hotkey_handle` 句柄写入、UiHost 中转、平台消费）。
     hotkey_ops: Rc<RefCell<Vec<(usize, crate::event::HotkeyOp)>>>,
+    /// Pending logical client-area size requested through `WindowSizeHandle`.
+    window_size_ops: Rc<RefCell<Option<(i32, i32)>>>,
 }
 
 impl App {
@@ -257,6 +279,7 @@ impl App {
             hide_on_close: false,
             bg_explicit: false,
             hotkey_ops: Rc::new(RefCell::new(Vec::new())),
+            window_size_ops: Rc::new(RefCell::new(None)),
         }
     }
 
@@ -491,6 +514,16 @@ impl App {
         }
     }
 
+    /// Returns a handle that can resize the native client area after startup.
+    ///
+    /// Requests use logical dp units and are coalesced: the most recent request
+    /// is applied after the current callback returns.
+    pub fn window_size_handle(&mut self) -> WindowSizeHandle {
+        WindowSizeHandle {
+            queue: self.window_size_ops.clone(),
+        }
+    }
+
     /// 改名为 [`App::hotkey_handle`]。
     #[deprecated(
         since = "0.12.0",
@@ -709,6 +742,7 @@ impl App {
                 cfg.bg,
                 !self.bg_explicit,
                 self.hotkey_ops.clone(),
+                self.window_size_ops.clone(),
                 self.pumps,
                 self.intervals,
                 self.close_handler,
@@ -734,6 +768,7 @@ impl App {
             self.cfg.bg,
             !self.bg_explicit,
             self.hotkey_ops.clone(),
+            self.window_size_ops.clone(),
             self.pumps,
             self.intervals,
             self.close_handler,
@@ -862,6 +897,8 @@ struct UiHost {
     bg_follows_theme: bool,
     /// 运行期热键操作队列（HotkeyHandle 写入；平台经 `take_hotkey_ops` 消费）。
     hotkey_ops: Rc<RefCell<Vec<(usize, crate::event::HotkeyOp)>>>,
+    /// Runtime logical client-area size requests consumed by the platform.
+    window_size_ops: Rc<RefCell<Option<(i32, i32)>>>,
     /// 一次「按下关闭浮层」后，吞掉随之而来的 Up：避免该 Up 下发到控件树重新激活
     /// 浮层下方控件（典型：下拉按钮点一下又弹一遍——Down 关、Up 再开）。
     swallow_up: bool,
@@ -985,6 +1022,7 @@ impl UiHost {
         bg: Color,
         bg_follows_theme: bool,
         hotkey_ops: Rc<RefCell<Vec<(usize, crate::event::HotkeyOp)>>>,
+        window_size_ops: Rc<RefCell<Option<(i32, i32)>>>,
         pumps: Vec<ChannelPump>,
         intervals: Vec<(std::time::Duration, AppCallback)>,
         close_handler: Option<CloseHandler>,
@@ -1019,6 +1057,7 @@ impl UiHost {
             bg,
             bg_follows_theme,
             hotkey_ops,
+            window_size_ops,
             swallow_up: false,
             pumps,
             interval_cbs,
@@ -1471,6 +1510,10 @@ impl AppHandler for UiHost {
 
     fn take_hotkey_ops(&mut self) -> Vec<(usize, crate::event::HotkeyOp)> {
         std::mem::take(&mut *self.hotkey_ops.borrow_mut())
+    }
+
+    fn take_window_size_request(&mut self) -> Option<(i32, i32)> {
+        self.window_size_ops.borrow_mut().take()
     }
 
     fn on_close_request(&mut self) -> bool {

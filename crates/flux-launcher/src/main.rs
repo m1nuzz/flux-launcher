@@ -18,7 +18,9 @@ use plugins::{FlowPluginWorker, PluginInvocation, PluginQueryResponse};
 use windui::prelude::*;
 
 const WINDOW_WIDTH: i32 = 420;
-const WINDOW_HEIGHT: i32 = 400;
+const COMPACT_WINDOW_HEIGHT: i32 = 72;
+const EXPANDED_WINDOW_HEIGHT: i32 = 400;
+const SETTINGS_WINDOW_HEIGHT: i32 = 520;
 const SEARCH_INTERVAL: Duration = Duration::from_millis(40);
 const PROVIDER_MIN_QUERY_LEN: usize = 2;
 const MAX_VISIBLE_RESULTS: usize = 8;
@@ -194,7 +196,14 @@ fn main() {
     let mut last_query = String::new();
     let mut sequence = 0_u64;
 
-    let mut app = App::new("Flux Launcher", WINDOW_WIDTH, WINDOW_HEIGHT);
+    let initial_height = if settings_visible.get() {
+        SETTINGS_WINDOW_HEIGHT
+    } else {
+        COMPACT_WINDOW_HEIGHT
+    };
+    let mut app = App::new("Flux Launcher", WINDOW_WIDTH, initial_height);
+    let window_size = app.window_size_handle();
+    let size_for_interval = window_size.clone();
     let query_for_everything = query;
     let results_for_everything = results;
     let status_for_everything = status;
@@ -272,20 +281,42 @@ fn main() {
     let game_status_for_tray = game_mode_status;
     let settings_visible_for_tray = settings_visible;
     let settings_visible_for_left_click = settings_visible;
+    let show_results_for_left_click = show_results;
+    let size_for_left_click = window_size.clone();
+    let show_results_for_tray = show_results;
+    let size_for_tray = window_size.clone();
+    let size_for_settings = window_size.clone();
     let tray = Tray::new()
         .tooltip("Flux Launcher")
         .icon_rgba(16, 16, &tray_icon())
         .on_left_click(move |ctx| {
             settings_visible_for_left_click.set(false);
+            size_for_left_click.set(
+                WINDOW_WIDTH,
+                if show_results_for_left_click.get() {
+                    EXPANDED_WINDOW_HEIGHT
+                } else {
+                    COMPACT_WINDOW_HEIGHT
+                },
+            );
             ctx.show_window();
         })
         .menu(vec![
             TrayMenuItem::item("Show launcher", move |ctx| {
                 settings_visible_for_tray.set(false);
+                size_for_tray.set(
+                    WINDOW_WIDTH,
+                    if show_results_for_tray.get() {
+                        EXPANDED_WINDOW_HEIGHT
+                    } else {
+                        COMPACT_WINDOW_HEIGHT
+                    },
+                );
                 ctx.show_window();
             }),
             TrayMenuItem::item("Settings", move |ctx| {
                 settings_visible.set(true);
+                size_for_settings.set(WINDOW_WIDTH, SETTINGS_WINDOW_HEIGHT);
                 ctx.show_window();
             }),
             TrayMenuItem::separator(),
@@ -306,6 +337,9 @@ fn main() {
     let activation_handle_for_apply = activation_handle.clone();
     let game_mode_status_for_apply = game_mode_status;
     let settings_visible_for_apply = settings_visible;
+    let show_results_for_back = show_results;
+    let size_for_back = window_size.clone();
+    let size_for_apply = window_size.clone();
     let settings_panel = Element::col()
         .fill()
         .padding(24)
@@ -331,7 +365,17 @@ fn main() {
                 .child(
                     Element::button("Back")
                         .neutral()
-                        .on_click(move |_| settings_visible.set(false)),
+                        .on_click(move |_| {
+                            settings_visible.set(false);
+                            size_for_back.set(
+                                WINDOW_WIDTH,
+                                if show_results_for_back.get() {
+                                    EXPANDED_WINDOW_HEIGHT
+                                } else {
+                                    COMPACT_WINDOW_HEIGHT
+                                },
+                            );
+                        }),
                 ),
         )
         .child(
@@ -401,6 +445,14 @@ fn main() {
                                 let _ = settings.save();
                             }
                             settings_visible_for_apply.set(false);
+                            size_for_apply.set(
+                                WINDOW_WIDTH,
+                                if show_results.get() {
+                                    EXPANDED_WINDOW_HEIGHT
+                                } else {
+                                    COMPACT_WINDOW_HEIGHT
+                                },
+                            );
                             ctx.toast_ok("Settings applied");
                         }),
                     ),
@@ -427,7 +479,7 @@ fn main() {
         .centered()
         .frameless()
         .resizable(false)
-        .min_size(380, 260)
+        .min_size(380, COMPACT_WINDOW_HEIGHT)
         .renderer(Renderer::Auto)
         .backdrop(Backdrop::Mica)
         .content(content)
@@ -439,6 +491,14 @@ fn main() {
 
             let has_query = !next_query.trim().is_empty();
             show_results_for_interval.set(has_query);
+            size_for_interval.set(
+                WINDOW_WIDTH,
+                if has_query {
+                    EXPANDED_WINDOW_HEIGHT
+                } else {
+                    COMPACT_WINDOW_HEIGHT
+                },
+            );
             sequence = sequence.wrapping_add(1);
             sequence_for_interval.set(sequence);
             model.set_query(&next_query);

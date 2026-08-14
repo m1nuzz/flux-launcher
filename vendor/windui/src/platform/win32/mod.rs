@@ -1273,14 +1273,48 @@ unsafe fn handle_nchittest(hwnd: HWND, lparam: LPARAM) -> LRESULT {
 /// 两段式：`state_from` 的借用在取出 op 的那条语句结束时即释放，随后 `run_window_op`
 /// 里的 OS 调用才可能重入 `wnd_proc`（铁律 6）。
 unsafe fn apply_window_op(hwnd: HWND) {
-    let op = state_from(hwnd).and_then(|s| s.handler.take_window_op());
+    let (op, size_request) = state_from(hwnd)
+        .map(|s| {
+            (
+                s.handler.take_window_op(),
+                s.handler.take_window_size_request(),
+            )
+        })
+        .unwrap_or((None, None));
     run_window_op(hwnd, op);
+    run_window_size_request(hwnd, size_request);
     // 运行期热键操作与窗口操作同点消费（HotkeyHandle 排队 → 此处落地）。
     // Register/UnregisterHotKey 不向本窗口同步派发消息，可在借用内直接执行。
     apply_hotkey_ops(hwnd);
 }
 
-/// 消费运行期热键操作队列（改绑/启停），落地到 `HotkeyState`。
+/// Applies a queued logical client-area size after all handler borrows are released.
+unsafe fn run_window_size_request(hwnd: HWND, request: Option<(i32, i32)>) {
+    let Some((logical_w, logical_h)) = request else {
+        return;
+    };
+    let dpi = GetDpiForWindow(hwnd).max(96);
+    let scale = dpi as f32 / 96.0;
+    let (width, height) = if is_frameless(hwnd) {
+        (
+            (logical_w as f32 * scale).round() as i32,
+            (logical_h as f32 * scale).round() as i32,
+        )
+    } else {
+        frame_size_for_client(logical_w, logical_h, scale, dpi)
+    };
+    let _ = SetWindowPos(
+        hwnd,
+        None,
+        0,
+        0,
+        width,
+        height,
+        SWP_NOZORDER | SWP_NOACTIVATE | SWP_NOMOVE,
+    );
+}
+
+/// 消费运行期热键操作队列（改绑/启停），落地到 `HotkeyState`.
 /// 先经 handler 取队列（借 handler 字段），再对 hotkeys 字段执行——同一
 /// `WindowState` 的两个字段序贯借用，无别名。
 unsafe fn apply_hotkey_ops(hwnd: HWND) {

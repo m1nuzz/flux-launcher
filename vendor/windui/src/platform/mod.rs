@@ -452,6 +452,12 @@ pub trait AppHandler {
         Vec::new()
     }
 
+    /// Take the most recent requested logical client-area size. Platform backends
+    /// apply this after callback dispatch to avoid native message-loop reentrancy.
+    fn take_window_size_request(&mut self) -> Option<(i32, i32)> {
+        None
+    }
+
     /// 注册的定时器间隔（平台据此 SetTimer/NSTimer）。无则空。
     fn intervals(&self) -> Vec<std::time::Duration> {
         Vec::new()
