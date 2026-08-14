@@ -1,0 +1,48 @@
+//! 列表 ListView 示例：单选 + 选中/悬停高亮 + 滚动。
+//!
+//! 运行：cargo run --release --example list
+//! 截屏：cargo run --example list -- --screenshot artifacts/list.png
+
+use windui::prelude::*;
+
+fn main() {
+    let sel = signal(2usize);
+    let items = vec![
+        "收件箱",
+        "已发送",
+        "草稿箱",
+        "垃圾邮件",
+        "归档",
+        "重要",
+        "已加星标",
+        "全部邮件",
+        "未读",
+        "已删除",
+    ];
+
+    let ui = Element::col()
+        .fill()
+        .bg_role(Role::Bg)
+        .padding(20)
+        .spacing(10)
+        .child(
+            Element::label("列表（单选）")
+                .font_size(22.0)
+                .fg_role(Role::Text)
+                .height(30)
+                .width_match(),
+        )
+        .child(
+            Element::list(items, sel)
+                .width_match()
+                .weight(1.0)
+                .bg_role(Role::Surface)
+                .corner(10.0)
+                .border_role(Role::Border, 1),
+        );
+
+    App::new("windui — 列表", 300, 360)
+        .screenshot_from_args()
+        .content(ui)
+        .run();
+}

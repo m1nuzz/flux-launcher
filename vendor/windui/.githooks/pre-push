@@ -1,0 +1,20 @@
+#!/bin/sh
+# 推送前门禁：完整对齐 CI（clippy 零警告 + 测试）。
+# 拦住会让 CI check job 变红的问题，避免把红色 CI 推到 main。
+# 启用方式：git config core.hooksPath .githooks
+
+echo "[pre-push] cargo clippy --all-targets -- -D warnings ..."
+if ! cargo clippy --all-targets -- -D warnings; then
+    echo ""
+    echo "❌ clippy 有警告/错误（CI 以 -D warnings 视警告为错误）。请修复后再推送。"
+    exit 1
+fi
+
+echo "[pre-push] cargo test ..."
+if ! cargo test; then
+    echo ""
+    echo "❌ 测试未通过。请修复后再推送。"
+    exit 1
+fi
+
+echo "[pre-push] ✓ clippy + 测试全部通过"

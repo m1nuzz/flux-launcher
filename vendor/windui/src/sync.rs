@@ -1,0 +1,189 @@
+//! 跨线程唤醒原语：Waker 延迟绑定平台句柄，窗口建好前的 wake 走 pending 兜底。
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, Mutex};
+
+/// 平台唤醒句柄：win32 持 HWND 数值并 post 自定义消息、macOS dispatch。Send 由各实现保证。
+pub(crate) trait RawWakeSignal: Send {
+    fn signal(&self);
+}
+pub(crate) type RawWake = Box<dyn RawWakeSignal>;
+
+pub use std::sync::mpsc::SendError;
+
+/// 跨线程消息发送端：Send + Sync + Clone。send = 入队 + 唤醒 UI 一帧。
+pub struct Sender<Msg> {
+    tx: std::sync::mpsc::Sender<Msg>,
+    waker: Waker,
+}
+
+impl<Msg> Clone for Sender<Msg> {
+    fn clone(&self) -> Self {
+        Self {
+            tx: self.tx.clone(),
+            waker: self.waker.clone(),
+        }
+    }
+}
+
+impl<Msg> Sender<Msg> {
+    /// 入队一条消息并唤醒 UI 一帧。接收端（窗口）已关闭时返回 Err。
+    pub fn send(&self, msg: Msg) -> Result<(), SendError<Msg>> {
+        self.tx.send(msg)?;
+        self.waker.wake();
+        Ok(())
+    }
+}
+
+/// 类型擦除的通道排空器（供 UiHost 每帧调用）：借宿主的树与 App 级 `self_id` 逐条
+/// 派送积压消息，每条产出一份 [`DispatchResult`] 交宿主消费。
+///
+/// 为什么把树传进来而不是让 pump 只调回调：`on_message` 收 `&mut EventCtx`，而
+/// `EventCtx` 只能由 [`Tree::run_detached`] 借出。**逐条**借（而非整批借一次）是为了
+/// 让每条消息的副作用互不覆盖——`DispatchResult` 里 toast/dialog 都是 `Option`，
+/// 一批消息共用一份就只剩最后一条的 toast，"三个任务完成弹三条提示"会静默丢两条。
+pub(crate) type ChannelPump =
+    Box<dyn FnMut(&mut crate::core::Tree, crate::core::NodeId) -> Vec<crate::core::DispatchResult>>;
+
+/// 建一个 typed channel：返回发送端 + 类型擦除的排空 pump（供 UiHost 每帧调用）。
+pub(crate) fn new_channel<Msg: Send + 'static>(
+    waker: Waker,
+    mut on_message: impl FnMut(&mut crate::core::EventCtx, Msg) + 'static,
+) -> (Sender<Msg>, ChannelPump) {
+    let (tx, rx) = std::sync::mpsc::channel::<Msg>();
+    let pump: ChannelPump = Box::new(move |tree, id| {
+        let mut out = Vec::new();
+        while let Ok(m) = rx.try_recv() {
+            out.push(tree.run_detached(id, |ctx| on_message(ctx, m)));
+        }
+        out
+    });
+    (Sender { tx, waker }, pump)
+}
+
+pub(crate) struct WakerShared {
+    raw: Mutex<Option<RawWake>>,
+    pending: AtomicBool,
+}
+
+/// 跨线程唤醒句柄：Send + Sync + Clone，交后台线程。
+#[derive(Clone)]
+pub struct Waker {
+    inner: Arc<WakerShared>,
+}
+
+impl WakerShared {
+    pub(crate) fn new() -> Arc<Self> {
+        Arc::new(Self {
+            raw: Mutex::new(None),
+            pending: AtomicBool::new(false),
+        })
+    }
+    /// 窗口建好后回填平台句柄；若此前有积压 wake，立即补发一次。
+    pub(crate) fn bind(self: &Arc<Self>, raw: RawWake) {
+        // 全程持锁：与同样持锁的 wake() 串行化 raw 的读写，消除「pending 已读、raw 未装」的窗口。
+        let mut guard = self.raw.lock().unwrap();
+        *guard = Some(raw);
+        if self.pending.swap(false, Ordering::SeqCst) {
+            guard.as_ref().unwrap().signal();
+        }
+    }
+    pub(crate) fn waker(self: &Arc<Self>) -> Waker {
+        Waker {
+            inner: self.clone(),
+        }
+    }
+}
+
+impl Waker {
+    /// 唤醒 UI 一帧。句柄未绑定（run 前）时置 pending，绑定时补发。
+    pub fn wake(&self) {
+        let guard = self.inner.raw.lock().unwrap();
+        match guard.as_ref() {
+            Some(raw) => raw.signal(),
+            None => self.inner.pending.store(true, Ordering::SeqCst),
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::sync::atomic::AtomicU32;
+
+    struct CountSignal(Arc<AtomicU32>);
+    impl RawWakeSignal for CountSignal {
+        fn signal(&self) {
+            self.0.fetch_add(1, Ordering::SeqCst);
+        }
+    }
+
+    #[test]
+    fn wake_before_bind_is_pending_then_flushed() {
+        let shared = WakerShared::new();
+        let waker = shared.waker();
+        waker.wake(); // 未绑定 → pending
+        let count = Arc::new(AtomicU32::new(0));
+        shared.bind(Box::new(CountSignal(count.clone())));
+        assert_eq!(count.load(Ordering::SeqCst), 1, "绑定时补发积压 wake");
+        waker.wake(); // 已绑定 → 直接 signal
+        assert_eq!(count.load(Ordering::SeqCst), 2);
+    }
+
+    #[test]
+    fn waker_is_send_sync() {
+        fn assert_send_sync<T: Send + Sync>() {}
+        assert_send_sync::<Waker>();
+    }
+
+    /// 一棵只有根节点的最小树，供 pump 借出 `EventCtx`。
+    fn tiny_tree() -> (crate::core::Tree, crate::core::NodeId) {
+        let mut tree = crate::core::Tree::new();
+        let id = crate::ui::Element::col().build(&mut tree);
+        tree.root = Some(id);
+        (tree, id)
+    }
+
+    #[test]
+    fn channel_pump_drains_in_order_across_thread() {
+        let shared = WakerShared::new();
+        let got = std::rc::Rc::new(std::cell::RefCell::new(Vec::<u32>::new()));
+        let g2 = got.clone();
+        let (tx, mut pump) =
+            new_channel::<u32>(shared.waker(), move |_ctx, m| g2.borrow_mut().push(m));
+        let t = std::thread::spawn(move || {
+            tx.send(1).unwrap();
+            tx.send(2).unwrap();
+            tx.send(3).unwrap();
+        });
+        t.join().unwrap();
+        let (mut tree, root) = tiny_tree();
+        let out = pump(&mut tree, root);
+        assert_eq!(*got.borrow(), vec![1, 2, 3]);
+        assert_eq!(out.len(), 3, "每条消息各产出一份可消费的副作用");
+    }
+
+    /// 逐条借 ctx 而非整批借一次：`DispatchResult` 的 toast/dialog 是 `Option`，
+    /// 共用一份会让一批消息里只剩最后一条的提示。
+    #[test]
+    fn each_message_gets_its_own_dispatch_result() {
+        let shared = WakerShared::new();
+        let (tx, mut pump) = new_channel::<u32>(shared.waker(), |ctx, m| ctx.toast(m.to_string()));
+        tx.send(1).unwrap();
+        tx.send(2).unwrap();
+        let (mut tree, root) = tiny_tree();
+        let out = pump(&mut tree, root);
+        let texts: Vec<String> = out
+            .into_iter()
+            .filter_map(|r| r.toast.map(|t| t.text))
+            .collect();
+        assert_eq!(texts, vec!["1".to_string(), "2".to_string()]);
+    }
+
+    #[test]
+    fn send_after_receiver_dropped_errs() {
+        let shared = WakerShared::new();
+        let (tx, pump) = new_channel::<u32>(shared.waker(), |_ctx, _m: u32| {});
+        drop(pump); // 接收端 rx 随 pump 一起销毁
+        assert!(tx.send(9).is_err(), "接收端关闭后 send 返回 Err");
+    }
+}

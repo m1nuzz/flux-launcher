@@ -1,0 +1,65 @@
+//! 多行 / 密码 文本框聚焦示例。
+//!
+//! 运行：cargo run --release --example multiline
+//! 截屏：cargo run --example multiline -- --screenshot artifacts/multiline.png
+
+use windui::prelude::*;
+
+fn label(t: &str) -> Element {
+    Element::label(t)
+        .font_size(13.0)
+        .fg_role(Role::TextMuted)
+        .height(20)
+        .width_match()
+}
+
+fn main() {
+    let wrap_txt = signal(String::from(
+        "软换行模式：超过文本框宽度的长行会自动折到下一视觉行，不需要手动断行。\n这是第二个段落（按 Enter 产生的硬换行）。",
+    ));
+    let code_txt = signal(String::from(
+        "fn main() {\n    println!(\"不换行模式：长行水平滚动\");\n}",
+    ));
+    let pwd = signal(String::from("s3cr3t-pass"));
+
+    let ui = Element::col()
+        .fill()
+        .bg_role(Role::Bg)
+        .padding(18)
+        .spacing(12)
+        .child(
+            Element::label("多行 / 密码 文本框")
+                .font_size(22.0)
+                .fg_role(Role::Text)
+                .height(30)
+                .width_match(),
+        )
+        .child(label("软换行多行（默认）"))
+        .child(
+            Element::text_input(wrap_txt, "输入多行文本")
+                .multiline()
+                .width_match()
+                .height(96)
+                .bg_role(Role::Surface),
+        )
+        .child(label("不换行多行（长行水平滚动）"))
+        .child(
+            Element::text_input(code_txt, "输入代码")
+                .multiline()
+                .wrap(false)
+                .width_match()
+                .height(72)
+                .fg_role(Role::Text),
+        )
+        .child(label("密码"))
+        .child(
+            Element::text_input(pwd, "输入密码")
+                .password()
+                .width_match(),
+        );
+
+    App::new("windui — 多行/密码", 420, 360)
+        .screenshot_from_args()
+        .content(ui)
+        .run();
+}

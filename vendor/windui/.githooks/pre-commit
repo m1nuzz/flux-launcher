@@ -1,0 +1,12 @@
+#!/bin/sh
+# 提交前门禁：格式检查（快，约 1s）。
+# 拦住未 cargo fmt 的代码，避免 CI 的 Rustfmt job 变红。
+# 启用方式：git config core.hooksPath .githooks
+
+echo "[pre-commit] cargo fmt --check ..."
+if ! cargo fmt --check; then
+    echo ""
+    echo "❌ 代码格式不规范。请运行 'cargo fmt' 后重新 git add 并提交。"
+    exit 1
+fi
+echo "[pre-commit] ✓ 格式检查通过"

@@ -1,0 +1,184 @@
+[package]
+name = "windui"
+version = "0.12.0"
+edition = "2021"
+description = "轻量跨平台桌面 GUI：tiny-skia 渲染 + 平台原生窗口/文字（Windows: Win32+DirectWrite；macOS: Cocoa+CoreText）"
+authors = ["huanfeng <huanfengf@gmail.com>"]
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/huanfeng/wind-ui-rust"
+homepage = "https://github.com/huanfeng/wind-ui-rust"
+documentation = "https://docs.rs/windui"
+readme = "README.md"
+keywords = ["gui", "ui", "desktop", "windows", "macos"]
+categories = ["gui", "rendering", "os::windows-apis", "os::macos-apis"]
+# 发布到 crates.io 时排除非源码资产，保持包精简。
+exclude = [".github/", ".remember/", "/scripts", "/temp", "/artifacts"]
+
+[features]
+# SVG 支持默认开启；体积敏感可 `--no-default-features` 关掉以剔除 resvg/usvg 依赖树。
+default = ["svg", "d2d"]
+svg = ["dep:resvg"]
+d2d = []
+# SVG 内嵌文字渲染（默认关）：开 resvg 文字栈 + 系统字体加载。代价是依赖体积增大、首次解码
+# SVG 时扫描系统字体——纯图标场景无需开启，需要时 `--features svg-text` 显式启用。
+svg-text = ["svg", "resvg/text", "resvg/system-fonts"]
+
+# 跨平台依赖（所有目标平台共用）。
+[dependencies]
+# 与 resvg 0.48 对齐到同一 tiny-skia 版本，避免依赖树编译两份。
+tiny-skia = "0.12"
+# 系统原生文件/目录选择对话框（PickDialog）。仅用阻塞 API，禁用异步 feature。
+rfd = { version = "0.17", default-features = false }
+# SVG 光栅化：resvg 渲染后端即 tiny-skia（与本项目同源）。关默认特性以剔除字体/栅格图等重依赖，
+# 只保留矢量路径渲染（含文字的 SVG 不渲染文字，图标场景足够）。
+resvg = { version = "0.48", optional = true, default-features = false }
+# 主题配置（TOML 映射）。
+serde = { version = "1", features = ["derive"] }
+toml = "1.1"
+
+# ---- Windows 平台后端（Win32 + GDI + DirectWrite）----
+[target.'cfg(windows)'.dependencies]
+# #[implement] 宏展开会引用 windows_core crate 名，需作为直接依赖暴露。
+# 0.62 起 implement 宏由 windows-core 无条件导出（windows 不再有 implement feature）。
+windows-core = "0.62"
+# rfd 的 set_parent 需要 HasWindowHandle（与 rfd 0.14 依赖版本对齐）。
+raw-window-handle = "0.6"
+# D2D 几何/画刷端点用 Matrix3x2/Vector2（windows 0.62 已把数值类型拆到 windows-numerics）。
+windows-numerics = "0.3"
+windows = { version = "0.62", features = [
+    "Win32_Foundation",
+    "Win32_Graphics_Gdi",
+    "Win32_Graphics_Dwm",
+    "Win32_Graphics_DirectWrite",
+    "Win32_Media",
+    "Win32_UI_WindowsAndMessaging",
+    "Win32_UI_Controls",
+    "Win32_UI_HiDpi",
+    "Win32_UI_Shell",
+    "Win32_UI_Input_Ime",
+    "Win32_UI_Input_KeyboardAndMouse",
+    "Win32_UI_Input_Touch",
+    "Win32_System_LibraryLoader",
+    "Win32_System_Com",
+    "Win32_System_DataExchange",
+    "Win32_System_Memory",
+    "Win32_System_Threading",
+    "Win32_Security",
+    "Win32_System_Ole",
+    "Win32_Graphics_Direct2D",
+    "Win32_Graphics_Direct2D_Common",
+    "Win32_Graphics_Direct3D",
+    "Win32_Graphics_Direct3D11",
+    "Win32_Graphics_DirectComposition",
+    "Win32_Graphics_Dxgi",
+    "Win32_Graphics_Dxgi_Common",
+] }
+
+# ---- macOS 平台后端（Cocoa/AppKit + Core Text）----
+# objc2 生态（活跃维护、类型安全、自动内存管理）。框架子 crate 的类型按 feature 暴露，
+# 缺哪个类型就在对应 features 里补哪个。
+[target.'cfg(target_os = "macos")'.dependencies]
+objc2 = "0.6"
+objc2-foundation = { version = "0.3", features = [
+    "NSString",
+    "NSURL",
+    "NSData",
+    "NSGeometry",
+    "NSValue",
+    "NSArray",
+    "NSDictionary",
+    "NSAttributedString",
+    "NSRange",
+    "NSObjCRuntime",
+    "NSNotification",
+    "NSThread",
+    "NSTimer",
+    "NSDate",
+    "NSUserNotification",
+] }
+objc2-app-kit = { version = "0.3", features = [
+    "NSApplication",
+    "NSResponder",
+    "NSWindow",
+    "NSView",
+    "NSEvent",
+    "NSGraphics",
+    "NSGraphicsContext",
+    "NSColor",
+    "NSScreen",
+    "NSImage",
+    "NSImageRep",
+    "NSPasteboard",
+    "NSStatusBar",
+    "NSStatusBarButton",
+    "NSStatusItem",
+    "NSButton",
+    "NSControl",
+    "NSCell",
+    "NSMenu",
+    "NSMenuItem",
+    "NSWorkspace",
+    "NSCursor",
+    "NSTrackingArea",
+    "NSText",
+    "NSTextInputClient",
+    "NSTextInputContext",
+    "NSDragging",
+    "NSPasteboardItem",
+    "NSRunningApplication",
+    "NSWindowScripting",
+] }
+objc2-core-foundation = { version = "0.3", features = [
+    "CFBase",
+    "CFString",
+    "CFAttributedString",
+    "CFDictionary",
+    "CFArray",
+    "CFData",
+    "CFCGTypes",
+] }
+objc2-core-graphics = { version = "0.3", features = [
+    "CGContext",
+    "CGImage",
+    "CGColorSpace",
+    "CGColor",
+    "CGGeometry",
+    "CGAffineTransform",
+    "CGDataProvider",
+    "CGPath",
+] }
+objc2-core-text = { version = "0.3", features = [
+    "CTLine",
+    "CTFramesetter",
+    "CTFrame",
+    "CTTypesetter",
+    "CTRun",
+    "CTFont",
+    "CTFontDescriptor",
+    "CTParagraphStyle",
+    "CTStringAttributes",
+] }
+
+# 这两个示例用到 svg feature 才有的 API（`icon_svg` / `image_svg`）。声明 required-features
+# 后，`--no-default-features` 下它们被跳过而非编译失败——其余示例仍自动发现，无需逐个声明。
+[[example]]
+name = "fullshowcase"
+required-features = ["svg"]
+
+[[example]]
+name = "image"
+required-features = ["svg"]
+
+[profile.release]
+opt-level = "z"
+lto = true
+codegen-units = 1
+panic = "abort"
+strip = true
+
+# docs.rs 默认在 Linux x86_64 构建文档，但本 crate 仅 Windows/macOS 可编译
+# （Linux 会触发 platform/mod.rs 的 compile_error!）。指定构建目标，否则文档页常红。
+[package.metadata.docs.rs]
+default-target = "x86_64-pc-windows-msvc"
+targets = ["x86_64-pc-windows-msvc", "x86_64-apple-darwin", "aarch64-apple-darwin"]
+all-features = true

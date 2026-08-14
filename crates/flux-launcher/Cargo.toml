@@ -1,0 +1,21 @@
+[package]
+name = "flux-launcher"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+description = "A lightweight Windows launcher built with Rust and windui."
+
+[dependencies]
+flux-core = { path = "../flux-core" }
+windui = { path = "../../vendor/windui", default-features = false, features = ["d2d"] }
+
+[target.'cfg(windows)'.dependencies]
+windows = { version = "0.62", features = [
+    "Win32_Foundation",
+    "Win32_Graphics_Dwm",
+    "Win32_Graphics_Gdi",
+    "Win32_UI_WindowsAndMessaging",
+] }
