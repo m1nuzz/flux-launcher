@@ -25,6 +25,15 @@ public static class FluxWallpaper {
 }
 '@
 
+function Get-MemorySnapshot([int]$ProcessId) {
+    $sample = Get-Process -Id $ProcessId
+    [ordered]@{
+        WorkingSetBytes = [int64]$sample.WorkingSet64
+        PrivateBytes = [int64]$sample.PrivateMemorySize64
+        VirtualBytes = [int64]$sample.VirtualMemorySize64
+    }
+}
+
 function Save-Screenshot([string]$FileName) {
     $bounds = [System.Windows.Forms.SystemInformation]::VirtualScreen
     $bitmap = New-Object System.Drawing.Bitmap $bounds.Width, $bounds.Height
@@ -73,6 +82,7 @@ Start-Sleep -Milliseconds 750
 $process = Start-Process -FilePath $Executable -PassThru
 try {
     Start-Sleep -Seconds 3
+    $idleMemory = Get-MemorySnapshot $process.Id
     Save-Screenshot "mica-desktop.png"
 
     $bounds = [System.Windows.Forms.SystemInformation]::VirtualScreen
@@ -87,6 +97,7 @@ try {
     Start-Sleep -Milliseconds 250
     $shell.SendKeys("windows")
     Start-Sleep -Seconds 2
+    $queryMemory = Get-MemorySnapshot $process.Id
     Save-Screenshot "everything-fallback.png"
 
     $env:FLUX_OPEN_SETTINGS = "1"
@@ -113,6 +124,10 @@ try {
         WallpaperProbe = $true
         QueryExpandedProbe = $true
         SettingsPanelProbe = $true
+        Memory = [ordered]@{
+            Idle = $idleMemory
+            Query = $queryMemory
+        }
     } | ConvertTo-Json | Set-Content -Encoding utf8 (Join-Path $OutputDirectory "environment.json")
 }
 finally {
