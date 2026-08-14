@@ -158,6 +158,7 @@ fn main() {
 
     let search_box = Element::text_input(query, "Search")
         .leading_icon('>')
+        .smooth_caret(settings.smooth_caret, settings.smooth_caret_duration_ms)
         .width_match()
         .height(44)
         .font_size(15.0)

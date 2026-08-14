@@ -702,6 +702,10 @@ pub struct TextConfig {
     /// 前置图标字形（如放大镜 🔍）：在左侧留出图标区并绘制，文字/光标/命中相应右移。
     /// 单字形（Copy 友好）；搜索框等用。
     pub leading: Option<char>,
+    /// Animate the visible caret horizontally when its target position changes.
+    pub smooth_caret: bool,
+    /// Smooth caret transition duration in milliseconds.
+    pub smooth_caret_duration_ms: u16,
 }
 
 impl Default for TextConfig {
@@ -712,6 +716,8 @@ impl Default for TextConfig {
             password: false,
             wrap: true,
             leading: None,
+            smooth_caret: false,
+            smooth_caret_duration_ms: 95,
         }
     }
 }
@@ -765,6 +771,10 @@ pub struct TextInput {
     /// 输入法组合态（拼音等未上屏）：为 true 时暂不绘制自绘光标条，避免与系统
     /// 组合浮层里跟随组合进度的光标重叠、显得"卡在组合开始前"。
     composing: Cell<bool>,
+    /// Visual caret x transition. The exact target remains in `caret_local` for IME.
+    caret_x: Cell<Transition<f32>>,
+    /// Prevents the first paint from animating the caret in from x=0.
+    caret_primed: Cell<bool>,
 }
 
 impl TextInput {
@@ -787,6 +797,8 @@ impl TextInput {
             hover_in_scrollbar: Cell::new(false),
             font_size_hint: Cell::new(14.0),
             composing: Cell::new(false),
+            caret_x: Cell::new(Transition::new(0.0)),
+            caret_primed: Cell::new(false),
         }
     }
 
@@ -1495,10 +1507,25 @@ impl Widget for TextInput {
         }
 
         let ly = first_line_y + cl as i32 * line_h;
-        let cxx = base_x + cx_in;
-        // 记录光标局部位置（相对节点左上角）供输入法候选窗定位。
+        let target_cxx = base_x + cx_in;
+        let target_cxx_f = target_cxx as f32;
+        // Keep IME placement on the exact target while the painted caret may ease toward it.
         self.caret_local
-            .set(Some((cxx - bounds.x, ly - bounds.y, line_h)));
+            .set(Some((target_cxx - bounds.x, ly - bounds.y, line_h)));
+        let mut caret_x = self.caret_x.get();
+        if !self.caret_primed.get() {
+            caret_x = Transition::new(target_cxx_f);
+            self.caret_primed.set(true);
+        } else if !self.config.smooth_caret || caret_x.target() != target_cxx_f {
+            let duration = if self.config.smooth_caret {
+                self.config.smooth_caret_duration_ms as u32
+            } else {
+                0
+            };
+            caret_x.retarget(target_cxx_f, duration, Easing::EaseOut);
+        }
+        let visual_cxx = caret_x.animate();
+        self.caret_x.set(caret_x);
         // 组合态期间不画自绘光标：系统组合浮层自带随组合进度前进的光标，
         // 两者并存会显得我们的光标"卡在组合开始前"。
         if focused && !self.composing.get() {
@@ -1509,7 +1536,7 @@ impl Widget for TextInput {
             // 之所以用「重画一遍再裁剪」而不是 difference 混合：D2D 后端（本库默认）
             // 的 SetPrimitiveBlend 只有 SourceOver/Copy/Min/Add，真反相要么改走
             // ID2D1Effect 离屏合成、要么每帧 GPU 读回，代价都远超此处所值。
-            let caret = Rect::new(cxx, ly + 2, CARET_W, line_h - 4);
+            let caret = Rect::new(visual_cxx.round() as i32, ly + 2, CARET_W, line_h - 4);
             canvas.fill_rect(
                 caret.x as f32,
                 caret.y as f32,
@@ -1841,6 +1868,7 @@ impl Widget for TextInput {
         self.dragging = false;
         self.goal_x.set(None);
         self.follow_cursor.set(true);
+        self.caret_primed.set(false);
     }
     fn wants_right_click(&self) -> bool {
         true // 右键弹出上下文菜单（剪切/复制/粘贴/全选）
@@ -1857,12 +1885,19 @@ impl Widget for TextInput {
 
 #[cfg(test)]
 mod tests {
-    use super::{word_run, wrap_paragraph, TextInput, TextLayout, VisLine};
+    use super::{word_run, wrap_paragraph, TextConfig, TextInput, TextLayout, VisLine};
     use crate::signal::signal;
 
     fn run(s: &str, idx: usize) -> (usize, usize) {
         let chars: Vec<char> = s.chars().collect();
         word_run(&chars, idx)
+    }
+
+    #[test]
+    fn smooth_caret_defaults_to_disabled_for_generic_inputs() {
+        let config = TextConfig::default();
+        assert!(!config.smooth_caret);
+        assert_eq!(config.smooth_caret_duration_ms, 95);
     }
 
     #[test]

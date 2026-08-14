@@ -1426,6 +1426,17 @@ impl Element {
         self.config_text_input(|c| c.leading = Some(glyph))
     }
 
+    /// Configure a short eased transition for the visible caret.
+    ///
+    /// The IME caret position remains exact; only the painted caret is animated.
+    #[track_caller]
+    pub fn smooth_caret(self, enabled: bool, duration_ms: u16) -> Self {
+        self.config_text_input(|c| {
+            c.smooth_caret = enabled;
+            c.smooth_caret_duration_ms = duration_ms;
+        })
+    }
+
     /// 静态可见标志。不可见的节点本帧不显示、不命中，且**不占布局**
     /// （区别于禁用——见 [`enabled`](Self::enabled) 处的三形态对照表）。
     pub fn visible(mut self, v: bool) -> Self {
