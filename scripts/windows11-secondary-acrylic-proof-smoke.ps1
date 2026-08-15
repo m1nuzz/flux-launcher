@@ -122,13 +122,13 @@ try {
     [FluxAcrylicProof]::SetForegroundWindow($handle) | Out-Null
     Start-Sleep -Milliseconds 250
     Save-Screen 'windows11-acrylic-proof-empty.png' $screen
-    Send-WmText $handle $Query
+    Send-AsciiText $Query
     Start-Sleep -Seconds 2
     Save-Screen 'windows11-acrylic-proof-before-down.png' $screen
-    Send-WmKey $handle 0x28
+    Send-VirtualKey 0x28 0x50 $true
     Start-Sleep -Milliseconds 350
     Save-Screen 'windows11-acrylic-proof-after-down.png' $screen
-    Send-WmKey $handle 0x27
+    Send-VirtualKey 0x27
     Start-Sleep -Milliseconds 350
     Save-Screen 'windows11-acrylic-proof-action-mode.png' $screen
     [ordered]@{
