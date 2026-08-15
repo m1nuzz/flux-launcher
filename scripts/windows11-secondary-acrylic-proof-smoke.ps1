@@ -99,8 +99,7 @@ try {
     Start-Sleep -Seconds 3
     $handle = (Get-Process -Id $process.Id).MainWindowHandle
     if ($handle -eq [IntPtr]::Zero) { throw 'Flux Launcher window handle is zero.' }
-    $topmost = [IntPtr](-1)
-    [FluxAcrylicProof]::SetWindowPos($handle, $topmost, $x, $y, 420, 400, 0x40) | Out-Null
+    [FluxAcrylicProof]::SetWindowPos($handle, [IntPtr]::Zero, $x, $y, 420, 400, 0x40) | Out-Null
     [FluxAcrylicProof]::SetForegroundWindow($handle) | Out-Null
     Start-Sleep -Milliseconds 400
     [FluxAcrylicProof]::SetCursorPos($x + 210, $y + 36) | Out-Null
@@ -128,11 +127,7 @@ try {
     } | ConvertTo-Json | Set-Content -Encoding utf8 (Join-Path $OutputDirectory 'proof-result.json')
 }
 finally {
-    if ($process -and !$process.HasExited) {
-        $notTopmost = [IntPtr](-2)
-        [FluxAcrylicProof]::SetWindowPos($process.MainWindowHandle, $notTopmost, 0, 0, 0, 0, 0x0003) | Out-Null
-        Stop-Process -Id $process.Id -Force
-    }
+    if ($process -and !$process.HasExited) { Stop-Process -Id $process.Id -Force }
     if (-not $fixture.IsDisposed) { $fixture.Close(); $fixture.Dispose() }
     if ($previousForeground -ne [IntPtr]::Zero) { [FluxAcrylicProof]::SetForegroundWindow($previousForeground) | Out-Null }
 }
