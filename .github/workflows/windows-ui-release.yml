@@ -1,0 +1,75 @@
+name: Windows UI release
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: windows-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install stable toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-pc-windows-msvc
+
+      - name: Build release binaries
+        shell: pwsh
+        run: |
+          cargo build --release --target x86_64-pc-windows-msvc -p flux-launcher -p flow-plugin-fixture
+          $pluginRoot = Join-Path $env:APPDATA "FluxLauncher\Plugins\NativeFlowFixture"
+          New-Item -ItemType Directory -Force -Path $pluginRoot | Out-Null
+          Copy-Item ./tests/fixtures/flow-native-plugin/plugin.json (Join-Path $pluginRoot "plugin.json") -Force
+          Copy-Item ./target/x86_64-pc-windows-msvc/release/flow-plugin-fixture.exe (Join-Path $pluginRoot "fixture-plugin.exe") -Force
+
+      - name: Enable remote desktop composition and transparency
+        shell: pwsh
+        run: |
+          New-Item -Path "HKLM:\SOFTWARE\Policies\Microsoft\Windows NT\Terminal Services" -Force | Out-Null
+          New-ItemProperty -Path "HKLM:\SOFTWARE\Policies\Microsoft\Windows NT\Terminal Services" -Name fAllowDesktopCompositionOnServer -PropertyType DWord -Value 1 -Force | Out-Null
+          New-ItemProperty -Path "HKCU:\Software\Microsoft\Windows\CurrentVersion\Themes\Personalize" -Name EnableTransparency -PropertyType DWord -Value 1 -Force | Out-Null
+          New-ItemProperty -Path "HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\VisualEffects" -Name VisualFXSetting -PropertyType DWord -Value 1 -Force | Out-Null
+          Set-Service -Name Themes -StartupType Automatic
+          Start-Service -Name Themes -ErrorAction SilentlyContinue
+          & gpupdate.exe /target:user /force
+          & rundll32.exe user32.dll,UpdatePerUserSystemParameters
+
+      - name: Capture empty and query UI states
+        shell: pwsh
+        run: >
+          ./scripts/capture-mica.ps1
+          -Executable ./target/x86_64-pc-windows-msvc/release/flux-launcher.exe
+          -OutputDirectory ./artifacts/windows-ui-release
+
+      - name: Prepare release files
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path ./artifacts/windows-ui-release/package | Out-Null
+          Copy-Item ./target/x86_64-pc-windows-msvc/release/flux-launcher.exe ./artifacts/windows-ui-release/package/FluxLauncher-Windows11-x64.exe
+          Copy-Item ./target/x86_64-pc-windows-msvc/release/flow-plugin-fixture.exe ./artifacts/windows-ui-release/package/flow-plugin-fixture.exe
+          Get-FileHash ./artifacts/windows-ui-release/package/* -Algorithm SHA256 | Format-Table -AutoSize
+
+      - name: Publish UI release and screenshots
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: v0.1.4
+          name: Flux Launcher v0.1.4
+          generate_release_notes: false
+          body: |
+            Flux Launcher v0.1.4 — Windows 11 x64 UI polish release.
+
+            This build changes the launcher root to a transparent full-window Acrylic surface. With an empty query, the complete 420x72 window is the blur surface and contains only the inset Search field. After the first character, the same surface expands and shows application results.
+
+            The attached `mica-desktop.png` and `keyboard-selection.png` are Windows Server/RDP smoke screenshots. The environment can suppress visible DWM Acrylic, so those screenshots validate layout and interaction but are not claimed as proof of blur. On a local Windows 11 session, the system backdrop is expected to provide the visible blur.
+          files: |
+            ./artifacts/windows-ui-release/package/FluxLauncher-Windows11-x64.exe
+            ./artifacts/windows-ui-release/package/flow-plugin-fixture.exe
+            ./artifacts/windows-ui-release/mica-desktop.png
+            ./artifacts/windows-ui-release/keyboard-selection.png
+            ./artifacts/windows-ui-release/actions-panel.png
+            ./artifacts/windows-ui-release/settings-panel.png
