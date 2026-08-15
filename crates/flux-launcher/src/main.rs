@@ -342,10 +342,10 @@ fn main() {
             )
         },
     )
+    // Keep the expanded result area transparent so the window remains one
+    // continuous Acrylic surface. Only individual result rows draw controls.
     .height(286)
     .padding(8)
-    .corner(14.0)
-    .bg(Color::rgba(24, 31, 44, 78))
     .visible_when(move || show_results.get() && !action_mode.get());
 
     let action_list = Element::list_signal(
