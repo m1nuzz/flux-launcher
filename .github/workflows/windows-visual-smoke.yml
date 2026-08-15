@@ -28,24 +28,18 @@ jobs:
           Copy-Item ./tests/fixtures/flow-native-plugin/plugin.json (Join-Path $pluginRoot "plugin.json") -Force
           Copy-Item ./target/x86_64-pc-windows-msvc/release/flow-plugin-fixture.exe (Join-Path $pluginRoot "fixture-plugin.exe") -Force
 
-      - name: Enable remote desktop composition and transparency
+      - name: Enable DWM effects and collect preflight diagnostics
         shell: pwsh
-        run: |
-          New-Item -Path "HKLM:\SOFTWARE\Policies\Microsoft\Windows NT\Terminal Services" -Force | Out-Null
-          New-ItemProperty -Path "HKLM:\SOFTWARE\Policies\Microsoft\Windows NT\Terminal Services" -Name fAllowDesktopCompositionOnServer -PropertyType DWord -Value 1 -Force | Out-Null
-          New-ItemProperty -Path "HKCU:\Software\Microsoft\Windows\CurrentVersion\Themes\Personalize" -Name EnableTransparency -PropertyType DWord -Value 1 -Force | Out-Null
-          New-ItemProperty -Path "HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\VisualEffects" -Name VisualFXSetting -PropertyType DWord -Value 1 -Force | Out-Null
-          Set-Service -Name Themes -StartupType Automatic
-          Start-Service -Name Themes -ErrorAction SilentlyContinue
-          & gpupdate.exe /target:user /force
-          & rundll32.exe user32.dll,UpdatePerUserSystemParameters
+        run: ./scripts/enable-dwm-smoke.ps1 -OutputDirectory ./artifacts/mica-smoke
 
       - name: Capture desktop compositor output
         shell: pwsh
-        run: >
-          ./scripts/capture-mica.ps1
-          -Executable ./target/x86_64-pc-windows-msvc/release/flux-launcher.exe
-          -OutputDirectory ./artifacts/mica-smoke
+        env:
+          WINDUI_D2D: "1"
+        run: |
+          ./scripts/capture-mica.ps1 `
+            -Executable ./target/x86_64-pc-windows-msvc/release/flux-launcher.exe `
+            -OutputDirectory ./artifacts/mica-smoke
 
       - name: Upload visual evidence
         uses: actions/upload-artifact@v4

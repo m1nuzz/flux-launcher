@@ -29,63 +29,14 @@ jobs:
 
       - name: Enable DWM effects and collect preflight diagnostics
         shell: pwsh
-        run: |
-          $ErrorActionPreference = "Continue"
-          $out = "./artifacts/windows-ui-release"
-          New-Item -ItemType Directory -Force -Path $out | Out-Null
-
-          # Per-user transparency and visual-effects settings.
-          New-ItemProperty -Path "HKCU:\Software\Microsoft\Windows\CurrentVersion\Themes\Personalize" -Name EnableTransparency -PropertyType DWord -Value 1 -Force | Out-Null
-          New-ItemProperty -Path "HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\VisualEffects" -Name VisualFXSetting -PropertyType DWord -Value 1 -Force | Out-Null
-
-          # Permit composition on Windows Server images when the runner exposes it.
-          New-Item -Path "HKLM:\SOFTWARE\Policies\Microsoft\Windows NT\Terminal Services" -Force | Out-Null
-          New-ItemProperty -Path "HKLM:\SOFTWARE\Policies\Microsoft\Windows NT\Terminal Services" -Name fAllowDesktopCompositionOnServer -PropertyType DWord -Value 1 -Force | Out-Null
-          Set-Service -Name Themes -StartupType Automatic
-          Start-Service -Name Themes -ErrorAction SilentlyContinue
-
-          # VM workaround from the Windows visual-effects ecosystem. This is
-          # intentionally best-effort: the runner may deny HKLM writes or require
-          # a reboot, so the diagnostics record whether the value was applied.
-          $forceEffectApplied = $false
-          try {
-            New-ItemProperty -Path "HKLM:\SOFTWARE\Microsoft\Windows\Dwm" -Name ForceEffectMode -PropertyType DWord -Value 2 -Force -ErrorAction Stop | Out-Null
-            $forceEffectApplied = $true
-          } catch {
-            Write-Warning "ForceEffectMode could not be written: $($_.Exception.Message)"
-          }
-
-          & gpupdate.exe /target:user /force | Out-Host
-          & rundll32.exe user32.dll,UpdatePerUserSystemParameters
-          Stop-Process -Name explorer -Force -ErrorAction SilentlyContinue
-          Start-Process explorer.exe
-          Start-Sleep -Seconds 3
-
-          Add-Type @'
-          using System;
-          using System.Runtime.InteropServices;
-          public static class FluxDwmPreflight {
-              [DllImport("dwmapi.dll")] public static extern int DwmIsCompositionEnabled(out int enabled);
-              [DllImport("user32.dll")] public static extern int GetSystemMetrics(int index);
-          }
-          '@
-          $composition = 0
-          $hr = [FluxDwmPreflight]::DwmIsCompositionEnabled([ref]$composition)
-          $remote = [FluxDwmPreflight]::GetSystemMetrics(0x1000)
-          $transparency = (Get-ItemProperty -Path "HKCU:\Software\Microsoft\Windows\CurrentVersion\Themes\Personalize" -ErrorAction SilentlyContinue).EnableTransparency
-          $effectMode = (Get-ItemProperty -Path "HKLM:\SOFTWARE\Microsoft\Windows\Dwm" -ErrorAction SilentlyContinue).ForceEffectMode
-          [ordered]@{
-            CompositionHResult = $hr
-            CompositionEnabled = ($composition -ne 0)
-            RemoteSession = ($remote -ne 0)
-            EnableTransparency = $transparency
-            ForceEffectMode = $effectMode
-            ForceEffectModeWriteSucceeded = $forceEffectApplied
-            CapturedAtUtc = (Get-Date).ToUniversalTime().ToString("O")
-          } | ConvertTo-Json | Set-Content -Encoding utf8 (Join-Path $out "dwm-preflight.json")
+        run: ./scripts/enable-dwm-smoke.ps1 -OutputDirectory ./artifacts/windows-ui-release
 
       - name: Capture empty and query UI states
         shell: pwsh
+        env:
+          # Force the GPU path when the runner supports it; Flux still checks
+          # SM_REMOTESESSION and DwmIsCompositionEnabled before using transparency.
+          WINDUI_D2D: "1"
         run: |
           ./scripts/capture-mica.ps1 `
             -Executable ./target/x86_64-pc-windows-msvc/release/flux-launcher.exe `
@@ -102,11 +53,11 @@ jobs:
       - name: Publish UI release and screenshots
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: v0.1.27
-          name: Flux Launcher v0.1.27
+          tag_name: v0.1.28
+          name: Flux Launcher v0.1.28
           generate_release_notes: false
           body: |
-            Flux Launcher v0.1.27 — Windows 11 x64 UI polish release.
+            Flux Launcher v0.1.28 — Windows 11 x64 UI polish release.
 
             This build changes the launcher root to a transparent full-window Acrylic surface. With an empty query, the complete 420x72 window is the blur surface and contains only the inset Search field. After the first character, the same surface expands and shows application results.
 
@@ -119,3 +70,5 @@ jobs:
             ./artifacts/windows-ui-release/actions-panel.png
             ./artifacts/windows-ui-release/settings-panel.png
             ./artifacts/windows-ui-release/dwm-preflight.json
+            ./artifacts/windows-ui-release/launcher.stderr.log
+            ./artifacts/windows-ui-release/launcher.stdout.log
