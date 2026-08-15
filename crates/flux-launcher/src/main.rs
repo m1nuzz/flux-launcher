@@ -16,7 +16,8 @@ use std::time::Duration;
 use applications::{ApplicationResponse, ApplicationWorker};
 use everything::{EverythingResponse, EverythingWorker};
 use flux_core::{
-    rank_results, should_suppress_activation, HotkeyConfig, SearchModel, SearchResult, Settings,
+    rank_results, should_suppress_activation, HotkeyConfig, ResultKind, SearchModel, SearchResult,
+    Settings,
 };
 use plugins::{FlowPluginWorker, PluginInvocation, PluginQueryResponse};
 use windui::app::WindowSizeHandle;
@@ -109,11 +110,13 @@ fn actions_for_result(
             label: String::from("Open file location"),
             kind: ActionKind::OpenLocation,
         });
-        actions.push(ActionItem {
-            id: format!("{}:copy-path", result.id),
-            label: String::from("Copy path"),
-            kind: ActionKind::CopyPath,
-        });
+        if !matches!(result.kind, ResultKind::Application) {
+            actions.push(ActionItem {
+                id: format!("{}:copy-path", result.id),
+                label: String::from("Copy path"),
+                kind: ActionKind::CopyPath,
+            });
+        }
     }
     if let Some(invocation) = plugin_actions.get(&result.id).cloned() {
         actions.push(ActionItem {
@@ -122,11 +125,13 @@ fn actions_for_result(
             kind: ActionKind::RunPlugin(invocation),
         });
     }
-    actions.push(ActionItem {
-        id: format!("{}:copy-name", result.id),
-        label: String::from("Copy name"),
-        kind: ActionKind::CopyName,
-    });
+    if !matches!(result.kind, ResultKind::Application) {
+        actions.push(ActionItem {
+            id: format!("{}:copy-name", result.id),
+            label: String::from("Copy name"),
+            kind: ActionKind::CopyName,
+        });
+    }
     actions
 }
 
