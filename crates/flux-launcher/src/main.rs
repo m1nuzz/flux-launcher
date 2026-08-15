@@ -229,8 +229,8 @@ fn result_row(
     let selected = selected_id.get() == id;
     Element::row()
         .width_match()
-        .height(58)
-        .padding_xy(14, 8)
+        .height(42)
+        .padding_xy(12, 4)
         .spacing(12)
         .corner(10.0)
         .bg(if selected {
@@ -335,7 +335,9 @@ fn main() {
         },
     )
     .height(286)
-    .corner(12.0)
+    .padding(8)
+    .corner(14.0)
+    .bg(Color::rgba(24, 31, 44, 78))
     .visible_when(move || show_results.get() && !action_mode.get());
 
     let action_list = Element::list_signal(
@@ -391,17 +393,18 @@ fn main() {
     .corner(12.0)
     .visible_signal(action_mode);
 
-    let launcher_surface = Element::col()
+    // The HWND itself owns the system Acrylic surface. Keep this root transparent so
+    // the blur fills the complete 420px client area instead of becoming an inset card.
+    let launcher_content = Element::col()
         .width(364)
         .padding(10)
         .spacing(8)
-        .corner(16.0)
-        .bg(Color::rgba(12, 18, 28, 72))
-        .border(Color::rgba(255, 255, 255, 18), 1)
-        .shadow(Shadow::new(0.0, 10.0, 24.0, Color::rgba(0, 0, 0, 52)))
         .child(search_box)
         .child(result_list)
         .child(action_list);
+    let launcher_surface = Element::stack()
+        .fill()
+        .child(launcher_content.align(Align::Center));
 
     let query_for_interval = query;
     let results_for_interval = results;
@@ -804,7 +807,7 @@ fn main() {
 
     let launcher_page = Element::stack()
         .fill()
-        .child(launcher_surface.align(Align::Center))
+        .child(launcher_surface)
         .visible_when(move || !settings_visible.get());
     let settings_page = Element::col()
         .fill()
