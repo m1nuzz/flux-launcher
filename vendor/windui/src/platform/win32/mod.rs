@@ -71,7 +71,8 @@ use windows::Win32::UI::WindowsAndMessaging::{
     WM_IME_ENDCOMPOSITION, WM_IME_STARTCOMPOSITION, WM_KEYDOWN, WM_LBUTTONDOWN, WM_LBUTTONUP,
     WM_MOUSEMOVE, WM_MOUSEWHEEL, WM_NCCALCSIZE, WM_NCCREATE, WM_NCHITTEST, WM_NCMOUSEMOVE,
     WM_PAINT, WM_QUIT, WM_RBUTTONDOWN, WM_RBUTTONUP, WM_SETCURSOR, WM_SIZE, WM_TIMER, WM_TOUCH,
-    WNDCLASSEXW, WS_EX_NOREDIRECTIONBITMAP, WS_MAXIMIZEBOX, WS_OVERLAPPEDWINDOW, WS_THICKFRAME,
+    WNDCLASSEXW, WS_EX_NOREDIRECTIONBITMAP, WS_MAXIMIZEBOX, WS_OVERLAPPEDWINDOW, WS_POPUP,
+    WS_THICKFRAME,
 };
 // 只用于 d2d 后端选择（RDP 远程会话下强制软渲染），随该 feature 一起门控。
 #[cfg(feature = "d2d")]
@@ -553,12 +554,22 @@ unsafe fn run_windowed(
         }
     };
     let init_scale = sys_dpi as f32 / 96.0;
-    let (phys_w, phys_h) = frame_size_for_client(cfg.width, cfg.height, init_scale, sys_dpi);
+    let (phys_w, phys_h) = if cfg.frameless {
+        (
+            (cfg.width as f32 * init_scale).round() as i32,
+            (cfg.height as f32 * init_scale).round() as i32,
+        )
+    } else {
+        frame_size_for_client(cfg.width, cfg.height, init_scale, sys_dpi)
+    };
 
-    let win_style = if cfg.resizable {
+    let win_style = if cfg.frameless {
+        // A popup has no retained title-bar/non-client surface. Frameless
+        // windows already implement hit testing and drag behavior in wnd_proc.
+        WS_POPUP
+    } else if cfg.resizable {
         WS_OVERLAPPEDWINDOW
     } else {
-        // 固定大小：保留标题栏、系统菜单、最小化按钮，去掉拉伸边框和最大化按钮
         WINDOW_STYLE(WS_OVERLAPPEDWINDOW.0 & !(WS_THICKFRAME.0 | WS_MAXIMIZEBOX.0))
     };
 
@@ -599,7 +610,14 @@ unsafe fn run_windowed(
     let scale = if dpi == 0 { 1.0 } else { dpi as f32 / 96.0 };
     // 实际 DPI 与系统估算不一致时，按真实 scale 校正窗口物理尺寸（在显示前，无 state 借用）。
     if (scale - init_scale).abs() > 0.01 {
-        let (w, h) = frame_size_for_client(cfg.width, cfg.height, scale, dpi);
+        let (w, h) = if cfg.frameless {
+            (
+                (cfg.width as f32 * scale).round() as i32,
+                (cfg.height as f32 * scale).round() as i32,
+            )
+        } else {
+            frame_size_for_client(cfg.width, cfg.height, scale, dpi)
+        };
         let _ = SetWindowPos(
             hwnd,
             None,
