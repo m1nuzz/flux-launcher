@@ -23,6 +23,7 @@ use windui::app::WindowSizeHandle;
 use windui::core::{ClipboardProvider, EventCtx, Widget};
 use windui::event::{Key, KeyEvent};
 use windui::prelude::*;
+use windui::render::{Canvas, Paint};
 
 const WINDOW_WIDTH: i32 = 420;
 const COMPACT_WINDOW_HEIGHT: i32 = 72;
@@ -147,17 +148,35 @@ impl Widget for ResultRowAnchor {
             });
             self.last_selected = Some(selected);
         }
-        // Always rewrite the row background. A virtualized/recycled row can
-        // otherwise retain the previous selected color after provider updates.
-        ctx.set_bg(if selected {
-            Color::rgba(76, 139, 245, 72)
-        } else {
-            Color::rgba(255, 255, 255, 18)
-        });
         if selected {
             let row_id = ctx.id();
             let _ = ctx.tree_mut().scroll_into_view(row_id);
         }
+    }
+
+    fn paint(
+        &self,
+        bounds: windui::geometry::Rect,
+        _content: windui::geometry::Rect,
+        _focused: bool,
+        _enabled: bool,
+        canvas: &mut dyn Canvas,
+        _style: &windui::style::Style,
+    ) {
+        let selected = self.selected_id.get() == self.result_id;
+        let color = if selected {
+            Color::rgba(76, 139, 245, 72)
+        } else {
+            Color::rgba(255, 255, 255, 18)
+        };
+        canvas.fill_round_rect(
+            bounds.x as f32,
+            bounds.y as f32,
+            bounds.w as f32,
+            bounds.h as f32,
+            10.0,
+            &Paint::fill(color),
+        );
     }
 }
 
