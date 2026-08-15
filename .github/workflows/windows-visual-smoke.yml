@@ -2,6 +2,12 @@ name: Windows visual smoke
 
 on:
   workflow_dispatch:
+    inputs:
+      runner_label:
+        description: "Configured GitHub larger-runner label (use windows-latest for standard VM)"
+        required: false
+        default: windows-latest
+        type: string
   push:
     branches: [main]
 
@@ -10,7 +16,7 @@ permissions:
 
 jobs:
   mica-smoke:
-    runs-on: windows-latest
+    runs-on: ${{ inputs.runner_label || 'windows-latest' }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4

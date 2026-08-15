@@ -2,13 +2,19 @@ name: Windows UI release
 
 on:
   workflow_dispatch:
+    inputs:
+      runner_label:
+        description: "Configured GitHub larger-runner label (use windows-latest for standard VM)"
+        required: false
+        default: windows-latest
+        type: string
 
 permissions:
   contents: write
 
 jobs:
   release:
-    runs-on: windows-latest
+    runs-on: ${{ inputs.runner_label || 'windows-latest' }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -61,7 +67,7 @@ jobs:
 
             This build changes the launcher root to a transparent full-window Acrylic surface. With an empty query, the complete 420x72 window is the blur surface and contains only the inset Search field. After the first character, the same surface expands and shows application results.
 
-            The attached `mica-desktop.png` and `keyboard-selection.png` are Windows visual smoke screenshots. The workflow first enables transparency and attempts the VM DWM ForceEffectMode workaround; `dwm-preflight.json` records whether composition and the registry settings were actually available. If the runner remains a remote/composition-disabled session, the binary uses its honest dark fallback and the screenshots validate layout, not blur. On a local Windows 11 session, the binary requests the real DWM Acrylic system backdrop.
+            The attached `mica-desktop.png` and `keyboard-selection.png` are Windows visual smoke screenshots. The workflow first enables transparency and attempts the VM DWM ForceEffectMode workaround; `dwm-preflight.json` records the selected runner, OS image, composition state and registry settings. For visible Acrylic smoke evidence, configure a GitHub larger runner with the Base Windows 11 Desktop image or GPU Windows image, then dispatch this workflow with that runner's label. The default `windows-latest` standard VM remains an honest layout/backend smoke environment and may not expose usable system material.
           files: |
             ./artifacts/windows-ui-release/package/FluxLauncher-Windows11-x64.exe
             ./artifacts/windows-ui-release/package/flow-plugin-fixture.exe
