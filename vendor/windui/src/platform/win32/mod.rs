@@ -34,6 +34,7 @@ use windows::Win32::Graphics::Gdi::{
 };
 use windows::Win32::Media::{timeBeginPeriod, timeEndPeriod};
 use windows::Win32::System::LibraryLoader::{GetModuleHandleW, GetProcAddress};
+use windows::Win32::System::SystemInformation::{GetProductInfo, OS_PRODUCT_TYPE};
 use windows::Win32::UI::Controls::{MARGINS, WM_MOUSELEAVE};
 use windows::Win32::UI::HiDpi::{
     AdjustWindowRectExForDpi, GetDpiForSystem, GetDpiForWindow, GetSystemMetricsForDpi,
@@ -456,6 +457,78 @@ unsafe fn hicon_from_rgba(w: i32, h: i32, rgba: &[u8]) -> Option<HICON> {
 
 use super::to_skia_color;
 
+/// Return whether the current OS is a Windows Client product that can host the
+/// desktop system material used by Flux. Server products may report DWM
+/// composition as enabled while still exposing only a neutral opaque surface.
+fn system_material_supported() -> bool {
+    let mut product = OS_PRODUCT_TYPE(0);
+    let queried = unsafe { GetProductInfo(10, 0, 0, 0, &mut product).as_bool() };
+    if !queried {
+        // Keep the historical behavior when the product query is unavailable.
+        return true;
+    }
+
+    // Windows server product IDs documented by GetProductInfo. Treat unknown
+    // values as client products so new Windows client editions do not regress.
+    !matches!(
+        product.0,
+        7 | 8
+            | 9
+            | 10
+            | 12
+            | 13
+            | 14
+            | 15
+            | 17
+            | 18
+            | 19
+            | 20
+            | 21
+            | 22
+            | 23
+            | 24
+            | 25
+            | 29
+            | 30
+            | 31
+            | 32
+            | 33
+            | 34
+            | 35
+            | 36
+            | 37
+            | 38
+            | 39
+            | 40
+            | 41
+            | 43
+            | 44
+            | 45
+            | 46
+            | 50
+            | 51
+            | 52
+            | 53
+            | 54
+            | 55
+            | 56
+            | 59
+            | 60
+            | 61
+            | 62
+            | 63
+            | 64
+            | 76
+            | 77
+            | 79
+            | 80
+            | 95
+            | 96
+            | 145
+            | 146
+    )
+}
+
 /// Applies the public DWM system backdrop first. The legacy WCA Acrylic policy is
 /// used only when the public attribute is unavailable, so two material policies do
 /// not compete for the same HWND.
@@ -464,6 +537,7 @@ unsafe fn apply_system_backdrop(hwnd: HWND, backdrop: Backdrop) {
     let composition_enabled = DwmIsCompositionEnabled()
         .map(|enabled| enabled.as_bool())
         .unwrap_or(true);
+    let material_supported = system_material_supported();
 
     let kind: Option<DWM_SYSTEMBACKDROP_TYPE> = match backdrop {
         Backdrop::None => None,
@@ -482,9 +556,10 @@ unsafe fn apply_system_backdrop(hwnd: HWND, backdrop: Backdrop) {
         &border_color as *const _ as *const c_void,
         size_of::<u32>() as u32,
     );
-    if is_remote || !composition_enabled {
-        // Explicitly clear any stale system material on remote/composition-disabled
-        // sessions. Requesting Acrylic there makes DWM paint an opaque neutral slab.
+    if is_remote || !composition_enabled || !material_supported {
+        // Explicitly clear any stale system material on remote, server, or
+        // composition-disabled sessions. Requesting Acrylic there makes DWM
+        // paint an opaque neutral slab.
         let none = DWMSBT_NONE;
         let zero_margins = MARGINS::default();
         let _ = DwmExtendFrameIntoClientArea(hwnd, &zero_margins);
@@ -665,6 +740,7 @@ unsafe fn run_windowed(
     let force_safe_fallback = std::env::var_os("FLUX_DISABLE_SYSTEM_BACKDROP").is_some();
     let backdrop_available = cfg.backdrop != Backdrop::None
         && !force_safe_fallback
+        && system_material_supported()
         && GetSystemMetrics(SM_REMOTESESSION) == 0
         && DwmIsCompositionEnabled()
             .map(|enabled| enabled.as_bool())
