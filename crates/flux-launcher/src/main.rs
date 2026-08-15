@@ -130,12 +130,29 @@ fn selected_result(
 /// surrounding windui scroll viewport without painting an additional surface.
 struct ResultRowAnchor {
     result_id: String,
+    title: String,
+    title_signal: Signal<String>,
     selected_id: Signal<String>,
+    last_selected: Option<bool>,
 }
 
 impl Widget for ResultRowAnchor {
     fn on_update(&mut self, ctx: &mut EventCtx) {
-        if self.selected_id.get() == self.result_id {
+        let selected = self.selected_id.get() == self.result_id;
+        if self.last_selected != Some(selected) {
+            self.title_signal.set(if selected {
+                format!("> {}", self.title)
+            } else {
+                self.title.clone()
+            });
+            ctx.set_bg(if selected {
+                Color::rgba(76, 139, 245, 72)
+            } else {
+                Color::rgba(255, 255, 255, 18)
+            });
+            self.last_selected = Some(selected);
+        }
+        if selected {
             let row_id = ctx.id();
             let _ = ctx.tree_mut().scroll_into_view(row_id);
         }
@@ -257,10 +274,18 @@ fn result_row(
     let title = result.title;
     let subtitle = result.subtitle;
     let selected = selected_id.get() == id;
+    let title_signal = signal(if selected {
+        format!("> {title}")
+    } else {
+        title.clone()
+    });
     Element::row()
         .widget(ResultRowAnchor {
             result_id: id.clone(),
+            title: title.clone(),
+            title_signal,
             selected_id,
+            last_selected: None,
         })
         .reactive()
         .width_match()
@@ -278,14 +303,10 @@ fn result_row(
                 .weight(1.0)
                 .spacing(1)
                 .child(
-                    Element::label(if selected {
-                        format!("> {title}")
-                    } else {
-                        title
-                    })
-                    .font_size(14.0)
-                    .fg(Color::WHITE)
-                    .width_match(),
+                    Element::label_signal(title_signal)
+                        .font_size(14.0)
+                        .fg(Color::WHITE)
+                        .width_match(),
                 )
                 .child(
                     Element::label(subtitle)
