@@ -40,10 +40,9 @@ function Send-WmKey([IntPtr]$handle, [uint32]$virtualKey) {
     [FluxAcrylicProof]::PostMessage($handle, 0x0101, $wParam, [IntPtr]::Zero) | Out-Null
 }
 
-function Send-WmText([IntPtr]$handle, [string]$text) {
-    foreach ($character in $text.ToCharArray()) {
-        $wParam = [UIntPtr]::new([uint64][int][char]$character)
-        [FluxAcrylicProof]::PostMessage($handle, 0x0102, $wParam, [IntPtr]::Zero) | Out-Null
+function Send-AsciiText([string]$text) {
+    foreach ($character in $text.ToUpperInvariant().ToCharArray()) {
+        Send-VirtualKey ([byte][char]$character)
     }
 }
 
