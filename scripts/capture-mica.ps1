@@ -28,6 +28,8 @@ public static class FluxWallpaper {
     public static extern bool SetForegroundWindow(IntPtr hwnd);
     [DllImport("user32.dll", SetLastError = true)]
     public static extern bool IsWindowVisible(IntPtr hwnd);
+    [DllImport("user32.dll", SetLastError = true)]
+    public static extern bool PostMessage(IntPtr hwnd, uint message, UIntPtr wParam, IntPtr lParam);
 }
 '@
 
@@ -162,12 +164,14 @@ try {
     if (![FluxWallpaper]::IsWindowVisible($launcherHandle)) { throw "Launcher is not visible before hotkey regression probe." }
     [FluxWallpaper]::SetForegroundWindow($launcherHandle) | Out-Null
     Start-Sleep -Milliseconds 250
-    $hotkeyShell = New-Object -ComObject WScript.Shell
-    $hotkeyShell.AppActivate($process.Id) | Out-Null
-    $hotkeyShell.SendKeys("% ")
+    # WM_HOTKEY is the exact message delivered by RegisterHotKey. Posting it to
+    # the real HWND avoids SendKeys losing focus after the first hide while still
+    # exercising the production hotkey dispatch and visibility callbacks.
+    $wmHotkey = 0x0312
+    [FluxWallpaper]::PostMessage($launcherHandle, $wmHotkey, [UIntPtr]::Zero, [IntPtr]::Zero) | Out-Null
     Start-Sleep -Milliseconds 450
     $hiddenAfterFirstHotkey = ![FluxWallpaper]::IsWindowVisible($launcherHandle)
-    $hotkeyShell.SendKeys("% ")
+    [FluxWallpaper]::PostMessage($launcherHandle, $wmHotkey, [UIntPtr]::Zero, [IntPtr]::Zero) | Out-Null
     Start-Sleep -Milliseconds 600
     $visibleAfterSecondHotkey = [FluxWallpaper]::IsWindowVisible($launcherHandle)
     if (!$hiddenAfterFirstHotkey -or !$visibleAfterSecondHotkey) {
