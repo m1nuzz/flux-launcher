@@ -134,15 +134,46 @@ fn execute_result_action(result: &SearchResult, action: &ActionKind) {
 }
 
 fn tray_icon() -> Vec<u8> {
-    let mut pixels = Vec::with_capacity(16 * 16 * 4);
-    for y in 0..16 {
-        for x in 0..16 {
-            let active = (x + y) % 5 < 3;
-            let (red, green, blue) = if active { (78, 139, 255) } else { (28, 39, 62) };
-            pixels.extend([red, green, blue, 255]);
+    const ICON_SIZE: usize = 16;
+    let fallback = || {
+        let mut pixels = Vec::with_capacity(ICON_SIZE * ICON_SIZE * 4);
+        for y in 0..ICON_SIZE {
+            for x in 0..ICON_SIZE {
+                let active = (x + y) % 5 < 3;
+                let (red, green, blue) = if active { (78, 139, 255) } else { (28, 39, 62) };
+                pixels.extend([red, green, blue, 255]);
+            }
+        }
+        pixels
+    };
+
+    let decoder = png::Decoder::new(std::io::Cursor::new(include_bytes!(
+        "../../../assets/ico.png"
+    )));
+    let Ok(mut reader) = decoder.read_info() else {
+        return fallback();
+    };
+    let mut source = vec![0; reader.output_buffer_size()];
+    let Ok(info) = reader.next_frame(&mut source) else {
+        return fallback();
+    };
+    if info.color_type != png::ColorType::Rgba || info.bit_depth != png::BitDepth::Eight {
+        return fallback();
+    }
+
+    let source = &source[..info.buffer_size()];
+    let mut icon = vec![0_u8; ICON_SIZE * ICON_SIZE * 4];
+    for y in 0..ICON_SIZE {
+        let source_y = y * info.height as usize / ICON_SIZE;
+        for x in 0..ICON_SIZE {
+            let source_x = x * info.width as usize / ICON_SIZE;
+            let source_index = (source_y * info.width as usize + source_x) * 4;
+            let target_index = (y * ICON_SIZE + x) * 4;
+            icon[target_index..target_index + 4]
+                .copy_from_slice(&source[source_index..source_index + 4]);
         }
     }
-    pixels
+    icon
 }
 
 fn game_mode_label(enabled: bool) -> String {

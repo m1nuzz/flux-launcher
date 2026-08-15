@@ -12,6 +12,7 @@ description = "A lightweight Windows launcher built with Rust and windui."
 flux-core = { path = "../flux-core" }
 serde_json = "1"
 windui = { path = "../../vendor/windui", default-features = false, features = ["d2d"] }
+png = "0.17"
 
 [target.'cfg(windows)'.dependencies]
 everything-ipc = "0.1.4"

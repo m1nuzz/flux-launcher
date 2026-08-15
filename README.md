@@ -1,5 +1,9 @@
 # Flux Launcher
 
+<p align="center">
+  <img src="assets/logotype.jpg" alt="Flux Launcher logo" width="392">
+</p>
+
 Flux Launcher is a lightweight Windows launcher written in Rust with **windui** as its only GUI framework. It combines a compact Spotlight-style search surface with Everything IPC, native Flow Launcher executable plugins, configurable global hotkeys, fullscreen-aware Game Mode, a system tray menu, and a windui-native Settings panel.
 
 The primary interaction is intentionally minimal. With an empty query, Flux shows only a short dark translucent search strip. After at least one character is entered, the native popup expands and displays a bounded, ranked result list. The frameless Windows path uses a popup-style alpha-aware client surface, the Windows system backdrop API, and a DirectComposition-compatible path where supported; it does not retain the opaque native title-bar/client frame that caused the previous white rectangle.
@@ -18,7 +22,7 @@ The primary interaction is intentionally minimal. With an empty query, Flux show
 | Global hotkey | Configurable modifier/key combination, default `Alt+Space` |
 | Game Mode | Fullscreen suppression enabled by default, manual toggle through `Ctrl+F12` and the tray |
 | Flow plugins | `Executable` and `Executable_V2` newline-delimited JSON-RPC plugins only |
-| Tray | Left-click show action and right-click menu for Show launcher, Settings, Game Mode, and Exit |
+| Tray | Left-click show action and right-click menu for Show launcher, Settings, Game Mode, and Exit; uses the transparent `assets/ico.png` branding icon |
 | Settings | Hotkey editor, fullscreen protection, Game Mode, Smooth Caret, caret duration, and atomic JSON persistence |
 | License | MIT |
 
@@ -110,6 +114,7 @@ The workspace separates portable behavior from Windows integration:
 | `crates/flow-plugin-fixture` | Native executable Flow JSON-RPC fixture used by integration smoke tests |
 | `vendor/windui` | Pinned local windui fork containing the Mica/DirectComposition seam, runtime window sizing, and Smooth Caret support |
 | `scripts/capture-mica.ps1` | Proactive Windows screenshot, input, plugin, Settings, and memory smoke harness |
+| `assets/logotype.jpg` / `assets/ico.png` | Repository branding artwork and transparent tray icon asset |
 
 The UI keeps result state bounded and uses background workers only for external providers. The compact empty state also reduces the rendered surface and memory pressure while the launcher is idle.
 
