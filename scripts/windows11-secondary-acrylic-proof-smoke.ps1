@@ -35,13 +35,15 @@ function Send-VirtualKey([byte]$virtualKey, [byte]$scanCode = 0, [bool]$extended
 }
 
 function Send-WmKey([IntPtr]$handle, [uint32]$virtualKey) {
-    [FluxAcrylicProof]::PostMessage($handle, 0x0100, [UIntPtr]$virtualKey, [IntPtr]::Zero) | Out-Null
-    [FluxAcrylicProof]::PostMessage($handle, 0x0101, [UIntPtr]$virtualKey, [IntPtr]::Zero) | Out-Null
+    $wParam = [UIntPtr]::new([uint64]$virtualKey)
+    [FluxAcrylicProof]::PostMessage($handle, 0x0100, $wParam, [IntPtr]::Zero) | Out-Null
+    [FluxAcrylicProof]::PostMessage($handle, 0x0101, $wParam, [IntPtr]::Zero) | Out-Null
 }
 
 function Send-WmText([IntPtr]$handle, [string]$text) {
     foreach ($character in $text.ToCharArray()) {
-        [FluxAcrylicProof]::PostMessage($handle, 0x0102, [UIntPtr][int][char]$character, [IntPtr]::Zero) | Out-Null
+        $wParam = [UIntPtr]::new([uint64][int][char]$character)
+        [FluxAcrylicProof]::PostMessage($handle, 0x0102, $wParam, [IntPtr]::Zero) | Out-Null
     }
 }
 
