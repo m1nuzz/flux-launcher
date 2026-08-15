@@ -74,8 +74,8 @@ use windows::Win32::UI::WindowsAndMessaging::{
     WM_GETMINMAXINFO, WM_HOTKEY, WM_IME_COMPOSITION, WM_IME_ENDCOMPOSITION,
     WM_IME_STARTCOMPOSITION, WM_KEYDOWN, WM_LBUTTONDOWN, WM_LBUTTONUP, WM_MOUSEMOVE, WM_MOUSEWHEEL,
     WM_NCCALCSIZE, WM_NCCREATE, WM_NCHITTEST, WM_NCMOUSEMOVE, WM_PAINT, WM_QUIT, WM_RBUTTONDOWN,
-    WM_RBUTTONUP, WM_SETCURSOR, WM_SIZE, WM_TIMER, WM_TOUCH, WNDCLASSEXW,
-    WS_EX_NOREDIRECTIONBITMAP, WS_MAXIMIZEBOX, WS_OVERLAPPEDWINDOW, WS_POPUP, WS_THICKFRAME,
+    WM_RBUTTONUP, WM_SETCURSOR, WM_SIZE, WM_TIMER, WM_TOUCH, WNDCLASSEXW, WS_MAXIMIZEBOX,
+    WS_OVERLAPPEDWINDOW, WS_POPUP, WS_THICKFRAME,
 };
 // 只用于 d2d 后端选择（RDP 远程会话下强制软渲染），随该 feature 一起门控。
 #[cfg(feature = "d2d")]
@@ -598,6 +598,19 @@ unsafe fn apply_system_backdrop(hwnd: HWND, backdrop: Backdrop) {
         &dark_mode as *const _ as *const c_void,
         size_of::<i32>() as u32,
     );
+
+    // DWMWA_REDIRECTIONBITMAP_ALPHA is 39 on current Windows 11 builds. The
+    // windows crate version used by windui predates this enum entry, so keep the
+    // numeric value local and treat E_INVALIDARG as a normal older-build fallback.
+    const DWMWA_REDIRECTIONBITMAP_ALPHA: windows::Win32::Graphics::Dwm::DWMWINDOWATTRIBUTE =
+        windows::Win32::Graphics::Dwm::DWMWINDOWATTRIBUTE(39);
+    let redirection_alpha: i32 = 1;
+    let _ = DwmSetWindowAttribute(
+        hwnd,
+        DWMWA_REDIRECTIONBITMAP_ALPHA,
+        &redirection_alpha as *const _ as *const c_void,
+        size_of::<i32>() as u32,
+    );
     // Extend the DWM frame across the complete client area before applying the
     // public system material. This is required for transparent DirectComposition
     // pixels to reveal the Acrylic surface instead of compositing over a uniform
@@ -805,15 +818,11 @@ unsafe fn run_windowed(
         WINDOW_STYLE(WS_OVERLAPPEDWINDOW.0 & !(WS_THICKFRAME.0 | WS_MAXIMIZEBOX.0))
     };
 
-    // Both system materials use the alpha-aware DirectComposition surface. A
-    // redirected HWND client would otherwise paint its default opaque class
-    // background over the swap chain and produce the white rectangle seen in the
-    // visual smoke screenshot.
-    let ex_style = if backdrop_available {
-        WS_EX_NOREDIRECTIONBITMAP
-    } else {
-        WINDOW_EX_STYLE::default()
-    };
+    // Use the normal redirected HWND path and explicitly preserve premultiplied
+    // alpha on Windows 11 builds that expose DWMWA_REDIRECTIONBITMAP_ALPHA. This
+    // lets DWM resolve transparent client pixels against the system material while
+    // retaining a safe opaque fallback on older builds.
+    let ex_style = WINDOW_EX_STYLE::default();
     let hwnd = match CreateWindowExW(
         ex_style,
         CLASS_NAME,
