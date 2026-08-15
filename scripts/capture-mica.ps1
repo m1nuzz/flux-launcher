@@ -195,7 +195,11 @@ try {
     Start-Sleep -Seconds 2
     $queryMemory = Get-MemorySnapshot $process.Id
     Save-Screenshot "everything-fallback.png"
-
+    # Native Everything syntax must remain usable in the always-on provider.
+    $shell.SendKeys("^a")
+    $shell.SendKeys("ext:zip")
+    Start-Sleep -Seconds 2
+    Save-Screenshot "everything-ext-zip.png"
     # The WAB query exercises long App Paths and duplicate application-like entries.
     # Flow-style keyboard navigation: select the second result with Down,
     # enter action mode with Right, then execute the next action with Enter.
@@ -237,6 +241,7 @@ try {
         FirstHotkeyHideProbe = $hiddenAfterFirstHotkey
         SecondHotkeyShowProbe = $visibleAfterSecondHotkey
         QueryExpandedProbe = $true
+        EverythingSyntaxProbe = $true
         SettingsPanelProbe = $true
         KeyboardSelectionProbe = $true
         ActionModeProbe = $true
