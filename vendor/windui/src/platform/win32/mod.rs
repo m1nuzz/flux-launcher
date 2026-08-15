@@ -447,14 +447,10 @@ use super::to_skia_color;
 /// used only when the public attribute is unavailable, so two material policies do
 /// not compete for the same HWND.
 unsafe fn apply_system_backdrop(hwnd: HWND, backdrop: Backdrop) {
-    // Remote sessions and composition-disabled hosts cannot honor DWM Acrylic.
-    // Avoid asking DWM for its opaque fallback; local Windows 11 keeps the real material.
+    let is_remote = GetSystemMetrics(SM_REMOTESESSION) != 0;
     let composition_enabled = DwmIsCompositionEnabled()
         .map(|enabled| enabled.as_bool())
         .unwrap_or(true);
-    if GetSystemMetrics(SM_REMOTESESSION) != 0 || !composition_enabled {
-        return;
-    }
 
     let kind: Option<DWM_SYSTEMBACKDROP_TYPE> = match backdrop {
         Backdrop::None => None,
@@ -475,17 +471,14 @@ unsafe fn apply_system_backdrop(hwnd: HWND, backdrop: Backdrop) {
         &dark_mode as *const _ as *const c_void,
         size_of::<bool>() as u32,
     );
-    // Extend the concrete client width immediately before the system material
-    // request so a frameless popup exposes its full client surface to Acrylic.
-    let mut client = RECT::default();
-    let _ = GetClientRect(hwnd, &mut client);
-    let client_frame = MARGINS {
-        cxLeftWidth: client.right - client.left,
-        cxRightWidth: 0,
-        cyTopHeight: 0,
-        cyBottomHeight: 0,
+    // Extend the complete client area before requesting the system material.
+    let full_frame = MARGINS {
+        cxLeftWidth: -1,
+        cxRightWidth: -1,
+        cyTopHeight: -1,
+        cyBottomHeight: -1,
     };
-    let _ = DwmExtendFrameIntoClientArea(hwnd, &client_frame);
+    let _ = DwmExtendFrameIntoClientArea(hwnd, &full_frame);
     if DwmSetWindowAttribute(
         hwnd,
         DWMWA_SYSTEMBACKDROP_TYPE,
@@ -497,7 +490,7 @@ unsafe fn apply_system_backdrop(hwnd: HWND, backdrop: Backdrop) {
         return;
     }
 
-    if backdrop == Backdrop::Acrylic {
+    if backdrop == Backdrop::Acrylic && !is_remote && composition_enabled {
         apply_acrylic_policy(hwnd);
         return;
     }
