@@ -95,10 +95,22 @@ try {
     [FluxWallpaper]::mouse_event(0x0002, 0, 0, 0, [UIntPtr]::Zero)
     [FluxWallpaper]::mouse_event(0x0004, 0, 0, 0, [UIntPtr]::Zero)
     Start-Sleep -Milliseconds 250
-    $shell.SendKeys("windows")
+    $shell.SendKeys("se")
     Start-Sleep -Seconds 2
     $queryMemory = Get-MemorySnapshot $process.Id
     Save-Screenshot "everything-fallback.png"
+
+    # Flow-style keyboard navigation: select the second result with Down,
+    # enter action mode with Right, then execute the next action with Enter.
+    $shell.SendKeys("{DOWN}")
+    Start-Sleep -Milliseconds 350
+    Save-Screenshot "keyboard-selection.png"
+    $shell.SendKeys("{RIGHT}")
+    Start-Sleep -Milliseconds 500
+    Save-Screenshot "actions-panel.png"
+    $shell.SendKeys("{DOWN}")
+    $shell.SendKeys("{ENTER}")
+    Start-Sleep -Milliseconds 400
 
     $env:FLUX_OPEN_SETTINGS = "1"
     $settingsProcess = Start-Process -FilePath $Executable -PassThru
@@ -124,6 +136,9 @@ try {
         WallpaperProbe = $true
         QueryExpandedProbe = $true
         SettingsPanelProbe = $true
+        KeyboardSelectionProbe = $true
+        ActionModeProbe = $true
+        EnterActionProbe = $true
         Memory = [ordered]@{
             Idle = $idleMemory
             Query = $queryMemory
