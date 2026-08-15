@@ -835,6 +835,11 @@ unsafe fn run_windowed(
         if let Some(s) = state_from(hwnd) {
             s.frameless = true;
         }
+        let local_backdrop_available = cfg.backdrop != Backdrop::None
+            && GetSystemMetrics(SM_REMOTESESSION) == 0
+            && DwmIsCompositionEnabled()
+                .map(|enabled| enabled.as_bool())
+                .unwrap_or(true);
         let margins = if cfg.backdrop == Backdrop::None {
             MARGINS {
                 cxLeftWidth: 0,
@@ -842,14 +847,24 @@ unsafe fn run_windowed(
                 cyTopHeight: 1,
                 cyBottomHeight: 0,
             }
-        } else {
-            // Extend the backdrop through the complete frameless client area;
-            // leaving a one-pixel top frame exposes the default white surface.
+        } else if local_backdrop_available {
+            // Extend the complete frameless client area only when DWM can render
+            // the requested local system material across the whole surface.
             MARGINS {
                 cxLeftWidth: -1,
                 cxRightWidth: -1,
                 cyTopHeight: -1,
                 cyBottomHeight: -1,
+            }
+        } else {
+            // Do not ask RDP/composition-disabled DWM for a glass frame: its
+            // fallback is an opaque neutral rectangle. The transparent swapchain
+            // remains visible without an app-painted replacement surface.
+            MARGINS {
+                cxLeftWidth: 0,
+                cxRightWidth: 0,
+                cyTopHeight: 0,
+                cyBottomHeight: 0,
             }
         };
         let _ = DwmExtendFrameIntoClientArea(hwnd, &margins);
