@@ -160,14 +160,16 @@ struct SkiaBackend {
     pixmap: Option<Pixmap>,
     buf_w: i32,
     buf_h: i32,
+    transparent: bool,
 }
 
 impl SkiaBackend {
-    fn new() -> Self {
+    fn new(transparent: bool) -> Self {
         Self {
             pixmap: None,
             buf_w: 0,
             buf_h: 0,
+            transparent,
         }
     }
 
@@ -205,7 +207,11 @@ impl WinRenderBackend for SkiaBackend {
 
         let size = Size::new(self.buf_w, self.buf_h);
         let pixmap = self.pixmap.as_mut().unwrap();
-        pixmap.fill(to_skia_color(bg));
+        if self.transparent {
+            pixmap.fill(tiny_skia::Color::from_rgba8(0, 0, 0, 0));
+        } else {
+            pixmap.fill(to_skia_color(bg));
+        }
         // target 借用 self.pixmap，限定在块内：块结束借用即释放，再重取引用做后续处理。
         {
             let mut tgt = crate::render::PixmapTarget { pixmap };
@@ -257,6 +263,7 @@ impl WinRenderBackend for SkiaBackend {
 struct WindowState {
     handler: Box<dyn AppHandler>,
     bg: Color,
+    transparent: bool,
     /// 当前是否已对窗口调用 OS SetCapture（与 handler 逻辑捕获态同步）。
     capturing: bool,
     /// 渲染后端：封装"如何把一帧呈现到 HWND"的全部逻辑。
@@ -350,12 +357,13 @@ impl ClickTracker {
 }
 
 impl WindowState {
-    fn new(handler: Box<dyn AppHandler>, bg: Color) -> Self {
+    fn new(handler: Box<dyn AppHandler>, bg: Color, transparent: bool) -> Self {
         Self {
             handler,
             bg,
+            transparent,
             capturing: false,
-            backend: Box::new(SkiaBackend::new()),
+            backend: Box::new(SkiaBackend::new(transparent)),
             last_click: ClickTracker::default(),
             touch: Touch::default(),
             tray: None,
@@ -375,7 +383,7 @@ impl WindowState {
         let downgrade = self.backend.paint(hwnd, bg, self.handler.as_mut());
         if downgrade {
             // 替换为软后端并请求重绘：下一帧用 Skia 呈现，进程不崩、内容继续渲染。
-            self.backend = Box::new(SkiaBackend::new());
+            self.backend = Box::new(SkiaBackend::new(self.transparent));
             let _ = InvalidateRect(Some(hwnd), None, false);
         }
     }
@@ -622,7 +630,11 @@ unsafe fn run_windowed(
     debug_assert!(atom != 0, "RegisterClassExW 失败");
 
     // 把 WindowState 装箱，指针随 CreateWindow 传入，在 WM_NCCREATE 挂到 HWND。
-    let mut state = Box::new(WindowState::new(handler, cfg.bg));
+    let mut state = Box::new(WindowState::new(
+        handler,
+        cfg.bg,
+        cfg.backdrop != Backdrop::None,
+    ));
     state.min_w = cfg.min_width;
     state.min_h = cfg.min_height;
     let state_ptr = Box::into_raw(state);

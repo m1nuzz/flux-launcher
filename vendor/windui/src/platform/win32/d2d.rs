@@ -79,7 +79,11 @@ pub(super) struct D2DBackend {
     /// DirectComposition visual tree used only by transparent system-backdrop windows.
     /// Keeping these COM references alive is required for the composition target to
     /// remain attached to the HWND.
+    #[allow(dead_code)]
     composition: Option<CompositionPresenter>,
+    /// Backdrop-enabled HWNDs must preserve transparent premultiplied pixels even
+    /// when the presenter is temporarily not attached to DirectComposition.
+    transparent: bool,
     /// D2D 设备上下文：BeginDraw/Clear/EndDraw 与 SetTarget 的目标。
     context: ID2D1DeviceContext,
     /// 缓存的后备缓冲 D2D 位图：官方文档要求建一次、仅 resize 重建（每帧 CreateBitmapFromDxgiSurface
@@ -394,6 +398,7 @@ unsafe fn try_create_inner(
         d2d_device: shared.d2d_device.clone(),
         swapchain,
         composition,
+        transparent: use_composition,
         context,
         target_bitmap: None,
         solid,
@@ -452,7 +457,7 @@ impl D2DBackend {
         let mut rc = windows::Win32::Foundation::RECT::default();
         let _ = windows::Win32::UI::WindowsAndMessaging::GetClientRect(hwnd, &mut rc);
         let (w, h) = (rc.right - rc.left, rc.bottom - rc.top);
-        match try_create_inner(hwnd, w, h, self.composition.is_some()) {
+        match try_create_inner(hwnd, w, h, self.transparent) {
             Some(fresh) => {
                 *self = fresh;
                 true
@@ -515,9 +520,9 @@ impl WinRenderBackend for D2DBackend {
         let size = Size::new(rc.right - rc.left, rc.bottom - rc.top);
 
         self.context.BeginDraw();
-        if self.composition.is_some() {
-            // Composition surfaces must start as transparent black so DWM Acrylic
-            // remains visible outside the explicitly painted child controls.
+        if self.transparent {
+            // Backdrop-enabled surfaces must start as transparent black so DWM
+            // Acrylic or the transparent fallback remains visible outside controls.
             self.context.Clear(None);
         } else {
             self.context.Clear(Some(&d2d_color(bg)));
