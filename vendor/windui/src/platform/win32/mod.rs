@@ -854,6 +854,11 @@ unsafe fn run_windowed(
         s.handler.set_scale(scale);
     }
 
+    // Activate the requested DWM material before creating the DirectComposition
+    // swapchain. The composition visual must be attached after the system backdrop
+    // exists so transparent pixels resolve against the Acrylic surface.
+    apply_system_backdrop(hwnd, cfg.backdrop);
+
     // GPU 后端选择：`cfg.renderer` 想要 GPU（或调试环境变量 WINDUI_D2D=1 强制）时，
     // 尝试用 Direct2D 后端替换软后端。try_create 需要已就绪的 HWND 与客户区尺寸，
     // 故在窗口创建并完成尺寸校正后切换。离屏截图走 run_offscreen，根本不到此处。
