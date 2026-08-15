@@ -57,11 +57,11 @@ jobs:
       - name: Publish UI release and screenshots
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: v0.1.10
-          name: Flux Launcher v0.1.10
+          tag_name: v0.1.11
+          name: Flux Launcher v0.1.11
           generate_release_notes: false
           body: |
-            Flux Launcher v0.1.10 — Windows 11 x64 UI polish release.
+            Flux Launcher v0.1.11 — Windows 11 x64 UI polish release.
 
             This build changes the launcher root to a transparent full-window Acrylic surface. With an empty query, the complete 420x72 window is the blur surface and contains only the inset Search field. After the first character, the same surface expands and shows application results.
 
