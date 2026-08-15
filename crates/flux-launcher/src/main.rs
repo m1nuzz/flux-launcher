@@ -317,12 +317,15 @@ fn main() {
 
     let search_box = Element::text_input(query, "Search")
         .leading_icon('>')
+        .transparent_surface()
         .smooth_caret(settings.smooth_caret, settings.smooth_caret_duration_ms)
         .width_match()
         .height(44)
         .font_size(15.0)
         .corner(10.0)
-        .bg(Color::rgba(0, 0, 0, 0))
+        // One uniform translucent control layer: the TextInput itself stays
+        // transparent so the Windows Acrylic material remains visible below it.
+        .bg(Color::rgba(24, 31, 44, 180))
         .border(Color::rgba(0, 0, 0, 0), 0)
         .padding_xy(13, 0);
 

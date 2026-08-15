@@ -1426,6 +1426,13 @@ impl Element {
         self.config_text_input(|c| c.leading = Some(glyph))
     }
 
+    /// Leave the TextInput surface transparent so a parent material remains visible.
+    /// The text, placeholder, selection, caret, and input events remain active.
+    #[track_caller]
+    pub fn transparent_surface(self) -> Self {
+        self.config_text_input(|c| c.transparent_surface = true)
+    }
+
     /// Configure a short eased transition for the visible caret.
     ///
     /// The IME caret position remains exact; only the painted caret is animated.

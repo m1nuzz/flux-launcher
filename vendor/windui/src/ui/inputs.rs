@@ -706,6 +706,8 @@ pub struct TextConfig {
     pub smooth_caret: bool,
     /// Smooth caret transition duration in milliseconds.
     pub smooth_caret_duration_ms: u16,
+    /// Leave the input surface transparent so a parent Acrylic layer remains visible.
+    pub transparent_surface: bool,
 }
 
 impl Default for TextConfig {
@@ -718,6 +720,7 @@ impl Default for TextConfig {
             leading: None,
             smooth_caret: false,
             smooth_caret_duration_ms: 95,
+            transparent_surface: false,
         }
     }
 }
@@ -1356,15 +1359,17 @@ impl Widget for TextInput {
         } else {
             pal.text_disabled
         };
-        canvas.fill_round_rect(x, y, w, h, corner, &Paint::fill(bg));
-        let border = if focused {
-            inp.border_focus(pal)
-        } else {
-            inp.border(pal)
-        };
-        let t = crate::theme::current();
-        let bw = t.metrics.border_width.to_logical(canvas.dpi_scale());
-        canvas.stroke_round_rect(x, y, w, h, corner, bw, &Paint::fill(border));
+        if !self.config.transparent_surface {
+            canvas.fill_round_rect(x, y, w, h, corner, &Paint::fill(bg));
+            let border = if focused {
+                inp.border_focus(pal)
+            } else {
+                inp.border(pal)
+            };
+            let t = crate::theme::current();
+            let bw = t.metrics.border_width.to_logical(canvas.dpi_scale());
+            canvas.stroke_round_rect(x, y, w, h, corner, bw, &Paint::fill(border));
+        }
 
         // 显示串：密码模式为掩码圆点；测量/绘制/光标定位都基于它（字符数与真实文本一致）。
         let disp = self.display_string();
@@ -1544,15 +1549,17 @@ impl Widget for TextInput {
                 caret.h as f32,
                 &Paint::fill(inp.cursor(pal)),
             );
-            if let Some(ln) = lay.lines.get(cl).filter(|ln| ln.end > ln.start) {
-                let s: String = chars[ln.start..ln.end].iter().collect();
-                canvas.save();
-                canvas.clip_rect(caret);
-                // 与常规绘制同一 rect/ts，只换颜色：同次排版故字形逐像素对齐。
-                // 取本次实际填的底色（非 inp.bg），背景逻辑再变反色也自动跟随。
-                let tr = Rect::new(base_x, ly, NO_WRAP_W, line_h);
-                canvas.draw_text(&s, tr, bg, Align::Start, ts);
-                canvas.restore();
+            if !self.config.transparent_surface {
+                if let Some(ln) = lay.lines.get(cl).filter(|ln| ln.end > ln.start) {
+                    let s: String = chars[ln.start..ln.end].iter().collect();
+                    canvas.save();
+                    canvas.clip_rect(caret);
+                    // Repaint the glyph under the caret only when an opaque input
+                    // surface exists; transparent inputs keep the underlying Acrylic.
+                    let tr = Rect::new(base_x, ly, NO_WRAP_W, line_h);
+                    canvas.draw_text(&s, tr, bg, Align::Start, ts);
+                    canvas.restore();
+                }
             }
         }
         canvas.restore();
@@ -1898,6 +1905,7 @@ mod tests {
         let config = TextConfig::default();
         assert!(!config.smooth_caret);
         assert_eq!(config.smooth_caret_duration_ms, 95);
+        assert!(!config.transparent_surface);
     }
 
     #[test]
