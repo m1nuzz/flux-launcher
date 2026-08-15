@@ -91,7 +91,7 @@ try {
     Start-Sleep -Milliseconds 400
     [FluxAcrylicProof]::SetCursorPos($x + 210, $y + 36) | Out-Null
     [FluxAcrylicProof]::mouse_event(2, 0, 0, 0, [UIntPtr]::Zero)
-    [FluxSecondarySmoke]::mouse_event(4, 0, 0, 0, [UIntPtr]::Zero)
+    [FluxAcrylicProof]::mouse_event(4, 0, 0, 0, [UIntPtr]::Zero)
     Start-Sleep -Milliseconds 250
     Save-Screen 'windows11-acrylic-proof-empty.png' $screen
     (New-Object -ComObject WScript.Shell).SendKeys('steam')
