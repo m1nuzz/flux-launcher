@@ -3,7 +3,9 @@ param(
     [string]$Executable,
 
     [Parameter(Mandatory = $true)]
-    [string]$OutputDirectory
+    [string]$OutputDirectory,
+
+    [string]$Query = 'steam'
 )
 
 $ErrorActionPreference = 'Stop'
@@ -112,7 +114,7 @@ try {
     [FluxAcrylicProof]::SetForegroundWindow($handle) | Out-Null
     Start-Sleep -Milliseconds 250
     Save-Screen 'windows11-acrylic-proof-empty.png' $screen
-    Send-AsciiText 'steam'
+    Send-AsciiText $Query
     Start-Sleep -Seconds 2
     Save-Screen 'windows11-acrylic-proof-before-down.png' $screen
     Send-VirtualKey 0x28 0x50 $true
@@ -122,7 +124,7 @@ try {
     Start-Sleep -Milliseconds 350
     Save-Screen 'windows11-acrylic-proof-action-mode.png' $screen
     [ordered]@{
-        Query = 'steam'
+        Query = $Query
         Display = $screen.DeviceName
         Bounds = $screen.Bounds.ToString()
         LauncherX = $x
