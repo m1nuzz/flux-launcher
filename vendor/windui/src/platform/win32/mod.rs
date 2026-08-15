@@ -475,15 +475,17 @@ unsafe fn apply_system_backdrop(hwnd: HWND, backdrop: Backdrop) {
         &dark_mode as *const _ as *const c_void,
         size_of::<bool>() as u32,
     );
-    // Re-extend immediately before the system material request so a frameless
-    // popup exposes its entire client area as the Acrylic surface.
-    let full_frame = MARGINS {
-        cxLeftWidth: -1,
-        cxRightWidth: -1,
-        cyTopHeight: -1,
-        cyBottomHeight: -1,
+    // Extend the concrete client width immediately before the system material
+    // request so a frameless popup exposes its full client surface to Acrylic.
+    let mut client = RECT::default();
+    let _ = GetClientRect(hwnd, &mut client);
+    let client_frame = MARGINS {
+        cxLeftWidth: client.right - client.left,
+        cxRightWidth: 0,
+        cyTopHeight: 0,
+        cyBottomHeight: 0,
     };
-    let _ = DwmExtendFrameIntoClientArea(hwnd, &full_frame);
+    let _ = DwmExtendFrameIntoClientArea(hwnd, &client_frame);
     if DwmSetWindowAttribute(
         hwnd,
         DWMWA_SYSTEMBACKDROP_TYPE,
