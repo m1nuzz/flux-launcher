@@ -4,6 +4,7 @@ mod applications;
 mod everything;
 mod fullscreen;
 mod hotkeys;
+mod keyboard_layout;
 mod launch;
 mod plugins;
 
@@ -154,26 +155,33 @@ struct ResultRowAnchor {
     result_id: String,
     title: String,
     title_signal: Signal<String>,
+    title_doc_signal: Signal<RichDoc>,
     trailing_signal: Signal<String>,
     selected_id: Signal<String>,
+    query: Signal<String>,
     last_selected: Option<bool>,
+    last_query: String,
 }
 
 impl Widget for ResultRowAnchor {
     fn on_update(&mut self, ctx: &mut EventCtx) {
         let selected = self.selected_id.get() == self.result_id;
-        if self.last_selected != Some(selected) {
+        let query = self.query.get();
+        if self.last_selected != Some(selected) || self.last_query != query {
             self.title_signal.set(if selected {
                 format!("> {}", self.title)
             } else {
                 self.title.clone()
             });
+            self.title_doc_signal
+                .set(title_match_doc(&self.title, &query, selected));
             self.trailing_signal.set(if selected {
                 String::from("↵")
             } else {
                 String::new()
             });
             self.last_selected = Some(selected);
+            self.last_query = query;
         }
         if selected {
             let row_id = ctx.id();
@@ -283,6 +291,75 @@ fn game_mode_label(enabled: bool) -> String {
     } else {
         String::from("Game Mode: Off")
     }
+}
+
+fn title_match_doc(title: &str, query: &str, selected: bool) -> RichDoc {
+    let normal = SpanStyle::new().fg(Color::rgba(250, 252, 255, 255));
+    let matched = SpanStyle::new().bold().fg(Color::rgba(255, 255, 255, 255));
+    let mut para = Para::new();
+    if selected {
+        para = para.span("> ", normal.clone());
+    }
+
+    let query_chars: Vec<char> = query
+        .trim()
+        .chars()
+        .filter(|character| !character.is_whitespace())
+        .flat_map(char::to_lowercase)
+        .collect();
+    let title_chars: Vec<char> = title.chars().collect();
+    let mut matched_flags = vec![false; title_chars.len()];
+    let mut query_index = 0;
+    for (index, character) in title_chars.iter().enumerate() {
+        if query_index < query_chars.len()
+            && character
+                .to_lowercase()
+                .eq(query_chars[query_index].to_lowercase())
+        {
+            matched_flags[index] = true;
+            query_index += 1;
+        }
+    }
+
+    let mut start = 0;
+    while start < title_chars.len() {
+        let is_match = matched_flags[start];
+        let mut end = start + 1;
+        while end < title_chars.len() && matched_flags[end] == is_match {
+            end += 1;
+        }
+        let text: String = title_chars[start..end].iter().collect();
+        para = para.span(
+            text,
+            if is_match {
+                matched.clone()
+            } else {
+                normal.clone()
+            },
+        );
+        start = end;
+    }
+    RichDoc::new().para(para)
+}
+
+fn inline_completion_suffix(query: &str, results: &[SearchResult]) -> String {
+    let trimmed = query.trim();
+    if trimmed.is_empty() {
+        return String::new();
+    }
+    let query_lower = trimmed.to_lowercase();
+    let query_len = trimmed.chars().count();
+    results
+        .iter()
+        .filter(|result| matches!(result.kind, ResultKind::Application))
+        .find_map(|result| {
+            let title_lower = result.title.to_lowercase();
+            if !title_lower.starts_with(&query_lower) {
+                return None;
+            }
+            Some(result.title.chars().skip(query_len).collect())
+        })
+        .unwrap_or_default()
 }
 
 #[cfg(windows)]
@@ -458,6 +535,7 @@ fn result_row(
     selection_touched: Signal<bool>,
     rows_refresh: Signal<Vec<SearchResult>>,
     plugin_actions: Rc<RefCell<HashMap<String, PluginInvocation>>>,
+    query: Signal<String>,
 ) -> Element {
     let id = result.id;
     let target = result.target;
@@ -488,6 +566,7 @@ fn result_row(
     } else {
         title.clone()
     });
+    let title_doc_signal = signal(title_match_doc(&title, &query.get(), selected));
     let trailing_signal = signal(if selected {
         String::from("↵")
     } else {
@@ -498,9 +577,12 @@ fn result_row(
             result_id: id.clone(),
             title: title.clone(),
             title_signal,
+            title_doc_signal,
             trailing_signal,
             selected_id,
+            query,
             last_selected: None,
+            last_query: query.get(),
         })
         .reactive()
         .width_match()
@@ -516,12 +598,8 @@ fn result_row(
                 .weight(1.0)
                 .spacing(1)
                 .child(
-                    Element::label_signal(title_signal)
-                        .font_size(14.0)
-                        .fg(Color::rgba(250, 252, 255, 255))
+                    Element::rich_signal(title_doc_signal)
                         .text_shadow(Color::rgba(8, 12, 20, 210))
-                        .max_lines(1)
-                        .truncate(Truncate::End)
                         .width_match(),
                 )
                 .child(
@@ -585,6 +663,7 @@ fn main() {
     let activation_meta = signal(settings.activation_hotkey.meta);
     let ignore_fullscreen = signal(settings.ignore_hotkeys_in_fullscreen);
     let smooth_caret = signal(settings.smooth_caret);
+    let switch_to_english_layout = signal(settings.switch_to_english_layout);
     let caret_duration = signal(settings.smooth_caret_duration_ms.to_string());
 
     let mut model = SearchModel::new();
@@ -600,11 +679,14 @@ fn main() {
     let action_index_for_rows = action_index;
     let action_mode_for_rows = action_mode;
     let action_window_slot_for_rows = Rc::clone(&action_window_slot);
+    let query_for_rows = query;
+    let inline_completion = signal(String::new());
 
     let search_box = Element::text_input(query, "Search")
         .leading_icon('⌕')
         .transparent_surface()
         .smooth_caret(settings.smooth_caret, settings.smooth_caret_duration_ms)
+        .inline_completion(inline_completion)
         .show_focus_ring(false)
         .width_match()
         .height(44)
@@ -657,6 +739,7 @@ fn main() {
                 selection_touched_for_rows,
                 result_source,
                 Rc::clone(&actions_for_rows),
+                query_for_rows,
             )
         },
     )
@@ -743,6 +826,7 @@ fn main() {
     let results_for_interval = results;
     let status_for_interval = status;
     let show_results_for_interval = show_results;
+    let inline_completion_for_interval = inline_completion;
     let selection_touched_for_interval = selection_touched;
     let sequence_for_interval = current_sequence;
     let providers_for_interval = Rc::clone(&provider_results);
@@ -763,6 +847,7 @@ fn main() {
     let size_for_interval = window_size.clone();
     let query_for_applications = query;
     let results_for_applications = results;
+    let inline_completion_for_applications = inline_completion;
     let status_for_applications = status;
     let selected_id_for_applications = selected_id;
     let selected_index_for_applications = selected_index;
@@ -790,6 +875,10 @@ fn main() {
                     .unwrap_or_default(),
             );
         }
+        inline_completion_for_applications.set(inline_completion_suffix(
+            &query_for_applications.get(),
+            &merged,
+        ));
         results_for_applications.set(merged);
         status_for_applications.set(response.status);
     });
@@ -797,6 +886,7 @@ fn main() {
 
     let query_for_everything = query;
     let results_for_everything = results;
+    let inline_completion_for_everything = inline_completion;
     let status_for_everything = status;
     let selected_id_for_everything = selected_id;
     let selected_index_for_everything = selected_index;
@@ -825,6 +915,10 @@ fn main() {
                         .unwrap_or_default(),
                 );
             }
+            inline_completion_for_everything.set(inline_completion_suffix(
+                &query_for_everything.get(),
+                &merged,
+            ));
             results_for_everything.set(merged);
         }
         status_for_everything.set(response.status);
@@ -833,6 +927,7 @@ fn main() {
 
     let query_for_plugins = query;
     let results_for_plugins = results;
+    let inline_completion_for_plugins = inline_completion;
     let status_for_plugins = status;
     let selected_id_for_plugins = selected_id;
     let selected_index_for_plugins = selected_index;
@@ -863,6 +958,8 @@ fn main() {
                         .unwrap_or_default(),
                 );
             }
+            inline_completion_for_plugins
+                .set(inline_completion_suffix(&query_for_plugins.get(), &merged));
             results_for_plugins.set(merged);
         }
         status_for_plugins.set(response.status);
@@ -889,6 +986,7 @@ fn main() {
     let action_index_for_keys = action_index;
     let action_items_for_keys = action_items;
     let plugin_actions_for_keys = Rc::clone(&plugin_actions);
+    let inline_completion_for_keys = inline_completion;
     let settings_visible_for_keys = settings_visible;
     let size_for_keys = window_size.clone();
     let show_results_for_keys = show_results;
@@ -916,6 +1014,14 @@ fn main() {
         let current_results = results_for_keys.get();
         if current_results.is_empty() {
             return false;
+        }
+
+        if event.ctrl && event.key == Key::Tab {
+            let suffix = inline_completion_for_keys.get();
+            if !suffix.is_empty() {
+                query_for_keys.set(format!("{query}{suffix}"));
+                return true;
+            }
         }
 
         if event.key == Key::Enter && alt_key_is_down() {
@@ -1180,6 +1286,13 @@ fn main() {
                         Element::checkbox("Suppress the launcher until manually disabled", game_mode),
                     ))
                     .child(Element::field(
+                        "Keyboard layout",
+                        Element::checkbox(
+                            "Start typing in English and restore the previous layout on hide",
+                            switch_to_english_layout,
+                        ),
+                    ))
+                    .child(Element::field(
                         "Smooth Caret",
                         Element::checkbox("Animate search caret movement", smooth_caret),
                     ))
@@ -1212,6 +1325,7 @@ fn main() {
                                 settings.ignore_hotkeys_in_fullscreen = ignore_fullscreen.get();
                                 settings.game_mode = game_mode.get();
                                 settings.smooth_caret = smooth_caret.get();
+                                settings.switch_to_english_layout = switch_to_english_layout.get();
                                 settings.smooth_caret_duration_ms = duration;
                                 settings.normalize();
                                 activation_handle_for_apply
@@ -1292,6 +1406,7 @@ fn main() {
                         .map(|result| result.id.clone())
                         .unwrap_or_default(),
                 );
+                inline_completion_for_interval.set(inline_completion_suffix(&next_query, &merged));
                 results_for_interval.set(merged);
             }
             action_mode.set(false);
@@ -1299,6 +1414,7 @@ fn main() {
             action_items.set(Vec::new());
             actions_for_interval.borrow_mut().clear();
             if !has_query {
+                inline_completion_for_interval.set(String::new());
                 status_for_interval.set(String::from("Ready"));
             } else {
                 status_for_interval.set(String::from(
@@ -1311,6 +1427,30 @@ fn main() {
                 }
             }
             last_query = next_query;
+        })
+        .on_window_show({
+            let settings = Arc::clone(&shared_settings);
+            move || {
+                let enabled = settings
+                    .read()
+                    .map(|settings| settings.switch_to_english_layout)
+                    .unwrap_or(true);
+                if enabled {
+                    keyboard_layout::switch_to_english();
+                }
+            }
+        })
+        .on_window_hide({
+            let settings = Arc::clone(&shared_settings);
+            move || {
+                let enabled = settings
+                    .read()
+                    .map(|settings| settings.switch_to_english_layout)
+                    .unwrap_or(true);
+                if enabled {
+                    keyboard_layout::restore_previous();
+                }
+            }
         })
         .run();
 }

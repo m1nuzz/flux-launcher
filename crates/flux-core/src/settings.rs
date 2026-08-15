@@ -47,6 +47,8 @@ pub struct Settings {
     pub game_mode: bool,
     #[serde(default = "enabled_by_default")]
     pub smooth_caret: bool,
+    #[serde(default = "enabled_by_default")]
+    pub switch_to_english_layout: bool,
     #[serde(default = "default_caret_duration")]
     pub smooth_caret_duration_ms: u16,
 }
@@ -58,6 +60,7 @@ impl Default for Settings {
             ignore_hotkeys_in_fullscreen: true,
             game_mode: false,
             smooth_caret: true,
+            switch_to_english_layout: true,
             smooth_caret_duration_ms: DEFAULT_CARET_DURATION_MS,
         }
     }
@@ -138,6 +141,7 @@ mod tests {
         assert_eq!(settings.activation_hotkey, HotkeyConfig::default());
         assert!(settings.ignore_hotkeys_in_fullscreen);
         assert!(settings.smooth_caret);
+        assert!(settings.switch_to_english_layout);
         assert_eq!(settings.smooth_caret_duration_ms, DEFAULT_CARET_DURATION_MS);
     }
 
@@ -155,6 +159,7 @@ mod tests {
             ignore_hotkeys_in_fullscreen: false,
             game_mode: true,
             smooth_caret: false,
+            switch_to_english_layout: false,
             smooth_caret_duration_ms: 120,
         };
 

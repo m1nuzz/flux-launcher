@@ -1036,6 +1036,9 @@ unsafe fn run_windowed(
     // 启动即隐藏：常驻托盘类应用不该在启动时闪一下窗口。此处**不调用 ShowWindow**，
     // 窗口保持初始的不可见态，等托盘点击或全局热键送来 WindowOp::Show。
     if !cfg.start_hidden {
+        if let Some(state) = state_from(hwnd) {
+            state.handler.on_window_show();
+        }
         let _ = ShowWindow(hwnd, SW_SHOW);
         let _ = UpdateWindow(hwnd);
     }
@@ -1678,10 +1681,16 @@ unsafe fn run_window_op(hwnd: HWND, op: Option<WindowOp>) {
         Some(WindowOp::Show) => show_and_activate(hwnd),
         Some(WindowOp::Hide) => {
             let _ = ShowWindow(hwnd, SW_HIDE);
+            if let Some(state) = state_from(hwnd) {
+                state.handler.on_window_hide();
+            }
         }
         Some(WindowOp::ToggleVisibility) => {
             if IsWindowVisible(hwnd).as_bool() {
                 let _ = ShowWindow(hwnd, SW_HIDE);
+                if let Some(state) = state_from(hwnd) {
+                    state.handler.on_window_hide();
+                }
             } else {
                 show_and_activate(hwnd);
             }
@@ -1809,6 +1818,9 @@ fn move_to_smoke_display(hwnd: HWND) {
 pub(crate) fn show_and_activate(hwnd: HWND) {
     move_to_smoke_display(hwnd);
     unsafe {
+        if let Some(state) = state_from(hwnd) {
+            state.handler.on_window_show();
+        }
         if IsIconic(hwnd).as_bool() {
             let _ = ShowWindow(hwnd, SW_RESTORE);
         } else {

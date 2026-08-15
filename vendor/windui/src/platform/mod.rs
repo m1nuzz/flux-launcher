@@ -415,6 +415,10 @@ pub trait AppHandler {
     fn on_close_request(&mut self) -> bool {
         true
     }
+    /// Called immediately before the native window is shown and activated.
+    fn on_window_show(&mut self) {}
+    /// Called immediately after the native window is hidden.
+    fn on_window_hide(&mut self) {}
     /// 当前是否处于指针捕获态。平台据此调用 OS 的 SetCapture/ReleaseCapture，
     /// 保证拖出窗口时仍能收到移动/抬起消息。
     ///

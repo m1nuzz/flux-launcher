@@ -119,6 +119,7 @@ type AppCallback = Box<dyn FnMut(&mut EventCtx)>;
 /// 与 [`AppCallback`] 分开是因为它多一个返回值——那个 `bool` 被平台同步等待。
 type CloseHandler = Box<dyn FnMut(&mut EventCtx) -> bool>;
 type KeyHandler = Box<dyn FnMut(KeyEvent) -> bool>;
+type VisibilityHandler = Box<dyn FnMut()>;
 
 /// 应用构建器。命令式 API 的根入口。
 /// 运行期主题句柄：克隆到控件回调中，`set` 即可热切换主题（下一帧生效）。
@@ -234,6 +235,9 @@ pub struct App {
     /// Optional app-level key handler. Returning true consumes the event before
     /// the focused widget receives it; returning false preserves normal routing.
     key_handler: Option<KeyHandler>,
+    /// Optional callbacks around native window visibility transitions.
+    show_handler: Option<VisibilityHandler>,
+    hide_handler: Option<VisibilityHandler>,
     /// 关闭请求转为隐藏窗口。与 `close_handler` 同属核心层的关闭决策链输入，
     /// 平台层对此无感知，故不放 `WindowConfig`。
     hide_on_close: bool,
@@ -282,6 +286,8 @@ impl App {
             single: None,
             close_handler: None,
             key_handler: None,
+            show_handler: None,
+            hide_handler: None,
             hide_on_close: false,
             bg_explicit: false,
             hotkey_ops: Rc::new(RefCell::new(Vec::new())),
@@ -737,7 +743,16 @@ impl App {
         self.key_handler = Some(Box::new(f));
         self
     }
-
+    /// Run a callback immediately before the native window is shown and activated.
+    pub fn on_window_show(mut self, f: impl FnMut() + 'static) -> Self {
+        self.show_handler = Some(Box::new(f));
+        self
+    }
+    /// Run a callback immediately before the native window is hidden.
+    pub fn on_window_hide(mut self, f: impl FnMut() + 'static) -> Self {
+        self.hide_handler = Some(Box::new(f));
+        self
+    }
     pub fn run(mut self) {
         // 窗口会被隐藏（启动即隐 / 关闭转隐）却无任何唤起途径 = 用户再也看不到窗口，
         // 只能去任务管理器结束进程。在 run() 而非各 setter 里查：tray/hotkey 可能在其后才链上。
@@ -768,6 +783,8 @@ impl App {
                 self.intervals,
                 self.close_handler,
                 self.key_handler,
+                self.show_handler,
+                self.hide_handler,
                 self.hide_on_close,
             ))
         } else {
@@ -795,6 +812,8 @@ impl App {
             self.intervals,
             self.close_handler,
             self.key_handler,
+            self.show_handler,
+            self.hide_handler,
             self.hide_on_close,
         )
     }
@@ -937,6 +956,9 @@ struct UiHost {
     close_handler: Option<CloseHandler>,
     /// Optional app-level key handler consumed before the focused widget.
     key_handler: Option<KeyHandler>,
+    /// Optional callbacks around native window visibility transitions.
+    show_handler: Option<VisibilityHandler>,
+    hide_handler: Option<VisibilityHandler>,
     /// 关闭请求转为隐藏窗口（常驻托盘类应用）。
     hide_on_close: bool,
     /// 正在跑关闭决策链（防 `on_close_request` 回调内再请求关闭导致的自我递归）。
@@ -1052,6 +1074,8 @@ impl UiHost {
         intervals: Vec<(std::time::Duration, AppCallback)>,
         close_handler: Option<CloseHandler>,
         key_handler: Option<KeyHandler>,
+        show_handler: Option<VisibilityHandler>,
+        hide_handler: Option<VisibilityHandler>,
         hide_on_close: bool,
     ) -> Self {
         // 尽早注入，使首个事件（首帧渲染前）也能读到正确主题。
@@ -1091,6 +1115,8 @@ impl UiHost {
             show_fps: std::env::var("WINDUI_FPS").is_ok_and(|v| v != "0" && !v.is_empty()),
             close_handler,
             key_handler,
+            show_handler,
+            hide_handler,
             hide_on_close,
             resolving_close: false,
         }
@@ -1553,7 +1579,16 @@ impl AppHandler for UiHost {
     fn on_close_request(&mut self) -> bool {
         self.resolve_close()
     }
-
+    fn on_window_show(&mut self) {
+        if let Some(handler) = self.show_handler.as_mut() {
+            handler();
+        }
+    }
+    fn on_window_hide(&mut self) {
+        if let Some(handler) = self.hide_handler.as_mut() {
+            handler();
+        }
+    }
     fn capture_active(&self) -> bool {
         self.capture.is_some()
     }

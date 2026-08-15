@@ -1494,6 +1494,12 @@ impl Element {
         })
     }
 
+    /// Draw a muted inline completion suffix after the current query while focused.
+    #[track_caller]
+    pub fn inline_completion(self, completion: Signal<String>) -> Self {
+        self.config_text_input(|c| c.inline_completion = Some(completion))
+    }
+
     /// 静态可见标志。不可见的节点本帧不显示、不命中，且**不占布局**
     /// （区别于禁用——见 [`enabled`](Self::enabled) 处的三形态对照表）。
     pub fn visible(mut self, v: bool) -> Self {

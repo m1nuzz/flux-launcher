@@ -8,7 +8,7 @@ use std::cell::{Cell, RefCell};
 use crate::anim::{Easing, Lerp, Transition};
 use crate::core::{ClickFn, EventCtx, Widget};
 use crate::event::{CursorShape, Event, Key, KeyEvent, MenuItem, MouseButton, PointerKind};
-use crate::geometry::{Rect, Size};
+use crate::geometry::{Color, Rect, Size};
 use crate::render::{Canvas, Paint};
 use crate::signal::Signal;
 use crate::spec::Align;
@@ -708,6 +708,8 @@ pub struct TextConfig {
     pub smooth_caret_duration_ms: u16,
     /// Leave the input surface transparent so a parent Acrylic layer remains visible.
     pub transparent_surface: bool,
+    /// Optional muted suffix drawn after the current query while the input is focused.
+    pub inline_completion: Option<Signal<String>>,
 }
 
 impl Default for TextConfig {
@@ -721,6 +723,7 @@ impl Default for TextConfig {
             smooth_caret: false,
             smooth_caret_duration_ms: 95,
             transparent_surface: false,
+            inline_completion: None,
         }
     }
 }
@@ -1525,6 +1528,26 @@ impl Widget for TextInput {
 
         let ly = first_line_y + cl as i32 * line_h;
         let target_cxx = base_x + cx_in;
+        if focused && !multiline && cursor == chars.len() && self.selection().is_none() {
+            let completion = self
+                .config
+                .inline_completion
+                .as_ref()
+                .map(|signal| signal.get())
+                .unwrap_or_default();
+            if !completion.is_empty() {
+                let completion_rect = Rect::new(target_cxx, ly, NO_WRAP_W, line_h);
+                super::draw_text_with_halo(
+                    canvas,
+                    &completion,
+                    completion_rect,
+                    Color::rgba(225, 235, 250, 118),
+                    Align::Start,
+                    ts,
+                    style.text_shadow,
+                );
+            }
+        }
         let target_cxx_f = target_cxx as f32;
         // Keep IME placement on the exact target while the painted caret may ease toward it.
         self.caret_local

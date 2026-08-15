@@ -915,15 +915,21 @@ impl ContentView {
                     // 与 macos/tray.rs 的 TrayCtx::show_window / hide_window 同源：
                     // 二者是同一语义的两个入口（托盘点击 / 控件请求），实现必须一致。
                     WindowOp::Show => {
+                        self.ivars().borrow_mut().handler.on_window_show();
                         win.makeKeyAndOrderFront(None);
                         // 隐藏期间应用可能已失去激活态，仅 orderFront 不足以到前台。
                         NSApplication::sharedApplication(MainThreadMarker::from(self)).activate();
                     }
-                    WindowOp::Hide => win.orderOut(None),
+                    WindowOp::Hide => {
+                        win.orderOut(None);
+                        self.ivars().borrow_mut().handler.on_window_hide();
+                    }
                     WindowOp::ToggleVisibility => {
                         if win.isVisible() {
                             win.orderOut(None);
+                            self.ivars().borrow_mut().handler.on_window_hide();
                         } else {
+                            self.ivars().borrow_mut().handler.on_window_show();
                             win.makeKeyAndOrderFront(None);
                             NSApplication::sharedApplication(MainThreadMarker::from(self))
                                 .activate();
