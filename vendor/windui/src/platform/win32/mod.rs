@@ -22,8 +22,9 @@ use windows::core::{s, w, PCWSTR};
 use windows::Win32::Foundation::{HINSTANCE, HWND, LPARAM, LRESULT, POINT, RECT, TRUE, WPARAM};
 use windows::Win32::Graphics::Dwm::{
     DwmExtendFrameIntoClientArea, DwmIsCompositionEnabled, DwmSetWindowAttribute,
-    DWMSBT_MAINWINDOW, DWMSBT_NONE, DWMSBT_TRANSIENTWINDOW, DWMWA_SYSTEMBACKDROP_TYPE,
-    DWMWA_WINDOW_CORNER_PREFERENCE, DWMWCP_ROUND, DWM_SYSTEMBACKDROP_TYPE,
+    DWMSBT_MAINWINDOW, DWMSBT_NONE, DWMSBT_TRANSIENTWINDOW, DWMWA_BORDER_COLOR, DWMWA_COLOR_NONE,
+    DWMWA_SYSTEMBACKDROP_TYPE, DWMWA_WINDOW_CORNER_PREFERENCE, DWMWCP_ROUND,
+    DWM_SYSTEMBACKDROP_TYPE,
 };
 use windows::Win32::Graphics::Gdi::{
     BeginPaint, CreateBitmap, CreateDIBSection, DeleteObject, EndPaint, GetDC, GetDeviceCaps,
@@ -472,6 +473,15 @@ unsafe fn apply_system_backdrop(hwnd: HWND, backdrop: Backdrop) {
     let Some(kind) = kind else {
         return;
     };
+    // Windows 11 may draw a default light non-client border around a frameless
+    // HWND unless the border color is explicitly disabled.
+    let border_color = DWMWA_COLOR_NONE;
+    let _ = DwmSetWindowAttribute(
+        hwnd,
+        DWMWA_BORDER_COLOR,
+        &border_color as *const _ as *const c_void,
+        size_of::<u32>() as u32,
+    );
     if is_remote || !composition_enabled {
         // Explicitly clear any stale system material on remote/composition-disabled
         // sessions. Requesting Acrylic there makes DWM paint an opaque neutral slab.
