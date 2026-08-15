@@ -36,7 +36,8 @@ const EXPANDED_WINDOW_HEIGHT: i32 = 286;
 const ACTION_WINDOW_HEIGHT: i32 = 250;
 const SETTINGS_WINDOW_HEIGHT: i32 = 520;
 const SEARCH_INTERVAL: Duration = Duration::from_millis(40);
-const PROVIDER_MIN_QUERY_LEN: usize = 2;
+const EVERYTHING_MIN_QUERY_LEN: usize = 1;
+const PLUGIN_MIN_QUERY_LEN: usize = 2;
 const MAX_VISIBLE_RESULTS: usize = 8;
 
 #[derive(Default)]
@@ -1542,8 +1543,13 @@ fn main() {
                     "Searching applications, Everything and native Flow plugins...",
                 ));
                 application_worker.request(sequence, next_query.clone());
-                if next_query.trim().len() >= PROVIDER_MIN_QUERY_LEN {
+                // Everything is the always-on file provider for every non-empty
+                // query. Pass the raw query unchanged so native Everything syntax
+                // such as `ext:zip`, `parent:`, `file:`, and `dm:today` works.
+                if next_query.trim().len() >= EVERYTHING_MIN_QUERY_LEN {
                     everything_worker.request(sequence, next_query.clone());
+                }
+                if next_query.trim().len() >= PLUGIN_MIN_QUERY_LEN {
                     plugin_worker.request(sequence, next_query.clone());
                 }
             }
