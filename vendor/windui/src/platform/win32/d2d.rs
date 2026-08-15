@@ -302,8 +302,14 @@ unsafe fn create_shared_device() -> Option<SharedDevice> {
 }
 
 /// 尝试建立 GPU 呈现链路。任一环节失败返回 `None`（调用方回退软后端）。
-pub(super) fn try_create(hwnd: HWND, w: i32, h: i32, use_composition: bool) -> Option<D2DBackend> {
-    unsafe { try_create_inner(hwnd, w, h, use_composition) }
+pub(super) fn try_create(
+    hwnd: HWND,
+    w: i32,
+    h: i32,
+    use_composition: bool,
+    transparent: bool,
+) -> Option<D2DBackend> {
+    unsafe { try_create_inner(hwnd, w, h, use_composition, transparent) }
 }
 
 unsafe fn try_create_inner(
@@ -311,6 +317,7 @@ unsafe fn try_create_inner(
     w: i32,
     h: i32,
     use_composition: bool,
+    transparent: bool,
 ) -> Option<D2DBackend> {
     // 设备链（D3D/D2D/DWrite）取自线程共享单例；本函数只建**每窗私有**资源（swapchain/context/画刷）。
     let shared = shared_device()?;
@@ -340,7 +347,7 @@ unsafe fn try_create_inner(
         } else {
             DXGI_SWAP_EFFECT_FLIP_SEQUENTIAL
         },
-        AlphaMode: if use_composition {
+        AlphaMode: if transparent {
             DXGI_ALPHA_MODE_PREMULTIPLIED
         } else {
             DXGI_ALPHA_MODE_IGNORE
@@ -398,7 +405,7 @@ unsafe fn try_create_inner(
         d2d_device: shared.d2d_device.clone(),
         swapchain,
         composition,
-        transparent: use_composition,
+        transparent,
         context,
         target_bitmap: None,
         solid,
@@ -457,7 +464,7 @@ impl D2DBackend {
         let mut rc = windows::Win32::Foundation::RECT::default();
         let _ = windows::Win32::UI::WindowsAndMessaging::GetClientRect(hwnd, &mut rc);
         let (w, h) = (rc.right - rc.left, rc.bottom - rc.top);
-        match try_create_inner(hwnd, w, h, self.transparent) {
+        match try_create_inner(hwnd, w, h, self.composition.is_some(), self.transparent) {
             Some(fresh) => {
                 *self = fresh;
                 true

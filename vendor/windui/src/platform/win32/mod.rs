@@ -379,7 +379,11 @@ impl WindowState {
 
     /// 渲染并呈现到窗口。后端报告失效（D2D 设备丢失且连续重建失败）时降级为软后端。
     unsafe fn paint(&mut self, hwnd: HWND) {
-        let bg = self.bg;
+        let bg = if self.transparent {
+            Color::rgba(0, 0, 0, 0)
+        } else {
+            self.bg
+        };
         let downgrade = self.backend.paint(hwnd, bg, self.handler.as_mut());
         if downgrade {
             // 替换为软后端并请求重绘：下一帧用 Skia 呈现，进程不崩、内容继续渲染。
@@ -750,7 +754,13 @@ unsafe fn run_windowed(
             let mut rc = RECT::default();
             let _ = GetClientRect(hwnd, &mut rc);
             let (cw, ch) = (rc.right - rc.left, rc.bottom - rc.top);
-            match d2d::try_create(hwnd, cw, ch, cfg.backdrop != Backdrop::None) {
+            match d2d::try_create(
+                hwnd,
+                cw,
+                ch,
+                cfg.backdrop != Backdrop::None,
+                cfg.backdrop != Backdrop::None,
+            ) {
                 Some(b) => {
                     eprintln!(
                         "[windui] D2D backend active (composition={})",
