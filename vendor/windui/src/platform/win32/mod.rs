@@ -585,12 +585,17 @@ unsafe fn apply_system_backdrop(hwnd: HWND, backdrop: Backdrop) {
         &dark_mode as *const _ as *const c_void,
         size_of::<i32>() as u32,
     );
-    // The public system backdrop already covers the entire window bounds.
-    // Reset legacy frame extension to zero before requesting it; combining
-    // full-sheet margins with DWMSBT_TRANSIENTWINDOW creates a second material
-    // boundary around the transparent DirectComposition surface.
-    let zero_margins = MARGINS::default();
-    let _ = DwmExtendFrameIntoClientArea(hwnd, &zero_margins);
+    // Extend the DWM frame across the complete client area before applying the
+    // public system material. This is required for transparent DirectComposition
+    // pixels to reveal the Acrylic surface instead of compositing over a uniform
+    // client slab. The frameless window has no separate native frame to expose.
+    let full_frame = MARGINS {
+        cxLeftWidth: -1,
+        cxRightWidth: -1,
+        cyTopHeight: -1,
+        cyBottomHeight: -1,
+    };
+    let _ = DwmExtendFrameIntoClientArea(hwnd, &full_frame);
     if DwmSetWindowAttribute(
         hwnd,
         DWMWA_SYSTEMBACKDROP_TYPE,
