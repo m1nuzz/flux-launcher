@@ -468,6 +468,12 @@ unsafe fn apply_system_backdrop(hwnd: HWND, backdrop: Backdrop) {
     let Some(kind) = kind else {
         return;
     };
+    // RDP and composition-disabled sessions cannot render the public material
+    // and otherwise replace the transparent surface with an opaque fallback.
+    // Keep the real system backdrop path unchanged for local Windows 11.
+    if is_remote || !composition_enabled {
+        return;
+    }
     // Keep the native material aligned with Flux's dark palette instead of inheriting
     // the runner's light system preference and exposing a bright outer frame.
     const DWMWA_USE_IMMERSIVE_DARK_MODE: windows::Win32::Graphics::Dwm::DWMWINDOWATTRIBUTE =
