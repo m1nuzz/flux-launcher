@@ -10,7 +10,7 @@ mod plugins;
 use std::cell::RefCell;
 use std::collections::{HashMap, HashSet};
 use std::rc::Rc;
-use std::sync::{Arc, RwLock};
+use std::sync::{Arc, Mutex, OnceLock, RwLock};
 use std::time::Duration;
 
 use applications::{ApplicationResponse, ApplicationWorker};
@@ -258,6 +258,126 @@ fn game_mode_label(enabled: bool) -> String {
     }
 }
 
+#[cfg(windows)]
+static SHELL_ICON_CACHE: OnceLock<Mutex<HashMap<String, Option<Vec<u8>>>>> = OnceLock::new();
+
+#[cfg(windows)]
+fn shell_icon_rgba(target: &str) -> Option<Vec<u8>> {
+    let cache = SHELL_ICON_CACHE.get_or_init(|| Mutex::new(HashMap::new()));
+    if let Ok(entries) = cache.lock() {
+        if let Some(icon) = entries.get(target) {
+            return icon.clone();
+        }
+    }
+
+    let icon = extract_shell_icon_rgba(target);
+    if let Ok(mut entries) = cache.lock() {
+        entries.insert(target.to_owned(), icon.clone());
+    }
+    icon
+}
+
+#[cfg(not(windows))]
+fn shell_icon_rgba(_target: &str) -> Option<Vec<u8>> {
+    None
+}
+
+#[cfg(windows)]
+fn extract_shell_icon_rgba(target: &str) -> Option<Vec<u8>> {
+    use std::ffi::c_void;
+    use std::mem::size_of;
+    use std::ptr::null_mut;
+    use windows::core::PCWSTR;
+    use windows::Win32::Graphics::Gdi::{
+        CreateCompatibleDC, CreateDIBSection, DeleteDC, DeleteObject, SelectObject, BITMAPINFO,
+        BITMAPINFOHEADER, BI_RGB, DIB_RGB_COLORS, HGDIOBJ,
+    };
+    use windows::Win32::UI::Shell::{
+        SHGetFileInfoW, SHFILEINFOW, SHGFI_FLAGS, SHGFI_ICON, SHGFI_SMALLICON,
+    };
+    use windows::Win32::UI::WindowsAndMessaging::{DestroyIcon, DrawIconEx, DI_NORMAL};
+
+    const ICON_SIZE: i32 = 24;
+    let path: Vec<u16> = target.encode_utf16().chain(std::iter::once(0)).collect();
+    let mut file_info = SHFILEINFOW::default();
+    let flags = SHGFI_FLAGS(SHGFI_ICON.0 | SHGFI_SMALLICON.0);
+    let result = unsafe {
+        SHGetFileInfoW(
+            PCWSTR(path.as_ptr()),
+            Default::default(),
+            Some(&mut file_info),
+            size_of::<SHFILEINFOW>() as u32,
+            flags,
+        )
+    };
+    if result == 0 || file_info.hIcon.is_invalid() {
+        return None;
+    }
+
+    let hdc = unsafe { CreateCompatibleDC(None) };
+    if hdc.is_invalid() {
+        unsafe { DestroyIcon(file_info.hIcon).ok()? };
+        return None;
+    }
+
+    let mut bits: *mut c_void = null_mut();
+    let bitmap_info = BITMAPINFO {
+        bmiHeader: BITMAPINFOHEADER {
+            biSize: size_of::<BITMAPINFOHEADER>() as u32,
+            biWidth: ICON_SIZE,
+            biHeight: -ICON_SIZE,
+            biPlanes: 1,
+            biBitCount: 32,
+            biCompression: BI_RGB.0,
+            ..Default::default()
+        },
+        ..Default::default()
+    };
+    let bitmap =
+        unsafe { CreateDIBSection(Some(hdc), &bitmap_info, DIB_RGB_COLORS, &mut bits, None, 0) };
+    let Ok(bitmap) = bitmap else {
+        unsafe {
+            DestroyIcon(file_info.hIcon).ok();
+            let _ = DeleteDC(hdc);
+        }
+        return None;
+    };
+    let previous = unsafe { SelectObject(hdc, HGDIOBJ(bitmap.0)) };
+    let drawn = unsafe {
+        DrawIconEx(
+            hdc,
+            0,
+            0,
+            file_info.hIcon,
+            ICON_SIZE,
+            ICON_SIZE,
+            0,
+            None,
+            DI_NORMAL,
+        )
+        .is_ok()
+    };
+    let rgba = if drawn && !bits.is_null() {
+        let bgra = unsafe {
+            std::slice::from_raw_parts(bits.cast::<u8>(), (ICON_SIZE * ICON_SIZE * 4) as usize)
+        };
+        let mut rgba = Vec::with_capacity(bgra.len());
+        for pixel in bgra.chunks_exact(4) {
+            rgba.extend([pixel[2], pixel[1], pixel[0], pixel[3]]);
+        }
+        Some(rgba)
+    } else {
+        None
+    };
+    unsafe {
+        SelectObject(hdc, previous);
+        let _ = DeleteObject(HGDIOBJ(bitmap.0));
+        let _ = DeleteDC(hdc);
+        DestroyIcon(file_info.hIcon).ok();
+    }
+    rgba
+}
+
 fn launcher_theme() -> Theme {
     let mut theme = Theme::dark();
     theme.palette.bg = Color::rgba(0, 0, 0, 0);
@@ -310,6 +430,20 @@ fn result_row(
     } else {
         String::from("▣")
     };
+    let icon = target.as_deref().and_then(shell_icon_rgba);
+    let icon_element = if let Some(icon) = icon.as_deref() {
+        Element::image_rgba(24, 24, icon)
+            .width(28)
+            .height(28)
+            .corner(6.0)
+    } else {
+        Element::label(glyph)
+            .font_size(20.0)
+            .fg(Color::rgba(201, 218, 240, 235))
+            .text_shadow(Color::rgba(8, 12, 20, 180))
+            .width(28)
+            .align(Align::Center)
+    };
     let selected = selected_id.get() == id;
     let title_signal = signal(if selected {
         format!("> {title}")
@@ -338,18 +472,7 @@ fn result_row(
         .corner(10.0)
         // Selection background is owned exclusively by ResultRowAnchor. Keeping
         // a static background here leaves stale highlights after selection moves.
-        .child(
-            Element::label(glyph)
-                .font_size(20.0)
-                .fg(if selected {
-                    Color::rgba(235, 244, 255, 255)
-                } else {
-                    Color::rgba(201, 218, 240, 235)
-                })
-                .text_shadow(Color::rgba(8, 12, 20, 180))
-                .width(28)
-                .align(Align::Center),
-        )
+        .child(icon_element)
         .child(
             Element::col()
                 .weight(1.0)
