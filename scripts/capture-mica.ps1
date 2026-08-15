@@ -25,10 +25,6 @@ public static class FluxWallpaper {
     [DllImport("user32.dll", SetLastError = true)]
     public static extern void keybd_event(byte virtualKey, byte scanCode, uint flags, UIntPtr extraInfo);
     [DllImport("user32.dll", SetLastError = true)]
-    public static extern bool ShowWindow(IntPtr hwnd, int command);
-    [DllImport("user32.dll", SetLastError = true)]
-    public static extern bool UpdateWindow(IntPtr hwnd);
-    [DllImport("user32.dll", SetLastError = true)]
     public static extern bool SetForegroundWindow(IntPtr hwnd);
 }
 '@
@@ -155,17 +151,21 @@ try {
     $idleMemory = Get-MemorySnapshot $process.Id
     Save-Screenshot "mica-desktop.png"
 
-    # Regression probe: repeat the native hide/show path while the query is empty.
-    # Capture this before any query edit, so a later repaint cannot hide a failure
-    # where the DirectComposition surface attaches only after typing.
+    # Regression probe: exercise the real global Alt+Space hide/show path twice
+    # while the query is empty. Capture this before any query edit, so a later
+    # repaint cannot hide a failure where the DirectComposition surface attaches
+    # only after typing.
     $launcherHandle = $process.MainWindowHandle
     if ($launcherHandle -eq [IntPtr]::Zero) { throw "Flux launcher has no main window handle." }
-    [FluxWallpaper]::ShowWindow($launcherHandle, 0) | Out-Null
-    Start-Sleep -Milliseconds 250
-    [FluxWallpaper]::ShowWindow($launcherHandle, 5) | Out-Null
     [FluxWallpaper]::SetForegroundWindow($launcherHandle) | Out-Null
-    [FluxWallpaper]::UpdateWindow($launcherHandle) | Out-Null
-    Start-Sleep -Milliseconds 500
+    Start-Sleep -Milliseconds 250
+    for ($toggle = 0; $toggle -lt 2; $toggle++) {
+        [FluxWallpaper]::keybd_event(0x12, 0, 0, [UIntPtr]::Zero)
+        [FluxWallpaper]::keybd_event(0x20, 0, 0, [UIntPtr]::Zero)
+        [FluxWallpaper]::keybd_event(0x20, 0, 2, [UIntPtr]::Zero)
+        [FluxWallpaper]::keybd_event(0x12, 0, 2, [UIntPtr]::Zero)
+        Start-Sleep -Milliseconds 350
+    }
     Save-Screenshot "mica-repeat-show-empty.png"
 
     $bounds = [System.Windows.Forms.SystemInformation]::VirtualScreen

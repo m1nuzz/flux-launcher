@@ -1036,10 +1036,13 @@ unsafe fn run_windowed(
     // 启动即隐藏：常驻托盘类应用不该在启动时闪一下窗口。此处**不调用 ShowWindow**，
     // 窗口保持初始的不可见态，等托盘点击或全局热键送来 WindowOp::Show。
     if !cfg.start_hidden {
+        let _ = ShowWindow(hwnd, SW_SHOW);
+        // Layout mutations from on_window_show must happen after the HWND is
+        // visible, otherwise a clear-query resize can race Acrylic setup.
         if let Some(state) = state_from(hwnd) {
             state.handler.on_window_show();
         }
-        let _ = ShowWindow(hwnd, SW_SHOW);
+        let _ = InvalidateRect(Some(hwnd), None, false);
         let _ = UpdateWindow(hwnd);
     }
 
@@ -1818,15 +1821,17 @@ fn move_to_smoke_display(hwnd: HWND) {
 pub(crate) fn show_and_activate(hwnd: HWND) {
     move_to_smoke_display(hwnd);
     unsafe {
-        if let Some(state) = state_from(hwnd) {
-            state.handler.on_window_show();
-        }
         if IsIconic(hwnd).as_bool() {
             let _ = ShowWindow(hwnd, SW_RESTORE);
         } else {
             let _ = ShowWindow(hwnd, SW_SHOW);
         }
         let _ = SetForegroundWindow(hwnd);
+        // The visible HWND now owns a valid DWM/DirectComposition target.
+        // Apply query-clear and other show-state mutations only after that point.
+        if let Some(state) = state_from(hwnd) {
+            state.handler.on_window_show();
+        }
         if let Some(state) = state_from(hwnd) {
             let _guard = super::EventDispatchGuard::enter();
             let _ = state.handler.on_key(crate::event::KeyEvent {
