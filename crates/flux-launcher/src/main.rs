@@ -145,13 +145,15 @@ impl Widget for ResultRowAnchor {
             } else {
                 self.title.clone()
             });
-            ctx.set_bg(if selected {
-                Color::rgba(76, 139, 245, 72)
-            } else {
-                Color::rgba(255, 255, 255, 18)
-            });
             self.last_selected = Some(selected);
         }
+        // Always rewrite the row background. A virtualized/recycled row can
+        // otherwise retain the previous selected color after provider updates.
+        ctx.set_bg(if selected {
+            Color::rgba(76, 139, 245, 72)
+        } else {
+            Color::rgba(255, 255, 255, 18)
+        });
         if selected {
             let row_id = ctx.id();
             let _ = ctx.tree_mut().scroll_into_view(row_id);
