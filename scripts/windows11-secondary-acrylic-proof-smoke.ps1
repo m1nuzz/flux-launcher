@@ -120,7 +120,7 @@ try {
     Send-VirtualKey 0x28 0x50 $true
     Start-Sleep -Milliseconds 350
     Save-Screen 'windows11-acrylic-proof-after-down.png' $screen
-    Send-VirtualKey 0x27 0x4D $true
+    Send-VirtualKey 0x27
     Start-Sleep -Milliseconds 350
     Save-Screen 'windows11-acrylic-proof-action-mode.png' $screen
     [ordered]@{
