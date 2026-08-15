@@ -18,7 +18,7 @@ use std::path::PathBuf;
 
 use tiny_skia::Pixmap;
 
-use windows::core::{w, PCWSTR};
+use windows::core::{s, w, PCWSTR};
 use windows::Win32::Foundation::{HINSTANCE, HWND, LPARAM, LRESULT, POINT, RECT, WPARAM};
 use windows::Win32::Graphics::Dwm::{
     DwmExtendFrameIntoClientArea, DwmSetWindowAttribute, DWMSBT_MAINWINDOW, DWMSBT_TRANSIENTWINDOW,
@@ -31,7 +31,7 @@ use windows::Win32::Graphics::Gdi::{
     DIB_RGB_COLORS, LOGFONTW, PAINTSTRUCT, VREFRESH,
 };
 use windows::Win32::Media::{timeBeginPeriod, timeEndPeriod};
-use windows::Win32::System::LibraryLoader::GetModuleHandleW;
+use windows::Win32::System::LibraryLoader::{GetModuleHandleW, GetProcAddress};
 use windows::Win32::UI::Controls::{MARGINS, WM_MOUSELEAVE};
 use windows::Win32::UI::HiDpi::{
     AdjustWindowRectExForDpi, GetDpiForSystem, GetDpiForWindow, GetSystemMetricsForDpi,
@@ -397,10 +397,14 @@ fn swap_rb_inplace(data: &mut [u8]) {
 
 use super::to_skia_color;
 
-/// Applies only public DWM backdrop values. Older Windows versions or unsupported
-/// environments return an HRESULT that is intentionally ignored so the normal
-/// opaque application background remains usable.
+/// Applies a system backdrop and, for Acrylic, the compatibility policy used by
+/// classic Win32 windows. The public DWM attribute is preferred; the WCA call is
+/// deliberately best-effort because it is not available as a stable SDK API.
 unsafe fn apply_system_backdrop(hwnd: HWND, backdrop: Backdrop) {
+    if backdrop == Backdrop::Acrylic {
+        apply_acrylic_policy(hwnd);
+    }
+
     let kind: Option<DWM_SYSTEMBACKDROP_TYPE> = match backdrop {
         Backdrop::None => None,
         Backdrop::Mica => Some(DWMSBT_MAINWINDOW),
@@ -433,6 +437,49 @@ unsafe fn apply_system_backdrop(hwnd: HWND, backdrop: Backdrop) {
             size_of::<bool>() as u32,
         );
     }
+}
+
+/// Applies the legacy Win32 Acrylic blur policy when the public system backdrop
+/// API is absent or too opaque for a transient launcher surface.
+unsafe fn apply_acrylic_policy(hwnd: HWND) {
+    #[repr(C)]
+    struct AccentPolicy {
+        state: u32,
+        flags: u32,
+        gradient_color: u32,
+        animation_id: u32,
+    }
+    #[repr(C)]
+    struct WindowCompositionAttributeData {
+        attribute: u32,
+        data: *mut c_void,
+        data_size: usize,
+    }
+
+    const WCA_ACCENT_POLICY: u32 = 19;
+    const ACCENT_ENABLE_ACRYLICBLURBEHIND: u32 = 4;
+    let Ok(user32) = GetModuleHandleW(w!("user32.dll")) else {
+        return;
+    };
+    let Some(proc) = GetProcAddress(user32, s!("SetWindowCompositionAttribute")) else {
+        return;
+    };
+    let set_attribute: unsafe extern "system" fn(HWND, *mut WindowCompositionAttributeData) -> i32 =
+        std::mem::transmute(proc);
+    let mut policy = AccentPolicy {
+        state: ACCENT_ENABLE_ACRYLICBLURBEHIND,
+        flags: 0,
+        // A restrained dark tint keeps text readable while allowing the desktop
+        // and adjacent windows to contribute to the translucent material.
+        gradient_color: 0xA0181E2A,
+        animation_id: 0,
+    };
+    let mut data = WindowCompositionAttributeData {
+        attribute: WCA_ACCENT_POLICY,
+        data: &mut policy as *mut _ as *mut c_void,
+        data_size: size_of::<AccentPolicy>(),
+    };
+    let _ = set_attribute(hwnd, &mut data);
 }
 
 const CLASS_NAME: PCWSTR = w!("WindUiWindowClass");
@@ -515,9 +562,9 @@ unsafe fn run_windowed(
         WINDOW_STYLE(WS_OVERLAPPEDWINDOW.0 & !(WS_THICKFRAME.0 | WS_MAXIMIZEBOX.0))
     };
 
-    // DirectComposition supplies the client surface for transparent Mica/Acrylic
-    // windows. A normal redirected HWND remains the lower-risk default otherwise.
-    let ex_style = if cfg.backdrop != Backdrop::None {
+    // Mica uses a no-redirection composition surface. Acrylic keeps the normal
+    // DWM redirection surface so its Win32 Acrylic policy can blur behind the HWND.
+    let ex_style = if cfg.backdrop == Backdrop::Mica {
         WS_EX_NOREDIRECTIONBITMAP
     } else {
         WINDOW_EX_STYLE::default()
@@ -669,11 +716,22 @@ unsafe fn run_windowed(
         if let Some(s) = state_from(hwnd) {
             s.frameless = true;
         }
-        let margins = MARGINS {
-            cxLeftWidth: 0,
-            cxRightWidth: 0,
-            cyTopHeight: 1,
-            cyBottomHeight: 0,
+        let margins = if cfg.backdrop == Backdrop::None {
+            MARGINS {
+                cxLeftWidth: 0,
+                cxRightWidth: 0,
+                cyTopHeight: 1,
+                cyBottomHeight: 0,
+            }
+        } else {
+            // Extend the backdrop through the complete frameless client area;
+            // leaving a one-pixel top frame exposes the default white surface.
+            MARGINS {
+                cxLeftWidth: -1,
+                cxRightWidth: -1,
+                cyTopHeight: -1,
+                cyBottomHeight: -1,
+            }
         };
         let _ = DwmExtendFrameIntoClientArea(hwnd, &margins);
         // 圆角：显式声明，与 Win11 系统其余窗口一致。

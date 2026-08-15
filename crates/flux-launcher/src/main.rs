@@ -72,6 +72,23 @@ fn game_mode_label(enabled: bool) -> String {
     }
 }
 
+fn launcher_theme() -> Theme {
+    let mut theme = Theme::dark();
+    theme.palette.bg = Color::rgba(0, 0, 0, 0);
+    theme.palette.surface = Color::rgba(24, 31, 44, 180);
+    theme.palette.surface_alt = Color::rgba(31, 40, 56, 205);
+    theme.palette.border = Color::rgba(255, 255, 255, 22);
+    theme.palette.placeholder = Color::rgba(207, 219, 236, 160);
+    theme.input.bg = Some(Color::rgba(21, 27, 39, 188));
+    theme.input.border = Some(Color::rgba(255, 255, 255, 24));
+    theme.input.border_focus = Some(Color::rgba(133, 181, 255, 135));
+    theme.input.text = Some(Color::rgba(245, 248, 255, 255));
+    theme.input.placeholder = Some(Color::rgba(207, 219, 236, 165));
+    theme.input.selection = Some(Color::rgba(76, 139, 245, 120));
+    theme.input.cursor = Some(Color::rgba(238, 245, 255, 235));
+    theme
+}
+
 fn set_game_mode(
     settings: &Arc<RwLock<Settings>>,
     game_mode: Signal<bool>,
@@ -163,8 +180,8 @@ fn main() {
         .height(44)
         .font_size(15.0)
         .corner(10.0)
-        .bg(Color::rgba(255, 255, 255, 24))
-        .border(Color::rgba(255, 255, 255, 38), 1)
+        .bg(Color::rgba(0, 0, 0, 0))
+        .border(Color::rgba(0, 0, 0, 0), 0)
         .padding_xy(13, 0);
 
     let result_list = Element::list_signal(
@@ -181,9 +198,9 @@ fn main() {
         .padding(10)
         .spacing(8)
         .corner(16.0)
-        .bg(Color::rgba(18, 22, 30, 150))
-        .border(Color::rgba(255, 255, 255, 34), 1)
-        .shadow(Shadow::new(0.0, 14.0, 36.0, Color::rgba(0, 0, 0, 92)))
+        .bg(Color::rgba(12, 18, 28, 72))
+        .border(Color::rgba(255, 255, 255, 18), 1)
+        .shadow(Shadow::new(0.0, 10.0, 24.0, Color::rgba(0, 0, 0, 52)))
         .child(search_box)
         .child(result_list);
 
@@ -482,7 +499,8 @@ fn main() {
         .resizable(false)
         .min_size(380, COMPACT_WINDOW_HEIGHT)
         .renderer(Renderer::Auto)
-        .backdrop(Backdrop::Mica)
+        .backdrop(Backdrop::Acrylic)
+        .theme(launcher_theme())
         .content(content)
         .on_interval(SEARCH_INTERVAL, move |_| {
             let next_query = query_for_interval.get();
