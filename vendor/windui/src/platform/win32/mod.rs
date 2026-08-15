@@ -455,6 +455,17 @@ unsafe fn apply_system_backdrop(hwnd: HWND, backdrop: Backdrop) {
     let Some(kind) = kind else {
         return;
     };
+    // Keep the native material aligned with Flux's dark palette instead of inheriting
+    // the runner's light system preference and exposing a bright outer frame.
+    const DWMWA_USE_IMMERSIVE_DARK_MODE: windows::Win32::Graphics::Dwm::DWMWINDOWATTRIBUTE =
+        windows::Win32::Graphics::Dwm::DWMWINDOWATTRIBUTE(20);
+    let dark_mode = true;
+    let _ = DwmSetWindowAttribute(
+        hwnd,
+        DWMWA_USE_IMMERSIVE_DARK_MODE,
+        &dark_mode as *const _ as *const c_void,
+        size_of::<bool>() as u32,
+    );
     if DwmSetWindowAttribute(
         hwnd,
         DWMWA_SYSTEMBACKDROP_TYPE,
