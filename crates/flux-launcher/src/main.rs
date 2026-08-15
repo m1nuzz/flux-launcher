@@ -135,6 +135,7 @@ struct ResultRowAnchor {
     result_id: String,
     title: String,
     title_signal: Signal<String>,
+    trailing_signal: Signal<String>,
     selected_id: Signal<String>,
     last_selected: Option<bool>,
 }
@@ -147,6 +148,11 @@ impl Widget for ResultRowAnchor {
                 format!("> {}", self.title)
             } else {
                 self.title.clone()
+            });
+            self.trailing_signal.set(if selected {
+                String::from("↵")
+            } else {
+                String::new()
             });
             self.last_selected = Some(selected);
         }
@@ -297,17 +303,28 @@ fn result_row(
     let target = result.target;
     let title = result.title;
     let subtitle = result.subtitle;
+    let glyph = if subtitle.contains("Application") {
+        String::from("◉")
+    } else {
+        String::from("▣")
+    };
     let selected = selected_id.get() == id;
     let title_signal = signal(if selected {
         format!("> {title}")
     } else {
         title.clone()
     });
+    let trailing_signal = signal(if selected {
+        String::from("↵")
+    } else {
+        String::new()
+    });
     Element::row()
         .widget(ResultRowAnchor {
             result_id: id.clone(),
             title: title.clone(),
             title_signal,
+            trailing_signal,
             selected_id,
             last_selected: None,
         })
@@ -319,6 +336,18 @@ fn result_row(
         .corner(10.0)
         // Selection background is owned exclusively by ResultRowAnchor. Keeping
         // a static background here leaves stale highlights after selection moves.
+        .child(
+            Element::label(glyph)
+                .font_size(20.0)
+                .fg(if selected {
+                    Color::rgba(235, 244, 255, 255)
+                } else {
+                    Color::rgba(201, 218, 240, 235)
+                })
+                .text_shadow(Color::rgba(8, 12, 20, 180))
+                .width(28)
+                .align(Align::Center),
+        )
         .child(
             Element::col()
                 .weight(1.0)
@@ -341,6 +370,14 @@ fn result_row(
                         .truncate(Truncate::End)
                         .width_match(),
                 ),
+        )
+        .child(
+            Element::label_signal(trailing_signal)
+                .font_size(17.0)
+                .fg(Color::rgba(238, 246, 255, 230))
+                .text_shadow(Color::rgba(8, 12, 20, 190))
+                .width(22)
+                .align(Align::Center),
         )
         .on_click(move |_| {
             selected_id.set(id.clone());
@@ -402,7 +439,7 @@ fn main() {
     let action_window_slot_for_rows = Rc::clone(&action_window_slot);
 
     let search_box = Element::text_input(query, "Search")
-        .leading_icon('>')
+        .leading_icon('⌕')
         .transparent_surface()
         .smooth_caret(settings.smooth_caret, settings.smooth_caret_duration_ms)
         .width_match()
@@ -415,6 +452,35 @@ fn main() {
         // material remains visible through the input, caret, and leading icon.
         .border(Color::rgba(0, 0, 0, 0), 0)
         .padding_xy(13, 0);
+
+    let action_hint = |key: &'static str, label: &'static str| {
+        Element::row()
+            .height(24)
+            .spacing(5)
+            .child(
+                Element::label(key)
+                    .font_size(10.0)
+                    .fg(Color::rgba(235, 243, 255, 235))
+                    .bg(Color::rgba(255, 255, 255, 24))
+                    .corner(5.0)
+                    .padding_xy(6, 3),
+            )
+            .child(
+                Element::label(label)
+                    .font_size(11.0)
+                    .fg(Color::rgba(222, 233, 248, 220))
+                    .text_shadow(Color::rgba(8, 12, 20, 140)),
+            )
+    };
+    let action_bar = Element::row()
+        .width_match()
+        .height(30)
+        .padding_xy(10, 2)
+        .spacing(14)
+        .child(action_hint("↵", "Open"))
+        .child(action_hint("→", "Actions"))
+        .child(action_hint("Esc", "Close"))
+        .visible_when(move || show_results.get() && !action_mode.get());
 
     let result_list = Element::list_signal(
         result_source,
@@ -432,7 +498,7 @@ fn main() {
     )
     // Keep the expanded result area transparent so the window remains one
     // continuous Acrylic surface. Only individual result rows draw controls.
-    .height(286)
+    .height(220)
     .padding(8)
     .visible_when(move || show_results.get() && !action_mode.get());
 
@@ -499,6 +565,7 @@ fn main() {
         .spacing(8)
         .child(search_box)
         .child(result_list)
+        .child(action_bar)
         .child(action_list);
     let launcher_surface = Element::stack()
         .fill()
