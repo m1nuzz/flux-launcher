@@ -92,7 +92,7 @@ $probeScriptPath = Join-Path $OutputDirectory "probe-screen.ps1"
 @'
 Add-Type -AssemblyName System.Windows.Forms
 Add-Type -AssemblyName System.Drawing
-Add-Type @"
+Add-Type -TypeDefinition @"
 using System;
 using System.Drawing;
 using System.Drawing.Drawing2D;
