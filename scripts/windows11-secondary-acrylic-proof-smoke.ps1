@@ -23,9 +23,10 @@ public static class FluxAcrylicProof {
 }
 '@
 
-function Send-VirtualKey([byte]$virtualKey) {
-    [FluxAcrylicProof]::keybd_event($virtualKey, 0, 0, [UIntPtr]::Zero)
-    [FluxAcrylicProof]::keybd_event($virtualKey, 0, 2, [UIntPtr]::Zero)
+function Send-VirtualKey([byte]$virtualKey, [byte]$scanCode = 0, [bool]$extended = $false) {
+    $flags = if ($extended) { 1 } else { 0 }
+    [FluxAcrylicProof]::keybd_event($virtualKey, $scanCode, $flags, [UIntPtr]::Zero)
+    [FluxAcrylicProof]::keybd_event($virtualKey, $scanCode, ($flags -bor 2), [UIntPtr]::Zero)
 }
 
 function Send-AsciiText([string]$text) {
@@ -109,10 +110,10 @@ try {
     Send-AsciiText 'steam'
     Start-Sleep -Seconds 2
     Save-Screen 'windows11-acrylic-proof-before-down.png' $screen
-    Send-VirtualKey 0x28
+    Send-VirtualKey 0x28 0x50 $true
     Start-Sleep -Milliseconds 350
     Save-Screen 'windows11-acrylic-proof-after-down.png' $screen
-    Send-VirtualKey 0x27
+    Send-VirtualKey 0x27 0x4D $true
     Start-Sleep -Milliseconds 350
     Save-Screen 'windows11-acrylic-proof-action-mode.png' $screen
     [ordered]@{
