@@ -27,8 +27,10 @@ use windui::render::{Canvas, Paint};
 
 const WINDOW_WIDTH: i32 = 420;
 const COMPACT_WINDOW_HEIGHT: i32 = 72;
-const EXPANDED_WINDOW_HEIGHT: i32 = 400;
-const ACTION_WINDOW_HEIGHT: i32 = 320;
+// Keep the result palette compact like the reference: search header, three visible
+// rows, and the command bar fit inside a short floating surface.
+const EXPANDED_WINDOW_HEIGHT: i32 = 286;
+const ACTION_WINDOW_HEIGHT: i32 = 250;
 const SETTINGS_WINDOW_HEIGHT: i32 = 520;
 const SEARCH_INTERVAL: Duration = Duration::from_millis(40);
 const PROVIDER_MIN_QUERY_LEN: usize = 2;
@@ -330,8 +332,8 @@ fn result_row(
         })
         .reactive()
         .width_match()
-        .height(46)
-        .padding_xy(12, 5)
+        .height(44)
+        .padding_xy(12, 4)
         .spacing(10)
         .corner(10.0)
         // Selection background is owned exclusively by ResultRowAnchor. Keeping
@@ -498,8 +500,8 @@ fn main() {
     )
     // Keep the expanded result area transparent so the window remains one
     // continuous Acrylic surface. Only individual result rows draw controls.
-    .height(220)
-    .padding(8)
+    .height(156)
+    .padding(6)
     .visible_when(move || show_results.get() && !action_mode.get());
 
     let action_list = Element::list_signal(
@@ -553,7 +555,7 @@ fn main() {
                 })
         },
     )
-    .height(180)
+    .height(138)
     .corner(12.0)
     .visible_signal(action_mode);
 
@@ -562,7 +564,7 @@ fn main() {
     let launcher_content = Element::col()
         .width(364)
         .padding(10)
-        .spacing(8)
+        .spacing(4)
         .child(search_box)
         .child(result_list)
         .child(action_bar)
