@@ -229,9 +229,9 @@ fn result_row(
     let selected = selected_id.get() == id;
     Element::row()
         .width_match()
-        .height(42)
-        .padding_xy(12, 4)
-        .spacing(12)
+        .height(46)
+        .padding_xy(12, 5)
+        .spacing(10)
         .corner(10.0)
         .bg(if selected {
             Color::rgba(76, 139, 245, 72)
@@ -239,20 +239,25 @@ fn result_row(
             Color::rgba(255, 255, 255, 18)
         })
         .child(
-            Element::label(if selected {
-                format!("> {title}")
-            } else {
-                title
-            })
-            .font_size(15.0)
-            .fg(Color::WHITE)
-            .weight(1.0),
-        )
-        .child(
-            Element::label(subtitle)
-                .font_size(12.0)
-                .fg(Color::rgba(235, 241, 255, 180))
-                .align(Align::Center),
+            Element::col()
+                .weight(1.0)
+                .spacing(1)
+                .child(
+                    Element::label(if selected {
+                        format!("> {title}")
+                    } else {
+                        title
+                    })
+                    .font_size(14.0)
+                    .fg(Color::WHITE)
+                    .width_match(),
+                )
+                .child(
+                    Element::label(subtitle)
+                        .font_size(11.0)
+                        .fg(Color::rgba(235, 241, 255, 175))
+                        .width_match(),
+                ),
         )
         .on_click(move |_| {
             selected_id.set(id.clone());
