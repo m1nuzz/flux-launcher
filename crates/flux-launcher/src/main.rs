@@ -1,5 +1,6 @@
 #![cfg_attr(windows, windows_subsystem = "windows")]
 
+mod applications;
 mod everything;
 mod fullscreen;
 mod hotkeys;
@@ -12,6 +13,7 @@ use std::rc::Rc;
 use std::sync::{Arc, RwLock};
 use std::time::Duration;
 
+use applications::{ApplicationResponse, ApplicationWorker};
 use everything::{EverythingResponse, EverythingWorker};
 use flux_core::{
     rank_results, should_suppress_activation, HotkeyConfig, SearchModel, SearchResult, Settings,
@@ -35,6 +37,7 @@ const MAX_VISIBLE_RESULTS: usize = 8;
 struct ProviderResults {
     sequence: u64,
     built_in: Vec<SearchResult>,
+    applications: Vec<SearchResult>,
     everything: Vec<SearchResult>,
     plugins: Vec<SearchResult>,
 }
@@ -43,6 +46,7 @@ impl ProviderResults {
     fn reset(&mut self, sequence: u64, built_in: Vec<SearchResult>) {
         self.sequence = sequence;
         self.built_in = built_in;
+        self.applications.clear();
         self.everything.clear();
         self.plugins.clear();
     }
@@ -51,6 +55,7 @@ impl ProviderResults {
         let mut merged = self
             .built_in
             .iter()
+            .chain(&self.applications)
             .chain(&self.everything)
             .chain(&self.plugins)
             .cloned()
@@ -468,6 +473,27 @@ fn main() {
     let window_size = app.window_size_handle();
     *action_window_slot.borrow_mut() = Some(window_size.clone());
     let size_for_interval = window_size.clone();
+    let query_for_applications = query;
+    let results_for_applications = results;
+    let status_for_applications = status;
+    let sequence_for_applications = current_sequence;
+    let providers_for_applications = Rc::clone(&provider_results);
+    let application_sender = app.channel::<ApplicationResponse>(move |_, response| {
+        if response.sequence != sequence_for_applications.get()
+            || response.query != query_for_applications.get()
+        {
+            return;
+        }
+        let mut providers = providers_for_applications.borrow_mut();
+        if providers.sequence != response.sequence {
+            return;
+        }
+        providers.applications = response.results;
+        results_for_applications.set(providers.merged(&query_for_applications.get()));
+        status_for_applications.set(response.status);
+    });
+    let application_worker = ApplicationWorker::spawn(application_sender);
+
     let query_for_everything = query;
     let results_for_everything = results;
     let status_for_everything = status;
@@ -917,14 +943,17 @@ fn main() {
             action_index.set(0);
             action_items.set(Vec::new());
             actions_for_interval.borrow_mut().clear();
-            if !has_query || next_query.trim().len() < PROVIDER_MIN_QUERY_LEN {
+            if !has_query {
                 status_for_interval.set(String::from("Ready"));
             } else {
                 status_for_interval.set(String::from(
-                    "Searching Everything and native Flow plugins...",
+                    "Searching applications, Everything and native Flow plugins...",
                 ));
-                everything_worker.request(sequence, next_query.clone());
-                plugin_worker.request(sequence, next_query.clone());
+                application_worker.request(sequence, next_query.clone());
+                if next_query.trim().len() >= PROVIDER_MIN_QUERY_LEN {
+                    everything_worker.request(sequence, next_query.clone());
+                    plugin_worker.request(sequence, next_query.clone());
+                }
             }
             last_query = next_query;
         })

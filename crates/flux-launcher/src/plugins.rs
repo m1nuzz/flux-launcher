@@ -205,6 +205,7 @@ fn append_plugin_results(
             title: item.title,
             subtitle,
             kind: flux_core::ResultKind::Placeholder,
+            source: flux_core::ResultSource::Plugin,
             target: None,
         });
         if let Some(action) = item.action {

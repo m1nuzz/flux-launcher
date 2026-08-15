@@ -8,12 +8,24 @@ pub enum ResultKind {
     Placeholder,
 }
 
+/// Identifies the provider that produced a result. Flow keeps program search
+/// separate from file search; the source tier lets Flux preserve that boundary
+/// even when both providers return executable-looking paths.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum ResultSource {
+    BuiltIn,
+    ApplicationCatalog,
+    Everything,
+    Plugin,
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct SearchResult {
     pub id: String,
     pub title: String,
     pub subtitle: String,
     pub kind: ResultKind,
+    pub source: ResultSource,
     pub target: Option<String>,
 }
 
@@ -37,6 +49,7 @@ impl SearchResult {
             } else {
                 ResultKind::File
             },
+            source: ResultSource::Everything,
             target: Some(path),
         }
     }
@@ -51,11 +64,16 @@ impl SearchResult {
         let query = normalize(query);
         let title = normalize(&self.title);
         let subtitle = normalize(&self.subtitle);
-        let (provider_tier, title_tier) = match self.kind {
-            ResultKind::Application => (0, match_app_title(&title, &query)),
-            ResultKind::Command => (1, match_app_title(&title, &query)),
-            ResultKind::Placeholder => (2, match_app_title(&title, &query)),
-            ResultKind::File => (3, match_file_title(&title, &query)),
+        let (provider_tier, title_tier) = match self.source {
+            ResultSource::ApplicationCatalog => (0, match_app_title(&title, &query)),
+            ResultSource::BuiltIn => (1, match_app_title(&title, &query)),
+            ResultSource::Plugin => (2, match_app_title(&title, &query)),
+            ResultSource::Everything => match self.kind {
+                ResultKind::Application => (3, match_app_title(&title, &query)),
+                ResultKind::Command | ResultKind::Placeholder | ResultKind::File => {
+                    (4, match_file_title(&title, &query))
+                }
+            },
         };
         let subtitle_match = if !query.is_empty() && subtitle.contains(&query) {
             0
@@ -212,6 +230,7 @@ fn built_in_results(query: &str) -> Vec<SearchResult> {
             title: title.to_owned(),
             subtitle: subtitle.to_owned(),
             kind: ResultKind::Command,
+            source: ResultSource::BuiltIn,
             target: None,
         })
         .collect()
@@ -268,6 +287,30 @@ mod tests {
     }
 
     #[test]
+    fn application_catalog_outranks_everything_executable_for_exact_name() {
+        let mut results = vec![
+            SearchResult::file(
+                String::from("C:/Users/Test/workspace/Steam.exe"),
+                String::from("Steam.exe"),
+                String::from("C:/Users/Test/workspace"),
+            ),
+            SearchResult {
+                id: String::from("application:start-menu:steam"),
+                title: String::from("Steam"),
+                subtitle: String::from("Application • Start Menu"),
+                kind: ResultKind::Application,
+                source: ResultSource::ApplicationCatalog,
+                target: Some(String::from(
+                    r"C:\Users\Test\AppData\Roaming\Microsoft\Windows\Start Menu\Steam.lnk",
+                )),
+            },
+        ];
+        rank_results("Steam", &mut results);
+        assert_eq!(results[0].source, ResultSource::ApplicationCatalog);
+        assert_eq!(results[0].title, "Steam");
+    }
+
+    #[test]
     fn shortcut_and_executable_paths_are_applications() {
         assert_eq!(
             SearchResult::file(
@@ -291,6 +334,7 @@ mod tests {
                     title: format!("Result {index}"),
                     subtitle: String::new(),
                     kind: ResultKind::Placeholder,
+                    source: ResultSource::BuiltIn,
                     target: None,
                 })
                 .collect(),
