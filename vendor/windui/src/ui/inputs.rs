@@ -1393,12 +1393,14 @@ impl Widget for TextInput {
         if let Some(g) = self.config.leading {
             let mut buf = [0u8; 4];
             let icon_rect = Rect::new(bounds.x + TEXT_PAD, bounds.y, lead, bounds.h);
-            canvas.draw_text(
+            super::draw_text_with_halo(
+                canvas,
                 g.encode_utf8(&mut buf),
                 icon_rect,
                 pal.placeholder,
                 Align::Center,
                 ts,
+                style.text_shadow,
             );
         }
         let wrap = self.config.wrap && multiline;
@@ -1490,12 +1492,14 @@ impl Widget for TextInput {
         let chars: Vec<char> = disp.chars().collect();
         if is_empty {
             let pr = Rect::new(inner.x, first_line_y, inner.w, line_h);
-            canvas.draw_text(
+            super::draw_text_with_halo(
+                canvas,
                 &self.placeholder,
                 pr,
                 inp.placeholder(pal),
                 Align::Start,
                 ts,
+                style.text_shadow,
             );
         } else {
             for (i, ln) in lay.lines.iter().enumerate() {
@@ -1506,7 +1510,15 @@ impl Widget for TextInput {
                 if ln.end > ln.start {
                     let s: String = chars[ln.start..ln.end].iter().collect();
                     let tr = Rect::new(base_x, ly, NO_WRAP_W, line_h);
-                    canvas.draw_text(&s, tr, text_color, Align::Start, ts);
+                    super::draw_text_with_halo(
+                        canvas,
+                        &s,
+                        tr,
+                        text_color,
+                        Align::Start,
+                        ts,
+                        style.text_shadow,
+                    );
                 }
             }
         }

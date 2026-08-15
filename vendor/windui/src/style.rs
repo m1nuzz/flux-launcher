@@ -234,6 +234,9 @@ pub struct Style {
     pub text_align: Align,
     /// 浮层投影（None = 无）。
     pub shadow: Option<Shadow>,
+    /// Optional text halo color rendered beneath Label/TextInput glyphs.
+    /// This is disabled by default and is useful for text over variable materials.
+    pub text_shadow: Option<Color>,
     /// 子树整体不透明度（1.0 = 不透明；<1 时核心层入离屏层合成）。
     pub opacity: f32,
 }
@@ -253,6 +256,7 @@ impl Default for Style {
             line_height: None,
             text_align: Align::Start,
             shadow: None,
+            text_shadow: None,
             opacity: 1.0,
         }
     }

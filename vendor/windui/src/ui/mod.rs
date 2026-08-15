@@ -54,6 +54,32 @@ pub use window_buttons::{WindowButton, WindowButtonKind};
 /// 图标与文字之间的间距（Button 等）。
 const ICON_GAP: i32 = 6;
 
+/// Draw text with an optional small halo for contrast over translucent materials.
+/// The halo is deliberately limited to four one-pixel passes; it is not a panel,
+/// gradient, or tint and therefore preserves the underlying Acrylic surface.
+pub(crate) fn draw_text_with_halo(
+    canvas: &mut dyn Canvas,
+    text: &str,
+    rect: Rect,
+    color: Color,
+    align: Align,
+    style: &crate::text::TextStyle,
+    halo: Option<Color>,
+) {
+    if let Some(halo) = halo {
+        for (dx, dy) in [(1, 0), (-1, 0), (0, 1), (0, -1)] {
+            canvas.draw_text(
+                text,
+                Rect::new(rect.x + dx, rect.y + dy, rect.w, rect.h),
+                halo,
+                align,
+                style,
+            );
+        }
+    }
+    canvas.draw_text(text, rect, color, align, style);
+}
+
 /// 表格单元格内边距（横/纵，px）与可点击单元格高亮圆角。内边距在单元格内部，
 /// 使可点击单元格填满整格、hover 高亮覆盖整格（而非仅贴着文字）。
 const TABLE_CELL_PAD_X: i32 = 14;
@@ -275,9 +301,25 @@ impl Widget for Label {
                     Some((s.to_string(), key_w, key_f, out.clone(), t));
                 (out, t)
             };
-            canvas.draw_text(&text_str, paint_rect, fg, style.text_align, ts);
+            draw_text_with_halo(
+                canvas,
+                &text_str,
+                paint_rect,
+                fg,
+                style.text_align,
+                ts,
+                style.text_shadow,
+            );
         } else {
-            canvas.draw_text(&s, paint_rect, fg, style.text_align, ts);
+            draw_text_with_halo(
+                canvas,
+                &s,
+                paint_rect,
+                fg,
+                style.text_align,
+                ts,
+                style.text_shadow,
+            );
         }
 
         if need_clip {
@@ -3157,6 +3199,11 @@ impl Element {
     /// 浮层投影（drop shadow）。
     pub fn shadow(mut self, s: crate::style::Shadow) -> Self {
         self.style.shadow = Some(s);
+        self
+    }
+    /// Optional glyph halo for text rendered over variable backgrounds.
+    pub fn text_shadow(mut self, c: Color) -> Self {
+        self.style.text_shadow = Some(c);
         self
     }
     /// 子树整体不透明度（0..=1）。

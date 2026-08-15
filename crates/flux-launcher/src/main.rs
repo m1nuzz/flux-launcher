@@ -305,13 +305,15 @@ fn result_row(
                 .child(
                     Element::label_signal(title_signal)
                         .font_size(14.0)
-                        .fg(Color::WHITE)
+                        .fg(Color::rgba(250, 252, 255, 255))
+                        .text_shadow(Color::rgba(8, 12, 20, 210))
                         .width_match(),
                 )
                 .child(
                     Element::label(subtitle)
                         .font_size(11.0)
-                        .fg(Color::rgba(235, 241, 255, 175))
+                        .fg(Color::rgba(240, 246, 255, 238))
+                        .text_shadow(Color::rgba(8, 12, 20, 185))
                         .width_match(),
                 ),
         )
@@ -379,6 +381,7 @@ fn main() {
         .height(44)
         .font_size(15.0)
         .font_weight(500)
+        .text_shadow(Color::rgba(8, 12, 20, 220))
         .corner(10.0)
         // The entire Search control stays transparent so the Windows Acrylic
         // material remains visible through the input, caret, and leading icon.
