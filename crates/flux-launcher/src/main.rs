@@ -593,6 +593,21 @@ fn launcher_theme() -> Theme {
     theme
 }
 
+fn record_query_history(
+    settings: &Arc<RwLock<Settings>>,
+    history: &Rc<RefCell<Vec<String>>>,
+    query: &str,
+) {
+    let Ok(mut settings_guard) = settings.write() else {
+        return;
+    };
+    if !settings_guard.record_query(query) {
+        return;
+    }
+    *history.borrow_mut() = settings_guard.query_history.clone();
+    let _ = settings_guard.save();
+}
+
 fn set_game_mode(
     settings: &Arc<RwLock<Settings>>,
     game_mode: Signal<bool>,
@@ -617,6 +632,8 @@ fn result_row(
     plugin_actions: Rc<RefCell<HashMap<String, PluginInvocation>>>,
     query: Signal<String>,
     selection_color: Signal<Color>,
+    settings: Arc<RwLock<Settings>>,
+    query_history: Rc<RefCell<Vec<String>>>,
 ) -> Element {
     let id = result.id;
     let target = result.target;
@@ -706,6 +723,7 @@ fn result_row(
                 .align(Align::Center),
         )
         .on_click(move |_| {
+            record_query_history(&settings, &query_history, &query.get());
             selected_id.set(id.clone());
             selection_touched.set(true);
             if let Some(index) = rows_refresh.get().iter().position(|result| result.id == id) {
@@ -726,6 +744,9 @@ fn main() {
     let settings = Settings::load_or_default();
     let activation_hotkey = hotkeys::activation_hotkey(&settings.activation_hotkey);
     let shared_settings = Arc::new(RwLock::new(settings.clone()));
+    let query_history = Rc::new(RefCell::new(settings.query_history.clone()));
+    let history_cursor = signal(None::<usize>);
+    let history_navigation = signal(false);
 
     let query = signal(String::new());
     let selected_id = signal(String::new());
@@ -764,6 +785,8 @@ fn main() {
     let selected_index_for_rows = selected_index;
     let selection_touched_for_rows = selection_touched;
     let actions_for_rows = Rc::clone(&plugin_actions);
+    let settings_for_rows = Arc::clone(&shared_settings);
+    let history_for_rows = Rc::clone(&query_history);
     let action_items_for_rows = action_items;
     let action_index_for_rows = action_index;
     let action_mode_for_rows = action_mode;
@@ -815,6 +838,15 @@ fn main() {
         .child(action_hint("↵", "Open"))
         .child(action_hint("Ctrl + R", "Run as admin"))
         .child(action_hint("Alt + Enter", "Open file location"))
+        .child(
+            Element::label_signal(status)
+                .font_size(9.0)
+                .fg(Color::rgba(210, 224, 244, 175))
+                .text_shadow(Color::rgba(8, 12, 20, 130))
+                .max_lines(1)
+                .truncate(Truncate::End)
+                .weight(1.0),
+        )
         .visible_when(move || show_results.get() && !action_mode.get());
 
     let result_list = Element::list_signal(
@@ -830,6 +862,8 @@ fn main() {
                 Rc::clone(&actions_for_rows),
                 query_for_rows,
                 selection_color,
+                Arc::clone(&settings_for_rows),
+                Rc::clone(&history_for_rows),
             )
         },
     )
@@ -921,6 +955,8 @@ fn main() {
     let sequence_for_interval = current_sequence;
     let providers_for_interval = Rc::clone(&provider_results);
     let actions_for_interval = Rc::clone(&plugin_actions);
+    let history_cursor_for_interval = history_cursor;
+    let history_navigation_for_interval = history_navigation;
     let mut last_query = String::new();
     let mut sequence = 0_u64;
 
@@ -1079,6 +1115,10 @@ fn main() {
     let plugin_actions_for_keys = Rc::clone(&plugin_actions);
     let inline_completion_for_keys = inline_completion;
     let settings_visible_for_keys = settings_visible;
+    let query_history_for_keys = Rc::clone(&query_history);
+    let history_cursor_for_keys = history_cursor;
+    let history_navigation_for_keys = history_navigation;
+    let settings_for_history_for_keys = Arc::clone(&shared_settings);
     let size_for_keys = window_size.clone();
     let show_results_for_keys = show_results;
     let settings_for_game_hotkey = Arc::clone(&shared_settings);
@@ -1098,6 +1138,20 @@ fn main() {
         if !event.pressed || settings_visible_for_keys.get() {
             return false;
         }
+        if event.ctrl && matches!(event.key, Key::Char('h') | Key::Char('H')) {
+            let history = query_history_for_keys.borrow();
+            if history.is_empty() {
+                return false;
+            }
+            let next = history_cursor_for_keys
+                .get()
+                .map(|index| index.saturating_sub(1))
+                .unwrap_or(history.len() - 1);
+            history_cursor_for_keys.set(Some(next));
+            history_navigation_for_keys.set(true);
+            query_for_keys.set(history[next].clone());
+            return true;
+        }
         let query = query_for_keys.get();
         if query.trim().is_empty() {
             return false;
@@ -1116,6 +1170,11 @@ fn main() {
         }
 
         if event.key == Key::Enter && alt_key_is_down() {
+            record_query_history(
+                &settings_for_history_for_keys,
+                &query_history_for_keys,
+                &query,
+            );
             if let Some(result) = selected_result(
                 &current_results,
                 &selected_id_for_keys.get(),
@@ -1157,6 +1216,11 @@ fn main() {
                     return true;
                 }
                 Key::Enter | Key::Space => {
+                    record_query_history(
+                        &settings_for_history_for_keys,
+                        &query_history_for_keys,
+                        &query,
+                    );
                     if let Some(result) = selected_result(
                         &current_results,
                         &selected_id_for_keys.get(),
@@ -1179,6 +1243,11 @@ fn main() {
         }
 
         if event.ctrl && matches!(event.key, Key::Char('r') | Key::Char('R')) {
+            record_query_history(
+                &settings_for_history_for_keys,
+                &query_history_for_keys,
+                &query,
+            );
             if let Some(result) = selected_result(
                 &current_results,
                 &selected_id_for_keys.get(),
@@ -1229,6 +1298,11 @@ fn main() {
                 true
             }
             Key::Enter => {
+                record_query_history(
+                    &settings_for_history_for_keys,
+                    &query_history_for_keys,
+                    &query,
+                );
                 if let Some(result) = selected_result(
                     &current_results,
                     &selected_id_for_keys.get(),
@@ -1312,6 +1386,9 @@ fn main() {
     let show_results_for_back = show_results;
     let size_for_back = window_size.clone();
     let size_for_apply = window_size.clone();
+    let settings_for_clear_history = Arc::clone(&shared_settings);
+    let history_for_clear = Rc::clone(&query_history);
+    let history_cursor_for_clear = history_cursor;
     let settings_panel = Element::col()
         .fill()
         .padding(24)
@@ -1407,6 +1484,26 @@ fn main() {
                             clear_query_on_activation,
                         ),
                     ))
+                    .child(
+                        Element::row()
+                            .width_match()
+                            .spacing(10)
+                            .child(
+                                Element::label("Query history: Ctrl+H recalls committed searches")
+                                    .font_size(11.0)
+                                    .fg(Color::rgba(235, 241, 255, 175))
+                                    .width_match(),
+                            )
+                            .child(Element::button("Clear history").on_click(move |ctx| {
+                                if let Ok(mut settings) = settings_for_clear_history.write() {
+                                    settings.clear_query_history();
+                                    let _ = settings.save();
+                                }
+                                history_for_clear.borrow_mut().clear();
+                                history_cursor_for_clear.set(None);
+                                ctx.toast_ok("Query history cleared");
+                            })),
+                    )
                     .child(Element::field(
                         "Smooth Caret",
                         Element::checkbox("Animate search caret movement", smooth_caret),
@@ -1499,6 +1596,11 @@ fn main() {
         .content(content)
         .on_interval(SEARCH_INTERVAL, move |_| {
             let next_query = query_for_interval.get();
+            let from_history = history_navigation_for_interval.get();
+            history_navigation_for_interval.set(false);
+            if !from_history {
+                history_cursor_for_interval.set(None);
+            }
             if next_query == last_query {
                 return;
             }

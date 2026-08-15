@@ -6,6 +6,7 @@ use std::path::{Path, PathBuf};
 const DEFAULT_CARET_DURATION_MS: u16 = 95;
 const MIN_CARET_DURATION_MS: u16 = 60;
 const MAX_CARET_DURATION_MS: u16 = 160;
+const MAX_QUERY_HISTORY: usize = 32;
 
 fn enabled_by_default() -> bool {
     true
@@ -61,6 +62,8 @@ pub struct Settings {
     pub clear_query_on_activation: bool,
     #[serde(default = "default_caret_duration")]
     pub smooth_caret_duration_ms: u16,
+    #[serde(default)]
+    pub query_history: Vec<String>,
 }
 
 impl Default for Settings {
@@ -75,6 +78,7 @@ impl Default for Settings {
             custom_selection_color: default_selection_color(),
             clear_query_on_activation: true,
             smooth_caret_duration_ms: DEFAULT_CARET_DURATION_MS,
+            query_history: Vec::new(),
         }
     }
 }
@@ -87,6 +91,48 @@ impl Settings {
         if self.activation_hotkey.key.trim().is_empty() {
             self.activation_hotkey = HotkeyConfig::default();
         }
+        self.normalize_query_history();
+    }
+
+    pub fn record_query(&mut self, query: &str) -> bool {
+        let query = query.trim();
+        if query.is_empty() {
+            return false;
+        }
+        if let Some(index) = self
+            .query_history
+            .iter()
+            .position(|item| item.eq_ignore_ascii_case(query))
+        {
+            self.query_history.remove(index);
+        }
+        self.query_history.push(query.to_owned());
+        self.normalize_query_history();
+        true
+    }
+
+    pub fn clear_query_history(&mut self) {
+        self.query_history.clear();
+    }
+
+    fn normalize_query_history(&mut self) {
+        let mut normalized = Vec::with_capacity(self.query_history.len());
+        for query in self.query_history.drain(..) {
+            let query = query.trim();
+            if query.is_empty()
+                || normalized
+                    .iter()
+                    .any(|item: &String| item.eq_ignore_ascii_case(query))
+            {
+                continue;
+            }
+            normalized.push(query.to_owned());
+        }
+        if normalized.len() > MAX_QUERY_HISTORY {
+            let start = normalized.len() - MAX_QUERY_HISTORY;
+            normalized.drain(..start);
+        }
+        self.query_history = normalized;
     }
 
     pub fn config_path() -> PathBuf {
@@ -180,6 +226,7 @@ mod tests {
             custom_selection_color: 0x12ab34,
             clear_query_on_activation: false,
             smooth_caret_duration_ms: 120,
+            query_history: vec![String::from("steam"), String::from("ext:zip")],
         };
 
         expected.save_to(&path).unwrap();
@@ -196,6 +243,23 @@ mod tests {
             io::ErrorKind::InvalidData
         );
         fs::remove_file(path).unwrap();
+    }
+
+    #[test]
+    fn query_history_is_deduplicated_and_bounded() {
+        let mut settings = Settings::default();
+        assert!(settings.record_query(" Steam "));
+        assert!(settings.record_query("ext:zip"));
+        assert!(settings.record_query("steam"));
+        assert_eq!(settings.query_history, ["ext:zip", "steam"]);
+        settings
+            .query_history
+            .extend((0..40).map(|i| format!("q{i}")));
+        settings.normalize();
+        assert_eq!(settings.query_history.len(), MAX_QUERY_HISTORY);
+        assert_eq!(settings.query_history.last().unwrap(), "q39");
+        settings.clear_query_history();
+        assert!(settings.query_history.is_empty());
     }
 
     #[test]

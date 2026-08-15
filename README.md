@@ -4,7 +4,7 @@
   <img src="assets/logotype.jpg" alt="Flux Launcher logo" width="392">
 </p>
 
-Flux Launcher is a lightweight Windows launcher written in Rust with **windui** as its only GUI framework. It combines a compact Spotlight-style search surface with Everything IPC, native Flow Launcher executable plugins, configurable global hotkeys, fullscreen-aware Game Mode, a system tray menu, and a windui-native Settings panel.
+Flux Launcher is a lightweight Windows launcher written in Rust with **windui** as its only GUI framework. It combines a compact Spotlight-style search surface with Everything IPC, native Flow Launcher executable plugins, configurable global hotkeys, fullscreen-aware Game Mode, persistent query history, visible provider status, a system tray menu, and a windui-native Settings panel.
 
 The primary interaction is intentionally minimal. With an empty query, Flux shows only a short dark translucent search strip. After at least one character is entered, the native popup expands and displays a bounded, ranked result list. The frameless Windows path uses a popup-style alpha-aware client surface, the Windows system backdrop API, and a DirectComposition-compatible path where supported; it does not retain the opaque native title-bar/client frame that caused the previous white rectangle.
 
@@ -14,10 +14,12 @@ The primary interaction is intentionally minimal. With an empty query, Flux show
 | --- | --- |
 | GUI | Rust + windui only; no WebView, browser engine, or secondary UI toolkit |
 | Window material | Windows system Mica request with safe fallback and Acrylic-capable backend path |
-| Search | Built-in command palette, bounded eight-result pipeline, Everything IPC provider, and native Flow plugin provider |
+| Search | Built-in command palette, bounded eight-result pipeline, always-on Everything IPC provider, and native Flow plugin provider |
 | Ranking | Exact/prefix application matches and executable/shortcut results are ranked ahead of ordinary indexed files and folders |
+| Query history | Committed searches are persisted atomically, recalled with `Ctrl+H`, deduplicated case-insensitively, and capped at 32 entries |
+| Provider status | Compact status text reports search/loading/fallback state in the expanded action bar |
 | Keyboard UX | Up/Down/Home/End select results, Enter launches, Right opens action mode, Left/Escape returns, and actions support Open, Copy path, Copy name, and native plugin execution |
-| Query layout | Compact 72 dp search strip when empty; expanded 400 dp result surface after typing |
+| Query layout | Compact 72 px search strip when empty; expanded 286 px result surface after typing |
 | Smooth Caret | Optional ease-out visual caret transition with configurable duration; IME coordinates remain exact |
 | Global hotkey | Configurable modifier/key combination, default `Alt+Space` |
 | Game Mode | Fullscreen suppression enabled by default, manual toggle through `Ctrl+F12` and the tray |
@@ -63,7 +65,7 @@ Settings are stored atomically in:
 %APPDATA%\FluxLauncher\settings.json
 ```
 
-The default activation combination is `Alt+Space`. The default policy suppresses activation while another application occupies the full monitor bounds and enables Game Mode protection. Smooth Caret is enabled by default for the launcher search field with a 95 ms transition.
+The default activation combination is `Alt+Space`. The default policy suppresses activation while another application occupies the full monitor bounds and enables Game Mode protection. Smooth Caret is enabled by default for the launcher search field with a 95 ms transition. Committed searches can be recalled with `Ctrl+H`; Settings includes a Clear history control.
 
 The environment variable below opens the Settings panel directly and is intended for smoke testing:
 
@@ -78,9 +80,11 @@ The search field remains focused while the result list is navigated. `ArrowUp` a
 
 `ArrowRight` enters an action surface for the selected result. `ArrowUp` and `ArrowDown` select an action, `Enter` executes it, and `ArrowLeft` or `Escape` returns to the result list. The initial action set includes opening a path, copying a path, copying a result name, and executing the action supplied by an `Executable`/`Executable_V2` plugin. Mouse selection remains supported and uses the same result/action model.
 
+`Ctrl+H` recalls committed searches from newest to oldest and can be pressed repeatedly to move backward through the bounded history. Editing the recalled query starts a new history navigation sequence. Settings provides a Clear history action.
+
 ## Everything integration
 
-Flux uses the Everything IPC protocol through the `everything-ipc` crate. Requests are dispatched in a background worker, use a short timeout, reject stale query sequences, and return at most eight results. If Everything is not running or cannot answer within the timeout, Flux remains usable without it.
+Flux uses the Everything IPC protocol through the `everything-ipc` crate. Every non-empty query is dispatched in a background worker, including native Everything syntax such as `ext:zip`, `parent:`, `file:`, `folder:`, and `dm:today`. Requests use a short timeout, reject stale query sequences, and return at most eight results. If Everything is not running or cannot answer within the timeout, Flux remains usable without it.
 
 Install Everything from [voidtools](https://www.voidtools.com/) and leave its IPC service enabled to obtain indexed file and folder results. No Everything installation is required for the built-in palette or Flow plugin results.
 
@@ -120,18 +124,18 @@ The UI keeps result state bounded and uses background workers only for external 
 
 ## Smoke and memory evidence
 
-The latest successful Windows smoke run is available at [GitHub Actions run 31861928506](https://github.com/m1nuzz/flux-launcher/actions/runs/31861928506). It verifies the compact empty state, typed-query expansion, ranked results, ArrowDown selection, Right-arrow action mode, Enter action execution, native Flow fixture output, Settings rendering, the requested system-backdrop path, and the following process samples from Windows Server 2025:
+The latest successful Windows smoke run is available at [GitHub Actions run 31896154901](https://github.com/m1nuzz/flux-launcher/actions/runs/31896154901). It verifies the compact empty state, repeated activation, typed-query expansion, native `ext:zip` syntax input, ranked results, ArrowDown selection, Right-arrow action mode, Enter action execution, native Flow fixture output, Settings rendering, the requested system-backdrop path, and the following process samples from Windows Server 2025:
 
 | State | Working set | Private bytes |
 | --- | ---: | ---: |
-| Idle, empty query | approximately 29.5 MiB | approximately 13.4 MiB |
-| Query active | approximately 36.4 MiB | approximately 20.3 MiB |
+| Idle, empty query | approximately 26.7 MiB | approximately 8.5 MiB |
+| Query active | approximately 51.9 MiB | approximately 30.4 MiB |
 
 These are point-in-time smoke measurements, not a formal performance guarantee. The query sample includes the expanded UI and a native plugin response. Memory usage can vary with Windows composition, display scale, fonts, GPU driver, plugin behavior, and Everything availability.
 
 ## Release
 
-The first MVP release is **Flux Launcher v0.1.0**. The current main branch additionally contains the translucent popup, app-first ranking, keyboard navigation, and action-mode corrections described above; the next patch release will carry these changes as a downloadable Windows x64 artifact. See the [GitHub Releases page](https://github.com/m1nuzz/flux-launcher/releases) for the available binary and English release notes.
+The current stable release is **[Flux Launcher v0.1.38](https://github.com/m1nuzz/flux-launcher/releases/tag/v0.1.38)** for Windows 11 x64. It includes the transparent Acrylic lifecycle fixes, app-first ranking, always-on Everything provider, native query syntax passthrough, persistent query history, provider status, keyboard navigation, action mode, and the current Windows smoke validation. See the [GitHub Releases page](https://github.com/m1nuzz/flux-launcher/releases) for binaries and English release notes.
 
 ## License
 
