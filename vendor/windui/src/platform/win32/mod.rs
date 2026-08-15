@@ -562,9 +562,11 @@ unsafe fn run_windowed(
         WINDOW_STYLE(WS_OVERLAPPEDWINDOW.0 & !(WS_THICKFRAME.0 | WS_MAXIMIZEBOX.0))
     };
 
-    // Mica uses a no-redirection composition surface. Acrylic keeps the normal
-    // DWM redirection surface so its Win32 Acrylic policy can blur behind the HWND.
-    let ex_style = if cfg.backdrop == Backdrop::Mica {
+    // Both system materials use the alpha-aware DirectComposition surface. A
+    // redirected HWND client would otherwise paint its default opaque class
+    // background over the swap chain and produce the white rectangle seen in the
+    // visual smoke screenshot.
+    let ex_style = if cfg.backdrop != Backdrop::None {
         WS_EX_NOREDIRECTIONBITMAP
     } else {
         WINDOW_EX_STYLE::default()
