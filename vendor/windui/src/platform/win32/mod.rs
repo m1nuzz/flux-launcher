@@ -1837,6 +1837,9 @@ pub(crate) fn show_and_activate(hwnd: HWND) {
             });
             let _ = InvalidateRect(Some(hwnd), None, false);
         }
+        // Force the first visible D2D frame synchronously. Without this, a hidden
+        // DirectComposition surface may not be presented until the next query edit.
+        let _ = UpdateWindow(hwnd);
     }
 }
 

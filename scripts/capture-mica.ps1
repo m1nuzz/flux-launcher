@@ -24,6 +24,12 @@ public static class FluxWallpaper {
     public static extern void mouse_event(uint flags, uint dx, uint dy, uint data, UIntPtr extraInfo);
     [DllImport("user32.dll", SetLastError = true)]
     public static extern void keybd_event(byte virtualKey, byte scanCode, uint flags, UIntPtr extraInfo);
+    [DllImport("user32.dll", SetLastError = true)]
+    public static extern bool ShowWindow(IntPtr hwnd, int command);
+    [DllImport("user32.dll", SetLastError = true)]
+    public static extern bool UpdateWindow(IntPtr hwnd);
+    [DllImport("user32.dll", SetLastError = true)]
+    public static extern bool SetForegroundWindow(IntPtr hwnd);
 }
 '@
 
@@ -149,6 +155,19 @@ try {
     $idleMemory = Get-MemorySnapshot $process.Id
     Save-Screenshot "mica-desktop.png"
 
+    # Regression probe: repeat the native hide/show path while the query is empty.
+    # Capture this before any query edit, so a later repaint cannot hide a failure
+    # where the DirectComposition surface attaches only after typing.
+    $launcherHandle = $process.MainWindowHandle
+    if ($launcherHandle -eq [IntPtr]::Zero) { throw "Flux launcher has no main window handle." }
+    [FluxWallpaper]::ShowWindow($launcherHandle, 0) | Out-Null
+    Start-Sleep -Milliseconds 250
+    [FluxWallpaper]::ShowWindow($launcherHandle, 5) | Out-Null
+    [FluxWallpaper]::SetForegroundWindow($launcherHandle) | Out-Null
+    [FluxWallpaper]::UpdateWindow($launcherHandle) | Out-Null
+    Start-Sleep -Milliseconds 500
+    Save-Screenshot "mica-repeat-show-empty.png"
+
     $bounds = [System.Windows.Forms.SystemInformation]::VirtualScreen
     $searchX = $bounds.Left + [int]($bounds.Width / 2)
     $searchY = $bounds.Top + [int]($bounds.Height / 2)
@@ -201,6 +220,7 @@ try {
         ProcessId = $process.Id
         CapturedAtUtc = (Get-Date).ToUniversalTime().ToString("O")
         WallpaperProbe = $true
+        RepeatShowEmptyProbe = $true
         QueryExpandedProbe = $true
         SettingsPanelProbe = $true
         KeyboardSelectionProbe = $true
