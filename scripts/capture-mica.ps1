@@ -88,6 +88,7 @@ Start-Sleep -Milliseconds 750
 [FluxWallpaper]::keybd_event(0x5B, 0, 2, [UIntPtr]::Zero)
 Start-Sleep -Milliseconds 750
 
+Get-Process | Where-Object { $_.MainWindowTitle -like "*System Properties*" } | Stop-Process -Force -ErrorAction SilentlyContinue
 $probeScriptPath = Join-Path $OutputDirectory "probe-screen.ps1"
 @'
 Add-Type -AssemblyName System.Windows.Forms
@@ -104,6 +105,7 @@ public sealed class FluxProbeForm : Form
         FormBorderStyle = FormBorderStyle.None;
         WindowState = FormWindowState.Maximized;
         ShowInTaskbar = false;
+        TopMost = true;
         StartPosition = FormStartPosition.Manual;
         DoubleBuffered = true;
         BackColor = Color.FromArgb(21, 46, 105);
@@ -129,7 +131,7 @@ public sealed class FluxProbeForm : Form
 $form = New-Object FluxProbeForm
 [System.Windows.Forms.Application]::Run($form)
 '@ | Set-Content -Encoding utf8 $probeScriptPath
-$probeProcess = Start-Process -FilePath "pwsh" -ArgumentList @("-NoProfile", "-File", $probeScriptPath) -PassThru
+$probeProcess = Start-Process -FilePath "pwsh" -ArgumentList @("-NoProfile", "-File", $probeScriptPath) -WindowStyle Hidden -PassThru
 Start-Sleep -Seconds 2
 
 $stdoutPath = Join-Path $OutputDirectory "launcher.stdout.log"
