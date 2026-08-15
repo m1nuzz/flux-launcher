@@ -323,9 +323,8 @@ fn main() {
         .height(44)
         .font_size(15.0)
         .corner(10.0)
-        // One uniform translucent control layer: the TextInput itself stays
-        // transparent so the Windows Acrylic material remains visible below it.
-        .bg(Color::rgba(24, 31, 44, 180))
+        // The entire Search control stays transparent so the Windows Acrylic
+        // material remains visible through the input, caret, and leading icon.
         .border(Color::rgba(0, 0, 0, 0), 0)
         .padding_xy(13, 0);
 
