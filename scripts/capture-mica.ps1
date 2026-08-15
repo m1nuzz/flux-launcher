@@ -121,6 +121,25 @@ $probeStderrPath = Join-Path $OutputDirectory "probe.stderr.log"
 $probeProcess = Start-Process -FilePath "pwsh" -ArgumentList @("-NoProfile", "-File", $probeScriptPath) -WindowStyle Hidden -RedirectStandardOutput $probeStdoutPath -RedirectStandardError $probeStderrPath -PassThru
 Start-Sleep -Seconds 2
 
+# Seed temporary Start Menu shortcuts so the WAB smoke exercises the same
+# application-catalog path as a real Windows installation.
+$wabFixtureRoot = Join-Path $env:APPDATA "Microsoft\Windows\Start Menu\Programs\Flux Smoke WAB"
+New-Item -ItemType Directory -Force -Path $wabFixtureRoot | Out-Null
+$wabFixtureNames = @(
+    "WAB Primary Application.lnk",
+    "WAB Secondary Application.lnk",
+    "WAB Microsoft Windows Web Account Manager Diagnostic Resource Long Name.lnk",
+    "WAB Microsoft Windows Web Account Manager Support Center Long Name.lnk"
+)
+$shortcutShell = New-Object -ComObject WScript.Shell
+foreach ($fixtureName in $wabFixtureNames) {
+    $shortcut = $shortcutShell.CreateShortcut((Join-Path $wabFixtureRoot $fixtureName))
+    $shortcut.TargetPath = $Executable
+    $shortcut.WorkingDirectory = Split-Path -Parent $Executable
+    $shortcut.Description = "Flux WAB smoke application fixture"
+    $shortcut.Save()
+}
+
 $stdoutPath = Join-Path $OutputDirectory "launcher.stdout.log"
 $stderrPath = Join-Path $OutputDirectory "launcher.stderr.log"
 $process = Start-Process -FilePath $Executable -PassThru -RedirectStandardOutput $stdoutPath -RedirectStandardError $stderrPath
@@ -198,5 +217,8 @@ finally {
     }
     if ($probeProcess -and !$probeProcess.HasExited) {
         Stop-Process -Id $probeProcess.Id -Force
+    }
+    if (Test-Path $wabFixtureRoot) {
+        Remove-Item -Recurse -Force $wabFixtureRoot
     }
 }
