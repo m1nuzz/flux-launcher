@@ -92,7 +92,7 @@ $probeScriptPath = Join-Path $OutputDirectory "probe-screen.ps1"
 @'
 Add-Type -AssemblyName System.Windows.Forms
 Add-Type -AssemblyName System.Drawing
-Add-Type @'
+Add-Type @"
 using System;
 using System.Drawing;
 using System.Drawing.Drawing2D;
@@ -125,7 +125,7 @@ public sealed class FluxProbeForm : Form
         e.Graphics.FillEllipse(gold, x, y, size, size);
     }
 }
-'@ | Add-Type
+"@ | Add-Type
 $form = New-Object FluxProbeForm
 [System.Windows.Forms.Application]::Run($form)
 '@ | Set-Content -Encoding utf8 $probeScriptPath
