@@ -139,11 +139,12 @@ try {
     [FluxWallpaper]::mouse_event(0x0002, 0, 0, 0, [UIntPtr]::Zero)
     [FluxWallpaper]::mouse_event(0x0004, 0, 0, 0, [UIntPtr]::Zero)
     Start-Sleep -Milliseconds 250
-    $shell.SendKeys("se")
+    $shell.SendKeys("wab")
     Start-Sleep -Seconds 2
     $queryMemory = Get-MemorySnapshot $process.Id
     Save-Screenshot "everything-fallback.png"
 
+    # The WAB query exercises long App Paths and duplicate application-like entries.
     # Flow-style keyboard navigation: select the second result with Down,
     # enter action mode with Right, then execute the next action with Enter.
     $shell.SendKeys("{DOWN}")
