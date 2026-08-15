@@ -97,7 +97,6 @@ $form = New-Object System.Windows.Forms.Form
 $form.FormBorderStyle = [System.Windows.Forms.FormBorderStyle]::None
 $form.WindowState = [System.Windows.Forms.FormWindowState]::Maximized
 $form.ShowInTaskbar = $false
-$form.TopMost = $true
 $form.StartPosition = [System.Windows.Forms.FormStartPosition]::Manual
 $form.BackColor = [System.Drawing.Color]::FromArgb(21, 46, 105)
 $form.Add_Paint({
