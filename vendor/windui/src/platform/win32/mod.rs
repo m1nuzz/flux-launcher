@@ -497,14 +497,10 @@ unsafe fn apply_system_backdrop(hwnd: HWND, backdrop: Backdrop) {
         &dark_mode as *const _ as *const c_void,
         size_of::<bool>() as u32,
     );
-    // Extend the complete client area before requesting the system material.
-    let full_frame = MARGINS {
-        cxLeftWidth: -1,
-        cxRightWidth: -1,
-        cyTopHeight: -1,
-        cyBottomHeight: -1,
-    };
-    let _ = DwmExtendFrameIntoClientArea(hwnd, &full_frame);
+    // DirectComposition already owns the complete client surface for backdrop
+    // windows. Do not extend the frame into that same surface a second time.
+    let zero_margins = MARGINS::default();
+    let _ = DwmExtendFrameIntoClientArea(hwnd, &zero_margins);
     if DwmSetWindowAttribute(
         hwnd,
         DWMWA_SYSTEMBACKDROP_TYPE,
@@ -866,24 +862,14 @@ unsafe fn run_windowed(
                 cyBottomHeight: 0,
             }
         } else if local_backdrop_available {
-            // Extend the complete frameless client area only when DWM can render
-            // the requested local system material across the whole surface.
-            MARGINS {
-                cxLeftWidth: -1,
-                cxRightWidth: -1,
-                cyTopHeight: -1,
-                cyBottomHeight: -1,
-            }
+            // DirectComposition and DWMWA_SYSTEMBACKDROP_TYPE already cover the
+            // complete client surface; keep the legacy frame extension empty.
+            MARGINS::default()
         } else {
             // Do not ask RDP/composition-disabled DWM for a glass frame: its
             // fallback is an opaque neutral rectangle. The transparent swapchain
             // remains visible without an app-painted replacement surface.
-            MARGINS {
-                cxLeftWidth: 0,
-                cxRightWidth: 0,
-                cyTopHeight: 0,
-                cyBottomHeight: 0,
-            }
+            MARGINS::default()
         };
         let _ = DwmExtendFrameIntoClientArea(hwnd, &margins);
         // 圆角：显式声明，与 Win11 系统其余窗口一致。
