@@ -94,13 +94,13 @@ try {
     [FluxAcrylicProof]::mouse_event(4, 0, 0, 0, [UIntPtr]::Zero)
     Start-Sleep -Milliseconds 250
     Save-Screen 'windows11-acrylic-proof-empty.png' $screen
-    (New-Object -ComObject WScript.Shell).SendKeys('steam')
+    [System.Windows.Forms.SendKeys]::SendWait('steam')
     Start-Sleep -Seconds 2
     Save-Screen 'windows11-acrylic-proof-before-down.png' $screen
-    (New-Object -ComObject WScript.Shell).SendKeys('{DOWN}')
+    [System.Windows.Forms.SendKeys]::SendWait('{DOWN}')
     Start-Sleep -Milliseconds 350
     Save-Screen 'windows11-acrylic-proof-after-down.png' $screen
-    (New-Object -ComObject WScript.Shell).SendKeys('{RIGHT}')
+    [System.Windows.Forms.SendKeys]::SendWait('{RIGHT}')
     Start-Sleep -Milliseconds 350
     Save-Screen 'windows11-acrylic-proof-action-mode.png' $screen
     [ordered]@{
