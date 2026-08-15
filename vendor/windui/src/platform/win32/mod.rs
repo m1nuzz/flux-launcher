@@ -507,16 +507,12 @@ unsafe fn apply_system_backdrop(hwnd: HWND, backdrop: Backdrop) {
         &dark_mode as *const _ as *const c_void,
         size_of::<bool>() as u32,
     );
-    // Local Windows 11 needs the documented full-sheet extension for the
-    // Acrylic material to cover a frameless client. Remote fallback is handled
-    // above with zero margins because it cannot render system Acrylic.
-    let full_frame = MARGINS {
-        cxLeftWidth: -1,
-        cxRightWidth: -1,
-        cyTopHeight: -1,
-        cyBottomHeight: -1,
-    };
-    let _ = DwmExtendFrameIntoClientArea(hwnd, &full_frame);
+    // The public system backdrop already covers the entire window bounds.
+    // Reset legacy frame extension to zero before requesting it; combining
+    // full-sheet margins with DWMSBT_TRANSIENTWINDOW creates a second material
+    // boundary around the transparent DirectComposition surface.
+    let zero_margins = MARGINS::default();
+    let _ = DwmExtendFrameIntoClientArea(hwnd, &zero_margins);
     if DwmSetWindowAttribute(
         hwnd,
         DWMWA_SYSTEMBACKDROP_TYPE,
@@ -527,6 +523,16 @@ unsafe fn apply_system_backdrop(hwnd: HWND, backdrop: Backdrop) {
     {
         return;
     }
+
+    // Public system material is unavailable: restore the documented sheet of
+    // glass only for the legacy fallback that actually needs frame extension.
+    let full_frame = MARGINS {
+        cxLeftWidth: -1,
+        cxRightWidth: -1,
+        cyTopHeight: -1,
+        cyBottomHeight: -1,
+    };
+    let _ = DwmExtendFrameIntoClientArea(hwnd, &full_frame);
 
     if backdrop == Backdrop::Acrylic && !is_remote && composition_enabled {
         apply_acrylic_policy(hwnd);
