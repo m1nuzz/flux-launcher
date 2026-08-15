@@ -125,7 +125,7 @@ public sealed class FluxProbeForm : Form
         e.Graphics.FillEllipse(gold, x, y, size, size);
     }
 }
-"@ | Add-Type
+"@
 $form = New-Object FluxProbeForm
 [System.Windows.Forms.Application]::Run($form)
 '@ | Set-Content -Encoding utf8 $probeScriptPath
