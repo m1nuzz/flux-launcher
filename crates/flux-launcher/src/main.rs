@@ -18,7 +18,7 @@ use flux_core::{
 };
 use plugins::{FlowPluginWorker, PluginInvocation, PluginQueryResponse};
 use windui::app::WindowSizeHandle;
-use windui::core::ClipboardProvider;
+use windui::core::{ClipboardProvider, EventCtx, Widget};
 use windui::event::{Key, KeyEvent};
 use windui::prelude::*;
 
@@ -108,12 +108,33 @@ fn actions_for_result(
     actions
 }
 
-fn selected_result(results: &[SearchResult], selected_id: &str) -> Option<SearchResult> {
+fn selected_result(
+    results: &[SearchResult],
+    selected_id: &str,
+    selected_index: usize,
+) -> Option<SearchResult> {
     results
         .iter()
         .find(|result| result.id == selected_id)
         .cloned()
+        .or_else(|| results.get(selected_index).cloned())
         .or_else(|| results.first().cloned())
+}
+
+/// Invisible reactive widget that keeps the keyboard-selected row inside the
+/// surrounding windui scroll viewport without painting an additional surface.
+struct ResultRowAnchor {
+    result_id: String,
+    selected_id: Signal<String>,
+}
+
+impl Widget for ResultRowAnchor {
+    fn on_update(&mut self, ctx: &mut EventCtx) {
+        if self.selected_id.get() == self.result_id {
+            let row_id = ctx.id();
+            let _ = ctx.tree_mut().scroll_into_view(row_id);
+        }
+    }
 }
 
 fn execute_result_action(result: &SearchResult, action: &ActionKind) {
@@ -232,6 +253,11 @@ fn result_row(
     let subtitle = result.subtitle;
     let selected = selected_id.get() == id;
     Element::row()
+        .widget(ResultRowAnchor {
+            result_id: id.clone(),
+            selected_id,
+        })
+        .reactive()
         .width_match()
         .height(46)
         .padding_xy(12, 5)
@@ -388,9 +414,11 @@ fn main() {
                 .on_click({
                     let action_window_slot = action_window_slot_for_rows.clone();
                     move |_| {
-                        if let Some(result) =
-                            selected_result(&result_source.get(), &selected_for_rows.get())
-                        {
+                        if let Some(result) = selected_result(
+                            &result_source.get(),
+                            &selected_for_rows.get(),
+                            selected_index_for_rows.get(),
+                        ) {
                             execute_result_action(&result, &item_kind);
                         }
                         action_mode_for_rows.set(false);
@@ -565,9 +593,11 @@ fn main() {
                     return true;
                 }
                 Key::Enter | Key::Space => {
-                    if let Some(result) =
-                        selected_result(&current_results, &selected_id_for_keys.get())
-                    {
+                    if let Some(result) = selected_result(
+                        &current_results,
+                        &selected_id_for_keys.get(),
+                        selected_index_for_keys.get(),
+                    ) {
                         if let Some(action) = action_items_for_keys
                             .get()
                             .get(action_index_for_keys.get())
@@ -605,8 +635,11 @@ fn main() {
                 true
             }
             Key::Right => {
-                if let Some(result) = selected_result(&current_results, &selected_id_for_keys.get())
-                {
+                if let Some(result) = selected_result(
+                    &current_results,
+                    &selected_id_for_keys.get(),
+                    selected_index_for_keys.get(),
+                ) {
                     let actions = actions_for_result(&result, &plugin_actions_for_keys.borrow());
                     if !actions.is_empty() {
                         action_items_for_keys.set(actions);
@@ -619,8 +652,11 @@ fn main() {
                 true
             }
             Key::Enter => {
-                if let Some(result) = selected_result(&current_results, &selected_id_for_keys.get())
-                {
+                if let Some(result) = selected_result(
+                    &current_results,
+                    &selected_id_for_keys.get(),
+                    selected_index_for_keys.get(),
+                ) {
                     if let Some(target) = result.target.as_deref() {
                         let _ = launch::open_path(target);
                     } else if let Some(action) =
