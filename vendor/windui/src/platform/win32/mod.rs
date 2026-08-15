@@ -575,12 +575,15 @@ unsafe fn apply_system_backdrop(hwnd: HWND, backdrop: Backdrop) {
     // the runner's light system preference and exposing a bright outer frame.
     const DWMWA_USE_IMMERSIVE_DARK_MODE: windows::Win32::Graphics::Dwm::DWMWINDOWATTRIBUTE =
         windows::Win32::Graphics::Dwm::DWMWINDOWATTRIBUTE(20);
-    let dark_mode = true;
+    // DWM expects a Win32 BOOL here, which is a 4-byte signed integer rather than Rust's
+    // 1-byte bool. Passing the Rust layout can make the attribute silently fail and leave
+    // Acrylic in the user's light system material, producing the white surface seen in smoke.
+    let dark_mode: i32 = 1;
     let _ = DwmSetWindowAttribute(
         hwnd,
         DWMWA_USE_IMMERSIVE_DARK_MODE,
         &dark_mode as *const _ as *const c_void,
-        size_of::<bool>() as u32,
+        size_of::<i32>() as u32,
     );
     // The public system backdrop already covers the entire window bounds.
     // Reset legacy frame extension to zero before requesting it; combining
