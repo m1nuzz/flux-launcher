@@ -13,13 +13,19 @@ use std::sync::{Arc, RwLock};
 use std::time::Duration;
 
 use everything::{EverythingResponse, EverythingWorker};
-use flux_core::{should_suppress_activation, HotkeyConfig, SearchModel, SearchResult, Settings};
+use flux_core::{
+    rank_results, should_suppress_activation, HotkeyConfig, SearchModel, SearchResult, Settings,
+};
 use plugins::{FlowPluginWorker, PluginInvocation, PluginQueryResponse};
+use windui::app::WindowSizeHandle;
+use windui::core::ClipboardProvider;
+use windui::event::{Key, KeyEvent};
 use windui::prelude::*;
 
 const WINDOW_WIDTH: i32 = 420;
 const COMPACT_WINDOW_HEIGHT: i32 = 72;
 const EXPANDED_WINDOW_HEIGHT: i32 = 400;
+const ACTION_WINDOW_HEIGHT: i32 = 500;
 const SETTINGS_WINDOW_HEIGHT: i32 = 520;
 const SEARCH_INTERVAL: Duration = Duration::from_millis(40);
 const PROVIDER_MIN_QUERY_LEN: usize = 2;
@@ -41,14 +47,89 @@ impl ProviderResults {
         self.plugins.clear();
     }
 
-    fn merged(&self) -> Vec<SearchResult> {
-        self.built_in
+    fn merged(&self, query: &str) -> Vec<SearchResult> {
+        let mut merged = self
+            .built_in
             .iter()
             .chain(&self.everything)
             .chain(&self.plugins)
-            .take(MAX_VISIBLE_RESULTS)
             .cloned()
-            .collect()
+            .collect::<Vec<_>>();
+        rank_results(query, &mut merged);
+        merged.truncate(MAX_VISIBLE_RESULTS);
+        merged
+    }
+}
+
+#[derive(Clone, Debug)]
+enum ActionKind {
+    Open,
+    CopyPath,
+    CopyName,
+    RunPlugin(PluginInvocation),
+}
+
+#[derive(Clone, Debug)]
+struct ActionItem {
+    id: String,
+    label: String,
+    kind: ActionKind,
+}
+
+fn actions_for_result(
+    result: &SearchResult,
+    plugin_actions: &HashMap<String, PluginInvocation>,
+) -> Vec<ActionItem> {
+    let mut actions = Vec::with_capacity(4);
+    if result.target.is_some() {
+        actions.push(ActionItem {
+            id: format!("{}:open", result.id),
+            label: String::from("Open"),
+            kind: ActionKind::Open,
+        });
+        actions.push(ActionItem {
+            id: format!("{}:copy-path", result.id),
+            label: String::from("Copy path"),
+            kind: ActionKind::CopyPath,
+        });
+    }
+    if let Some(invocation) = plugin_actions.get(&result.id).cloned() {
+        actions.push(ActionItem {
+            id: format!("{}:plugin", result.id),
+            label: String::from("Run plugin action"),
+            kind: ActionKind::RunPlugin(invocation),
+        });
+    }
+    actions.push(ActionItem {
+        id: format!("{}:copy-name", result.id),
+        label: String::from("Copy name"),
+        kind: ActionKind::CopyName,
+    });
+    actions
+}
+
+fn selected_result(results: &[SearchResult], selected_id: &str) -> Option<SearchResult> {
+    results
+        .iter()
+        .find(|result| result.id == selected_id)
+        .cloned()
+        .or_else(|| results.first().cloned())
+}
+
+fn execute_result_action(result: &SearchResult, action: &ActionKind) {
+    match action {
+        ActionKind::Open => {
+            if let Some(target) = result.target.as_deref() {
+                let _ = launch::open_path(target);
+            }
+        }
+        ActionKind::CopyPath => {
+            if let Some(target) = result.target.as_deref() {
+                windui::platform::Clipboard.set_text(target);
+            }
+        }
+        ActionKind::CopyName => windui::platform::Clipboard.set_text(&result.title),
+        ActionKind::RunPlugin(invocation) => plugins::execute_async(invocation.clone()),
     }
 }
 
@@ -106,24 +187,35 @@ fn set_game_mode(
 fn result_row(
     result: SearchResult,
     selected_id: Signal<String>,
+    selected_index: Signal<usize>,
+    rows_refresh: Signal<Vec<SearchResult>>,
     plugin_actions: Rc<RefCell<HashMap<String, PluginInvocation>>>,
 ) -> Element {
     let id = result.id;
     let target = result.target;
     let title = result.title;
     let subtitle = result.subtitle;
+    let selected = selected_id.get() == id;
     Element::row()
         .width_match()
         .height(58)
         .padding_xy(14, 8)
         .spacing(12)
         .corner(10.0)
-        .bg(Color::rgba(255, 255, 255, 20))
+        .bg(if selected {
+            Color::rgba(76, 139, 245, 72)
+        } else {
+            Color::rgba(255, 255, 255, 18)
+        })
         .child(
-            Element::label(title)
-                .font_size(15.0)
-                .fg(Color::WHITE)
-                .weight(1.0),
+            Element::label(if selected {
+                format!("> {title}")
+            } else {
+                title
+            })
+            .font_size(15.0)
+            .fg(Color::WHITE)
+            .weight(1.0),
         )
         .child(
             Element::label(subtitle)
@@ -133,6 +225,10 @@ fn result_row(
         )
         .on_click(move |_| {
             selected_id.set(id.clone());
+            if let Some(index) = rows_refresh.get().iter().position(|result| result.id == id) {
+                selected_index.set(index);
+            }
+            rows_refresh.set(rows_refresh.get());
             if let Some(target) = target.as_deref() {
                 let _ = launch::open_path(target);
                 return;
@@ -150,6 +246,11 @@ fn main() {
 
     let query = signal(String::new());
     let selected_id = signal(String::new());
+    let selected_index = signal(0_usize);
+    let action_mode = signal(false);
+    let action_index = signal(0_usize);
+    let action_items = signal(Vec::<ActionItem>::new());
+    let action_window_slot = Rc::new(RefCell::new(None::<WindowSizeHandle>));
     let status = signal(String::from("Ready"));
     let current_sequence = signal(0_u64);
     let game_mode = signal(settings.game_mode);
@@ -171,7 +272,12 @@ fn main() {
     let plugin_actions = Rc::new(RefCell::new(HashMap::<String, PluginInvocation>::new()));
     let result_source = results;
     let selected_for_rows = selected_id;
+    let selected_index_for_rows = selected_index;
     let actions_for_rows = Rc::clone(&plugin_actions);
+    let action_items_for_rows = action_items;
+    let action_index_for_rows = action_index;
+    let action_mode_for_rows = action_mode;
+    let action_window_slot_for_rows = Rc::clone(&action_window_slot);
 
     let search_box = Element::text_input(query, "Search")
         .leading_icon('>')
@@ -187,11 +293,72 @@ fn main() {
     let result_list = Element::list_signal(
         result_source,
         |result| result.id.clone(),
-        move |result| result_row(result, selected_for_rows, Rc::clone(&actions_for_rows)),
+        move |result| {
+            result_row(
+                result,
+                selected_for_rows,
+                selected_index_for_rows,
+                result_source,
+                Rc::clone(&actions_for_rows),
+            )
+        },
     )
     .height(286)
     .corner(12.0)
     .visible_signal(show_results);
+
+    let action_list = Element::list_signal(
+        action_items_for_rows,
+        |item| item.id.clone(),
+        move |item| {
+            let item_id = item.id.clone();
+            let item_label = item.label.clone();
+            let item_kind = item.kind.clone();
+            let is_selected = action_items_for_rows
+                .get()
+                .iter()
+                .position(|candidate| candidate.id == item_id)
+                .map(|index| index == action_index_for_rows.get())
+                .unwrap_or(false);
+            Element::row()
+                .width_match()
+                .height(42)
+                .padding_xy(12, 5)
+                .corner(9.0)
+                .bg(if is_selected {
+                    Color::rgba(76, 139, 245, 92)
+                } else {
+                    Color::rgba(255, 255, 255, 14)
+                })
+                .child(
+                    Element::label(if is_selected {
+                        format!("> {item_label}")
+                    } else {
+                        item_label
+                    })
+                    .font_size(13.0)
+                    .fg(Color::WHITE)
+                    .weight(1.0),
+                )
+                .on_click({
+                    let action_window_slot = action_window_slot_for_rows.clone();
+                    move |_| {
+                        if let Some(result) =
+                            selected_result(&result_source.get(), &selected_for_rows.get())
+                        {
+                            execute_result_action(&result, &item_kind);
+                        }
+                        action_mode_for_rows.set(false);
+                        if let Some(handle) = action_window_slot.borrow().as_ref() {
+                            handle.set(WINDOW_WIDTH, EXPANDED_WINDOW_HEIGHT);
+                        }
+                    }
+                })
+        },
+    )
+    .height(180)
+    .corner(12.0)
+    .visible_signal(action_mode);
 
     let launcher_surface = Element::col()
         .width(364)
@@ -202,7 +369,8 @@ fn main() {
         .border(Color::rgba(255, 255, 255, 18), 1)
         .shadow(Shadow::new(0.0, 10.0, 24.0, Color::rgba(0, 0, 0, 52)))
         .child(search_box)
-        .child(result_list);
+        .child(result_list)
+        .child(action_list);
 
     let query_for_interval = query;
     let results_for_interval = results;
@@ -221,6 +389,7 @@ fn main() {
     };
     let mut app = App::new("Flux Launcher", WINDOW_WIDTH, initial_height);
     let window_size = app.window_size_handle();
+    *action_window_slot.borrow_mut() = Some(window_size.clone());
     let size_for_interval = window_size.clone();
     let query_for_everything = query;
     let results_for_everything = results;
@@ -239,7 +408,7 @@ fn main() {
         }
         if response.available {
             providers.everything = response.results;
-            results_for_everything.set(providers.merged());
+            results_for_everything.set(providers.merged(&query_for_everything.get()));
         }
         status_for_everything.set(response.status);
     });
@@ -264,7 +433,7 @@ fn main() {
         if response.available {
             providers.plugins = response.results;
             *actions_for_plugins.borrow_mut() = response.actions;
-            results_for_plugins.set(providers.merged());
+            results_for_plugins.set(providers.merged(&query_for_plugins.get()));
         }
         status_for_plugins.set(response.status);
     });
@@ -281,6 +450,17 @@ fn main() {
         }
     });
 
+    let query_for_keys = query;
+    let results_for_keys = results;
+    let selected_id_for_keys = selected_id;
+    let selected_index_for_keys = selected_index;
+    let action_mode_for_keys = action_mode;
+    let action_index_for_keys = action_index;
+    let action_items_for_keys = action_items;
+    let plugin_actions_for_keys = Rc::clone(&plugin_actions);
+    let settings_visible_for_keys = settings_visible;
+    let size_for_keys = window_size.clone();
+    let show_results_for_keys = show_results;
     let settings_for_game_hotkey = Arc::clone(&shared_settings);
     let game_mode_for_hotkey = game_mode;
     let game_mode_status_for_hotkey = game_mode_status;
@@ -292,6 +472,118 @@ fn main() {
             game_mode_status_for_hotkey,
             enabled,
         );
+    });
+
+    app = app.on_key(move |event: KeyEvent| {
+        if !event.pressed || settings_visible_for_keys.get() {
+            return false;
+        }
+        let query = query_for_keys.get();
+        if query.trim().is_empty() {
+            return false;
+        }
+        let current_results = results_for_keys.get();
+        if current_results.is_empty() {
+            return false;
+        }
+
+        if action_mode_for_keys.get() {
+            let count = action_items_for_keys.get().len();
+            if count == 0 {
+                action_mode_for_keys.set(false);
+                return true;
+            }
+            match event.key {
+                Key::Up => {
+                    action_index_for_keys.set(
+                        action_index_for_keys
+                            .get()
+                            .checked_sub(1)
+                            .unwrap_or(count - 1),
+                    );
+                    action_items_for_keys.set(action_items_for_keys.get());
+                    return true;
+                }
+                Key::Down => {
+                    action_index_for_keys.set((action_index_for_keys.get() + 1) % count);
+                    action_items_for_keys.set(action_items_for_keys.get());
+                    return true;
+                }
+                Key::Left | Key::Escape => {
+                    action_mode_for_keys.set(false);
+                    action_index_for_keys.set(0);
+                    size_for_keys.set(WINDOW_WIDTH, EXPANDED_WINDOW_HEIGHT);
+                    return true;
+                }
+                Key::Enter | Key::Space => {
+                    if let Some(result) =
+                        selected_result(&current_results, &selected_id_for_keys.get())
+                    {
+                        if let Some(action) = action_items_for_keys
+                            .get()
+                            .get(action_index_for_keys.get())
+                            .cloned()
+                        {
+                            execute_result_action(&result, &action.kind);
+                        }
+                    }
+                    action_mode_for_keys.set(false);
+                    size_for_keys.set(WINDOW_WIDTH, EXPANDED_WINDOW_HEIGHT);
+                    return true;
+                }
+                _ => return true,
+            }
+        }
+
+        match event.key {
+            Key::Up | Key::Down | Key::Home | Key::End => {
+                let count = current_results.len();
+                let next = match event.key {
+                    Key::Up => selected_index_for_keys
+                        .get()
+                        .checked_sub(1)
+                        .unwrap_or(count - 1),
+                    Key::Down => (selected_index_for_keys.get() + 1) % count,
+                    Key::Home => 0,
+                    Key::End => count - 1,
+                    _ => 0,
+                };
+                selected_index_for_keys.set(next);
+                if let Some(result) = current_results.get(next) {
+                    selected_id_for_keys.set(result.id.clone());
+                }
+                results_for_keys.set(current_results);
+                true
+            }
+            Key::Right => {
+                if let Some(result) = selected_result(&current_results, &selected_id_for_keys.get())
+                {
+                    let actions = actions_for_result(&result, &plugin_actions_for_keys.borrow());
+                    if !actions.is_empty() {
+                        action_items_for_keys.set(actions);
+                        action_index_for_keys.set(0);
+                        action_mode_for_keys.set(true);
+                        show_results_for_keys.set(true);
+                        size_for_keys.set(WINDOW_WIDTH, ACTION_WINDOW_HEIGHT);
+                    }
+                }
+                true
+            }
+            Key::Enter => {
+                if let Some(result) = selected_result(&current_results, &selected_id_for_keys.get())
+                {
+                    if let Some(target) = result.target.as_deref() {
+                        let _ = launch::open_path(target);
+                    } else if let Some(action) =
+                        plugin_actions_for_keys.borrow().get(&result.id).cloned()
+                    {
+                        plugins::execute_async(action);
+                    }
+                }
+                true
+            }
+            _ => false,
+        }
     });
 
     let settings_for_tray_toggle = Arc::clone(&shared_settings);
@@ -524,8 +816,19 @@ fn main() {
             {
                 let mut providers = providers_for_interval.borrow_mut();
                 providers.reset(sequence, model.results().to_vec());
-                results_for_interval.set(providers.merged());
+                let merged = providers.merged(&next_query);
+                results_for_interval.set(merged.clone());
+                selected_index.set(0);
+                selected_id.set(
+                    merged
+                        .first()
+                        .map(|result| result.id.clone())
+                        .unwrap_or_default(),
+                );
             }
+            action_mode.set(false);
+            action_index.set(0);
+            action_items.set(Vec::new());
             actions_for_interval.borrow_mut().clear();
             if !has_query || next_query.trim().len() < PROVIDER_MIN_QUERY_LEN {
                 status_for_interval.set(String::from("Ready"));

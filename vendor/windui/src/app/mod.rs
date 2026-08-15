@@ -23,7 +23,7 @@ use std::time::Duration;
 use crate::sync::{new_channel, ChannelPump, Sender, WakerShared};
 
 use crate::core::{DamageReq, DispatchResult, EventCtx, NodeId, Tree};
-use crate::event::{CursorShape, Key, MouseButton, PointerEvent, PointerKind, WindowOp};
+use crate::event::{CursorShape, Key, KeyEvent, MouseButton, PointerEvent, PointerKind, WindowOp};
 use crate::geometry::{Color, Point, Rect, Size};
 use crate::platform::{self, AppHandler, Backdrop, DialogRequest, Renderer, WindowConfig};
 use crate::render::Paint;
@@ -118,6 +118,7 @@ type AppCallback = Box<dyn FnMut(&mut EventCtx)>;
 /// 关闭请求拦截器（[`App::on_close_request`]）：返回 true 放行、false 取消。
 /// 与 [`AppCallback`] 分开是因为它多一个返回值——那个 `bool` 被平台同步等待。
 type CloseHandler = Box<dyn FnMut(&mut EventCtx) -> bool>;
+type KeyHandler = Box<dyn FnMut(KeyEvent) -> bool>;
 
 /// 应用构建器。命令式 API 的根入口。
 /// 运行期主题句柄：克隆到控件回调中，`set` 即可热切换主题（下一帧生效）。
@@ -230,6 +231,9 @@ pub struct App {
     waker_shared: Option<Arc<WakerShared>>,
     single: Option<crate::single_instance::SingleInstance>,
     close_handler: Option<CloseHandler>,
+    /// Optional app-level key handler. Returning true consumes the event before
+    /// the focused widget receives it; returning false preserves normal routing.
+    key_handler: Option<KeyHandler>,
     /// 关闭请求转为隐藏窗口。与 `close_handler` 同属核心层的关闭决策链输入，
     /// 平台层对此无感知，故不放 `WindowConfig`。
     hide_on_close: bool,
@@ -276,6 +280,7 @@ impl App {
             waker_shared: None,
             single: None,
             close_handler: None,
+            key_handler: None,
             hide_on_close: false,
             bg_explicit: false,
             hotkey_ops: Rc::new(RefCell::new(Vec::new())),
@@ -717,6 +722,15 @@ impl App {
         self
     }
 
+    /// Install an app-level key handler. Returning `true` consumes the event
+    /// before the focused widget receives it; returning `false` keeps normal
+    /// widget routing intact. This is useful for command surfaces that need
+    /// keyboard navigation while retaining a focused TextInput.
+    pub fn on_key(mut self, f: impl FnMut(KeyEvent) -> bool + 'static) -> Self {
+        self.key_handler = Some(Box::new(f));
+        self
+    }
+
     pub fn run(mut self) {
         // 窗口会被隐藏（启动即隐 / 关闭转隐）却无任何唤起途径 = 用户再也看不到窗口，
         // 只能去任务管理器结束进程。在 run() 而非各 setter 里查：tray/hotkey 可能在其后才链上。
@@ -746,6 +760,7 @@ impl App {
                 self.pumps,
                 self.intervals,
                 self.close_handler,
+                self.key_handler,
                 self.hide_on_close,
             ))
         } else {
@@ -772,6 +787,7 @@ impl App {
             self.pumps,
             self.intervals,
             self.close_handler,
+            self.key_handler,
             self.hide_on_close,
         )
     }
@@ -912,6 +928,8 @@ struct UiHost {
     show_fps: bool,
     /// 关闭请求拦截器：返回 true 允许关闭，false 取消。None 时默认允许。
     close_handler: Option<CloseHandler>,
+    /// Optional app-level key handler consumed before the focused widget.
+    key_handler: Option<KeyHandler>,
     /// 关闭请求转为隐藏窗口（常驻托盘类应用）。
     hide_on_close: bool,
     /// 正在跑关闭决策链（防 `on_close_request` 回调内再请求关闭导致的自我递归）。
@@ -1026,6 +1044,7 @@ impl UiHost {
         pumps: Vec<ChannelPump>,
         intervals: Vec<(std::time::Duration, AppCallback)>,
         close_handler: Option<CloseHandler>,
+        key_handler: Option<KeyHandler>,
         hide_on_close: bool,
     ) -> Self {
         // 尽早注入，使首个事件（首帧渲染前）也能读到正确主题。
@@ -1064,6 +1083,7 @@ impl UiHost {
             interval_durs,
             show_fps: std::env::var("WINDUI_FPS").is_ok_and(|v| v != "0" && !v.is_empty()),
             close_handler,
+            key_handler,
             hide_on_close,
             resolving_close: false,
         }
@@ -1477,6 +1497,13 @@ impl AppHandler for UiHost {
         // Escape 关闭，其余吞掉（避免打到被遮住的控件上）。
         if self.menu.is_open() {
             return self.handle_menu_key(ev);
+        }
+        if let Some(mut handler) = self.key_handler.take() {
+            let consumed = handler(ev);
+            self.key_handler = Some(handler);
+            if consumed {
+                return true;
+            }
         }
         // Tab 由宿主独占用于焦点导航，并启用焦点环显示。焦点环跨节点变化（低频）→ 整窗。
         if ev.key == Key::Tab {

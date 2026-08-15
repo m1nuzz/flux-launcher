@@ -3,6 +3,7 @@ const MAX_RESULTS: usize = 8;
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum ResultKind {
     Command,
+    Application,
     File,
     Placeholder,
 }
@@ -18,11 +19,24 @@ pub struct SearchResult {
 
 impl SearchResult {
     pub fn file(path: String, title: String, subtitle: String) -> Self {
+        let is_application = is_application_path(&path);
+        let display_title = if is_application {
+            title
+                .rsplit_once('.')
+                .map(|(stem, _)| stem.to_owned())
+                .unwrap_or(title)
+        } else {
+            title
+        };
         Self {
             id: format!("file:{path}"),
-            title,
+            title: display_title,
             subtitle,
-            kind: ResultKind::File,
+            kind: if is_application {
+                ResultKind::Application
+            } else {
+                ResultKind::File
+            },
             target: Some(path),
         }
     }
@@ -30,6 +44,71 @@ impl SearchResult {
     pub fn display_text(&self) -> String {
         format!("{}  -  {}", self.title, self.subtitle)
     }
+
+    /// Lower sort key means a result is more useful for the current query.
+    /// Applications deliberately outrank indexed files and folders.
+    pub fn relevance(&self, query: &str) -> (u8, u8, String) {
+        let query = normalize(query);
+        let title = normalize(&self.title);
+        let subtitle = normalize(&self.subtitle);
+        let (provider_tier, title_tier) = match self.kind {
+            ResultKind::Application => (0, match_app_title(&title, &query)),
+            ResultKind::Command => (1, match_app_title(&title, &query)),
+            ResultKind::Placeholder => (2, match_app_title(&title, &query)),
+            ResultKind::File => (3, match_file_title(&title, &query)),
+        };
+        let subtitle_match = if !query.is_empty() && subtitle.contains(&query) {
+            0
+        } else {
+            1
+        };
+        (
+            provider_tier,
+            title_tier.saturating_add(subtitle_match),
+            title,
+        )
+    }
+}
+
+fn normalize(value: &str) -> String {
+    value.trim().to_ascii_lowercase()
+}
+
+fn match_app_title(title: &str, query: &str) -> u8 {
+    if query.is_empty() || title == query {
+        0
+    } else if title.starts_with(query) {
+        1
+    } else if title.contains(query) {
+        2
+    } else {
+        3
+    }
+}
+
+fn match_file_title(title: &str, query: &str) -> u8 {
+    if query.is_empty() {
+        3
+    } else if title == query {
+        0
+    } else if title.starts_with(query) {
+        1
+    } else if title.contains(query) {
+        2
+    } else {
+        3
+    }
+}
+
+fn is_application_path(path: &str) -> bool {
+    let lower = normalize(path);
+    [".exe", ".lnk", ".com", ".bat", ".cmd", ".url"]
+        .iter()
+        .any(|extension| lower.ends_with(extension))
+}
+
+pub fn rank_results(query: &str, results: &mut [SearchResult]) {
+    results.sort_by_key(|result| result.relevance(query));
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -79,6 +158,7 @@ impl SearchModel {
     }
 
     pub fn replace_results(&mut self, mut results: Vec<SearchResult>) {
+        rank_results(&self.query, &mut results);
         results.truncate(MAX_RESULTS);
         self.results = results;
         self.selected = self.selected.min(self.results.len().saturating_sub(1));
@@ -143,7 +223,8 @@ mod tests {
 
     #[test]
     fn default_query_shows_bounded_command_palette() {
-        let model = SearchModel::new();
+        let mut model = SearchModel::new();
+        model.set_query("");
         assert!(!model.results().is_empty());
         assert!(model.results().len() <= MAX_RESULTS);
         assert_eq!(model.selected_index(), 0);
@@ -165,6 +246,38 @@ mod tests {
         assert_eq!(model.selected_index(), last);
         model.select_next();
         assert_eq!(model.selected_index(), 0);
+    }
+
+    #[test]
+    fn executable_results_are_ranked_before_indexed_files() {
+        let mut results = vec![
+            SearchResult::file(
+                String::from("C:/Windows/Steam/cache.txt"),
+                String::from("cache.txt"),
+                String::from("C:/Windows/Steam"),
+            ),
+            SearchResult::file(
+                String::from("C:/Program Files/Steam/Steam.exe"),
+                String::from("Steam.exe"),
+                String::from("C:/Program Files/Steam"),
+            ),
+        ];
+        rank_results("steam", &mut results);
+        assert_eq!(results[0].kind, ResultKind::Application);
+        assert_eq!(results[0].title, "Steam");
+    }
+
+    #[test]
+    fn shortcut_and_executable_paths_are_applications() {
+        assert_eq!(
+            SearchResult::file(
+                String::from("C:/Users/Test/Google Chrome.lnk"),
+                String::from("Google Chrome.lnk"),
+                String::new(),
+            )
+            .kind,
+            ResultKind::Application
+        );
     }
 
     #[test]

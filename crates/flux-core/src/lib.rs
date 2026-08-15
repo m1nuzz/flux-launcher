@@ -10,5 +10,5 @@ pub use game_mode::{
     is_flow_excluded_class, matches_display_bounds, should_suppress_activation, WindowBounds,
     WindowClass,
 };
-pub use search::{ResultKind, SearchModel, SearchResult};
+pub use search::{rank_results, ResultKind, SearchModel, SearchResult};
 pub use settings::{HotkeyConfig, Settings};
