@@ -15,6 +15,10 @@ fn default_caret_duration() -> u16 {
     DEFAULT_CARET_DURATION_MS
 }
 
+fn default_selection_color() -> u32 {
+    0x4c8bf4
+}
+
 #[derive(Clone, Debug, Deserialize, PartialEq, Eq, Serialize)]
 #[serde(default)]
 pub struct HotkeyConfig {
@@ -49,6 +53,12 @@ pub struct Settings {
     pub smooth_caret: bool,
     #[serde(default = "enabled_by_default")]
     pub switch_to_english_layout: bool,
+    #[serde(default = "enabled_by_default")]
+    pub use_system_accent: bool,
+    #[serde(default = "default_selection_color")]
+    pub custom_selection_color: u32,
+    #[serde(default = "enabled_by_default")]
+    pub clear_query_on_activation: bool,
     #[serde(default = "default_caret_duration")]
     pub smooth_caret_duration_ms: u16,
 }
@@ -61,6 +71,9 @@ impl Default for Settings {
             game_mode: false,
             smooth_caret: true,
             switch_to_english_layout: true,
+            use_system_accent: true,
+            custom_selection_color: default_selection_color(),
+            clear_query_on_activation: true,
             smooth_caret_duration_ms: DEFAULT_CARET_DURATION_MS,
         }
     }
@@ -142,6 +155,9 @@ mod tests {
         assert!(settings.ignore_hotkeys_in_fullscreen);
         assert!(settings.smooth_caret);
         assert!(settings.switch_to_english_layout);
+        assert!(settings.use_system_accent);
+        assert_eq!(settings.custom_selection_color, 0x4c8bf4);
+        assert!(settings.clear_query_on_activation);
         assert_eq!(settings.smooth_caret_duration_ms, DEFAULT_CARET_DURATION_MS);
     }
 
@@ -160,6 +176,9 @@ mod tests {
             game_mode: true,
             smooth_caret: false,
             switch_to_english_layout: false,
+            use_system_accent: false,
+            custom_selection_color: 0x12ab34,
+            clear_query_on_activation: false,
             smooth_caret_duration_ms: 120,
         };
 

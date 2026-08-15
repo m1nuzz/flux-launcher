@@ -1,5 +1,6 @@
 #![cfg_attr(windows, windows_subsystem = "windows")]
 
+mod accent;
 mod applications;
 mod everything;
 mod fullscreen;
@@ -159,6 +160,7 @@ struct ResultRowAnchor {
     trailing_signal: Signal<String>,
     selected_id: Signal<String>,
     query: Signal<String>,
+    selection_color: Signal<Color>,
     last_selected: Option<bool>,
     last_query: String,
 }
@@ -200,7 +202,7 @@ impl Widget for ResultRowAnchor {
     ) {
         let selected = self.selected_id.get() == self.result_id;
         let color = if selected {
-            Color::rgba(76, 139, 245, 72)
+            self.selection_color.get()
         } else {
             Color::rgba(255, 255, 255, 18)
         };
@@ -291,6 +293,61 @@ fn game_mode_label(enabled: bool) -> String {
     } else {
         String::from("Game Mode: Off")
     }
+}
+
+fn custom_selection_color_rgb(value: u32) -> (u8, u8, u8) {
+    (
+        ((value >> 16) & 0xff) as u8,
+        ((value >> 8) & 0xff) as u8,
+        (value & 0xff) as u8,
+    )
+}
+
+fn selection_color_for_settings(settings: &Settings) -> Color {
+    let (r, g, b) = if settings.use_system_accent {
+        accent::system_accent_rgb()
+            .unwrap_or_else(|| custom_selection_color_rgb(settings.custom_selection_color))
+    } else {
+        custom_selection_color_rgb(settings.custom_selection_color)
+    };
+    Color::rgba(r, g, b, 84)
+}
+
+fn selection_color_hex(value: u32) -> String {
+    format!("#{value:06X}")
+}
+
+fn parse_selection_color(value: &str) -> Option<u32> {
+    let trimmed = value.trim().trim_start_matches('#');
+    (trimmed.len() == 6)
+        .then(|| u32::from_str_radix(trimmed, 16).ok())
+        .flatten()
+}
+
+fn selection_palette(custom_selection_color: Signal<String>) -> Element {
+    const COLORS: &[u32] = &[
+        0x4c8bf4, 0x0078d4, 0x00a4ef, 0x107c10, 0x498205, 0xffb900, 0xd83b01, 0xe74856, 0x8764b8,
+        0x744da9, 0x038387, 0x605e5c,
+    ];
+    let mut row = Element::row().spacing(6).width_match();
+    for &value in COLORS {
+        let label = selection_color_hex(value);
+        row = row.child(
+            Element::col()
+                .width(24)
+                .height(24)
+                .bg(Color::rgb(
+                    ((value >> 16) & 0xff) as u8,
+                    ((value >> 8) & 0xff) as u8,
+                    (value & 0xff) as u8,
+                ))
+                .corner(6.0)
+                .clickable()
+                .tooltip(label)
+                .on_click(move |_| custom_selection_color.set(selection_color_hex(value))),
+        );
+    }
+    row
 }
 
 fn title_match_doc(title: &str, query: &str, selected: bool) -> RichDoc {
@@ -528,6 +585,7 @@ fn set_game_mode(
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn result_row(
     result: SearchResult,
     selected_id: Signal<String>,
@@ -536,6 +594,7 @@ fn result_row(
     rows_refresh: Signal<Vec<SearchResult>>,
     plugin_actions: Rc<RefCell<HashMap<String, PluginInvocation>>>,
     query: Signal<String>,
+    selection_color: Signal<Color>,
 ) -> Element {
     let id = result.id;
     let target = result.target;
@@ -581,6 +640,7 @@ fn result_row(
             trailing_signal,
             selected_id,
             query,
+            selection_color,
             last_selected: None,
             last_query: query.get(),
         })
@@ -664,6 +724,10 @@ fn main() {
     let ignore_fullscreen = signal(settings.ignore_hotkeys_in_fullscreen);
     let smooth_caret = signal(settings.smooth_caret);
     let switch_to_english_layout = signal(settings.switch_to_english_layout);
+    let use_system_accent = signal(settings.use_system_accent);
+    let custom_selection_color = signal(selection_color_hex(settings.custom_selection_color));
+    let clear_query_on_activation = signal(settings.clear_query_on_activation);
+    let selection_color = signal(selection_color_for_settings(&settings));
     let caret_duration = signal(settings.smooth_caret_duration_ms.to_string());
 
     let mut model = SearchModel::new();
@@ -740,6 +804,7 @@ fn main() {
                 result_source,
                 Rc::clone(&actions_for_rows),
                 query_for_rows,
+                selection_color,
             )
         },
     )
@@ -845,6 +910,7 @@ fn main() {
     let window_size = app.window_size_handle();
     *action_window_slot.borrow_mut() = Some(window_size.clone());
     let size_for_interval = window_size.clone();
+    let size_for_visibility = window_size.clone();
     let query_for_applications = query;
     let results_for_applications = results;
     let inline_completion_for_applications = inline_completion;
@@ -1293,6 +1359,30 @@ fn main() {
                         ),
                     ))
                     .child(Element::field(
+                        "Selection color",
+                        Element::checkbox(
+                            "Use the Windows 11 system accent color",
+                            use_system_accent,
+                        ),
+                    ))
+                    .child(
+                        Element::col()
+                            .spacing(8)
+                            .visible_when(move || !use_system_accent.get())
+                            .child(
+                                Element::text_input(custom_selection_color, "#4C8BF4")
+                                    .width_match(),
+                            )
+                            .child(selection_palette(custom_selection_color)),
+                    )
+                    .child(Element::field(
+                        "Query on activation",
+                        Element::checkbox(
+                            "Clear the previous query when opened with the global hotkey",
+                            clear_query_on_activation,
+                        ),
+                    ))
+                    .child(Element::field(
                         "Smooth Caret",
                         Element::checkbox("Animate search caret movement", smooth_caret),
                     ))
@@ -1320,14 +1410,21 @@ fn main() {
                                 meta: activation_meta.get(),
                                 key: activation_key.get(),
                             };
+                            let custom_color = parse_selection_color(&custom_selection_color.get())
+                                .unwrap_or(0x4c8bf4);
                             if let Ok(mut settings) = settings_for_apply.write() {
                                 settings.activation_hotkey = configuration;
                                 settings.ignore_hotkeys_in_fullscreen = ignore_fullscreen.get();
                                 settings.game_mode = game_mode.get();
                                 settings.smooth_caret = smooth_caret.get();
                                 settings.switch_to_english_layout = switch_to_english_layout.get();
+                                settings.use_system_accent = use_system_accent.get();
+                                settings.custom_selection_color = custom_color;
+                                settings.clear_query_on_activation = clear_query_on_activation.get();
                                 settings.smooth_caret_duration_ms = duration;
                                 settings.normalize();
+                                selection_color.set(selection_color_for_settings(&settings));
+                                custom_selection_color.set(selection_color_hex(settings.custom_selection_color));
                                 activation_handle_for_apply
                                     .set(hotkeys::activation_hotkey(&settings.activation_hotkey));
                                 game_mode_status_for_apply.set(game_mode_label(settings.game_mode));
@@ -1431,12 +1528,31 @@ fn main() {
         .on_window_show({
             let settings = Arc::clone(&shared_settings);
             move || {
-                let enabled = settings
+                let (layout_enabled, clear_query) = settings
                     .read()
-                    .map(|settings| settings.switch_to_english_layout)
-                    .unwrap_or(true);
-                if enabled {
+                    .map(|settings| {
+                        selection_color.set(selection_color_for_settings(&settings));
+                        (
+                            settings.switch_to_english_layout,
+                            settings.clear_query_on_activation,
+                        )
+                    })
+                    .unwrap_or((true, clear_query_on_activation.get()));
+                if layout_enabled {
                     keyboard_layout::switch_to_english();
+                }
+                if clear_query {
+                    query.set(String::new());
+                    results.set(Vec::new());
+                    selected_id.set(String::new());
+                    selected_index.set(0);
+                    selection_touched.set(false);
+                    show_results.set(false);
+                    action_mode.set(false);
+                    action_index.set(0);
+                    action_items.set(Vec::new());
+                    inline_completion.set(String::new());
+                    size_for_visibility.set(WINDOW_WIDTH, COMPACT_WINDOW_HEIGHT);
                 }
             }
         })
