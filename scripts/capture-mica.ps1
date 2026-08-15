@@ -93,42 +93,28 @@ $probeScriptPath = Join-Path $OutputDirectory "probe-screen.ps1"
 @'
 Add-Type -AssemblyName System.Windows.Forms
 Add-Type -AssemblyName System.Drawing
-Add-Type -TypeDefinition @"
-using System;
-using System.Drawing;
-using System.Drawing.Drawing2D;
-using System.Windows.Forms;
-public sealed class FluxProbeForm : Form
-{
-    public FluxProbeForm()
-    {
-        FormBorderStyle = FormBorderStyle.None;
-        WindowState = FormWindowState.Maximized;
-        ShowInTaskbar = false;
-        TopMost = true;
-        StartPosition = FormStartPosition.Manual;
-        DoubleBuffered = true;
-        BackColor = Color.FromArgb(21, 46, 105);
-    }
-
-    protected override void OnPaint(PaintEventArgs e)
-    {
-        base.OnPaint(e);
-        using var gradient = new LinearGradientBrush(
-            ClientRectangle,
-            Color.FromArgb(255, 21, 46, 105),
-            Color.FromArgb(255, 154, 41, 99),
-            0.0f);
-        e.Graphics.FillRectangle(gradient, ClientRectangle);
-        var size = Math.Min(ClientSize.Width, ClientSize.Height) * 0.32f;
-        var x = (ClientSize.Width - size) / 2.0f;
-        var y = (ClientSize.Height - size) / 2.0f;
-        using var gold = new SolidBrush(Color.Gold);
-        e.Graphics.FillEllipse(gold, x, y, size, size);
-    }
-}
-"@
-$form = New-Object FluxProbeForm
+$form = New-Object System.Windows.Forms.Form
+$form.FormBorderStyle = [System.Windows.Forms.FormBorderStyle]::None
+$form.WindowState = [System.Windows.Forms.FormWindowState]::Maximized
+$form.ShowInTaskbar = $false
+$form.TopMost = $true
+$form.StartPosition = [System.Windows.Forms.FormStartPosition]::Manual
+$form.BackColor = [System.Drawing.Color]::FromArgb(21, 46, 105)
+$form.Add_Paint({
+    param($sender, $event)
+    $rect = $sender.ClientRectangle
+    $left = [System.Drawing.Color]::FromArgb(255, 21, 46, 105)
+    $right = [System.Drawing.Color]::FromArgb(255, 154, 41, 99)
+    $gradient = New-Object System.Drawing.Drawing2D.LinearGradientBrush($rect, $left, $right, 0.0)
+    $event.Graphics.FillRectangle($gradient, $rect)
+    $gradient.Dispose()
+    $diameter = [Math]::Min($sender.ClientSize.Width, $sender.ClientSize.Height) * 0.32
+    $x = ($sender.ClientSize.Width - $diameter) / 2.0
+    $y = ($sender.ClientSize.Height - $diameter) / 2.0
+    $gold = New-Object System.Drawing.SolidBrush([System.Drawing.Color]::Gold)
+    $event.Graphics.FillEllipse($gold, $x, $y, $diameter, $diameter)
+    $gold.Dispose()
+})
 [System.Windows.Forms.Application]::Run($form)
 '@ | Set-Content -Encoding utf8 $probeScriptPath
 $probeStdoutPath = Join-Path $OutputDirectory "probe.stdout.log"
