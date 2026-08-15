@@ -350,6 +350,19 @@ fn selection_palette(custom_selection_color: Signal<String>) -> Element {
     row
 }
 
+fn display_title(title: &str) -> String {
+    const MAX_TITLE_CHARS: usize = 34;
+    let chars: Vec<char> = title.chars().collect();
+    if chars.len() <= MAX_TITLE_CHARS {
+        return title.to_owned();
+    }
+    chars
+        .into_iter()
+        .take(MAX_TITLE_CHARS.saturating_sub(1))
+        .chain(std::iter::once('…'))
+        .collect()
+}
+
 fn title_match_doc(title: &str, query: &str, selected: bool) -> RichDoc {
     // Keep every title readable over both dark and light Acrylic samples. A
     // semibold base also prevents non-matching portions from disappearing when
@@ -371,7 +384,8 @@ fn title_match_doc(title: &str, query: &str, selected: bool) -> RichDoc {
         .filter(|character| !character.is_whitespace())
         .flat_map(char::to_lowercase)
         .collect();
-    let title_chars: Vec<char> = title.chars().collect();
+    let display_title = display_title(title);
+    let title_chars: Vec<char> = display_title.chars().collect();
     let mut matched_flags = vec![false; title_chars.len()];
     let mut query_index = 0;
     for (index, character) in title_chars.iter().enumerate() {
