@@ -241,7 +241,11 @@ fn collect_app_paths(by_title: &mut HashMap<String, SearchResult>) {
             if let Some((title, target)) = read_app_path(app_paths, &key_name) {
                 let key = normalize(&title);
                 by_title.entry(key).or_insert_with(|| SearchResult {
-                    id: format!("application:app-paths:{}", normalize(&target)),
+                    id: format!(
+                        "application:app-paths:{}:{}",
+                        normalize(&title),
+                        normalize(&target)
+                    ),
                     title,
                     subtitle: String::from("Application • App Paths"),
                     kind: ResultKind::Application,

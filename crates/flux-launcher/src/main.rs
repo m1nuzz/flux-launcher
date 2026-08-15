@@ -8,7 +8,7 @@ mod launch;
 mod plugins;
 
 use std::cell::RefCell;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::rc::Rc;
 use std::sync::{Arc, RwLock};
 use std::time::Duration;
@@ -53,12 +53,14 @@ impl ProviderResults {
     }
 
     fn merged(&self, query: &str) -> Vec<SearchResult> {
+        let mut seen = HashSet::new();
         let mut merged = self
             .built_in
             .iter()
             .chain(&self.applications)
             .chain(&self.everything)
             .chain(&self.plugins)
+            .filter(|result| seen.insert(result.id.clone()))
             .cloned()
             .collect::<Vec<_>>();
         rank_results(query, &mut merged);
@@ -146,7 +148,6 @@ impl Widget for ResultRowAnchor {
             } else {
                 self.title.clone()
             });
-            eprintln!("[selection] id={} selected={}", self.result_id, selected);
             self.last_selected = Some(selected);
         }
         if selected {
