@@ -71,4 +71,3 @@ jobs:
             ./artifacts/windows-ui-release/settings-panel.png
             ./artifacts/windows-ui-release/dwm-preflight.json
             ./artifacts/windows-ui-release/launcher.stderr.log
-            ./artifacts/windows-ui-release/launcher.stdout.log
