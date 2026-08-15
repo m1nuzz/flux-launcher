@@ -710,6 +710,10 @@ unsafe fn run_windowed(
             let (cw, ch) = (rc.right - rc.left, rc.bottom - rc.top);
             match d2d::try_create(hwnd, cw, ch, cfg.backdrop != Backdrop::None) {
                 Some(b) => {
+                    eprintln!(
+                        "[windui] D2D backend active (composition={})",
+                        cfg.backdrop != Backdrop::None
+                    );
                     if let Some(s) = state_from(hwnd) {
                         s.backend = Box::new(b);
                     }

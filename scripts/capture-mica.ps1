@@ -79,7 +79,9 @@ if (![FluxWallpaper]::SystemParametersInfo(0x0014, 0, $wallpaperPath, 0x0003)) {
 }
 Start-Sleep -Milliseconds 750
 
-$process = Start-Process -FilePath $Executable -PassThru
+$stdoutPath = Join-Path $OutputDirectory "launcher.stdout.log"
+$stderrPath = Join-Path $OutputDirectory "launcher.stderr.log"
+$process = Start-Process -FilePath $Executable -PassThru -RedirectStandardOutput $stdoutPath -RedirectStandardError $stderrPath
 try {
     Start-Sleep -Seconds 3
     $idleMemory = Get-MemorySnapshot $process.Id
@@ -113,7 +115,9 @@ try {
     Start-Sleep -Milliseconds 400
 
     $env:FLUX_OPEN_SETTINGS = "1"
-    $settingsProcess = Start-Process -FilePath $Executable -PassThru
+    $settingsStdoutPath = Join-Path $OutputDirectory "settings.stdout.log"
+    $settingsStderrPath = Join-Path $OutputDirectory "settings.stderr.log"
+    $settingsProcess = Start-Process -FilePath $Executable -PassThru -RedirectStandardOutput $settingsStdoutPath -RedirectStandardError $settingsStderrPath
     try {
         Start-Sleep -Seconds 2
         Save-Screenshot "settings-panel.png"
