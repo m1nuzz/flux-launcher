@@ -22,7 +22,7 @@ use windows::core::{s, w, PCWSTR};
 use windows::Win32::Foundation::{HINSTANCE, HWND, LPARAM, LRESULT, POINT, RECT, TRUE, WPARAM};
 use windows::Win32::Graphics::Dwm::{
     DwmExtendFrameIntoClientArea, DwmIsCompositionEnabled, DwmSetWindowAttribute,
-    DWMSBT_MAINWINDOW, DWMSBT_TRANSIENTWINDOW, DWMWA_SYSTEMBACKDROP_TYPE,
+    DWMSBT_MAINWINDOW, DWMSBT_NONE, DWMSBT_TRANSIENTWINDOW, DWMWA_SYSTEMBACKDROP_TYPE,
     DWMWA_WINDOW_CORNER_PREFERENCE, DWMWCP_ROUND, DWM_SYSTEMBACKDROP_TYPE,
 };
 use windows::Win32::Graphics::Gdi::{
@@ -472,6 +472,20 @@ unsafe fn apply_system_backdrop(hwnd: HWND, backdrop: Backdrop) {
     let Some(kind) = kind else {
         return;
     };
+    if is_remote || !composition_enabled {
+        // Explicitly clear any stale system material on remote/composition-disabled
+        // sessions. Requesting Acrylic there makes DWM paint an opaque neutral slab.
+        let none = DWMSBT_NONE;
+        let zero_margins = MARGINS::default();
+        let _ = DwmExtendFrameIntoClientArea(hwnd, &zero_margins);
+        let _ = DwmSetWindowAttribute(
+            hwnd,
+            DWMWA_SYSTEMBACKDROP_TYPE,
+            &none as *const _ as *const c_void,
+            size_of::<DWM_SYSTEMBACKDROP_TYPE>() as u32,
+        );
+        return;
+    }
     // Keep the native material aligned with Flux's dark palette instead of inheriting
     // the runner's light system preference and exposing a bright outer frame.
     const DWMWA_USE_IMMERSIVE_DARK_MODE: windows::Win32::Graphics::Dwm::DWMWINDOWATTRIBUTE =
