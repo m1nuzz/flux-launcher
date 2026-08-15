@@ -22,6 +22,8 @@ pub enum WindowOp {
     /// 隐藏窗口（进程继续存活）。配合托盘或全局热键使用；
     /// 无托盘图标也无热键时隐藏窗口，用户将无法再唤起它。
     Hide,
+    /// Toggle the actual native window visibility without relying on app-side state.
+    ToggleVisibility,
 }
 
 /// 全局热键的修饰键组合。
@@ -109,6 +111,10 @@ impl HotkeyCtx {
     /// 请求隐藏窗口。
     pub fn hide_window(&mut self) {
         self.op = Some(WindowOp::Hide);
+    }
+    /// Toggle the native window between visible and hidden states.
+    pub fn toggle_window(&mut self) {
+        self.op = Some(WindowOp::ToggleVisibility);
     }
     /// 取出回调声明的意图（供平台层在**释放窗口状态借用之后**执行）。
     ///

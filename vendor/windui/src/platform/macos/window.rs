@@ -920,6 +920,15 @@ impl ContentView {
                         NSApplication::sharedApplication(MainThreadMarker::from(self)).activate();
                     }
                     WindowOp::Hide => win.orderOut(None),
+                    WindowOp::ToggleVisibility => {
+                        if win.isVisible() {
+                            win.orderOut(None);
+                        } else {
+                            win.makeKeyAndOrderFront(None);
+                            NSApplication::sharedApplication(MainThreadMarker::from(self))
+                                .activate();
+                        }
+                    }
                 }
             }
         }

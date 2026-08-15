@@ -876,7 +876,7 @@ fn main() {
             .map(|settings| settings.clone())
             .unwrap_or_default();
         if !should_suppress_activation(&settings, fullscreen::foreground_is_fullscreen()) {
-            ctx.show_window();
+            ctx.toggle_window();
         }
     });
 
@@ -916,6 +916,19 @@ fn main() {
         let current_results = results_for_keys.get();
         if current_results.is_empty() {
             return false;
+        }
+
+        if event.key == Key::Enter && alt_key_is_down() {
+            if let Some(result) = selected_result(
+                &current_results,
+                &selected_id_for_keys.get(),
+                selected_index_for_keys.get(),
+            ) {
+                if let Some(target) = result.target.as_deref() {
+                    let _ = launch::open_file_location(target);
+                }
+            }
+            return true;
         }
 
         if action_mode_for_keys.get() {
@@ -980,19 +993,6 @@ fn main() {
             }
             return true;
         }
-        if event.key == Key::Enter && alt_key_is_down() {
-            if let Some(result) = selected_result(
-                &current_results,
-                &selected_id_for_keys.get(),
-                selected_index_for_keys.get(),
-            ) {
-                if let Some(target) = result.target.as_deref() {
-                    let _ = launch::open_file_location(target);
-                }
-            }
-            return true;
-        }
-
         match event.key {
             Key::Up | Key::Down | Key::Home | Key::End => {
                 let count = current_results.len();
