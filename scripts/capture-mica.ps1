@@ -88,6 +88,50 @@ Start-Sleep -Milliseconds 750
 [FluxWallpaper]::keybd_event(0x5B, 0, 2, [UIntPtr]::Zero)
 Start-Sleep -Milliseconds 750
 
+$probeScriptPath = Join-Path $OutputDirectory "probe-screen.ps1"
+@'
+Add-Type -AssemblyName System.Windows.Forms
+Add-Type -AssemblyName System.Drawing
+Add-Type @'
+using System;
+using System.Drawing;
+using System.Drawing.Drawing2D;
+using System.Windows.Forms;
+public sealed class FluxProbeForm : Form
+{
+    public FluxProbeForm()
+    {
+        FormBorderStyle = FormBorderStyle.None;
+        WindowState = FormWindowState.Maximized;
+        ShowInTaskbar = false;
+        StartPosition = FormStartPosition.Manual;
+        DoubleBuffered = true;
+        BackColor = Color.FromArgb(21, 46, 105);
+    }
+
+    protected override void OnPaint(PaintEventArgs e)
+    {
+        base.OnPaint(e);
+        using var gradient = new LinearGradientBrush(
+            ClientRectangle,
+            Color.FromArgb(255, 21, 46, 105),
+            Color.FromArgb(255, 154, 41, 99),
+            0.0f);
+        e.Graphics.FillRectangle(gradient, ClientRectangle);
+        var size = Math.Min(ClientSize.Width, ClientSize.Height) * 0.32f;
+        var x = (ClientSize.Width - size) / 2.0f;
+        var y = (ClientSize.Height - size) / 2.0f;
+        using var gold = new SolidBrush(Color.Gold);
+        e.Graphics.FillEllipse(gold, x, y, size, size);
+    }
+}
+'@ | Add-Type
+$form = New-Object FluxProbeForm
+[System.Windows.Forms.Application]::Run($form)
+'@ | Set-Content -Encoding utf8 $probeScriptPath
+$probeProcess = Start-Process -FilePath "pwsh" -ArgumentList @("-NoProfile", "-File", $probeScriptPath) -PassThru
+Start-Sleep -Seconds 2
+
 $stdoutPath = Join-Path $OutputDirectory "launcher.stdout.log"
 $stderrPath = Join-Path $OutputDirectory "launcher.stderr.log"
 $process = Start-Process -FilePath $Executable -PassThru -RedirectStandardOutput $stdoutPath -RedirectStandardError $stderrPath
@@ -161,5 +205,8 @@ try {
 finally {
     if (!$process.HasExited) {
         Stop-Process -Id $process.Id -Force
+    }
+    if ($probeProcess -and !$probeProcess.HasExited) {
+        Stop-Process -Id $probeProcess.Id -Force
     }
 }
