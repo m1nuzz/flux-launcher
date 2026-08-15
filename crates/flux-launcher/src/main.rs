@@ -351,7 +351,7 @@ fn selection_palette(custom_selection_color: Signal<String>) -> Element {
 }
 
 fn display_title(title: &str) -> String {
-    const MAX_TITLE_CHARS: usize = 28;
+    const MAX_TITLE_CHARS: usize = 20;
     let chars: Vec<char> = title.chars().collect();
     if chars.len() <= MAX_TITLE_CHARS {
         return title.to_owned();
