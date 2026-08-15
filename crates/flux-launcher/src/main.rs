@@ -351,7 +351,7 @@ fn selection_palette(custom_selection_color: Signal<String>) -> Element {
 }
 
 fn display_title(title: &str) -> String {
-    const MAX_TITLE_CHARS: usize = 34;
+    const MAX_TITLE_CHARS: usize = 28;
     let chars: Vec<char> = title.chars().collect();
     if chars.len() <= MAX_TITLE_CHARS {
         return title.to_owned();
@@ -667,8 +667,8 @@ fn result_row(
         })
         .reactive()
         .width_match()
-        .height(44)
-        .padding_xy(12, 4)
+        .height(46)
+        .padding_xy(12, 3)
         .spacing(10)
         .corner(10.0)
         // Selection background is owned exclusively by ResultRowAnchor. Keeping
