@@ -1612,7 +1612,14 @@ unsafe fn apply_window_op(hwnd: HWND) {
         })
         .unwrap_or((None, None));
     run_window_op(hwnd, op);
+    let resized = size_request.is_some();
     run_window_size_request(hwnd, size_request);
+    // A resize after a visible show invalidates the old swap-chain frame. Queue
+    // one more paint after SetWindowPos so transparent D2D content is presented
+    // at the new size instead of appearing only after the next query edit.
+    if resized && IsWindowVisible(hwnd).as_bool() {
+        let _ = InvalidateRect(Some(hwnd), None, false);
+    }
     // 运行期热键操作与窗口操作同点消费（HotkeyHandle 排队 → 此处落地）。
     // Register/UnregisterHotKey 不向本窗口同步派发消息，可在借用内直接执行。
     apply_hotkey_ops(hwnd);
