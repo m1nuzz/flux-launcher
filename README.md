@@ -2,7 +2,7 @@
 
 Flux Launcher is a lightweight Windows launcher written in Rust with **windui** as its only GUI framework. It combines a compact Spotlight-style search surface with Everything IPC, native Flow Launcher executable plugins, configurable global hotkeys, fullscreen-aware Game Mode, a system tray menu, and a windui-native Settings panel.
 
-The primary interaction is intentionally minimal. With an empty query, Flux shows only a short translucent search strip. After at least one character is entered, the native window expands and displays a bounded result list. The window uses the Windows system backdrop API and a DirectComposition-compatible transparent client path where supported.
+The primary interaction is intentionally minimal. With an empty query, Flux shows only a short dark translucent search strip. After at least one character is entered, the native popup expands and displays a bounded, ranked result list. The frameless Windows path uses a popup-style alpha-aware client surface, the Windows system backdrop API, and a DirectComposition-compatible path where supported; it does not retain the opaque native title-bar/client frame that caused the previous white rectangle.
 
 ## Features
 
@@ -11,6 +11,8 @@ The primary interaction is intentionally minimal. With an empty query, Flux show
 | GUI | Rust + windui only; no WebView, browser engine, or secondary UI toolkit |
 | Window material | Windows system Mica request with safe fallback and Acrylic-capable backend path |
 | Search | Built-in command palette, bounded eight-result pipeline, Everything IPC provider, and native Flow plugin provider |
+| Ranking | Exact/prefix application matches and executable/shortcut results are ranked ahead of ordinary indexed files and folders |
+| Keyboard UX | Up/Down/Home/End select results, Enter launches, Right opens action mode, Left/Escape returns, and actions support Open, Copy path, Copy name, and native plugin execution |
 | Query layout | Compact 72 dp search strip when empty; expanded 400 dp result surface after typing |
 | Smooth Caret | Optional ease-out visual caret transition with configurable duration; IME coordinates remain exact |
 | Global hotkey | Configurable modifier/key combination, default `Alt+Space` |
@@ -66,6 +68,12 @@ $env:FLUX_OPEN_SETTINGS = "1"
 .\flux-launcher.exe
 ```
 
+## Keyboard navigation and actions
+
+The search field remains focused while the result list is navigated. `ArrowUp` and `ArrowDown` move the selection with wraparound, while `Home` and `End` jump to the first and last result. `Enter` launches a selected file, folder, executable, or shortcut, and executes a native Flow plugin result when the plugin supplies an action.
+
+`ArrowRight` enters an action surface for the selected result. `ArrowUp` and `ArrowDown` select an action, `Enter` executes it, and `ArrowLeft` or `Escape` returns to the result list. The initial action set includes opening a path, copying a path, copying a result name, and executing the action supplied by an `Executable`/`Executable_V2` plugin. Mouse selection remains supported and uses the same result/action model.
+
 ## Everything integration
 
 Flux uses the Everything IPC protocol through the `everything-ipc` crate. Requests are dispatched in a background worker, use a short timeout, reject stale query sequences, and return at most eight results. If Everything is not running or cannot answer within the timeout, Flux remains usable without it.
@@ -107,18 +115,18 @@ The UI keeps result state bounded and uses background workers only for external 
 
 ## Smoke and memory evidence
 
-The latest successful Windows smoke run is available at [GitHub Actions run 31826972525](https://github.com/m1nuzz/flux-launcher/actions/runs/31826972525). It verifies the compact empty state, typed-query expansion, native Flow fixture output, Settings rendering, the requested system-backdrop path, and the following process samples from Windows Server 2025:
+The latest successful Windows smoke run is available at [GitHub Actions run 31861928506](https://github.com/m1nuzz/flux-launcher/actions/runs/31861928506). It verifies the compact empty state, typed-query expansion, ranked results, ArrowDown selection, Right-arrow action mode, Enter action execution, native Flow fixture output, Settings rendering, the requested system-backdrop path, and the following process samples from Windows Server 2025:
 
 | State | Working set | Private bytes |
 | --- | ---: | ---: |
-| Idle, empty query | approximately 29.1 MiB | approximately 11.5 MiB |
-| Query active | approximately 35.7 MiB | approximately 17.4 MiB |
+| Idle, empty query | approximately 29.5 MiB | approximately 13.4 MiB |
+| Query active | approximately 36.4 MiB | approximately 20.3 MiB |
 
 These are point-in-time smoke measurements, not a formal performance guarantee. The query sample includes the expanded UI and a native plugin response. Memory usage can vary with Windows composition, display scale, fonts, GPU driver, plugin behavior, and Everything availability.
 
 ## Release
 
-The first MVP release is **Flux Launcher v0.1.0**. It is intended for Windows 11 x64 and includes the release binary produced by the Windows CI pipeline. See the [GitHub Releases page](https://github.com/m1nuzz/flux-launcher/releases) for the downloadable artifact and English release notes.
+The first MVP release is **Flux Launcher v0.1.0**. The current main branch additionally contains the translucent popup, app-first ranking, keyboard navigation, and action-mode corrections described above; the next patch release will carry these changes as a downloadable Windows x64 artifact. See the [GitHub Releases page](https://github.com/m1nuzz/flux-launcher/releases) for the available binary and English release notes.
 
 ## License
 
