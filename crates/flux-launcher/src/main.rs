@@ -418,7 +418,9 @@ fn main() {
     } else {
         COMPACT_WINDOW_HEIGHT
     };
-    let mut app = App::new("Flux Launcher", WINDOW_WIDTH, initial_height);
+    let window_icon = tray_icon();
+    let mut app =
+        App::new("Flux Launcher", WINDOW_WIDTH, initial_height).icon_rgba(16, 16, &window_icon);
     let window_size = app.window_size_handle();
     *action_window_slot.borrow_mut() = Some(window_size.clone());
     let size_for_interval = window_size.clone();

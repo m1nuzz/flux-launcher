@@ -295,8 +295,10 @@ pub struct WindowConfig {
     pub screenshot_clicks: Vec<(i32, i32)>,
     /// 截屏前合成一次悬停（逻辑坐标 Move）并等待超过提示延时，用于验证 tooltip 等悬停视觉。
     pub screenshot_hover: Option<(i32, i32)>,
-    /// 系统托盘图标（None=不创建）。窗口创建后安装，窗口销毁时自动清理。
+    /// System tray icon (None = no tray). Installed after window creation.
     pub tray: Option<Tray>,
+    /// Optional non-premultiplied RGBA icon for the native window class/taskbar.
+    pub window_icon: Option<(u32, u32, Vec<u8>)>,
     /// 全局热键绑定（空=不注册）。窗口创建后注册，窗口销毁时自动注销。
     pub hotkeys: Vec<HotkeyBinding>,
     /// 启动即隐藏：窗口创建后不显示，交由托盘或全局热键唤起。
@@ -332,6 +334,7 @@ impl Default for WindowConfig {
             screenshot_clicks: Vec::new(),
             screenshot_hover: None,
             tray: None,
+            window_icon: None,
             hotkeys: Vec::new(),
             start_hidden: false,
             frameless: false,

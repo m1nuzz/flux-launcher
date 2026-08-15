@@ -262,6 +262,7 @@ impl App {
                 screenshot_clicks: Vec::new(),
                 screenshot_hover: None,
                 tray: None,
+                window_icon: None,
                 hotkeys: Vec::new(),
                 start_hidden: false,
                 frameless: false,
@@ -576,6 +577,12 @@ impl App {
     /// 窗口创建后安装，窗口销毁时自动清理。截屏模式下忽略。
     pub fn tray(mut self, tray: platform::Tray) -> Self {
         self.cfg.tray = Some(tray);
+        self
+    }
+
+    /// Set the native window/taskbar icon from non-premultiplied RGBA8 pixels.
+    pub fn icon_rgba(mut self, width: u32, height: u32, rgba: &[u8]) -> Self {
+        self.cfg.window_icon = Some((width, height, rgba.to_vec()));
         self
     }
 

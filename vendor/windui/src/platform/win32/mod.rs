@@ -19,16 +19,17 @@ use std::path::PathBuf;
 use tiny_skia::Pixmap;
 
 use windows::core::{s, w, PCWSTR};
-use windows::Win32::Foundation::{HINSTANCE, HWND, LPARAM, LRESULT, POINT, RECT, WPARAM};
+use windows::Win32::Foundation::{HINSTANCE, HWND, LPARAM, LRESULT, POINT, RECT, TRUE, WPARAM};
 use windows::Win32::Graphics::Dwm::{
     DwmExtendFrameIntoClientArea, DwmSetWindowAttribute, DWMSBT_MAINWINDOW, DWMSBT_TRANSIENTWINDOW,
     DWMWA_SYSTEMBACKDROP_TYPE, DWMWA_WINDOW_CORNER_PREFERENCE, DWMWCP_ROUND,
     DWM_SYSTEMBACKDROP_TYPE,
 };
 use windows::Win32::Graphics::Gdi::{
-    BeginPaint, EndPaint, GetDC, GetDeviceCaps, InvalidateRect, ReleaseDC, ScreenToClient,
-    SetDIBitsToDevice, UpdateWindow, BITMAPINFO, BITMAPINFOHEADER, BI_RGB, DEFAULT_CHARSET,
-    DIB_RGB_COLORS, LOGFONTW, PAINTSTRUCT, VREFRESH,
+    BeginPaint, CreateBitmap, CreateDIBSection, DeleteObject, EndPaint, GetDC, GetDeviceCaps,
+    InvalidateRect, ReleaseDC, ScreenToClient, SetDIBitsToDevice, UpdateWindow, BITMAPINFO,
+    BITMAPINFOHEADER, BI_RGB, DEFAULT_CHARSET, DIB_RGB_COLORS, HGDIOBJ, LOGFONTW, PAINTSTRUCT,
+    VREFRESH,
 };
 use windows::Win32::Media::{timeBeginPeriod, timeEndPeriod};
 use windows::Win32::System::LibraryLoader::{GetModuleHandleW, GetProcAddress};
@@ -54,25 +55,25 @@ use windows::Win32::UI::Shell::{
     DragAcceptFiles, DragFinish, DragQueryFileW, DragQueryPoint, ShellExecuteW, HDROP,
 };
 use windows::Win32::UI::WindowsAndMessaging::{
-    CreateWindowExW, DefWindowProcW, DestroyWindow, DispatchMessageW, GetClientRect,
-    GetMessageExtraInfo, GetMessageTime, GetMessageW, GetSystemMetrics, GetWindowLongPtrW,
-    GetWindowRect, IsIconic, IsZoomed, LoadCursorW, LoadIconW, MsgWaitForMultipleObjectsEx,
-    PeekMessageW, PostMessageW, PostQuitMessage, RegisterClassExW, SetCursor, SetForegroundWindow,
-    SetTimer, SetWindowLongPtrW, SetWindowPos, ShowWindow, SystemParametersInfoW, TranslateMessage,
-    CREATESTRUCTW, CW_USEDEFAULT, GWLP_USERDATA, HTBOTTOM, HTBOTTOMLEFT, HTBOTTOMRIGHT, HTCAPTION,
-    HTCLIENT, HTLEFT, HTRIGHT, HTTOP, HTTOPLEFT, HTTOPRIGHT, IDC_ARROW, IDC_HAND, IDC_IBEAM,
-    MINMAXINFO, MSG, MWMO_INPUTAVAILABLE, NCCALCSIZE_PARAMS, PM_REMOVE, QS_ALLINPUT,
-    SIZE_MINIMIZED, SM_CXDOUBLECLK, SM_CXFRAME, SM_CXPADDEDBORDER, SM_CXSCREEN, SM_CYDOUBLECLK,
-    SM_CYFRAME, SM_CYSCREEN, SPI_GETCLIENTAREAANIMATION, SWP_FRAMECHANGED, SWP_NOACTIVATE,
-    SWP_NOMOVE, SWP_NOSIZE, SWP_NOZORDER, SW_HIDE, SW_MAXIMIZE, SW_MINIMIZE, SW_RESTORE, SW_SHOW,
-    SW_SHOWNORMAL, SYSTEM_PARAMETERS_INFO_UPDATE_FLAGS, WINDOW_EX_STYLE, WINDOW_STYLE, WM_APP,
-    WM_CAPTURECHANGED, WM_CHAR, WM_CLOSE, WM_DESTROY, WM_DPICHANGED, WM_DROPFILES,
-    WM_ENTERSIZEMOVE, WM_EXITSIZEMOVE, WM_GETMINMAXINFO, WM_HOTKEY, WM_IME_COMPOSITION,
-    WM_IME_ENDCOMPOSITION, WM_IME_STARTCOMPOSITION, WM_KEYDOWN, WM_LBUTTONDOWN, WM_LBUTTONUP,
-    WM_MOUSEMOVE, WM_MOUSEWHEEL, WM_NCCALCSIZE, WM_NCCREATE, WM_NCHITTEST, WM_NCMOUSEMOVE,
-    WM_PAINT, WM_QUIT, WM_RBUTTONDOWN, WM_RBUTTONUP, WM_SETCURSOR, WM_SIZE, WM_TIMER, WM_TOUCH,
-    WNDCLASSEXW, WS_EX_NOREDIRECTIONBITMAP, WS_MAXIMIZEBOX, WS_OVERLAPPEDWINDOW, WS_POPUP,
-    WS_THICKFRAME,
+    CreateIconIndirect, CreateWindowExW, DefWindowProcW, DestroyIcon, DestroyWindow,
+    DispatchMessageW, GetClientRect, GetMessageExtraInfo, GetMessageTime, GetMessageW,
+    GetSystemMetrics, GetWindowLongPtrW, GetWindowRect, IsIconic, IsZoomed, LoadCursorW, LoadIconW,
+    MsgWaitForMultipleObjectsEx, PeekMessageW, PostMessageW, PostQuitMessage, RegisterClassExW,
+    SetCursor, SetForegroundWindow, SetTimer, SetWindowLongPtrW, SetWindowPos, ShowWindow,
+    SystemParametersInfoW, TranslateMessage, CREATESTRUCTW, CW_USEDEFAULT, GWLP_USERDATA, HICON,
+    HTBOTTOM, HTBOTTOMLEFT, HTBOTTOMRIGHT, HTCAPTION, HTCLIENT, HTLEFT, HTRIGHT, HTTOP, HTTOPLEFT,
+    HTTOPRIGHT, ICONINFO, IDC_ARROW, IDC_HAND, IDC_IBEAM, MINMAXINFO, MSG, MWMO_INPUTAVAILABLE,
+    NCCALCSIZE_PARAMS, PM_REMOVE, QS_ALLINPUT, SIZE_MINIMIZED, SM_CXDOUBLECLK, SM_CXFRAME,
+    SM_CXPADDEDBORDER, SM_CXSCREEN, SM_CYDOUBLECLK, SM_CYFRAME, SM_CYSCREEN,
+    SPI_GETCLIENTAREAANIMATION, SWP_FRAMECHANGED, SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE,
+    SWP_NOZORDER, SW_HIDE, SW_MAXIMIZE, SW_MINIMIZE, SW_RESTORE, SW_SHOW, SW_SHOWNORMAL,
+    SYSTEM_PARAMETERS_INFO_UPDATE_FLAGS, WINDOW_EX_STYLE, WINDOW_STYLE, WM_APP, WM_CAPTURECHANGED,
+    WM_CHAR, WM_CLOSE, WM_DESTROY, WM_DPICHANGED, WM_DROPFILES, WM_ENTERSIZEMOVE, WM_EXITSIZEMOVE,
+    WM_GETMINMAXINFO, WM_HOTKEY, WM_IME_COMPOSITION, WM_IME_ENDCOMPOSITION,
+    WM_IME_STARTCOMPOSITION, WM_KEYDOWN, WM_LBUTTONDOWN, WM_LBUTTONUP, WM_MOUSEMOVE, WM_MOUSEWHEEL,
+    WM_NCCALCSIZE, WM_NCCREATE, WM_NCHITTEST, WM_NCMOUSEMOVE, WM_PAINT, WM_QUIT, WM_RBUTTONDOWN,
+    WM_RBUTTONUP, WM_SETCURSOR, WM_SIZE, WM_TIMER, WM_TOUCH, WNDCLASSEXW,
+    WS_EX_NOREDIRECTIONBITMAP, WS_MAXIMIZEBOX, WS_OVERLAPPEDWINDOW, WS_POPUP, WS_THICKFRAME,
 };
 // 只用于 d2d 后端选择（RDP 远程会话下强制软渲染），随该 feature 一起门控。
 #[cfg(feature = "d2d")]
@@ -396,16 +397,58 @@ fn swap_rb_inplace(data: &mut [u8]) {
     }
 }
 
+/// Builds an owned Win32 HICON from non-premultiplied RGBA8 pixels.
+unsafe fn hicon_from_rgba(w: i32, h: i32, rgba: &[u8]) -> Option<HICON> {
+    if w <= 0 || h <= 0 || rgba.len() < (w * h * 4) as usize {
+        return None;
+    }
+    let bmi = BITMAPINFO {
+        bmiHeader: BITMAPINFOHEADER {
+            biSize: size_of::<BITMAPINFOHEADER>() as u32,
+            biWidth: w,
+            biHeight: -h,
+            biPlanes: 1,
+            biBitCount: 32,
+            biCompression: BI_RGB.0,
+            ..Default::default()
+        },
+        ..Default::default()
+    };
+    let mut bits: *mut c_void = std::ptr::null_mut();
+    let hbm_color = CreateDIBSection(None, &bmi, DIB_RGB_COLORS, &mut bits, None, 0).ok()?;
+    if bits.is_null() {
+        let _ = DeleteObject(HGDIOBJ(hbm_color.0));
+        return None;
+    }
+    let px = bits as *mut u8;
+    for index in 0..(w * h) as usize {
+        let source = index * 4;
+        let target = source;
+        *px.add(target) = rgba[source + 2];
+        *px.add(target + 1) = rgba[source + 1];
+        *px.add(target + 2) = rgba[source];
+        *px.add(target + 3) = rgba[source + 3];
+    }
+    let hbm_mask = CreateBitmap(w, h, 1, 1, None);
+    let icon_info = ICONINFO {
+        fIcon: TRUE,
+        xHotspot: 0,
+        yHotspot: 0,
+        hbmMask: hbm_mask,
+        hbmColor: hbm_color,
+    };
+    let hicon = CreateIconIndirect(&icon_info).ok();
+    let _ = DeleteObject(HGDIOBJ(hbm_color.0));
+    let _ = DeleteObject(HGDIOBJ(hbm_mask.0));
+    hicon
+}
+
 use super::to_skia_color;
 
-/// Applies a system backdrop and, for Acrylic, the compatibility policy used by
-/// classic Win32 windows. The public DWM attribute is preferred; the WCA call is
-/// deliberately best-effort because it is not available as a stable SDK API.
+/// Applies the public DWM system backdrop first. The legacy WCA Acrylic policy is
+/// used only when the public attribute is unavailable, so two material policies do
+/// not compete for the same HWND.
 unsafe fn apply_system_backdrop(hwnd: HWND, backdrop: Backdrop) {
-    if backdrop == Backdrop::Acrylic {
-        apply_acrylic_policy(hwnd);
-    }
-
     let kind: Option<DWM_SYSTEMBACKDROP_TYPE> = match backdrop {
         Backdrop::None => None,
         Backdrop::Mica => Some(DWMSBT_MAINWINDOW),
@@ -422,6 +465,11 @@ unsafe fn apply_system_backdrop(hwnd: HWND, backdrop: Backdrop) {
     )
     .is_ok()
     {
+        return;
+    }
+
+    if backdrop == Backdrop::Acrylic {
+        apply_acrylic_policy(hwnd);
         return;
     }
 
@@ -472,7 +520,7 @@ unsafe fn apply_acrylic_policy(hwnd: HWND) {
         flags: 0,
         // A restrained dark tint keeps text readable while allowing the desktop
         // and adjacent windows to contribute to the translucent material.
-        gradient_color: 0xA0181E2A,
+        gradient_color: 0x66101828,
         animation_id: 0,
     };
     let mut data = WindowCompositionAttributeData {
@@ -518,10 +566,20 @@ unsafe fn run_windowed(
     let hinst = HINSTANCE(hmodule.0);
     let cursor = LoadCursorW(None, IDC_ARROW).unwrap_or_default();
 
-    // MAKEINTRESOURCE(1)=IDI_APPLICATION：整数 1 当资源序号传入（低 64K 表示序号而非字符串指针）。
-    // 这不是“悬垂指针”，故抑制 clippy；其自动建议 ptr::dangling() 会把序号改成 u16 对齐值(2)，是语义错误。
-    #[allow(clippy::manual_dangling_ptr)]
-    let hicon = LoadIconW(Some(hinst), PCWSTR(1usize as *const u16)).unwrap_or_default();
+    // Prefer the application-provided RGBA icon for the taskbar and Alt+Tab class identity.
+    // Fall back to the system application icon when no custom icon was supplied.
+    let (hicon, owns_class_icon) = cfg
+        .window_icon
+        .as_ref()
+        .and_then(|(w, h, rgba)| hicon_from_rgba(*w as i32, *h as i32, rgba))
+        .map(|icon| (icon, true))
+        .unwrap_or_else(|| {
+            // MAKEINTRESOURCE(1)=IDI_APPLICATION: integer resource 1 is intentionally passed as
+            // a low pointer value, not as a dangling string pointer.
+            #[allow(clippy::manual_dangling_ptr)]
+            let icon = LoadIconW(Some(hinst), PCWSTR(1usize as *const u16)).unwrap_or_default();
+            (icon, false)
+        });
     let wc = WNDCLASSEXW {
         cbSize: size_of::<WNDCLASSEXW>() as u32,
         lpfnWndProc: Some(wnd_proc),
@@ -601,6 +659,9 @@ unsafe fn run_windowed(
             // 创建失败不会触发 WM_DESTROY，需手动回收已装箱的 WindowState，
             // 避免泄漏（含其 GDI 资源）。成功路径下所有权已转移给 HWND。
             drop(Box::from_raw(state_ptr));
+            if owns_class_icon {
+                let _ = DestroyIcon(hicon);
+            }
             panic!("CreateWindowExW 失败: {e:?}");
         }
     };
@@ -798,6 +859,9 @@ unsafe fn run_windowed(
     }
 
     run_message_loop(hwnd);
+    if owns_class_icon {
+        let _ = DestroyIcon(hicon);
+    }
 
     // 消息循环结束后立即显式释放 GPU 共享设备链（D3D11/DXGI/D2D/DWrite COM 对象）。
     // 推迟到线程析构才 Release 会触发 GPU 命令队列排空 + DWrite 字体缓存全局清理，
