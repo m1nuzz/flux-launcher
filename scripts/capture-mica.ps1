@@ -131,7 +131,9 @@ public sealed class FluxProbeForm : Form
 $form = New-Object FluxProbeForm
 [System.Windows.Forms.Application]::Run($form)
 '@ | Set-Content -Encoding utf8 $probeScriptPath
-$probeProcess = Start-Process -FilePath "pwsh" -ArgumentList @("-NoProfile", "-File", $probeScriptPath) -WindowStyle Hidden -PassThru
+$probeStdoutPath = Join-Path $OutputDirectory "probe.stdout.log"
+$probeStderrPath = Join-Path $OutputDirectory "probe.stderr.log"
+$probeProcess = Start-Process -FilePath "pwsh" -ArgumentList @("-NoProfile", "-File", $probeScriptPath) -WindowStyle Hidden -RedirectStandardOutput $probeStdoutPath -RedirectStandardError $probeStderrPath -PassThru
 Start-Sleep -Seconds 2
 
 $stdoutPath = Join-Path $OutputDirectory "launcher.stdout.log"
