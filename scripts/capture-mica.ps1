@@ -26,6 +26,8 @@ public static class FluxWallpaper {
     public static extern void keybd_event(byte virtualKey, byte scanCode, uint flags, UIntPtr extraInfo);
     [DllImport("user32.dll", SetLastError = true)]
     public static extern bool SetForegroundWindow(IntPtr hwnd);
+    [DllImport("user32.dll", SetLastError = true)]
+    public static extern bool IsWindowVisible(IntPtr hwnd);
 }
 '@
 
@@ -157,14 +159,19 @@ try {
     # only after typing.
     $launcherHandle = $process.MainWindowHandle
     if ($launcherHandle -eq [IntPtr]::Zero) { throw "Flux launcher has no main window handle." }
+    if (![FluxWallpaper]::IsWindowVisible($launcherHandle)) { throw "Launcher is not visible before hotkey regression probe." }
     [FluxWallpaper]::SetForegroundWindow($launcherHandle) | Out-Null
     Start-Sleep -Milliseconds 250
-    for ($toggle = 0; $toggle -lt 2; $toggle++) {
-        [FluxWallpaper]::keybd_event(0x12, 0, 0, [UIntPtr]::Zero)
-        [FluxWallpaper]::keybd_event(0x20, 0, 0, [UIntPtr]::Zero)
-        [FluxWallpaper]::keybd_event(0x20, 0, 2, [UIntPtr]::Zero)
-        [FluxWallpaper]::keybd_event(0x12, 0, 2, [UIntPtr]::Zero)
-        Start-Sleep -Milliseconds 350
+    $hotkeyShell = New-Object -ComObject WScript.Shell
+    $hotkeyShell.AppActivate($process.Id) | Out-Null
+    $hotkeyShell.SendKeys("% ")
+    Start-Sleep -Milliseconds 450
+    $hiddenAfterFirstHotkey = ![FluxWallpaper]::IsWindowVisible($launcherHandle)
+    $hotkeyShell.SendKeys("% ")
+    Start-Sleep -Milliseconds 600
+    $visibleAfterSecondHotkey = [FluxWallpaper]::IsWindowVisible($launcherHandle)
+    if (!$hiddenAfterFirstHotkey -or !$visibleAfterSecondHotkey) {
+        throw "Alt+Space visibility regression: hidden=$hiddenAfterFirstHotkey visible=$visibleAfterSecondHotkey"
     }
     Save-Screenshot "mica-repeat-show-empty.png"
 
@@ -221,6 +228,8 @@ try {
         CapturedAtUtc = (Get-Date).ToUniversalTime().ToString("O")
         WallpaperProbe = $true
         RepeatShowEmptyProbe = $true
+        FirstHotkeyHideProbe = $hiddenAfterFirstHotkey
+        SecondHotkeyShowProbe = $visibleAfterSecondHotkey
         QueryExpandedProbe = $true
         SettingsPanelProbe = $true
         KeyboardSelectionProbe = $true
