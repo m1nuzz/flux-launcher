@@ -266,6 +266,7 @@ fn result_row(
     result: SearchResult,
     selected_id: Signal<String>,
     selected_index: Signal<usize>,
+    selection_touched: Signal<bool>,
     rows_refresh: Signal<Vec<SearchResult>>,
     plugin_actions: Rc<RefCell<HashMap<String, PluginInvocation>>>,
 ) -> Element {
@@ -319,6 +320,7 @@ fn result_row(
         )
         .on_click(move |_| {
             selected_id.set(id.clone());
+            selection_touched.set(true);
             if let Some(index) = rows_refresh.get().iter().position(|result| result.id == id) {
                 selected_index.set(index);
             }
@@ -341,6 +343,7 @@ fn main() {
     let query = signal(String::new());
     let selected_id = signal(String::new());
     let selected_index = signal(0_usize);
+    let selection_touched = signal(false);
     let action_mode = signal(false);
     let action_index = signal(0_usize);
     let action_items = signal(Vec::<ActionItem>::new());
@@ -367,6 +370,7 @@ fn main() {
     let result_source = results;
     let selected_for_rows = selected_id;
     let selected_index_for_rows = selected_index;
+    let selection_touched_for_rows = selection_touched;
     let actions_for_rows = Rc::clone(&plugin_actions);
     let action_items_for_rows = action_items;
     let action_index_for_rows = action_index;
@@ -396,6 +400,7 @@ fn main() {
                 result,
                 selected_for_rows,
                 selected_index_for_rows,
+                selection_touched_for_rows,
                 result_source,
                 Rc::clone(&actions_for_rows),
             )
@@ -480,6 +485,7 @@ fn main() {
     let results_for_interval = results;
     let status_for_interval = status;
     let show_results_for_interval = show_results;
+    let selection_touched_for_interval = selection_touched;
     let sequence_for_interval = current_sequence;
     let providers_for_interval = Rc::clone(&provider_results);
     let actions_for_interval = Rc::clone(&plugin_actions);
@@ -500,6 +506,9 @@ fn main() {
     let query_for_applications = query;
     let results_for_applications = results;
     let status_for_applications = status;
+    let selected_id_for_applications = selected_id;
+    let selected_index_for_applications = selected_index;
+    let selection_touched_for_applications = selection_touched;
     let sequence_for_applications = current_sequence;
     let providers_for_applications = Rc::clone(&provider_results);
     let application_sender = app.channel::<ApplicationResponse>(move |_, response| {
@@ -513,7 +522,17 @@ fn main() {
             return;
         }
         providers.applications = response.results;
-        results_for_applications.set(providers.merged(&query_for_applications.get()));
+        let merged = providers.merged(&query_for_applications.get());
+        if !selection_touched_for_applications.get() {
+            selected_index_for_applications.set(0);
+            selected_id_for_applications.set(
+                merged
+                    .first()
+                    .map(|result| result.id.clone())
+                    .unwrap_or_default(),
+            );
+        }
+        results_for_applications.set(merged);
         status_for_applications.set(response.status);
     });
     let application_worker = ApplicationWorker::spawn(application_sender);
@@ -521,6 +540,9 @@ fn main() {
     let query_for_everything = query;
     let results_for_everything = results;
     let status_for_everything = status;
+    let selected_id_for_everything = selected_id;
+    let selected_index_for_everything = selected_index;
+    let selection_touched_for_everything = selection_touched;
     let sequence_for_everything = current_sequence;
     let providers_for_everything = Rc::clone(&provider_results);
     let everything_sender = app.channel::<EverythingResponse>(move |_, response| {
@@ -535,7 +557,17 @@ fn main() {
         }
         if response.available {
             providers.everything = response.results;
-            results_for_everything.set(providers.merged(&query_for_everything.get()));
+            let merged = providers.merged(&query_for_everything.get());
+            if !selection_touched_for_everything.get() {
+                selected_index_for_everything.set(0);
+                selected_id_for_everything.set(
+                    merged
+                        .first()
+                        .map(|result| result.id.clone())
+                        .unwrap_or_default(),
+                );
+            }
+            results_for_everything.set(merged);
         }
         status_for_everything.set(response.status);
     });
@@ -544,6 +576,9 @@ fn main() {
     let query_for_plugins = query;
     let results_for_plugins = results;
     let status_for_plugins = status;
+    let selected_id_for_plugins = selected_id;
+    let selected_index_for_plugins = selected_index;
+    let selection_touched_for_plugins = selection_touched;
     let sequence_for_plugins = current_sequence;
     let providers_for_plugins = Rc::clone(&provider_results);
     let actions_for_plugins = Rc::clone(&plugin_actions);
@@ -560,7 +595,17 @@ fn main() {
         if response.available {
             providers.plugins = response.results;
             *actions_for_plugins.borrow_mut() = response.actions;
-            results_for_plugins.set(providers.merged(&query_for_plugins.get()));
+            let merged = providers.merged(&query_for_plugins.get());
+            if !selection_touched_for_plugins.get() {
+                selected_index_for_plugins.set(0);
+                selected_id_for_plugins.set(
+                    merged
+                        .first()
+                        .map(|result| result.id.clone())
+                        .unwrap_or_default(),
+                );
+            }
+            results_for_plugins.set(merged);
         }
         status_for_plugins.set(response.status);
     });
@@ -581,6 +626,7 @@ fn main() {
     let results_for_keys = results;
     let selected_id_for_keys = selected_id;
     let selected_index_for_keys = selected_index;
+    let selection_touched_for_keys = selection_touched;
     let action_mode_for_keys = action_mode;
     let action_index_for_keys = action_index;
     let action_items_for_keys = action_items;
@@ -677,6 +723,7 @@ fn main() {
                     Key::End => count - 1,
                     _ => 0,
                 };
+                selection_touched_for_keys.set(true);
                 selected_index_for_keys.set(next);
                 if let Some(result) = current_results.get(next) {
                     selected_id_for_keys.set(result.id.clone());
@@ -954,7 +1001,7 @@ fn main() {
                 let mut providers = providers_for_interval.borrow_mut();
                 providers.reset(sequence, model.results().to_vec());
                 let merged = providers.merged(&next_query);
-                results_for_interval.set(merged.clone());
+                selection_touched_for_interval.set(false);
                 selected_index.set(0);
                 selected_id.set(
                     merged
@@ -962,6 +1009,7 @@ fn main() {
                         .map(|result| result.id.clone())
                         .unwrap_or_default(),
                 );
+                results_for_interval.set(merged);
             }
             action_mode.set(false);
             action_index.set(0);
