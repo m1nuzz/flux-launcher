@@ -74,6 +74,8 @@ impl ProviderResults {
 #[derive(Clone, Debug)]
 enum ActionKind {
     Open,
+    RunAsAdmin,
+    OpenLocation,
     CopyPath,
     CopyName,
     RunPlugin(PluginInvocation),
@@ -96,6 +98,16 @@ fn actions_for_result(
             id: format!("{}:open", result.id),
             label: String::from("Open"),
             kind: ActionKind::Open,
+        });
+        actions.push(ActionItem {
+            id: format!("{}:run-as-admin", result.id),
+            label: String::from("Run as admin"),
+            kind: ActionKind::RunAsAdmin,
+        });
+        actions.push(ActionItem {
+            id: format!("{}:open-location", result.id),
+            label: String::from("Open file location"),
+            kind: ActionKind::OpenLocation,
         });
         actions.push(ActionItem {
             id: format!("{}:copy-path", result.id),
@@ -197,6 +209,16 @@ fn execute_result_action(result: &SearchResult, action: &ActionKind) {
                 let _ = launch::open_path(target);
             }
         }
+        ActionKind::RunAsAdmin => {
+            if let Some(target) = result.target.as_deref() {
+                let _ = launch::run_as_admin(target);
+            }
+        }
+        ActionKind::OpenLocation => {
+            if let Some(target) = result.target.as_deref() {
+                let _ = launch::open_file_location(target);
+            }
+        }
         ActionKind::CopyPath => {
             if let Some(target) = result.target.as_deref() {
                 windui::platform::Clipboard.set_text(target);
@@ -256,6 +278,17 @@ fn game_mode_label(enabled: bool) -> String {
     } else {
         String::from("Game Mode: Off")
     }
+}
+
+#[cfg(windows)]
+fn alt_key_is_down() -> bool {
+    use windows::Win32::UI::Input::KeyboardAndMouse::{GetKeyState, VK_MENU};
+    unsafe { GetKeyState(VK_MENU.0 as i32) < 0 }
+}
+
+#[cfg(not(windows))]
+fn alt_key_is_down() -> bool {
+    false
 }
 
 #[cfg(windows)]
@@ -603,8 +636,8 @@ fn main() {
         .padding_xy(10, 2)
         .spacing(14)
         .child(action_hint("↵", "Open"))
-        .child(action_hint("→", "Actions"))
-        .child(action_hint("Esc", "Close"))
+        .child(action_hint("Ctrl + R", "Run as admin"))
+        .child(action_hint("Alt + Enter", "Open file location"))
         .visible_when(move || show_results.get() && !action_mode.get());
 
     let result_list = Element::list_signal(
@@ -924,6 +957,31 @@ fn main() {
                 }
                 _ => return true,
             }
+        }
+
+        if event.ctrl && matches!(event.key, Key::Char('r') | Key::Char('R')) {
+            if let Some(result) = selected_result(
+                &current_results,
+                &selected_id_for_keys.get(),
+                selected_index_for_keys.get(),
+            ) {
+                if let Some(target) = result.target.as_deref() {
+                    let _ = launch::run_as_admin(target);
+                }
+            }
+            return true;
+        }
+        if event.key == Key::Enter && alt_key_is_down() {
+            if let Some(result) = selected_result(
+                &current_results,
+                &selected_id_for_keys.get(),
+                selected_index_for_keys.get(),
+            ) {
+                if let Some(target) = result.target.as_deref() {
+                    let _ = launch::open_file_location(target);
+                }
+            }
+            return true;
         }
 
         match event.key {
