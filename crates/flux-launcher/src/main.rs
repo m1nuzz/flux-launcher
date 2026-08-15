@@ -25,7 +25,7 @@ use windui::prelude::*;
 const WINDOW_WIDTH: i32 = 420;
 const COMPACT_WINDOW_HEIGHT: i32 = 72;
 const EXPANDED_WINDOW_HEIGHT: i32 = 400;
-const ACTION_WINDOW_HEIGHT: i32 = 500;
+const ACTION_WINDOW_HEIGHT: i32 = 320;
 const SETTINGS_WINDOW_HEIGHT: i32 = 520;
 const SEARCH_INTERVAL: Duration = Duration::from_millis(40);
 const PROVIDER_MIN_QUERY_LEN: usize = 2;
@@ -305,7 +305,7 @@ fn main() {
     )
     .height(286)
     .corner(12.0)
-    .visible_signal(show_results);
+    .visible_when(move || show_results.get() && !action_mode.get());
 
     let action_list = Element::list_signal(
         action_items_for_rows,
