@@ -146,6 +146,7 @@ impl Widget for ResultRowAnchor {
             } else {
                 self.title.clone()
             });
+            eprintln!("[selection] id={} selected={}", self.result_id, selected);
             self.last_selected = Some(selected);
         }
         if selected {
