@@ -827,7 +827,9 @@ fn main() {
 
     app.tray(tray)
         .hide_on_close()
-        .bg(Color::rgba(0, 0, 0, 0))
+        // The Win32 backend keeps this transparent on local Acrylic-capable
+        // sessions and uses this dark color only for an honest RDP fallback.
+        .bg(Color::rgba(24, 31, 44, 255))
         .centered()
         .frameless()
         .resizable(false)

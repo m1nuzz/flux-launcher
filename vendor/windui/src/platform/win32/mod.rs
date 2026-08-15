@@ -637,12 +637,17 @@ unsafe fn run_windowed(
     let atom = RegisterClassExW(&wc);
     debug_assert!(atom != 0, "RegisterClassExW 失败");
 
+    // A transparent presenter is safe only when local DWM composition can
+    // provide the requested system material. Remote sessions use an opaque
+    // dark fallback instead of exposing DWM's neutral material slab.
+    let backdrop_available = cfg.backdrop != Backdrop::None
+        && GetSystemMetrics(SM_REMOTESESSION) == 0
+        && DwmIsCompositionEnabled()
+            .map(|enabled| enabled.as_bool())
+            .unwrap_or(true);
+
     // 把 WindowState 装箱，指针随 CreateWindow 传入，在 WM_NCCREATE 挂到 HWND。
-    let mut state = Box::new(WindowState::new(
-        handler,
-        cfg.bg,
-        cfg.backdrop != Backdrop::None,
-    ));
+    let mut state = Box::new(WindowState::new(handler, cfg.bg, backdrop_available));
     state.min_w = cfg.min_width;
     state.min_h = cfg.min_height;
     let state_ptr = Box::into_raw(state);
@@ -683,7 +688,7 @@ unsafe fn run_windowed(
     // redirected HWND client would otherwise paint its default opaque class
     // background over the swap chain and produce the white rectangle seen in the
     // visual smoke screenshot.
-    let ex_style = if cfg.backdrop != Backdrop::None {
+    let ex_style = if backdrop_available {
         WS_EX_NOREDIRECTIONBITMAP
     } else {
         WINDOW_EX_STYLE::default()
@@ -758,17 +763,11 @@ unsafe fn run_windowed(
             let mut rc = RECT::default();
             let _ = GetClientRect(hwnd, &mut rc);
             let (cw, ch) = (rc.right - rc.left, rc.bottom - rc.top);
-            match d2d::try_create(
-                hwnd,
-                cw,
-                ch,
-                cfg.backdrop != Backdrop::None,
-                cfg.backdrop != Backdrop::None,
-            ) {
+            match d2d::try_create(hwnd, cw, ch, backdrop_available, backdrop_available) {
                 Some(b) => {
                     eprintln!(
                         "[windui] D2D backend active (composition={})",
-                        cfg.backdrop != Backdrop::None
+                        backdrop_available
                     );
                     if let Some(s) = state_from(hwnd) {
                         s.backend = Box::new(b);
@@ -849,11 +848,6 @@ unsafe fn run_windowed(
         if let Some(s) = state_from(hwnd) {
             s.frameless = true;
         }
-        let local_backdrop_available = cfg.backdrop != Backdrop::None
-            && GetSystemMetrics(SM_REMOTESESSION) == 0
-            && DwmIsCompositionEnabled()
-                .map(|enabled| enabled.as_bool())
-                .unwrap_or(true);
         let margins = if cfg.backdrop == Backdrop::None {
             MARGINS {
                 cxLeftWidth: 0,
@@ -861,14 +855,9 @@ unsafe fn run_windowed(
                 cyTopHeight: 1,
                 cyBottomHeight: 0,
             }
-        } else if local_backdrop_available {
-            // DirectComposition and DWMWA_SYSTEMBACKDROP_TYPE already cover the
-            // complete client surface; keep the legacy frame extension empty.
-            MARGINS::default()
         } else {
-            // Do not ask RDP/composition-disabled DWM for a glass frame: its
-            // fallback is an opaque neutral rectangle. The transparent swapchain
-            // remains visible without an app-painted replacement surface.
+            // System Acrylic, or the dark remote fallback, owns the client
+            // surface; do not extend a second legacy frame into it.
             MARGINS::default()
         };
         let _ = DwmExtendFrameIntoClientArea(hwnd, &margins);
