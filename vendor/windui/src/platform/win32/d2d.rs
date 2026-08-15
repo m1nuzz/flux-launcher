@@ -31,7 +31,9 @@ use windows::Win32::Graphics::Direct2D::{
     D2D1_SHADOW_PROP_BLUR_STANDARD_DEVIATION, D2D1_SHADOW_PROP_COLOR,
     D2D1_TEXT_ANTIALIAS_MODE_CLEARTYPE, D2D1_TEXT_ANTIALIAS_MODE_GRAYSCALE,
 };
-use windows::Win32::Graphics::Direct3D::{D3D_DRIVER_TYPE_HARDWARE, D3D_FEATURE_LEVEL};
+use windows::Win32::Graphics::Direct3D::{
+    D3D_DRIVER_TYPE_HARDWARE, D3D_DRIVER_TYPE_WARP, D3D_FEATURE_LEVEL,
+};
 use windows::Win32::Graphics::Direct3D11::{
     D3D11CreateDevice, ID3D11Device, D3D11_CREATE_DEVICE_BGRA_SUPPORT, D3D11_SDK_VERSION,
 };
@@ -243,21 +245,28 @@ unsafe fn invalidate_shared_device(gen: u64) {
 
 /// 新建设备链（D3D11 硬件设备 → DXGI 工厂 → D2D 工厂/设备 → DirectWrite 工厂）。任一环节失败返回 `None`。
 unsafe fn create_shared_device() -> Option<SharedDevice> {
-    // 1. D3D11 硬件设备（BGRA 支持，供 D2D 互操作）。失败即放弃。
+    // 1. Prefer a hardware adapter, then use WARP so alpha-aware composition can
+    // still be exercised in remote smoke environments.
     let mut d3d_device: Option<ID3D11Device> = None;
     let mut feature_level = D3D_FEATURE_LEVEL::default();
-    D3D11CreateDevice(
-        None, // 默认适配器
-        D3D_DRIVER_TYPE_HARDWARE,
-        Default::default(), // 无软件光栅模块
-        D3D11_CREATE_DEVICE_BGRA_SUPPORT,
-        None, // 默认特性级别集
-        D3D11_SDK_VERSION,
-        Some(&mut d3d_device),
-        Some(&mut feature_level),
-        None, // 不需要 immediate context
-    )
-    .ok()?;
+    for driver in [D3D_DRIVER_TYPE_HARDWARE, D3D_DRIVER_TYPE_WARP] {
+        if D3D11CreateDevice(
+            None,
+            driver,
+            Default::default(),
+            D3D11_CREATE_DEVICE_BGRA_SUPPORT,
+            None,
+            D3D11_SDK_VERSION,
+            Some(&mut d3d_device),
+            Some(&mut feature_level),
+            None,
+        )
+        .is_ok()
+            && d3d_device.is_some()
+        {
+            break;
+        }
+    }
     let d3d_device = d3d_device?;
 
     // 2. D3D11 → IDXGIDevice → adapter → IDXGIFactory2（每窗建 swapchain 用）。

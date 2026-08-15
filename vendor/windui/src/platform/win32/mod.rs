@@ -77,8 +77,6 @@ use windows::Win32::UI::WindowsAndMessaging::{
 };
 // 只用于 d2d 后端选择（RDP 远程会话下强制软渲染），随该 feature 一起门控。
 #[cfg(feature = "d2d")]
-use windows::Win32::UI::WindowsAndMessaging::SM_REMOTESESSION;
-
 use super::{AppHandler, Backdrop, WindowConfig};
 use crate::event::{CursorShape, Key, KeyEvent, MouseButton, PointerEvent, PointerKind, WindowOp};
 use crate::geometry::{Color, Point, Size};
@@ -705,14 +703,8 @@ unsafe fn run_windowed(
     #[cfg(feature = "d2d")]
     {
         let env_force = std::env::var("WINDUI_D2D").is_ok_and(|v| v != "0" && !v.is_empty());
-        let is_remote = GetSystemMetrics(SM_REMOTESESSION) != 0;
         let want = cfg.renderer.wants_gpu() || env_force;
-        assert!(
-            !(cfg.renderer.requires_gpu() && is_remote),
-            "Renderer::Gpu 要求 GPU 渲染，但当前是 RDP 远程会话——flip-model swapchain \
-             在远程桌面不可用。需要自动回退请改用 Renderer::Auto"
-        );
-        if want && !is_remote {
+        if want {
             let mut rc = RECT::default();
             let _ = GetClientRect(hwnd, &mut rc);
             let (cw, ch) = (rc.right - rc.left, rc.bottom - rc.top);
