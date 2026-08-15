@@ -190,14 +190,18 @@ fn launcher_theme() -> Theme {
     theme.palette.surface = Color::rgba(24, 31, 44, 180);
     theme.palette.surface_alt = Color::rgba(31, 40, 56, 205);
     theme.palette.border = Color::rgba(255, 255, 255, 22);
-    theme.palette.placeholder = Color::rgba(207, 219, 236, 160);
+    // The Search control is transparent, so its foreground must stay readable
+    // over both dark and light Acrylic samples. Keep ordinary text neutral and
+    // opaque; reserve accent blue for selection/focus feedback only.
+    theme.palette.text = Color::rgba(250, 252, 255, 255);
+    theme.palette.placeholder = Color::rgba(238, 243, 255, 230);
     theme.input.bg = Some(Color::rgba(21, 27, 39, 188));
     theme.input.border = Some(Color::rgba(255, 255, 255, 24));
     theme.input.border_focus = Some(Color::rgba(133, 181, 255, 135));
-    theme.input.text = Some(Color::rgba(245, 248, 255, 255));
-    theme.input.placeholder = Some(Color::rgba(207, 219, 236, 165));
-    theme.input.selection = Some(Color::rgba(76, 139, 245, 120));
-    theme.input.cursor = Some(Color::rgba(238, 245, 255, 235));
+    theme.input.text = Some(Color::rgba(250, 252, 255, 255));
+    theme.input.placeholder = Some(Color::rgba(238, 243, 255, 230));
+    theme.input.selection = Some(Color::rgba(76, 139, 245, 150));
+    theme.input.cursor = Some(Color::rgba(255, 255, 255, 255));
     theme
 }
 
@@ -322,6 +326,7 @@ fn main() {
         .width_match()
         .height(44)
         .font_size(15.0)
+        .font_weight(500)
         .corner(10.0)
         // The entire Search control stays transparent so the Windows Acrylic
         // material remains visible through the input, caret, and leading icon.
