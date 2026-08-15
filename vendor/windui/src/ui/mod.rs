@@ -743,6 +743,7 @@ pub struct Element {
     context_menu: Option<crate::core::MenuFn>,
     window_drag: bool,
     focusable: Option<bool>,
+    show_focus_ring: bool,
     enabled_static: bool,
     enabled: Option<Signal<bool>>,
     en_cond: Option<Box<dyn Fn() -> bool>>,
@@ -778,6 +779,7 @@ impl Element {
             context_menu: None,
             window_drag: false,
             focusable: None,
+            show_focus_ring: true,
             enabled_static: true,
             enabled: None,
             en_cond: None,
@@ -1014,6 +1016,12 @@ impl Element {
     /// 测试、鼠标交互与 `request_focus`。
     pub fn focusable(mut self, on: bool) -> Self {
         self.focusable = Some(on);
+        self
+    }
+
+    /// Show or hide the generic keyboard focus ring for this node without changing focusability.
+    pub fn show_focus_ring(mut self, show: bool) -> Self {
+        self.show_focus_ring = show;
         self
     }
 
@@ -3299,6 +3307,7 @@ impl Element {
             context_menu: self.context_menu,
             window_drag: self.window_drag,
             focusable: self.focusable,
+            show_focus_ring: self.show_focus_ring,
             tooltip: self.tooltip,
             focused: false,
             clip_children: self.clip_children,

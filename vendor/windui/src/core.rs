@@ -330,6 +330,8 @@ pub struct Node {
     pub tooltip: Option<String>,
     /// 当前是否持有键盘焦点（由 UiHost 维护，核心层据此绘制焦点环）。
     pub focused: bool,
+    /// Whether the generic keyboard focus ring is painted for this node.
+    pub show_focus_ring: bool,
     /// 是否把子节点裁剪到自身内容区（滚动容器等）。
     pub clip_children: bool,
     /// 垂直滚动偏移（Scroll 容器）。
@@ -1071,8 +1073,8 @@ impl Tree {
             .paint(abs, content, n.focused, enabled, canvas, &n.style);
         crate::anim::set_paint_rect(None);
 
-        // 焦点环：仅在键盘导航时（focus_ring_visible）绘制，纯鼠标操作不显示。
-        if n.focused && self.focus_ring_visible {
+        // Focus ring is keyboard-only globally and can be hidden for specific nodes.
+        if n.focused && self.focus_ring_visible && n.show_focus_ring {
             let ring = crate::theme::current().palette.accent;
             canvas.stroke_round_rect(
                 fx - 1.0,

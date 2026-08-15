@@ -605,6 +605,7 @@ fn main() {
         .leading_icon('⌕')
         .transparent_surface()
         .smooth_caret(settings.smooth_caret, settings.smooth_caret_duration_ms)
+        .show_focus_ring(false)
         .width_match()
         .height(44)
         .font_size(15.0)
