@@ -613,28 +613,28 @@ fn main() {
 
     let action_hint = |key: &'static str, label: &'static str| {
         Element::row()
-            .height(24)
-            .spacing(5)
+            .height(22)
+            .spacing(4)
             .child(
                 Element::label(key)
-                    .font_size(10.0)
+                    .font_size(9.0)
                     .fg(Color::rgba(235, 243, 255, 235))
                     .bg(Color::rgba(255, 255, 255, 24))
                     .corner(5.0)
-                    .padding_xy(6, 3),
+                    .padding_xy(4, 2),
             )
             .child(
                 Element::label(label)
-                    .font_size(11.0)
+                    .font_size(10.0)
                     .fg(Color::rgba(222, 233, 248, 220))
                     .text_shadow(Color::rgba(8, 12, 20, 140)),
             )
     };
     let action_bar = Element::row()
         .width_match()
-        .height(30)
-        .padding_xy(10, 2)
-        .spacing(14)
+        .height(28)
+        .padding_xy(4, 2)
+        .spacing(8)
         .child(action_hint("↵", "Open"))
         .child(action_hint("Ctrl + R", "Run as admin"))
         .child(action_hint("Alt + Enter", "Open file location"))

@@ -99,6 +99,9 @@ try {
     (New-Object -ComObject WScript.Shell).SendKeys('{DOWN}')
     Start-Sleep -Milliseconds 350
     Save-Screen 'windows11-acrylic-proof-after-down.png' $screen
+    (New-Object -ComObject WScript.Shell).SendKeys('{RIGHT}')
+    Start-Sleep -Milliseconds 350
+    Save-Screen 'windows11-acrylic-proof-action-mode.png' $screen
     [ordered]@{
         Query = 'steam'
         Display = $screen.DeviceName
