@@ -571,6 +571,19 @@ unsafe fn apply_system_backdrop(hwnd: HWND, backdrop: Backdrop) {
         );
         return;
     }
+    // Request the host backdrop brush for custom client composition. This keeps
+    // the public DWM material available to the DirectComposition visual instead of
+    // reducing the client surface to a uniform fallback color.
+    const DWMWA_USE_HOSTBACKDROPBRUSH: windows::Win32::Graphics::Dwm::DWMWINDOWATTRIBUTE =
+        windows::Win32::Graphics::Dwm::DWMWINDOWATTRIBUTE(17);
+    let use_host_backdrop: i32 = 1;
+    let _ = DwmSetWindowAttribute(
+        hwnd,
+        DWMWA_USE_HOSTBACKDROPBRUSH,
+        &use_host_backdrop as *const _ as *const c_void,
+        size_of::<i32>() as u32,
+    );
+
     // Keep the native material aligned with Flux's dark palette instead of inheriting
     // the runner's light system preference and exposing a bright outer frame.
     const DWMWA_USE_IMMERSIVE_DARK_MODE: windows::Win32::Graphics::Dwm::DWMWINDOWATTRIBUTE =
