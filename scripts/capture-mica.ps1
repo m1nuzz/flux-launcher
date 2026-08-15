@@ -132,10 +132,11 @@ $wabFixtureNames = @(
     "WAB Microsoft Windows Web Account Manager Support Center Long Name.lnk"
 )
 $shortcutShell = New-Object -ComObject WScript.Shell
+$absoluteExecutable = [System.IO.Path]::GetFullPath($Executable)
 foreach ($fixtureName in $wabFixtureNames) {
     $shortcut = $shortcutShell.CreateShortcut((Join-Path $wabFixtureRoot $fixtureName))
-    $shortcut.TargetPath = $Executable
-    $shortcut.WorkingDirectory = Split-Path -Parent $Executable
+    $shortcut.TargetPath = $absoluteExecutable
+    $shortcut.WorkingDirectory = Split-Path -Parent $absoluteExecutable
     $shortcut.Description = "Flux WAB smoke application fixture"
     $shortcut.Save()
 }
