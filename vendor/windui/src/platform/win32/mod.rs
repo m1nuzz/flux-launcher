@@ -640,7 +640,9 @@ unsafe fn run_windowed(
     // A transparent presenter is safe only when local DWM composition can
     // provide the requested system material. Remote sessions use an opaque
     // dark fallback instead of exposing DWM's neutral material slab.
+    let force_safe_fallback = std::env::var_os("FLUX_DISABLE_SYSTEM_BACKDROP").is_some();
     let backdrop_available = cfg.backdrop != Backdrop::None
+        && !force_safe_fallback
         && GetSystemMetrics(SM_REMOTESESSION) == 0
         && DwmIsCompositionEnabled()
             .map(|enabled| enabled.as_bool())

@@ -41,6 +41,10 @@ jobs:
 
       - name: Capture empty and query UI states
         shell: pwsh
+        env:
+          # Windows Server/RDP cannot render Acrylic. Keep smoke screenshots honest
+          # by selecting Flux's dark opaque fallback instead of DWM's neutral slab.
+          FLUX_DISABLE_SYSTEM_BACKDROP: "1"
         run: >
           ./scripts/capture-mica.ps1
           -Executable ./target/x86_64-pc-windows-msvc/release/flux-launcher.exe
@@ -65,7 +69,7 @@ jobs:
 
             This build changes the launcher root to a transparent full-window Acrylic surface. With an empty query, the complete 420x72 window is the blur surface and contains only the inset Search field. After the first character, the same surface expands and shows application results.
 
-            The attached `mica-desktop.png` and `keyboard-selection.png` are Windows Server/RDP smoke screenshots. The environment can suppress visible DWM Acrylic, so those screenshots validate layout and interaction but are not claimed as proof of blur. On a local Windows 11 session, the system backdrop is expected to provide the visible blur.
+            The attached `mica-desktop.png` and `keyboard-selection.png` are Windows Server/RDP smoke screenshots. CI explicitly selects Flux's dark opaque fallback because that environment cannot render Acrylic; these screenshots validate layout and interaction, not blur. On a local Windows 11 session without `FLUX_DISABLE_SYSTEM_BACKDROP`, the binary requests the real DWM Acrylic system backdrop.
           files: |
             ./artifacts/windows-ui-release/package/FluxLauncher-Windows11-x64.exe
             ./artifacts/windows-ui-release/package/flow-plugin-fixture.exe
