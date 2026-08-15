@@ -351,8 +351,15 @@ fn selection_palette(custom_selection_color: Signal<String>) -> Element {
 }
 
 fn title_match_doc(title: &str, query: &str, selected: bool) -> RichDoc {
-    let normal = SpanStyle::new().fg(Color::rgba(250, 252, 255, 255));
-    let matched = SpanStyle::new().bold().fg(Color::rgba(255, 255, 255, 255));
+    // Keep every title readable over both dark and light Acrylic samples. A
+    // semibold base also prevents non-matching portions from disappearing when
+    // the backdrop is bright or saturated; matched characters remain heavier.
+    let normal = SpanStyle::new()
+        .weight(600)
+        .fg(Color::rgba(255, 255, 255, 255));
+    let matched = SpanStyle::new()
+        .weight(750)
+        .fg(Color::rgba(255, 255, 255, 255));
     let mut para = Para::new();
     if selected {
         para = para.span("> ", normal.clone());
@@ -659,14 +666,17 @@ fn result_row(
                 .spacing(1)
                 .child(
                     Element::rich_signal(title_doc_signal)
-                        .text_shadow(Color::rgba(8, 12, 20, 210))
+                        .font_size(14.0)
+                        .max_lines(1)
+                        .truncate(Truncate::End)
+                        .text_shadow(Color::rgba(8, 12, 20, 230))
                         .width_match(),
                 )
                 .child(
                     Element::label(subtitle)
-                        .font_size(11.0)
-                        .fg(Color::rgba(240, 246, 255, 238))
-                        .text_shadow(Color::rgba(8, 12, 20, 185))
+                        .font_size(12.0)
+                        .fg(Color::rgba(248, 251, 255, 255))
+                        .text_shadow(Color::rgba(8, 12, 20, 220))
                         .max_lines(1)
                         .truncate(Truncate::End)
                         .width_match(),
