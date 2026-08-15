@@ -507,10 +507,16 @@ unsafe fn apply_system_backdrop(hwnd: HWND, backdrop: Backdrop) {
         &dark_mode as *const _ as *const c_void,
         size_of::<bool>() as u32,
     );
-    // DirectComposition already owns the complete client surface for backdrop
-    // windows. Do not extend the frame into that same surface a second time.
-    let zero_margins = MARGINS::default();
-    let _ = DwmExtendFrameIntoClientArea(hwnd, &zero_margins);
+    // Local Windows 11 needs the documented full-sheet extension for the
+    // Acrylic material to cover a frameless client. Remote fallback is handled
+    // above with zero margins because it cannot render system Acrylic.
+    let full_frame = MARGINS {
+        cxLeftWidth: -1,
+        cxRightWidth: -1,
+        cyTopHeight: -1,
+        cyBottomHeight: -1,
+    };
+    let _ = DwmExtendFrameIntoClientArea(hwnd, &full_frame);
     if DwmSetWindowAttribute(
         hwnd,
         DWMWA_SYSTEMBACKDROP_TYPE,
@@ -867,9 +873,17 @@ unsafe fn run_windowed(
                 cyTopHeight: 1,
                 cyBottomHeight: 0,
             }
+        } else if backdrop_available {
+            // Local Windows 11 needs the full sheet-of-glass extension so the
+            // system Acrylic material covers the complete frameless client.
+            MARGINS {
+                cxLeftWidth: -1,
+                cxRightWidth: -1,
+                cyTopHeight: -1,
+                cyBottomHeight: -1,
+            }
         } else {
-            // System Acrylic, or the dark remote fallback, owns the client
-            // surface; do not extend a second legacy frame into it.
+            // Remote fallback has no material to extend; keep its client clear.
             MARGINS::default()
         };
         let _ = DwmExtendFrameIntoClientArea(hwnd, &margins);
