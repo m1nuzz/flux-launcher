@@ -20,6 +20,7 @@ public static class FluxAcrylicProof {
     [DllImport("user32.dll")] public static extern bool SetForegroundWindow(IntPtr h);
     [DllImport("user32.dll")] public static extern bool BringWindowToTop(IntPtr h);
     [DllImport("user32.dll")] public static extern bool ShowWindow(IntPtr h, int command);
+    [DllImport("user32.dll", EntryPoint = "PostMessageW")] public static extern bool PostMessage(IntPtr h, uint message, UIntPtr wParam, IntPtr lParam);
     [DllImport("user32.dll")] public static extern IntPtr GetForegroundWindow();
     [DllImport("user32.dll")] public static extern bool SetCursorPos(int x, int y);
     [DllImport("user32.dll")] public static extern void mouse_event(uint flags, uint dx, uint dy, uint data, UIntPtr extra);
@@ -33,9 +34,14 @@ function Send-VirtualKey([byte]$virtualKey, [byte]$scanCode = 0, [bool]$extended
     [FluxAcrylicProof]::keybd_event($virtualKey, $scanCode, ($flags -bor 2), [UIntPtr]::Zero)
 }
 
-function Send-AsciiText([string]$text) {
-    foreach ($character in $text.ToUpperInvariant().ToCharArray()) {
-        Send-VirtualKey ([byte][char]$character)
+function Send-WmKey([IntPtr]$handle, [uint32]$virtualKey) {
+    [FluxAcrylicProof]::PostMessage($handle, 0x0100, [UIntPtr]$virtualKey, [IntPtr]::Zero) | Out-Null
+    [FluxAcrylicProof]::PostMessage($handle, 0x0101, [UIntPtr]$virtualKey, [IntPtr]::Zero) | Out-Null
+}
+
+function Send-WmText([IntPtr]$handle, [string]$text) {
+    foreach ($character in $text.ToCharArray()) {
+        [FluxAcrylicProof]::PostMessage($handle, 0x0102, [UIntPtr][int][char]$character, [IntPtr]::Zero) | Out-Null
     }
 }
 
@@ -114,13 +120,13 @@ try {
     [FluxAcrylicProof]::SetForegroundWindow($handle) | Out-Null
     Start-Sleep -Milliseconds 250
     Save-Screen 'windows11-acrylic-proof-empty.png' $screen
-    Send-AsciiText $Query
+    Send-WmText $handle $Query
     Start-Sleep -Seconds 2
     Save-Screen 'windows11-acrylic-proof-before-down.png' $screen
-    Send-VirtualKey 0x28 0x50 $true
+    Send-WmKey $handle 0x28
     Start-Sleep -Milliseconds 350
     Save-Screen 'windows11-acrylic-proof-after-down.png' $screen
-    Send-VirtualKey 0x27
+    Send-WmKey $handle 0x27
     Start-Sleep -Milliseconds 350
     Save-Screen 'windows11-acrylic-proof-action-mode.png' $screen
     [ordered]@{
