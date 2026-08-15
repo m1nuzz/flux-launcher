@@ -866,27 +866,19 @@ unsafe fn run_windowed(
         if let Some(s) = state_from(hwnd) {
             s.frameless = true;
         }
-        let margins = if cfg.backdrop == Backdrop::None {
-            MARGINS {
+        if cfg.backdrop == Backdrop::None {
+            // Classic opaque windui windows retain their small top frame seam.
+            let margins = MARGINS {
                 cxLeftWidth: 0,
                 cxRightWidth: 0,
                 cyTopHeight: 1,
                 cyBottomHeight: 0,
-            }
-        } else if backdrop_available {
-            // Local Windows 11 needs the full sheet-of-glass extension so the
-            // system Acrylic material covers the complete frameless client.
-            MARGINS {
-                cxLeftWidth: -1,
-                cxRightWidth: -1,
-                cyTopHeight: -1,
-                cyBottomHeight: -1,
-            }
-        } else {
-            // Remote fallback has no material to extend; keep its client clear.
-            MARGINS::default()
-        };
-        let _ = DwmExtendFrameIntoClientArea(hwnd, &margins);
+            };
+            let _ = DwmExtendFrameIntoClientArea(hwnd, &margins);
+        }
+        // Backdrop windows are extended exactly once by apply_system_backdrop,
+        // after the frame has been recalculated. A second extension here creates
+        // a separate DWM boundary around the transparent DirectComposition sheet.
         // 圆角：显式声明，与 Win11 系统其余窗口一致。
         //
         // 不依赖 DWM 默认策略：本窗口保留着 WS_OVERLAPPEDWINDOW 样式位（非客户区是靠
