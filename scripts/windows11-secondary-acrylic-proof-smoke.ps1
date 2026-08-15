@@ -19,8 +19,20 @@ public static class FluxAcrylicProof {
     [DllImport("user32.dll")] public static extern IntPtr GetForegroundWindow();
     [DllImport("user32.dll")] public static extern bool SetCursorPos(int x, int y);
     [DllImport("user32.dll")] public static extern void mouse_event(uint flags, uint dx, uint dy, uint data, UIntPtr extra);
+    [DllImport("user32.dll")] public static extern void keybd_event(byte virtualKey, byte scanCode, uint flags, UIntPtr extra);
 }
 '@
+
+function Send-VirtualKey([byte]$virtualKey) {
+    [FluxAcrylicProof]::keybd_event($virtualKey, 0, 0, [UIntPtr]::Zero)
+    [FluxAcrylicProof]::keybd_event($virtualKey, 0, 2, [UIntPtr]::Zero)
+}
+
+function Send-AsciiText([string]$text) {
+    foreach ($character in $text.ToUpperInvariant().ToCharArray()) {
+        Send-VirtualKey ([byte][char]$character)
+    }
+}
 
 function Save-Screen([string]$name, $screen) {
     $bounds = $screen.Bounds
@@ -94,13 +106,13 @@ try {
     [FluxAcrylicProof]::mouse_event(4, 0, 0, 0, [UIntPtr]::Zero)
     Start-Sleep -Milliseconds 250
     Save-Screen 'windows11-acrylic-proof-empty.png' $screen
-    [System.Windows.Forms.SendKeys]::SendWait('steam')
+    Send-AsciiText 'steam'
     Start-Sleep -Seconds 2
     Save-Screen 'windows11-acrylic-proof-before-down.png' $screen
-    [System.Windows.Forms.SendKeys]::SendWait('{DOWN}')
+    Send-VirtualKey 0x28
     Start-Sleep -Milliseconds 350
     Save-Screen 'windows11-acrylic-proof-after-down.png' $screen
-    [System.Windows.Forms.SendKeys]::SendWait('{RIGHT}')
+    Send-VirtualKey 0x27
     Start-Sleep -Milliseconds 350
     Save-Screen 'windows11-acrylic-proof-action-mode.png' $screen
     [ordered]@{
