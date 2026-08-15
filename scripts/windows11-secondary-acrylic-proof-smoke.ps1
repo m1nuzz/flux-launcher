@@ -96,7 +96,7 @@ $fixture.Show()
 Start-Sleep -Milliseconds 300
 
 $previousForeground = [FluxAcrylicProof]::GetForegroundWindow()
-$process = Start-Process -FilePath $Executable -WorkingDirectory (Split-Path -Parent $Executable) -PassThru
+$process = Start-Process -FilePath $Executable -WorkingDirectory (Split-Path -Parent $Executable) -WindowStyle Hidden -PassThru
 try {
     Start-Sleep -Seconds 3
     $handle = (Get-Process -Id $process.Id).MainWindowHandle

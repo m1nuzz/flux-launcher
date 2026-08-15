@@ -675,8 +675,8 @@ fn main() {
                 .unwrap_or(false);
             Element::row()
                 .width_match()
-                .height(42)
-                .padding_xy(12, 5)
+                .height(36)
+                .padding_xy(10, 4)
                 .corner(9.0)
                 .bg(if is_selected {
                     Color::rgba(76, 139, 245, 92)
@@ -690,8 +690,11 @@ fn main() {
                         item_label
                     })
                     .font_size(13.0)
-                    .fg(Color::WHITE)
-                    .weight(1.0),
+                    .fg(Color::rgba(250, 252, 255, 255))
+                    .text_shadow(Color::rgba(8, 12, 20, 220))
+                    .max_lines(1)
+                    .truncate(Truncate::End)
+                    .width_match(),
                 )
                 .on_click({
                     let action_window_slot = action_window_slot_for_rows.clone();
@@ -711,7 +714,7 @@ fn main() {
                 })
         },
     )
-    .height(138)
+    .height(174)
     .corner(12.0)
     .visible_signal(action_mode);
 
