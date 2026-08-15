@@ -22,6 +22,8 @@ public static class FluxWallpaper {
     public static extern bool SetCursorPos(int x, int y);
     [DllImport("user32.dll", SetLastError = true)]
     public static extern void mouse_event(uint flags, uint dx, uint dy, uint data, UIntPtr extraInfo);
+    [DllImport("user32.dll", SetLastError = true)]
+    public static extern void keybd_event(byte virtualKey, byte scanCode, uint flags, UIntPtr extraInfo);
 }
 '@
 
@@ -77,6 +79,13 @@ finally {
 if (![FluxWallpaper]::SystemParametersInfo(0x0014, 0, $wallpaperPath, 0x0003)) {
     throw "Unable to set the Mica probe wallpaper."
 }
+Start-Sleep -Milliseconds 750
+# Put the launcher over the synthetic wallpaper, not over the runner terminal. This makes
+# backdrop sampling visible in the screenshot and avoids mistaking a solid panel for glass.
+[FluxWallpaper]::keybd_event(0x5B, 0, 0, [UIntPtr]::Zero)
+[FluxWallpaper]::keybd_event(0x44, 0, 0, [UIntPtr]::Zero)
+[FluxWallpaper]::keybd_event(0x44, 0, 2, [UIntPtr]::Zero)
+[FluxWallpaper]::keybd_event(0x5B, 0, 2, [UIntPtr]::Zero)
 Start-Sleep -Milliseconds 750
 
 $stdoutPath = Join-Path $OutputDirectory "launcher.stdout.log"
