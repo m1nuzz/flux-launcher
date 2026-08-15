@@ -455,13 +455,6 @@ unsafe fn apply_system_backdrop(hwnd: HWND, backdrop: Backdrop) {
     let Some(kind) = kind else {
         return;
     };
-    // The legacy Acrylic policy is the most reliable Win32 path for a transient
-    // launcher surface. It keeps the HWND redirected so DWM can sample the desktop,
-    // while the public system backdrop remains the fallback for systems that do not
-    // expose SetWindowCompositionAttribute.
-    if backdrop == Backdrop::Acrylic && apply_acrylic_policy(hwnd) {
-        return;
-    }
     // Keep the native material aligned with Flux's dark palette instead of inheriting
     // the runner's light system preference and exposing a bright outer frame.
     const DWMWA_USE_IMMERSIVE_DARK_MODE: windows::Win32::Graphics::Dwm::DWMWINDOWATTRIBUTE =
@@ -506,7 +499,7 @@ unsafe fn apply_system_backdrop(hwnd: HWND, backdrop: Backdrop) {
 
 /// Applies the legacy Win32 Acrylic blur policy when the public system backdrop
 /// API is absent or too opaque for a transient launcher surface.
-unsafe fn apply_acrylic_policy(hwnd: HWND) -> bool {
+unsafe fn apply_acrylic_policy(hwnd: HWND) {
     #[repr(C)]
     struct AccentPolicy {
         state: u32,
@@ -524,10 +517,10 @@ unsafe fn apply_acrylic_policy(hwnd: HWND) -> bool {
     const WCA_ACCENT_POLICY: u32 = 19;
     const ACCENT_ENABLE_ACRYLICBLURBEHIND: u32 = 4;
     let Ok(user32) = GetModuleHandleW(w!("user32.dll")) else {
-        return false;
+        return;
     };
     let Some(proc) = GetProcAddress(user32, s!("SetWindowCompositionAttribute")) else {
-        return false;
+        return;
     };
     let set_attribute: unsafe extern "system" fn(HWND, *mut WindowCompositionAttributeData) -> i32 =
         std::mem::transmute(proc);
@@ -544,7 +537,7 @@ unsafe fn apply_acrylic_policy(hwnd: HWND) -> bool {
         data: &mut policy as *mut _ as *mut c_void,
         data_size: size_of::<AccentPolicy>(),
     };
-    set_attribute(hwnd, &mut data) != 0
+    let _ = set_attribute(hwnd, &mut data);
 }
 
 const CLASS_NAME: PCWSTR = w!("WindUiWindowClass");
