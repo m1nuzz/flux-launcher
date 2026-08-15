@@ -515,7 +515,13 @@ impl WinRenderBackend for D2DBackend {
         let size = Size::new(rc.right - rc.left, rc.bottom - rc.top);
 
         self.context.BeginDraw();
-        self.context.Clear(Some(&d2d_color(bg)));
+        if self.composition.is_some() {
+            // Composition surfaces must start as transparent black so DWM Acrylic
+            // remains visible outside the explicitly painted child controls.
+            self.context.Clear(None);
+        } else {
+            self.context.Clear(Some(&d2d_color(bg)));
+        }
         // 单线程 STA：把 ctx/solid/渐变缓存借给本帧 target，由 handler 渲染控件树。
         // target 在 EndDraw 前 drop，释放对 ctx 的借用（EndDraw/Present 仍需 ctx/swapchain）。
         {

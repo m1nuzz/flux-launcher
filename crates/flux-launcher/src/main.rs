@@ -409,6 +409,7 @@ fn main() {
         .child(action_list);
     let launcher_surface = Element::stack()
         .fill()
+        .bg(Color::rgba(0, 0, 0, 0))
         .child(launcher_content.align(Align::Center));
 
     let query_for_interval = query;
