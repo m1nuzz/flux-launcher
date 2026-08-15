@@ -1,0 +1,34 @@
+name: Windows release artifact
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install stable toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-pc-windows-msvc
+
+      - name: Build release binaries
+        shell: pwsh
+        run: |
+          cargo build --release --target x86_64-pc-windows-msvc -p flux-launcher -p flow-plugin-fixture
+          New-Item -ItemType Directory -Force -Path artifacts/FluxLauncher-Windows11-x64 | Out-Null
+          Copy-Item target/x86_64-pc-windows-msvc/release/flux-launcher.exe artifacts/FluxLauncher-Windows11-x64/FluxLauncher-Windows11-x64.exe
+          Copy-Item target/x86_64-pc-windows-msvc/release/flow-plugin-fixture.exe artifacts/FluxLauncher-Windows11-x64/flow-plugin-fixture.exe
+          Get-FileHash artifacts/FluxLauncher-Windows11-x64/* -Algorithm SHA256 | Format-Table -AutoSize
+
+      - name: Upload release artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: FluxLauncher-Windows11-x64
+          path: artifacts/FluxLauncher-Windows11-x64
