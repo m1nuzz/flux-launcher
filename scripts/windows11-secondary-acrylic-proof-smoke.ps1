@@ -16,6 +16,8 @@ using System.Runtime.InteropServices;
 public static class FluxAcrylicProof {
     [DllImport("user32.dll")] public static extern bool SetWindowPos(IntPtr h, IntPtr z, int x, int y, int w, int height, uint flags);
     [DllImport("user32.dll")] public static extern bool SetForegroundWindow(IntPtr h);
+    [DllImport("user32.dll")] public static extern bool BringWindowToTop(IntPtr h);
+    [DllImport("user32.dll")] public static extern bool ShowWindow(IntPtr h, int command);
     [DllImport("user32.dll")] public static extern IntPtr GetForegroundWindow();
     [DllImport("user32.dll")] public static extern bool SetCursorPos(int x, int y);
     [DllImport("user32.dll")] public static extern void mouse_event(uint flags, uint dx, uint dy, uint data, UIntPtr extra);
@@ -100,11 +102,14 @@ try {
     $handle = (Get-Process -Id $process.Id).MainWindowHandle
     if ($handle -eq [IntPtr]::Zero) { throw 'Flux Launcher window handle is zero.' }
     [FluxAcrylicProof]::SetWindowPos($handle, [IntPtr]::Zero, $x, $y, 420, 400, 0x40) | Out-Null
+    [FluxAcrylicProof]::ShowWindow($handle, 5) | Out-Null
+    [FluxAcrylicProof]::BringWindowToTop($handle) | Out-Null
     [FluxAcrylicProof]::SetForegroundWindow($handle) | Out-Null
     Start-Sleep -Milliseconds 400
     [FluxAcrylicProof]::SetCursorPos($x + 210, $y + 36) | Out-Null
     [FluxAcrylicProof]::mouse_event(2, 0, 0, 0, [UIntPtr]::Zero)
     [FluxAcrylicProof]::mouse_event(4, 0, 0, 0, [UIntPtr]::Zero)
+    [FluxAcrylicProof]::SetForegroundWindow($handle) | Out-Null
     Start-Sleep -Milliseconds 250
     Save-Screen 'windows11-acrylic-proof-empty.png' $screen
     Send-AsciiText 'steam'
