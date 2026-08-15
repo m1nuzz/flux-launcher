@@ -294,11 +294,8 @@ fn result_row(
         .padding_xy(12, 5)
         .spacing(10)
         .corner(10.0)
-        .bg(if selected {
-            Color::rgba(76, 139, 245, 72)
-        } else {
-            Color::rgba(255, 255, 255, 18)
-        })
+        // Selection background is owned exclusively by ResultRowAnchor. Keeping
+        // a static background here leaves stale highlights after selection moves.
         .child(
             Element::col()
                 .weight(1.0)
@@ -308,6 +305,8 @@ fn result_row(
                         .font_size(14.0)
                         .fg(Color::rgba(250, 252, 255, 255))
                         .text_shadow(Color::rgba(8, 12, 20, 210))
+                        .max_lines(1)
+                        .truncate(Truncate::End)
                         .width_match(),
                 )
                 .child(
@@ -315,6 +314,8 @@ fn result_row(
                         .font_size(11.0)
                         .fg(Color::rgba(240, 246, 255, 238))
                         .text_shadow(Color::rgba(8, 12, 20, 185))
+                        .max_lines(1)
+                        .truncate(Truncate::End)
                         .width_match(),
                 ),
         )
