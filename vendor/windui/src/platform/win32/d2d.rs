@@ -547,6 +547,7 @@ impl WinRenderBackend for D2DBackend {
         {
             let mut target = D2DTarget {
                 ctx: &self.context,
+                transparent: self.transparent,
                 solid: &self.solid,
                 grad_cache: &mut self.grad_cache,
                 dwrite_factory: &self.dwrite_factory,
@@ -589,6 +590,8 @@ impl WinRenderBackend for D2DBackend {
 /// `make_canvas` 应用 DPI scale 后产出 `D2DCanvas`，交给 handler 绘制控件树。
 struct D2DTarget<'a> {
     ctx: &'a ID2D1DeviceContext,
+    /// Transparent premultiplied composition targets require grayscale text AA.
+    transparent: bool,
     solid: &'a ID2D1SolidColorBrush,
     grad_cache: &'a mut HashMap<GradKey, ID2D1Brush>,
     dwrite_factory: &'a IDWriteFactory,
@@ -614,6 +617,7 @@ impl RenderTarget for D2DTarget<'_> {
         }
         Box::new(D2DCanvas {
             ctx: self.ctx,
+            transparent: self.transparent,
             solid: self.solid,
             grad_cache: self.grad_cache,
             dwrite_factory: self.dwrite_factory,
@@ -638,6 +642,8 @@ impl RenderTarget for D2DTarget<'_> {
 /// （分别由 Task 8/后续/Task 9/Task 7 补）。
 struct D2DCanvas<'a> {
     ctx: &'a ID2D1DeviceContext,
+    /// Transparent premultiplied composition surfaces cannot use ClearType safely.
+    transparent: bool,
     solid: &'a ID2D1SolidColorBrush,
     grad_cache: &'a mut HashMap<GradKey, ID2D1Brush>,
     /// DirectWrite 工厂（借入）：建 format/layout。
@@ -925,7 +931,7 @@ impl D2DCanvas<'_> {
     /// 恢复动作就会把外层仍需的 GRAYSCALE 打回 ClearType，该层内后续所有文字随之消失。
     /// 模式由状态推导，就不存在"该恢复成什么"的问题。
     fn sync_text_aa(&self) {
-        let mode = if self.pushed_layers > 0 {
+        let mode = if self.transparent || self.pushed_layers > 0 {
             D2D1_TEXT_ANTIALIAS_MODE_GRAYSCALE
         } else {
             D2D1_TEXT_ANTIALIAS_MODE_CLEARTYPE
@@ -1850,7 +1856,8 @@ pub(crate) mod offscreen {
             let size = self.size();
             unsafe {
                 self.ctx.SetTarget(&self.target);
-                // 与 try_create_inner 同样的初始状态，否则测的不是生产配置。
+                // The offscreen test target is opaque; production composition targets
+                // select grayscale through D2DBackend::transparent.
                 self.ctx
                     .SetTextAntialiasMode(D2D1_TEXT_ANTIALIAS_MODE_CLEARTYPE);
                 self.ctx.BeginDraw();
@@ -1858,6 +1865,7 @@ pub(crate) mod offscreen {
                 {
                     let mut target = D2DTarget {
                         ctx: &self.ctx,
+                        transparent: false,
                         solid: &self.solid,
                         grad_cache: &mut self.grad_cache,
                         dwrite_factory: &self.dwrite_factory,
