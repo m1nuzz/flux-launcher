@@ -156,7 +156,6 @@ fn selected_result(
 struct ResultRowAnchor {
     result_id: String,
     title: String,
-    title_signal: Signal<String>,
     title_doc_signal: Signal<RichDoc>,
     trailing_signal: Signal<String>,
     selected_id: Signal<String>,
@@ -171,13 +170,8 @@ impl Widget for ResultRowAnchor {
         let selected = self.selected_id.get() == self.result_id;
         let query = self.query.get();
         if self.last_selected != Some(selected) || self.last_query != query {
-            self.title_signal.set(if selected {
-                format!("> {}", self.title)
-            } else {
-                self.title.clone()
-            });
             self.title_doc_signal
-                .set(title_match_doc(&self.title, &query, selected));
+                .set(title_match_doc(&self.title, &query));
             self.trailing_signal.set(if selected {
                 String::from("↵")
             } else {
@@ -364,7 +358,7 @@ fn display_title(title: &str) -> String {
         .collect()
 }
 
-fn title_match_doc(title: &str, query: &str, selected: bool) -> RichDoc {
+fn title_match_doc(title: &str, query: &str) -> RichDoc {
     // Keep every title readable over both dark and light Acrylic samples. A
     // semibold base also prevents non-matching portions from disappearing when
     // the backdrop is bright or saturated; matched characters remain heavier.
@@ -375,9 +369,6 @@ fn title_match_doc(title: &str, query: &str, selected: bool) -> RichDoc {
         .weight(750)
         .fg(Color::rgba(255, 255, 255, 255));
     let mut para = Para::new();
-    if selected {
-        para = para.span("> ", normal.clone());
-    }
 
     let query_chars: Vec<char> = query
         .trim()
@@ -746,12 +737,7 @@ fn result_row(
             .align(Align::Center)
     };
     let selected = selected_id.get() == id;
-    let title_signal = signal(if selected {
-        format!("> {title}")
-    } else {
-        title.clone()
-    });
-    let title_doc_signal = signal(title_match_doc(&title, &query.get(), selected));
+    let title_doc_signal = signal(title_match_doc(&title, &query.get()));
     let trailing_signal = signal(if selected {
         String::from("↵")
     } else {
@@ -761,7 +747,6 @@ fn result_row(
         .widget(ResultRowAnchor {
             result_id: id.clone(),
             title: title.clone(),
-            title_signal,
             title_doc_signal,
             trailing_signal,
             selected_id,
