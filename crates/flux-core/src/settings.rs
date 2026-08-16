@@ -60,6 +60,8 @@ pub struct Settings {
     pub custom_selection_color: u32,
     #[serde(default = "enabled_by_default")]
     pub clear_query_on_activation: bool,
+    #[serde(default = "enabled_by_default")]
+    pub auto_enable_everything: bool,
     #[serde(default = "default_caret_duration")]
     pub smooth_caret_duration_ms: u16,
     #[serde(default)]
@@ -77,6 +79,7 @@ impl Default for Settings {
             use_system_accent: true,
             custom_selection_color: default_selection_color(),
             clear_query_on_activation: true,
+            auto_enable_everything: true,
             smooth_caret_duration_ms: DEFAULT_CARET_DURATION_MS,
             query_history: Vec::new(),
         }
@@ -204,6 +207,7 @@ mod tests {
         assert!(settings.use_system_accent);
         assert_eq!(settings.custom_selection_color, 0x4c8bf4);
         assert!(settings.clear_query_on_activation);
+        assert!(settings.auto_enable_everything);
         assert_eq!(settings.smooth_caret_duration_ms, DEFAULT_CARET_DURATION_MS);
     }
 
@@ -225,6 +229,7 @@ mod tests {
             use_system_accent: false,
             custom_selection_color: 0x12ab34,
             clear_query_on_activation: false,
+            auto_enable_everything: false,
             smooth_caret_duration_ms: 120,
             query_history: vec![String::from("steam"), String::from("ext:zip")],
         };

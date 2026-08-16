@@ -16,7 +16,7 @@ use std::sync::{Arc, Mutex, OnceLock, RwLock};
 use std::time::Duration;
 
 use applications::{ApplicationResponse, ApplicationWorker};
-use everything::{EverythingResponse, EverythingWorker};
+use everything::{EverythingResponse, EverythingWorker, InstallationState};
 use flux_core::{
     history_results, rank_results, should_suppress_activation, HotkeyConfig, ResultKind,
     SearchModel, SearchResult, Settings,
@@ -959,6 +959,14 @@ fn main() {
     let use_system_accent = signal(settings.use_system_accent);
     let custom_selection_color = signal(selection_color_hex(settings.custom_selection_color));
     let clear_query_on_activation = signal(settings.clear_query_on_activation);
+    let auto_enable_everything = signal(settings.auto_enable_everything);
+    let initial_everything_state = everything::installation_state();
+    let everything_installed = signal(initial_everything_state.is_installed());
+    let everything_status = signal(if everything_installed.get() {
+        String::from("Everything detected; Flux will enable IPC automatically")
+    } else {
+        String::from("Everything is not installed. Install it with winget to enable file search.")
+    });
     let selection_color = signal(selection_color_for_settings(&settings));
     let caret_duration = signal(settings.smooth_caret_duration_ms.to_string());
 
@@ -1139,6 +1147,7 @@ fn main() {
     let sequence_for_interval = current_sequence;
     let providers_for_interval = Rc::clone(&provider_results);
     let actions_for_interval = Rc::clone(&plugin_actions);
+    let auto_enable_everything_for_interval = auto_enable_everything;
     let history_cursor_for_interval = history_cursor;
     let history_navigation_for_interval = history_navigation;
     let history_mode_for_interval = history_mode;
@@ -1213,7 +1222,16 @@ fn main() {
     let selection_touched_for_everything = selection_touched;
     let sequence_for_everything = current_sequence;
     let providers_for_everything = Rc::clone(&provider_results);
+    let auto_enable_everything_for_response = auto_enable_everything;
+    let everything_installed_for_response = everything_installed;
+    let everything_status_for_response = everything_status;
     let everything_sender = app.channel::<EverythingResponse>(move |_, response| {
+        if !auto_enable_everything_for_response.get() {
+            everything_status_for_response.set(String::from(
+                "Everything auto-enable is disabled in Flux settings",
+            ));
+            return;
+        }
         if response.sequence != sequence_for_everything.get()
             || response.query != query_for_everything.get()
         {
@@ -1224,6 +1242,8 @@ fn main() {
             return;
         }
         if response.available {
+            everything_installed_for_response.set(true);
+            everything_status_for_response.set(String::from("Everything IPC is available"));
             providers.everything = response.results;
             let merged = providers.merged(&query_for_everything.get());
             if !selection_touched_for_everything.get() {
@@ -1240,10 +1260,41 @@ fn main() {
                 &merged,
             ));
             results_for_everything.set(merged);
+        } else if everything_installed_for_response.get() {
+            everything_status_for_response.set(String::from(
+                "Everything is installed but its local IPC is unavailable",
+            ));
+        } else {
+            everything_status_for_response.set(String::from(
+                "Everything is not installed. Install it with winget to enable file search.",
+            ));
         }
         status_for_everything.set(response.status);
     });
     let everything_worker = EverythingWorker::spawn(everything_sender);
+    if settings.auto_enable_everything {
+        match everything::start_background_if_installed() {
+            Ok(InstallationState::Installed(_)) => {
+                everything_installed.set(true);
+                everything_status.set(String::from(
+                    "Everything detected; Flux is enabling local IPC automatically",
+                ));
+            }
+            Ok(InstallationState::Missing) => {
+                everything_installed.set(false);
+                everything_status.set(String::from(
+                    "Everything is not installed. Install it with winget to enable file search.",
+                ));
+            }
+            Err(error) => {
+                everything_status.set(error);
+            }
+        }
+    } else {
+        everything_status.set(String::from(
+            "Everything auto-enable is disabled in Flux settings",
+        ));
+    }
 
     let query_for_plugins = query;
     let results_for_plugins = results;
@@ -1683,6 +1734,9 @@ fn main() {
     let settings_for_clear_history = Arc::clone(&shared_settings);
     let history_for_clear = Rc::clone(&query_history);
     let history_cursor_for_clear = history_cursor;
+    let auto_enable_everything_for_apply = auto_enable_everything;
+    let everything_status_for_apply = everything_status;
+    let everything_installed_for_ui = everything_installed;
     // Settings shares the same continuous Acrylic surface as the launcher.
     // Do not add a dark card here: it hides the blur and creates the old opaque
     // search-style slab inside the transparent window.
@@ -1781,6 +1835,51 @@ fn main() {
                         ),
                     ))
                     .child(
+                        Element::col()
+                            .width_match()
+                            .spacing(6)
+                            .child(Element::field(
+                                "Everything",
+                                Element::checkbox(
+                                    "Auto-enable Everything when installed",
+                                    auto_enable_everything,
+                                ),
+                            ))
+                            .child(
+                                Element::label_signal(everything_status)
+                                    .font_size(11.0)
+                                    .fg(Color::rgba(235, 241, 255, 190))
+                                    .max_lines(2)
+                                    .truncate(Truncate::End)
+                                    .width_match(),
+                            )
+                            .child(
+                                Element::label("Command: winget install -e --id voidtools.Everything")
+                                    .font_size(10.0)
+                                    .fg(Color::rgba(235, 241, 255, 155))
+                                    .visible_when(move || !everything_installed_for_ui.get())
+                                    .width_match(),
+                            )
+                            .child(
+                                Element::button("Install Everything")
+                                    .visible_when(move || !everything_installed_for_ui.get())
+                                    .on_click(move |ctx| {
+                                        match everything::launch_winget_install() {
+                                            Ok(()) => {
+                                                everything_status.set(String::from(
+                                                    "winget install started. Restart Flux after Everything is installed.",
+                                                ));
+                                                ctx.toast_ok("winget install started");
+                                            }
+                                            Err(error) => {
+                                                everything_status.set(error.clone());
+                                                ctx.toast_ok(error);
+                                            }
+                                        }
+                                    }),
+                            ),
+                    )
+                    .child(
                         Element::row()
                             .width_match()
                             .spacing(10)
@@ -1839,6 +1938,7 @@ fn main() {
                                 settings.use_system_accent = use_system_accent.get();
                                 settings.custom_selection_color = custom_color;
                                 settings.clear_query_on_activation = clear_query_on_activation.get();
+                                settings.auto_enable_everything = auto_enable_everything_for_apply.get();
                                 settings.smooth_caret_duration_ms = duration;
                                 settings.normalize();
                                 selection_color.set(selection_color_for_settings(&settings));
@@ -1846,6 +1946,27 @@ fn main() {
                                 activation_handle_for_apply
                                     .set(hotkeys::activation_hotkey(&settings.activation_hotkey));
                                 game_mode_status_for_apply.set(game_mode_label(settings.game_mode));
+                                if settings.auto_enable_everything {
+                                    match everything::start_background_if_installed() {
+                                        Ok(InstallationState::Installed(_)) => {
+                                            everything_installed.set(true);
+                                            everything_status_for_apply.set(String::from(
+                                                "Everything detected; Flux will enable IPC automatically",
+                                            ));
+                                        }
+                                        Ok(InstallationState::Missing) => {
+                                            everything_installed.set(false);
+                                            everything_status_for_apply.set(String::from(
+                                                "Everything is not installed. Install it with winget to enable file search.",
+                                            ));
+                                        }
+                                        Err(error) => everything_status_for_apply.set(error),
+                                    }
+                                } else {
+                                    everything_status_for_apply.set(String::from(
+                                        "Everything auto-enable is disabled in Flux settings",
+                                    ));
+                                }
                                 let _ = settings.save();
                             }
                             settings_visible_for_apply.set(false);
@@ -1954,7 +2075,9 @@ fn main() {
                 // Everything is the always-on file provider for every non-empty
                 // query. Pass the raw query unchanged so native Everything syntax
                 // such as `ext:zip`, `parent:`, `file:`, and `dm:today` works.
-                if next_query.trim().len() >= EVERYTHING_MIN_QUERY_LEN {
+                if auto_enable_everything_for_interval.get()
+                    && next_query.trim().len() >= EVERYTHING_MIN_QUERY_LEN
+                {
                     everything_worker.request(sequence, next_query.clone());
                 }
                 if next_query.trim().len() >= PLUGIN_MIN_QUERY_LEN {

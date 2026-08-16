@@ -1,3 +1,6 @@
+use std::path::PathBuf;
+#[cfg(windows)]
+use std::process::Command;
 use std::sync::{
     mpsc::{self, SyncSender},
     Arc, Mutex,
@@ -11,6 +14,102 @@ use windui::prelude::Sender;
 
 const MAX_RESULTS: u32 = 16;
 const QUERY_TIMEOUT: Duration = Duration::from_millis(350);
+pub const WINGET_PACKAGE_ID: &str = "voidtools.Everything";
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum InstallationState {
+    Installed(PathBuf),
+    Missing,
+}
+
+impl InstallationState {
+    pub fn is_installed(&self) -> bool {
+        matches!(self, Self::Installed(_))
+    }
+}
+
+pub fn installation_state() -> InstallationState {
+    if std::env::var_os("FLUX_SMOKE_EVERYTHING_MISSING").is_some() {
+        return InstallationState::Missing;
+    }
+    installed_executable()
+        .map(InstallationState::Installed)
+        .unwrap_or(InstallationState::Missing)
+}
+
+pub fn winget_install_args() -> [&'static str; 4] {
+    ["install", "-e", "--id", WINGET_PACKAGE_ID]
+}
+
+pub fn start_background_if_installed() -> Result<InstallationState, String> {
+    let state = installation_state();
+    let InstallationState::Installed(path) = &state else {
+        return Ok(state);
+    };
+
+    #[cfg(windows)]
+    {
+        Command::new(path)
+            .arg("-background")
+            .spawn()
+            .map_err(|error| format!("Unable to start Everything in the background: {error}"))?;
+    }
+    Ok(state)
+}
+
+pub fn launch_winget_install() -> Result<(), String> {
+    #[cfg(windows)]
+    {
+        Command::new("winget")
+            .args(winget_install_args())
+            .spawn()
+            .map(|_| ())
+            .map_err(|error| format!("Unable to start winget: {error}"))
+    }
+    #[cfg(not(windows))]
+    {
+        Err(String::from("winget is only available on Windows"))
+    }
+}
+
+#[cfg(windows)]
+fn installed_executable() -> Option<PathBuf> {
+    let mut candidates = Vec::new();
+    for variable in ["ProgramFiles", "ProgramFiles(x86)", "LOCALAPPDATA"] {
+        if let Some(root) = std::env::var_os(variable).map(PathBuf::from) {
+            candidates.push(root.join("Everything").join("Everything.exe"));
+            candidates.push(root.join("Everything 1.4").join("Everything.exe"));
+            candidates.push(root.join("Everything 1.5").join("Everything.exe"));
+            if let Ok(entries) = std::fs::read_dir(&root) {
+                candidates.extend(entries.flatten().filter_map(|entry| {
+                    let name = entry.file_name().to_string_lossy().to_ascii_lowercase();
+                    (name.starts_with("everything") && entry.path().is_dir())
+                        .then(|| entry.path().join("Everything.exe"))
+                }));
+            }
+        }
+    }
+    candidates
+        .into_iter()
+        .find(|path| path.is_file())
+        .or_else(|| {
+            let output = Command::new("where").arg("Everything.exe").output().ok()?;
+            if !output.status.success() {
+                return None;
+            }
+            output
+                .stdout
+                .split(|byte| *byte == b'\r' || *byte == b'\n')
+                .filter(|line| !line.is_empty())
+                .filter_map(|line| std::str::from_utf8(line).ok().map(PathBuf::from))
+                .find(|path| path.is_file())
+        })
+}
+
+#[cfg(not(windows))]
+fn installed_executable() -> Option<PathBuf> {
+    None
+}
 
 #[derive(Clone, Debug)]
 pub struct EverythingResponse {
@@ -137,7 +236,15 @@ fn join_everything_path(folder: &str, filename: &str) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::join_everything_path;
+    use super::{join_everything_path, winget_install_args, WINGET_PACKAGE_ID};
+
+    #[test]
+    fn winget_install_uses_exact_official_package_id() {
+        assert_eq!(
+            winget_install_args(),
+            ["install", "-e", "--id", WINGET_PACKAGE_ID]
+        );
+    }
 
     #[test]
     fn joins_windows_folder_and_filename_without_duplicate_separator() {

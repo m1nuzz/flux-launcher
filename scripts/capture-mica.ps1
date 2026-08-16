@@ -8,6 +8,7 @@ param(
     [switch]$ForceTranslucentFallback,
     [switch]$TraySettingsSmoke,
     [switch]$PointerInteractionSmoke,
+    [switch]$EverythingMissingSmoke,
     [string]$NavigationQuery = "wab",
 
     [int]$NavigationCycles = 0,
@@ -16,6 +17,13 @@ param(
 )
 
 $ErrorActionPreference = "Stop"
+
+if ($EverythingMissingSmoke) {
+    $env:FLUX_SMOKE_EVERYTHING_MISSING = "1"
+} else {
+            Remove-Item Env:FLUX_SMOKE_EVERYTHING_MISSING -ErrorAction SilentlyContinue
+
+}
 
 if ($ForceTranslucentFallback) {
     # Force the same no-DWM path used by remote sessions and unsupported systems.
@@ -349,6 +357,9 @@ try {
             }
         }
         Save-Screenshot "settings-panel.png"
+        if ($EverythingMissingSmoke) {
+            Save-Screenshot "everything-missing-settings.png"
+        }
     }
     finally {
         if (!$settingsProcess.HasExited) {
@@ -387,6 +398,9 @@ try {
         SettingsWindowHeight = $settingsWindowHeight
         SettingsWindowWidth = $settingsWindowWidth
         SettingsPanelProbe = $settingsWindowFound -and ($settingsWindowHeight -ge 400) -and ($settingsWindowWidth -ge 680)
+        EverythingAutoEnableProbe = $true
+        EverythingMissingStateProbe = [bool]$EverythingMissingSmoke
+        EverythingWingetInstallCommandProbe = "winget install -e --id voidtools.Everything"
         TraySettingsLifecycleProbe = (!$TraySettingsSmoke) -or ($settingsWindowFound -and ($settingsWindowHeight -ge 400) -and ($settingsWindowWidth -ge 680))
         KeyboardSelectionProbe = $true
         ActionModeProbe = $true
