@@ -80,7 +80,7 @@ The search field remains focused while the result list is navigated. `ArrowUp` a
 
 `ArrowRight` enters an action surface for the selected result. `ArrowUp` and `ArrowDown` select an action, `Enter` executes it, and `ArrowLeft` or `Escape` returns to the result list. The initial action set includes opening a path, copying a path, copying a result name, and executing the action supplied by an `Executable`/`Executable_V2` plugin. Mouse selection remains supported and uses the same result/action model.
 
-`Ctrl+H` recalls committed searches from newest to oldest and can be pressed repeatedly to move backward through the bounded history. Editing the recalled query starts a new history navigation sequence. Settings provides a Clear history action.
+`Ctrl+H` switches the result list into a selectable history view, newest first; `Enter` or a click reruns the selected query. When the search field is empty, plain `ArrowUp` recalls the latest committed query. `Alt+ArrowUp` and `Alt+ArrowDown` cycle backward and forward through committed queries. Editing the recalled query starts a new history navigation sequence. Settings provides a Clear history action.
 
 ## Everything integration
 
@@ -124,12 +124,13 @@ The UI keeps result state bounded and uses background workers only for external 
 
 ## Smoke and memory evidence
 
-The latest successful Windows smoke run is available at [GitHub Actions run 31896154901](https://github.com/m1nuzz/flux-launcher/actions/runs/31896154901). It verifies the compact empty state, repeated activation, typed-query expansion, native `ext:zip` syntax input, ranked results, ArrowDown selection, Right-arrow action mode, Enter action execution, native Flow fixture output, Settings rendering, the requested system-backdrop path, and the following process samples from Windows Server 2025:
+The latest successful Windows smoke run is available at [GitHub Actions run 31925755076](https://github.com/m1nuzz/flux-launcher/actions/runs/31925755076). It verifies the compact empty state, repeated activation, typed-query expansion, native `ext:zip` syntax input, selectable Ctrl+H history, Enter history rerun, ArrowUp empty-query recall, Alt+ArrowUp/Alt+ArrowDown cycling, ranked results, ArrowDown selection, Right-arrow action mode, Enter action execution, native Flow fixture output, Settings rendering, the requested system-backdrop path, and the following process samples from Windows Server 2025:
 
 | State | Working set | Private bytes |
 | --- | ---: | ---: |
-| Idle, empty query | approximately 26.7 MiB | approximately 8.5 MiB |
-| Query active | approximately 51.9 MiB | approximately 30.4 MiB |
+| Idle, empty query | approximately 27.0 MiB | approximately 8.9 MiB |
+| Query active | approximately 64.6 MiB | approximately 48.2 MiB |
+| History panel | approximately 69.1 MiB | approximately 42.8 MiB |
 
 These are point-in-time smoke measurements, not a formal performance guarantee. The query sample includes the expanded UI and a native plugin response. Memory usage can vary with Windows composition, display scale, fonts, GPU driver, plugin behavior, and Everything availability.
 

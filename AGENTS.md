@@ -18,7 +18,7 @@ The Win32 lifecycle is sensitive to ordering. `ShowWindow` must establish visibi
 
 The default activation hotkey is Alt+Space and must remain configurable. Repeated activation must toggle visibility. Search receives keyboard focus immediately when shown. Clear-query-on-activation is enabled by default. Game Mode and fullscreen hotkey protection are enabled by default. Application results must rank before ordinary files and folders. Keyboard navigation must support Up, Down, Home, End, Enter, Right, Left, and Escape according to the existing Flow-style behavior.
 
-Result rows must remain readable on both dark and bright Acrylic samples. Titles must not overlap subtitles or adjacent rows. Selection state must be reactive and visibly unique. Keep the Windows accent-color default and custom palette fallback intact. Committed queries are persisted in a bounded, case-insensitive history, recalled with Ctrl+H, and removable from Settings. Provider status must remain visible in the expanded action bar without changing the transparent Acrylic surface.
+Result rows must remain readable on both dark and bright Acrylic samples. Titles must not overlap subtitles or adjacent rows. Selection state must be reactive and visibly unique. Keep the Windows accent-color default and custom palette fallback intact. Committed queries are persisted in a bounded, case-insensitive history. Ctrl+H must open selectable newest-first history rows; Enter/click reruns the selected query; plain Up on an empty field recalls the latest query; Alt+Up/Alt+Down cycle backward/forward; and Settings can clear history. Provider status must remain visible in the expanded action bar without changing the transparent Acrylic surface.
 
 ## Dependencies and architecture
 
