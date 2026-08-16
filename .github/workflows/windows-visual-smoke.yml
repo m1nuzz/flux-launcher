@@ -48,14 +48,14 @@ jobs:
         env:
           WINDUI_D2D: "1"
         run: |
-          $captureArgs = @(
-            "-Executable", "./target/x86_64-pc-windows-msvc/release/flux-launcher.exe",
-            "-OutputDirectory", "./artifacts/mica-smoke"
-          )
-          if ("${{ inputs.force_translucent_fallback }}" -eq "true") {
-            $captureArgs += "-ForceTranslucentFallback"
+          $captureParams = @{
+            Executable = "./target/x86_64-pc-windows-msvc/release/flux-launcher.exe"
+            OutputDirectory = "./artifacts/mica-smoke"
           }
-          & ./scripts/capture-mica.ps1 @captureArgs
+          if ("${{ inputs.force_translucent_fallback }}" -eq "true") {
+            $captureParams.ForceTranslucentFallback = $true
+          }
+          & ./scripts/capture-mica.ps1 @captureParams
 
       - name: Upload visual evidence
         uses: actions/upload-artifact@v4
