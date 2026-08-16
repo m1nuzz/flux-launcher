@@ -484,6 +484,14 @@ fn is_device_lost(hr: HRESULT) -> bool {
 }
 
 impl WinRenderBackend for D2DBackend {
+    unsafe fn on_show(&mut self, _hwnd: HWND) {
+        if let Some(composition) = self.composition.as_ref() {
+            let _ = composition.visual.SetContent(&self.swapchain);
+            let _ = composition.target.SetRoot(&composition.visual);
+            let _ = composition.device.Commit();
+        }
+    }
+
     fn resize(&mut self, w: i32, h: i32) {
         unsafe {
             // 先解绑 target 并释放缓存位图，释放对旧后备缓冲的全部引用，否则 ResizeBuffers 失败。

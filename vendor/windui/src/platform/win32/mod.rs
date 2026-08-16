@@ -158,9 +158,10 @@ trait WinRenderBackend {
     ///
     /// 返回 `true` 表示后端已不可用、需由 `WindowState` 降级替换为软后端
     /// （D2D 设备丢失且连续重建失败时）。软后端恒返回 `false`。
+    /// Reattach the presentation surface before the first frame after a hidden window is shown.
+    unsafe fn on_show(&mut self, _hwnd: HWND) {}
     unsafe fn paint(&mut self, hwnd: HWND, bg: Color, handler: &mut dyn AppHandler) -> bool;
 }
-
 /// CPU 软件渲染后端：tiny-skia `Pixmap` 作后备缓冲，`SetDIBitsToDevice` 呈现。
 struct SkiaBackend {
     pixmap: Option<Pixmap>,
@@ -270,6 +271,8 @@ struct WindowState {
     handler: Box<dyn AppHandler>,
     bg: Color,
     transparent: bool,
+    #[cfg(feature = "d2d")]
+    backdrop: Backdrop,
     /// 当前是否已对窗口调用 OS SetCapture（与 handler 逻辑捕获态同步）。
     capturing: bool,
     /// 渲染后端：封装"如何把一帧呈现到 HWND"的全部逻辑。
@@ -368,6 +371,8 @@ impl WindowState {
             handler,
             bg,
             transparent,
+            #[cfg(feature = "d2d")]
+            backdrop: Backdrop::None,
             capturing: false,
             backend: Box::new(SkiaBackend::new(transparent)),
             last_click: ClickTracker::default(),
@@ -790,6 +795,10 @@ unsafe fn run_windowed(
     let translucent_fallback = cfg.backdrop != Backdrop::None && !backdrop_available;
     // 把 WindowState 装箱，指针随 CreateWindow 传入，在 WM_NCCREATE 挂到 HWND。
     let mut state = Box::new(WindowState::new(handler, cfg.bg, backdrop_available));
+    #[cfg(feature = "d2d")]
+    {
+        state.backdrop = cfg.backdrop;
+    }
     state.min_w = cfg.min_width;
     state.min_h = cfg.min_height;
     let state_ptr = Box::into_raw(state);
@@ -1847,6 +1856,19 @@ pub(crate) fn show_and_activate(hwnd: HWND) {
             let _ = ShowWindow(hwnd, SW_RESTORE);
         } else {
             let _ = ShowWindow(hwnd, SW_SHOW);
+        }
+        // Reapply DWM attributes and recommit the DirectComposition visual after
+        // every hidden-to-visible transition. DWM can detach a hidden target;
+        // without this, Acrylic may appear only after a later resize or query edit.
+        #[cfg(feature = "d2d")]
+        {
+            let backdrop = state_from(hwnd).map(|state| state.backdrop);
+            if let Some(backdrop) = backdrop {
+                apply_system_backdrop(hwnd, backdrop);
+            }
+        }
+        if let Some(state) = state_from(hwnd) {
+            state.backend.on_show(hwnd);
         }
         let _ = SetForegroundWindow(hwnd);
         // The visible HWND now owns a valid DWM/DirectComposition target.
