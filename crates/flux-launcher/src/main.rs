@@ -29,6 +29,7 @@ use windui::prelude::*;
 use windui::render::{Canvas, Paint};
 
 const WINDOW_WIDTH: i32 = 420;
+const SETTINGS_WINDOW_WIDTH: i32 = 720;
 const COMPACT_WINDOW_HEIGHT: i32 = 72;
 // Keep the result palette compact like the reference while exposing a six-row
 // viewport; additional results remain available through the native wheel scroll.
@@ -198,7 +199,9 @@ impl Widget for ResultRowAnchor {
     fn on_update(&mut self, ctx: &mut EventCtx) {
         let selected = self.selected_id.get() == self.result_id;
         let query = self.query.get();
-        if self.last_selected != Some(selected) || self.last_query != query {
+        let selection_changed = self.last_selected != Some(selected);
+        let query_changed = self.last_query != query;
+        if selection_changed || query_changed {
             self.title_doc_signal
                 .set(title_match_doc(&self.title, &query));
             self.trailing_signal.set(if selected {
@@ -209,7 +212,11 @@ impl Widget for ResultRowAnchor {
             self.last_selected = Some(selected);
             self.last_query = query;
         }
-        if selected {
+        // Scroll only when this row becomes selected or the query creates a new
+        // result set. Calling scroll_into_view on every layout/update pass feeds
+        // the ScrollWidget's own layout mutation back into the next frame and can
+        // make the viewport oscillate between two positions while typing.
+        if selected && (selection_changed || query_changed) {
             let row_id = ctx.id();
             let _ = ctx.tree_mut().scroll_into_view(row_id);
         }
@@ -1144,14 +1151,20 @@ fn main() {
     let mut last_query = String::new();
     let mut sequence = 0_u64;
 
-    let initial_height = if settings_visible.get() {
+    let settings_at_start = settings_visible.get();
+    let initial_height = if settings_at_start {
         SETTINGS_WINDOW_HEIGHT
     } else {
         COMPACT_WINDOW_HEIGHT
     };
+    let initial_width = if settings_at_start {
+        SETTINGS_WINDOW_WIDTH
+    } else {
+        WINDOW_WIDTH
+    };
     let window_icon = tray_icon();
     let mut app =
-        App::new("Flux Launcher", WINDOW_WIDTH, initial_height).icon_rgba(16, 16, &window_icon);
+        App::new("Flux Launcher", initial_width, initial_height).icon_rgba(16, 16, &window_icon);
     let window_size = app.window_size_handle();
     *action_window_slot.borrow_mut() = Some(window_size.clone());
     let size_for_interval = window_size.clone();
@@ -1648,7 +1661,7 @@ fn main() {
                 // launcher state. Apply the Settings size after that lifecycle
                 // callback so it cannot overwrite the 520px panel height.
                 ctx.show_window();
-                size_for_settings.set(WINDOW_WIDTH, SETTINGS_WINDOW_HEIGHT);
+                size_for_settings.set(SETTINGS_WINDOW_WIDTH, SETTINGS_WINDOW_HEIGHT);
             }),
             TrayMenuItem::separator(),
             TrayMenuItem::check("Game Mode", game_mode, move |_| {
@@ -1888,7 +1901,7 @@ fn main() {
                 // without relying on brittle screen-coordinate tray automation.
                 settings_visible_for_interval.set(true);
                 ctx.show_window();
-                size_for_interval.set(WINDOW_WIDTH, SETTINGS_WINDOW_HEIGHT);
+                size_for_interval.set(SETTINGS_WINDOW_WIDTH, SETTINGS_WINDOW_HEIGHT);
                 return;
             }
             let next_query = query_for_interval.get();
@@ -1985,7 +1998,11 @@ fn main() {
                     action_items.set(Vec::new());
                     inline_completion.set(String::new());
                     size_for_visibility.set(
-                        WINDOW_WIDTH,
+                        if settings_visible.get() {
+                            SETTINGS_WINDOW_WIDTH
+                        } else {
+                            WINDOW_WIDTH
+                        },
                         if settings_visible.get() {
                             SETTINGS_WINDOW_HEIGHT
                         } else {

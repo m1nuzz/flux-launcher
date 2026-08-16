@@ -331,6 +331,7 @@ try {
     $settingsStderrPath = Join-Path $OutputDirectory "settings.stderr.log"
     $settingsProcess = Start-Process -FilePath $Executable -PassThru -RedirectStandardOutput $settingsStdoutPath -RedirectStandardError $settingsStderrPath
     $settingsWindowHeight = 0
+    $settingsWindowWidth = 0
     $settingsWindowFound = $false
     try {
         Start-Sleep -Seconds 2
@@ -343,6 +344,7 @@ try {
             $settingsRect = New-Object FluxWallpaper+RECT
             if ([FluxWallpaper]::GetWindowRect($settingsHwnd, [ref]$settingsRect)) {
                 $settingsWindowHeight = $settingsRect.Bottom - $settingsRect.Top
+                $settingsWindowWidth = $settingsRect.Right - $settingsRect.Left
                 $settingsWindowFound = $true
             }
         }
@@ -383,8 +385,9 @@ try {
         SettingsOpenPath = if ($TraySettingsSmoke) { "tray-lifecycle" } else { "startup-env" }
         SettingsWindowFound = $settingsWindowFound
         SettingsWindowHeight = $settingsWindowHeight
-        SettingsPanelProbe = $settingsWindowFound -and ($settingsWindowHeight -ge 400)
-        TraySettingsLifecycleProbe = (!$TraySettingsSmoke) -or ($settingsWindowFound -and ($settingsWindowHeight -ge 400))
+        SettingsWindowWidth = $settingsWindowWidth
+        SettingsPanelProbe = $settingsWindowFound -and ($settingsWindowHeight -ge 400) -and ($settingsWindowWidth -ge 680)
+        TraySettingsLifecycleProbe = (!$TraySettingsSmoke) -or ($settingsWindowFound -and ($settingsWindowHeight -ge 400) -and ($settingsWindowWidth -ge 680))
         KeyboardSelectionProbe = $true
         ActionModeProbe = $true
         EnterActionProbe = $true
