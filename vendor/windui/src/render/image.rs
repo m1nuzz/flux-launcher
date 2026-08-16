@@ -22,6 +22,7 @@ use std::cell::RefCell;
 use std::fmt;
 use std::path::Path;
 use std::rc::Rc;
+use std::sync::atomic::{AtomicUsize, Ordering};
 
 use tiny_skia::{ColorU8, IntSize, Pixmap};
 
@@ -261,12 +262,15 @@ fn decode_with_registry(bytes: &[u8]) -> Result<DecodedImage, ImageError> {
     })
 }
 
-/// 解码后的图片资源。`Rc` 共享，克隆廉价；paint 期只做 blit，不再解码。
+static NEXT_IMAGE_ID: AtomicUsize = AtomicUsize::new(1);
+
+/// Decoded image resource. Clones share the pixels and the stable cache identity.
 #[derive(Clone)]
 pub struct Image {
     pixmap: Rc<Pixmap>,
     w: u32,
     h: u32,
+    cache_id: usize,
 }
 
 impl Image {
@@ -332,6 +336,7 @@ impl Image {
             pixmap: Rc::new(pm),
             w,
             h,
+            cache_id: NEXT_IMAGE_ID.fetch_add(1, Ordering::Relaxed),
         }
     }
 
@@ -356,6 +361,7 @@ impl Image {
             pixmap: Rc::new(pm),
             w: self.w,
             h: self.h,
+            cache_id: NEXT_IMAGE_ID.fetch_add(1, Ordering::Relaxed),
         }
     }
 
@@ -373,12 +379,13 @@ impl Image {
         &self.pixmap
     }
 
-    /// 稳定缓存键：底层 `Rc<Pixmap>` 指针。同一图片的 `Rc` 克隆共享此 id
-    /// （供 D2D 后端按图片身份缓存 device-dependent 位图，避免每帧重建）。
-    /// 仅 Windows + `d2d` 后端是消费者；其余平台/配置下无人使用，显式放行 dead_code。
+    /// Stable process-local cache identity shared by clones of the same image.
+    /// It is monotonic rather than an allocation address, so list rebuilds cannot
+    /// accidentally reuse a stale D2D bitmap when an old image is dropped.
+    /// Only Windows + `d2d` consumes this value; other configurations allow dead code.
     #[cfg_attr(not(all(windows, feature = "d2d")), allow(dead_code))]
     pub(crate) fn cache_id(&self) -> usize {
-        std::rc::Rc::as_ptr(&self.pixmap) as usize
+        self.cache_id
     }
 }
 
@@ -387,6 +394,15 @@ mod tests {
     use super::*;
 
     /// 构造一张 w×h 纯色 PNG 的字节（红色不透明）。
+    #[test]
+    fn distinct_images_keep_distinct_cache_ids_after_drop() {
+        let first = Image::from_rgba(1, 1, &[255, 0, 0, 255]).unwrap();
+        let first_id = first.cache_id();
+        drop(first);
+        let second = Image::from_rgba(1, 1, &[0, 255, 0, 255]).unwrap();
+        assert_ne!(first_id, second.cache_id());
+    }
+
     fn red_png(w: u32, h: u32) -> Vec<u8> {
         let mut pm = Pixmap::new(w, h).unwrap();
         pm.fill(tiny_skia::Color::from_rgba8(255, 0, 0, 255));
