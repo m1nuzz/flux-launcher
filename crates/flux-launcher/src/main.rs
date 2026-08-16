@@ -1516,8 +1516,11 @@ fn main() {
             }),
             TrayMenuItem::item("Settings", move |ctx| {
                 settings_visible.set(true);
-                size_for_settings.set(WINDOW_WIDTH, SETTINGS_WINDOW_HEIGHT);
+                // show_window invokes on_window_show, which clears the normal
+                // launcher state. Apply the Settings size after that lifecycle
+                // callback so it cannot overwrite the 520px panel height.
                 ctx.show_window();
+                size_for_settings.set(WINDOW_WIDTH, SETTINGS_WINDOW_HEIGHT);
             }),
             TrayMenuItem::separator(),
             TrayMenuItem::check("Game Mode", game_mode, move |_| {
