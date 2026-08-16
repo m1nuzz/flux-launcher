@@ -13,7 +13,7 @@ The primary interaction is intentionally minimal. With an empty query, Flux show
 | Area | Implementation |
 | --- | --- |
 | GUI | Rust + windui only; no WebView, browser engine, or secondary UI toolkit |
-| Window material | Windows system Mica request with safe fallback and Acrylic-capable backend path |
+| Window material | Windows 11 system Acrylic through DWM/DirectComposition; neutral dark uniform-alpha fallback when the system backdrop is unavailable |
 | Search | Built-in command palette, bounded eight-result pipeline, always-on Everything IPC provider, and native Flow plugin provider |
 | Ranking | Exact/prefix application matches and executable/shortcut results are ranked ahead of ordinary indexed files and folders |
 | Query history | Committed searches are persisted atomically, recalled with `Ctrl+H`, deduplicated case-insensitively, and capped at 32 entries |
@@ -32,7 +32,7 @@ The primary interaction is intentionally minimal. With an empty query, Flux show
 
 Flux Launcher targets **Windows 11 x64** and is built for the `x86_64-pc-windows-msvc` target. Everything is optional: when the Everything service is not available, Flux keeps the built-in and plugin providers active and reports a graceful fallback state. Flow plugins must be native executable plugins; Python and C# plugin runtimes are intentionally outside the MVP scope.
 
-The repository CI uses Windows Server 2025 for automated launch, render, input, compositor-path, plugin, and screenshot smoke tests. A Server runner is useful for repeatable automation, but its desktop composition and wallpaper treatment are not a visual substitute for a physical Windows 11 desktop. The exact dark Mica tint and wallpaper blending should therefore be validated on Windows 11 hardware.
+The repository CI uses Windows Server 2025 for automated launch, render, input, compositor-path, plugin, and screenshot smoke tests. A Server runner is useful for repeatable automation, but its desktop composition and wallpaper treatment are not a visual substitute for a physical Windows 11 desktop. The exact dark Acrylic material and wallpaper blending should therefore be validated on Windows 11 hardware. If DWM composition, system material support, or the session policy makes the requested backdrop unavailable, Flux creates a top-level layered window and applies a neutral charcoal uniform alpha surface. This fallback provides desktop translucency without claiming to provide blur; the real Acrylic path remains selected on supported local Windows 11 sessions.
 
 ## Build
 
@@ -117,26 +117,26 @@ The workspace separates portable behavior from Windows integration:
 | `crates/flux-launcher` | windui application, native Windows integrations, Everything worker, plugin host, tray, and launch actions |
 | `crates/flow-plugin-fixture` | Native executable Flow JSON-RPC fixture used by integration smoke tests |
 | `vendor/windui` | Pinned local windui fork containing the Mica/DirectComposition seam, runtime window sizing, and Smooth Caret support |
-| `scripts/capture-mica.ps1` | Proactive Windows screenshot, input, plugin, Settings, and memory smoke harness |
+| `scripts/capture-mica.ps1` | Proactive Windows screenshot, input, plugin, Settings, memory, and optional forced-fallback smoke harness |
 | `assets/logotype.jpg` / `assets/ico.png` | Repository branding artwork and transparent tray icon asset |
 
 The UI keeps result state bounded and uses background workers only for external providers. The compact empty state also reduces the rendered surface and memory pressure while the launcher is idle.
 
 ## Smoke and memory evidence
 
-The latest successful Windows smoke run is available at [GitHub Actions run 31925755076](https://github.com/m1nuzz/flux-launcher/actions/runs/31925755076). It verifies the compact empty state, repeated activation, typed-query expansion, native `ext:zip` syntax input, selectable Ctrl+H history, Enter history rerun, ArrowUp empty-query recall, Alt+ArrowUp/Alt+ArrowDown cycling, ranked results, ArrowDown selection, Right-arrow action mode, Enter action execution, native Flow fixture output, Settings rendering, the requested system-backdrop path, and the following process samples from Windows Server 2025:
+The latest successful Windows smoke run is available at [GitHub Actions run 31927841139](https://github.com/m1nuzz/flux-launcher/actions/runs/31927841139). It verifies the compact empty state, repeated activation, typed-query expansion, native `ext:zip` syntax input, selectable Ctrl+H history, Enter history rerun, ArrowUp empty-query recall, Alt+ArrowUp/Alt+ArrowDown cycling, ranked results, ArrowDown selection, Right-arrow action mode, Enter action execution, native Flow fixture output, Settings rendering, the tray-only style, and the forced no-DWM translucent fallback path. The fallback smoke reports the following process samples from Windows Server 2025:
 
 | State | Working set | Private bytes |
 | --- | ---: | ---: |
-| Idle, empty query | approximately 27.0 MiB | approximately 8.9 MiB |
-| Query active | approximately 64.6 MiB | approximately 48.2 MiB |
-| History panel | approximately 69.1 MiB | approximately 42.8 MiB |
+| Idle, empty query | approximately 26.1 MiB | approximately 7.7 MiB |
+| Query active | approximately 43.2 MiB | approximately 22.5 MiB |
+| History panel | approximately 52.0 MiB | approximately 23.2 MiB |
 
 These are point-in-time smoke measurements, not a formal performance guarantee. The query sample includes the expanded UI and a native plugin response. Memory usage can vary with Windows composition, display scale, fonts, GPU driver, plugin behavior, and Everything availability.
 
 ## Release
 
-The current stable release is **[Flux Launcher v0.1.38](https://github.com/m1nuzz/flux-launcher/releases/tag/v0.1.38)** for Windows 11 x64. It includes the transparent Acrylic lifecycle fixes, app-first ranking, always-on Everything provider, native query syntax passthrough, persistent query history, provider status, keyboard navigation, action mode, and the current Windows smoke validation. See the [GitHub Releases page](https://github.com/m1nuzz/flux-launcher/releases) for binaries and English release notes.
+The current stable release is **[Flux Launcher v0.1.41](https://github.com/m1nuzz/flux-launcher/releases/tag/v0.1.41)** for Windows 11 x64. The post-release fallback implementation is tracked on `main` and will be included in the next release. See the [GitHub Releases page](https://github.com/m1nuzz/flux-launcher/releases) for binaries and English release notes.
 
 ## License
 
