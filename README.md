@@ -124,7 +124,7 @@ The UI keeps result state bounded and uses background workers only for external 
 
 ## Smoke and memory evidence
 
-The latest successful Windows smoke run is available at [GitHub Actions run 31931688990](https://github.com/m1nuzz/flux-launcher/actions/runs/31931688990). It verifies the compact empty state before and after repeated hotkey show, typed-query expansion, native `ext:zip` syntax input, selectable Ctrl+H history, ranked results, keyboard action mode, the tray-only style, the Acrylic reattachment lifecycle path, stable result icons through repeated `Edge` Up/Down navigation, selected-row rendering without a redundant title marker, Settings expansion with a measured 520 px window height, partial-match typography, a Settings page without a local opaque card surface, and ChatGPT text rendering on the transparent composition path.
+The latest successful Windows smoke run is available at [GitHub Actions run 31932228302](https://github.com/m1nuzz/flux-launcher/actions/runs/31932228302). It verifies the compact empty state before and after repeated hotkey show, typed-query expansion, native `ext:zip` syntax input, selectable Ctrl+H history, ranked results, keyboard action mode, the tray-only style, the Acrylic reattachment lifecycle path, stable result icons through repeated `Edge` Up/Down navigation, selected-row rendering without a redundant title marker, Settings expansion with a measured 520 px window height, partial-match typography, a Settings page without a local opaque card surface, ChatGPT text rendering on the transparent composition path, and the dedicated tray Settings lifecycle path.
 
 | State | Working set | Private bytes |
 | --- | ---: | ---: |
@@ -136,7 +136,7 @@ These are point-in-time smoke measurements, not a formal performance guarantee. 
 
 ## Release
 
-The current stable release is **[Flux Launcher v0.1.49](https://github.com/m1nuzz/flux-launcher/releases/tag/v0.1.49)** for Windows 11 x64. It includes the repeated-show Acrylic lifecycle fix, stale icon bitmap fix, cleaner selected-row presentation, Settings expansion fix, Windows 11 Segoe UI Variable typography hierarchy, transparent Settings surfaces, and composition-safe grayscale text antialiasing. See the [GitHub Releases page](https://github.com/m1nuzz/flux-launcher/releases) for binaries and English release notes.
+The current stable release is **[Flux Launcher v0.1.50](https://github.com/m1nuzz/flux-launcher/releases/tag/v0.1.50)** for Windows 11 x64. It includes the repeated-show Acrylic lifecycle fix, stale icon bitmap fix, cleaner selected-row presentation, Windows 11 Segoe UI Variable typography, transparent Settings surfaces, composition-safe grayscale text antialiasing, and the tray Settings ordering fix. See the [GitHub Releases page](https://github.com/m1nuzz/flux-launcher/releases) for binaries and English release notes.
 
 ## License
 
