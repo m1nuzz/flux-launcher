@@ -1295,6 +1295,28 @@ fn main() {
             }
         }
 
+        // Match Flow Launcher: plain Tab selects the next result, while
+        // Shift+Tab selects the previous result. Ctrl+Tab remains reserved
+        // for inline completion above.
+        if !event.ctrl && !alt_down && event.key == Key::Tab {
+            let count = current_results.len();
+            let next = if event.shift {
+                selected_index_for_keys
+                    .get()
+                    .checked_sub(1)
+                    .unwrap_or(count - 1)
+            } else {
+                (selected_index_for_keys.get() + 1) % count
+            };
+            selection_touched_for_keys.set(true);
+            selected_index_for_keys.set(next);
+            if let Some(result) = current_results.get(next) {
+                selected_id_for_keys.set(result.id.clone());
+            }
+            results_for_keys.set(current_results);
+            return true;
+        }
+
         if event.key == Key::Enter && alt_key_is_down() {
             if history_mode_for_keys.get() {
                 if let Some(result) = selected_result(

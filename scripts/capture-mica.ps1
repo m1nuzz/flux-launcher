@@ -9,7 +9,9 @@ param(
     [switch]$TraySettingsSmoke,
     [string]$NavigationQuery = "wab",
 
-    [int]$NavigationCycles = 0
+    [int]$NavigationCycles = 0,
+
+    [int]$TabNavigationCycles = 0
 )
 
 $ErrorActionPreference = "Stop"
@@ -224,6 +226,17 @@ try {
     Start-Sleep -Seconds 2
     $queryMemory = Get-MemorySnapshot $process.Id
     Save-Screenshot "everything-fallback.png"
+    if ($TabNavigationCycles -gt 0) {
+        for ($cycle = 1; $cycle -le $TabNavigationCycles; $cycle++) {
+            # Flow Launcher semantics: Tab selects next result and Shift+Tab selects previous.
+            $shell.SendKeys("{TAB}")
+            Start-Sleep -Milliseconds 250
+            Save-Screenshot ("tab-navigation-cycle-{0:D2}-next.png" -f $cycle)
+            $shell.SendKeys("+{TAB}")
+            Start-Sleep -Milliseconds 250
+            Save-Screenshot ("tab-navigation-cycle-{0:D2}-previous.png" -f $cycle)
+        }
+    }
     if ($NavigationCycles -gt 0) {
         for ($cycle = 1; $cycle -le $NavigationCycles; $cycle++) {
             $shell.SendKeys("{UP}")
@@ -326,6 +339,7 @@ try {
         SecondHotkeyShowProbe = $visibleAfterSecondHotkey
         TrayOnlyWindowProbe = $trayOnlyWindow
         QueryExpandedProbe = $true
+        TabNavigationProbe = $TabNavigationCycles -gt 0
         EverythingSyntaxProbe = $true
         HistoryPanelProbe = $true
         HistoryUpProbe = $true
