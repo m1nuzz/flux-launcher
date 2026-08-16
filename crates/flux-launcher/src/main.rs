@@ -1033,25 +1033,21 @@ fn main() {
         )
         .visible_when(move || show_results.get() && !action_mode.get());
 
-    let result_list_body = Element::list_signal(
-        result_source,
-        |result| result.id.clone(),
-        move |result| {
-            result_row(
-                result,
-                selected_for_rows,
-                selected_index_for_rows,
-                selection_touched_for_rows,
-                result_source,
-                Rc::clone(&actions_for_rows),
-                query_for_rows,
-                selection_color,
-                Arc::clone(&settings_for_rows),
-                Rc::clone(&history_for_rows),
-                history_mode_for_rows,
-            )
-        },
-    )
+    let result_list_body = Element::host_signal(result_source, move |result| {
+        result_row(
+            result,
+            selected_for_rows,
+            selected_index_for_rows,
+            selection_touched_for_rows,
+            result_source,
+            Rc::clone(&actions_for_rows),
+            query_for_rows,
+            selection_color,
+            Arc::clone(&settings_for_rows),
+            Rc::clone(&history_for_rows),
+            history_mode_for_rows,
+        )
+    })
     .width_match()
     // Keep the result body transparent so the window remains one continuous
     // Acrylic surface. Only individual result rows draw controls.
