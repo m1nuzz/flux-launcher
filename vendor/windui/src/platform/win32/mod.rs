@@ -19,7 +19,9 @@ use std::path::PathBuf;
 use tiny_skia::Pixmap;
 
 use windows::core::{s, w, PCWSTR};
-use windows::Win32::Foundation::{HINSTANCE, HWND, LPARAM, LRESULT, POINT, RECT, TRUE, WPARAM};
+use windows::Win32::Foundation::{
+    COLORREF, HINSTANCE, HWND, LPARAM, LRESULT, POINT, RECT, TRUE, WPARAM,
+};
 use windows::Win32::Graphics::Dwm::{
     DwmExtendFrameIntoClientArea, DwmIsCompositionEnabled, DwmSetWindowAttribute,
     DWMSBT_MAINWINDOW, DWMSBT_NONE, DWMSBT_TRANSIENTWINDOW, DWMWA_BORDER_COLOR, DWMWA_COLOR_NONE,
@@ -61,23 +63,23 @@ use windows::Win32::UI::WindowsAndMessaging::{
     DispatchMessageW, GetClientRect, GetMessageExtraInfo, GetMessageTime, GetMessageW,
     GetSystemMetrics, GetWindowLongPtrW, GetWindowRect, IsIconic, IsWindowVisible, IsZoomed,
     LoadCursorW, LoadIconW, MsgWaitForMultipleObjectsEx, PeekMessageW, PostMessageW,
-    PostQuitMessage, RegisterClassExW, SetCursor, SetForegroundWindow, SetTimer, SetWindowLongPtrW,
-    SetWindowPos, ShowWindow, SystemParametersInfoW, TranslateMessage, CREATESTRUCTW,
-    CW_USEDEFAULT, GWLP_USERDATA, HICON, HTBOTTOM, HTBOTTOMLEFT, HTBOTTOMRIGHT, HTCAPTION,
-    HTCLIENT, HTLEFT, HTRIGHT, HTTOP, HTTOPLEFT, HTTOPRIGHT, ICONINFO, IDC_ARROW, IDC_HAND,
-    IDC_IBEAM, MINMAXINFO, MSG, MWMO_INPUTAVAILABLE, NCCALCSIZE_PARAMS, PM_REMOVE, QS_ALLINPUT,
-    SIZE_MINIMIZED, SM_CXDOUBLECLK, SM_CXFRAME, SM_CXPADDEDBORDER, SM_CXSCREEN, SM_CYDOUBLECLK,
-    SM_CYFRAME, SM_CYSCREEN, SM_CYVIRTUALSCREEN, SM_REMOTESESSION, SM_XVIRTUALSCREEN,
-    SM_YVIRTUALSCREEN, SPI_GETCLIENTAREAANIMATION, SWP_FRAMECHANGED, SWP_NOACTIVATE, SWP_NOMOVE,
-    SWP_NOSIZE, SWP_NOZORDER, SW_HIDE, SW_MAXIMIZE, SW_MINIMIZE, SW_RESTORE, SW_SHOW,
-    SW_SHOWNORMAL, SYSTEM_PARAMETERS_INFO_UPDATE_FLAGS, WINDOW_EX_STYLE, WINDOW_STYLE, WM_APP,
-    WM_CAPTURECHANGED, WM_CHAR, WM_CLOSE, WM_DESTROY, WM_DPICHANGED, WM_DROPFILES,
-    WM_ENTERSIZEMOVE, WM_EXITSIZEMOVE, WM_GETMINMAXINFO, WM_HOTKEY, WM_IME_COMPOSITION,
-    WM_IME_ENDCOMPOSITION, WM_IME_STARTCOMPOSITION, WM_KEYDOWN, WM_LBUTTONDOWN, WM_LBUTTONUP,
-    WM_MOUSEMOVE, WM_MOUSEWHEEL, WM_NCCALCSIZE, WM_NCCREATE, WM_NCHITTEST, WM_NCMOUSEMOVE,
-    WM_PAINT, WM_QUIT, WM_RBUTTONDOWN, WM_RBUTTONUP, WM_SETCURSOR, WM_SIZE, WM_SYSKEYDOWN,
-    WM_TIMER, WM_TOUCH, WNDCLASSEXW, WS_EX_TOOLWINDOW, WS_MAXIMIZEBOX, WS_OVERLAPPEDWINDOW,
-    WS_POPUP, WS_THICKFRAME,
+    PostQuitMessage, RegisterClassExW, SetCursor, SetForegroundWindow, SetLayeredWindowAttributes,
+    SetTimer, SetWindowLongPtrW, SetWindowPos, ShowWindow, SystemParametersInfoW, TranslateMessage,
+    CREATESTRUCTW, CW_USEDEFAULT, GWLP_USERDATA, HICON, HTBOTTOM, HTBOTTOMLEFT, HTBOTTOMRIGHT,
+    HTCAPTION, HTCLIENT, HTLEFT, HTRIGHT, HTTOP, HTTOPLEFT, HTTOPRIGHT, ICONINFO, IDC_ARROW,
+    IDC_HAND, IDC_IBEAM, LWA_ALPHA, MINMAXINFO, MSG, MWMO_INPUTAVAILABLE, NCCALCSIZE_PARAMS,
+    PM_REMOVE, QS_ALLINPUT, SIZE_MINIMIZED, SM_CXDOUBLECLK, SM_CXFRAME, SM_CXPADDEDBORDER,
+    SM_CXSCREEN, SM_CYDOUBLECLK, SM_CYFRAME, SM_CYSCREEN, SM_CYVIRTUALSCREEN, SM_REMOTESESSION,
+    SM_XVIRTUALSCREEN, SM_YVIRTUALSCREEN, SPI_GETCLIENTAREAANIMATION, SWP_FRAMECHANGED,
+    SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE, SWP_NOZORDER, SW_HIDE, SW_MAXIMIZE, SW_MINIMIZE,
+    SW_RESTORE, SW_SHOW, SW_SHOWNORMAL, SYSTEM_PARAMETERS_INFO_UPDATE_FLAGS, WINDOW_EX_STYLE,
+    WINDOW_STYLE, WM_APP, WM_CAPTURECHANGED, WM_CHAR, WM_CLOSE, WM_DESTROY, WM_DPICHANGED,
+    WM_DROPFILES, WM_ENTERSIZEMOVE, WM_EXITSIZEMOVE, WM_GETMINMAXINFO, WM_HOTKEY,
+    WM_IME_COMPOSITION, WM_IME_ENDCOMPOSITION, WM_IME_STARTCOMPOSITION, WM_KEYDOWN, WM_LBUTTONDOWN,
+    WM_LBUTTONUP, WM_MOUSEMOVE, WM_MOUSEWHEEL, WM_NCCALCSIZE, WM_NCCREATE, WM_NCHITTEST,
+    WM_NCMOUSEMOVE, WM_PAINT, WM_QUIT, WM_RBUTTONDOWN, WM_RBUTTONUP, WM_SETCURSOR, WM_SIZE,
+    WM_SYSKEYDOWN, WM_TIMER, WM_TOUCH, WNDCLASSEXW, WS_EX_LAYERED, WS_EX_TOOLWINDOW,
+    WS_MAXIMIZEBOX, WS_OVERLAPPEDWINDOW, WS_POPUP, WS_THICKFRAME,
 };
 // 只用于 d2d 后端选择（RDP 远程会话下强制软渲染），随该 feature 一起门控。
 #[cfg(feature = "d2d")]
@@ -781,7 +783,11 @@ unsafe fn run_windowed(
         && DwmIsCompositionEnabled()
             .map(|enabled| enabled.as_bool())
             .unwrap_or(true);
-
+    // A layered top-level window provides a real uniform-alpha fallback when
+    // DWM cannot provide the requested system backdrop. It is intentionally
+    // excluded from the normal Acrylic path, which needs transparent pixels
+    // and DirectComposition to expose the system material.
+    let translucent_fallback = cfg.backdrop != Backdrop::None && !backdrop_available;
     // 把 WindowState 装箱，指针随 CreateWindow 传入，在 WM_NCCREATE 挂到 HWND。
     let mut state = Box::new(WindowState::new(handler, cfg.bg, backdrop_available));
     state.min_w = cfg.min_width;
@@ -822,7 +828,13 @@ unsafe fn run_windowed(
 
     // Keep the launcher as a tray utility: WS_EX_TOOLWINDOW removes the popup
     // from the taskbar and Alt+Tab while preserving activation and tray/global-hotkey access.
-    let ex_style = WS_EX_TOOLWINDOW;
+    // Add WS_EX_LAYERED only to the no-DWM fallback so its opaque dark surface
+    // is composed with uniform alpha instead of becoming a white or solid slab.
+    let ex_style = if translucent_fallback {
+        WS_EX_TOOLWINDOW | WS_EX_LAYERED
+    } else {
+        WS_EX_TOOLWINDOW
+    };
     let hwnd = match CreateWindowExW(
         ex_style,
         CLASS_NAME,
@@ -848,7 +860,11 @@ unsafe fn run_windowed(
             panic!("CreateWindowExW 失败: {e:?}");
         }
     };
-
+    if translucent_fallback {
+        // Keep the fallback close to the reference: neutral charcoal
+        // translucency without pretending to be a blurred desktop surface.
+        let _ = SetLayeredWindowAttributes(hwnd, COLORREF(0), 232, LWA_ALPHA);
+    }
     // 用实际窗口 DPI 设置内容缩放（可能与系统 DPI 不同，如多显示器）。
     let dpi = GetDpiForWindow(hwnd);
     let scale = if dpi == 0 { 1.0 } else { dpi as f32 / 96.0 };

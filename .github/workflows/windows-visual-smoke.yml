@@ -8,6 +8,11 @@ on:
         required: false
         default: windows-latest
         type: string
+      force_translucent_fallback:
+        description: "Force the non-DWM uniform-alpha fallback instead of system Acrylic"
+        required: false
+        default: false
+        type: boolean
   push:
     branches: [main]
 
@@ -43,9 +48,14 @@ jobs:
         env:
           WINDUI_D2D: "1"
         run: |
-          ./scripts/capture-mica.ps1 `
-            -Executable ./target/x86_64-pc-windows-msvc/release/flux-launcher.exe `
-            -OutputDirectory ./artifacts/mica-smoke
+          $captureArgs = @(
+            "-Executable", "./target/x86_64-pc-windows-msvc/release/flux-launcher.exe",
+            "-OutputDirectory", "./artifacts/mica-smoke"
+          )
+          if ("${{ inputs.force_translucent_fallback }}" -eq "true") {
+            $captureArgs += "-ForceTranslucentFallback"
+          }
+          & ./scripts/capture-mica.ps1 @captureArgs
 
       - name: Upload visual evidence
         uses: actions/upload-artifact@v4

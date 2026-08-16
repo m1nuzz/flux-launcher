@@ -3,10 +3,19 @@ param(
     [string]$Executable,
 
     [Parameter(Mandatory = $true)]
-    [string]$OutputDirectory
+    [string]$OutputDirectory,
+
+    [switch]$ForceTranslucentFallback
 )
 
 $ErrorActionPreference = "Stop"
+
+if ($ForceTranslucentFallback) {
+    # Force the same no-DWM path used by remote sessions and unsupported systems.
+    $env:FLUX_DISABLE_SYSTEM_BACKDROP = "1"
+} else {
+    Remove-Item Env:FLUX_DISABLE_SYSTEM_BACKDROP -ErrorAction SilentlyContinue
+}
 
 New-Item -ItemType Directory -Force -Path $OutputDirectory | Out-Null
 
@@ -263,6 +272,7 @@ try {
         BuildNumber = $os.BuildNumber
         Architecture = $os.OSArchitecture
         ProcessId = $process.Id
+        ForcedTranslucentFallback = [bool]$ForceTranslucentFallback
         CapturedAtUtc = (Get-Date).ToUniversalTime().ToString("O")
         WallpaperProbe = $true
         RepeatShowEmptyProbe = $true

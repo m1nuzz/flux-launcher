@@ -662,15 +662,15 @@ fn extract_shell_icon_rgba(target: &str) -> Option<Vec<u8>> {
 fn launcher_theme() -> Theme {
     let mut theme = Theme::dark();
     theme.palette.bg = Color::rgba(0, 0, 0, 0);
-    theme.palette.surface = Color::rgba(24, 31, 44, 180);
-    theme.palette.surface_alt = Color::rgba(31, 40, 56, 205);
+    theme.palette.surface = Color::rgba(38, 39, 41, 180);
+    theme.palette.surface_alt = Color::rgba(48, 49, 51, 205);
     theme.palette.border = Color::rgba(255, 255, 255, 22);
     // The Search control is transparent, so its foreground must stay readable
     // over both dark and light Acrylic samples. Keep ordinary text neutral and
     // opaque; reserve accent blue for selection/focus feedback only.
     theme.palette.text = Color::rgba(250, 252, 255, 255);
     theme.palette.placeholder = Color::rgba(238, 243, 255, 230);
-    theme.input.bg = Some(Color::rgba(21, 27, 39, 188));
+    theme.input.bg = Some(Color::rgba(29, 30, 32, 188));
     theme.input.border = Some(Color::rgba(255, 255, 255, 24));
     theme.input.border_focus = Some(Color::rgba(133, 181, 255, 135));
     theme.input.text = Some(Color::rgba(250, 252, 255, 255));
@@ -1750,7 +1750,7 @@ fn main() {
         .hide_on_close()
         // The Win32 backend keeps this transparent on local Acrylic-capable
         // sessions and uses this dark color only for an honest RDP fallback.
-        .bg(Color::rgba(24, 31, 44, 255))
+        .bg(Color::rgba(32, 33, 35, 255))
         .centered()
         .frameless()
         .resizable(false)
