@@ -1838,7 +1838,14 @@ fn main() {
                     action_index.set(0);
                     action_items.set(Vec::new());
                     inline_completion.set(String::new());
-                    size_for_visibility.set(WINDOW_WIDTH, COMPACT_WINDOW_HEIGHT);
+                    size_for_visibility.set(
+                        WINDOW_WIDTH,
+                        if settings_visible.get() {
+                            SETTINGS_WINDOW_HEIGHT
+                        } else {
+                            COMPACT_WINDOW_HEIGHT
+                        },
+                    );
                 }
             }
         })

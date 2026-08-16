@@ -45,6 +45,17 @@ public static class FluxWallpaper {
     public static extern IntPtr GetWindowLongPtr(IntPtr hwnd, int index);
     [DllImport("user32.dll", SetLastError = true)]
     public static extern IntPtr SendMessage(IntPtr hwnd, uint message, UIntPtr wParam, IntPtr lParam);
+    [DllImport("user32.dll", SetLastError = true)]
+    public static extern IntPtr GetForegroundWindow();
+    [StructLayout(LayoutKind.Sequential)]
+    public struct RECT {
+        public int Left;
+        public int Top;
+        public int Right;
+        public int Bottom;
+    }
+    [DllImport("user32.dll", SetLastError = true)]
+    public static extern bool GetWindowRect(IntPtr hwnd, out RECT rect);
 }
 '@
 
@@ -268,8 +279,22 @@ try {
     $settingsStdoutPath = Join-Path $OutputDirectory "settings.stdout.log"
     $settingsStderrPath = Join-Path $OutputDirectory "settings.stderr.log"
     $settingsProcess = Start-Process -FilePath $Executable -PassThru -RedirectStandardOutput $settingsStdoutPath -RedirectStandardError $settingsStderrPath
+    $settingsWindowHeight = 0
+    $settingsWindowFound = $false
     try {
         Start-Sleep -Seconds 2
+        $settingsProcess.Refresh()
+        $settingsHwnd = $settingsProcess.MainWindowHandle
+        if ($settingsHwnd -eq [IntPtr]::Zero) {
+            $settingsHwnd = [FluxWallpaper]::GetForegroundWindow()
+        }
+        if ($settingsHwnd -ne [IntPtr]::Zero) {
+            $settingsRect = New-Object FluxWallpaper+RECT
+            if ([FluxWallpaper]::GetWindowRect($settingsHwnd, [ref]$settingsRect)) {
+                $settingsWindowHeight = $settingsRect.Bottom - $settingsRect.Top
+                $settingsWindowFound = $true
+            }
+        }
         Save-Screenshot "settings-panel.png"
     }
     finally {
@@ -299,7 +324,9 @@ try {
         HistoryUpProbe = $true
         HistoryAltUpProbe = $true
         HistoryAltDownProbe = $true
-        SettingsPanelProbe = $true
+        SettingsWindowFound = $settingsWindowFound
+        SettingsWindowHeight = $settingsWindowHeight
+        SettingsPanelProbe = $settingsWindowFound -and ($settingsWindowHeight -ge 400)
         KeyboardSelectionProbe = $true
         ActionModeProbe = $true
         EnterActionProbe = $true
