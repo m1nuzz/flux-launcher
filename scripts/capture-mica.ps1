@@ -29,6 +29,8 @@ public static class FluxWallpaper {
     [DllImport("user32.dll", SetLastError = true)]
     public static extern bool IsWindowVisible(IntPtr hwnd);
     [DllImport("user32.dll", SetLastError = true)]
+    public static extern IntPtr GetWindowLongPtr(IntPtr hwnd, int index);
+    [DllImport("user32.dll", SetLastError = true)]
     public static extern IntPtr SendMessage(IntPtr hwnd, uint message, UIntPtr wParam, IntPtr lParam);
 }
 '@
@@ -164,6 +166,9 @@ try {
     $launcherHandle = $process.MainWindowHandle
     if ($launcherHandle -eq [IntPtr]::Zero) { throw "Flux launcher has no main window handle." }
     if (![FluxWallpaper]::IsWindowVisible($launcherHandle)) { throw "Launcher is not visible before hotkey regression probe." }
+    $exStyle = [FluxWallpaper]::GetWindowLongPtr($launcherHandle, -20).ToInt64()
+    $trayOnlyWindow = (($exStyle -band 0x00000080) -ne 0) -and (($exStyle -band 0x00040000) -eq 0)
+    if (!$trayOnlyWindow) { throw "Tray-only window style regression: exStyle=0x$('{0:X}' -f $exStyle)" }
     [FluxWallpaper]::SetForegroundWindow($launcherHandle) | Out-Null
     Start-Sleep -Milliseconds 250
     # WM_HOTKEY is the exact message delivered by RegisterHotKey. Send it
@@ -263,6 +268,7 @@ try {
         RepeatShowEmptyProbe = $true
         FirstHotkeyHideProbe = $hiddenAfterFirstHotkey
         SecondHotkeyShowProbe = $visibleAfterSecondHotkey
+        TrayOnlyWindowProbe = $trayOnlyWindow
         QueryExpandedProbe = $true
         EverythingSyntaxProbe = $true
         HistoryPanelProbe = $true

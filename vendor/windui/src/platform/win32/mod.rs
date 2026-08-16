@@ -76,7 +76,8 @@ use windows::Win32::UI::WindowsAndMessaging::{
     WM_IME_ENDCOMPOSITION, WM_IME_STARTCOMPOSITION, WM_KEYDOWN, WM_LBUTTONDOWN, WM_LBUTTONUP,
     WM_MOUSEMOVE, WM_MOUSEWHEEL, WM_NCCALCSIZE, WM_NCCREATE, WM_NCHITTEST, WM_NCMOUSEMOVE,
     WM_PAINT, WM_QUIT, WM_RBUTTONDOWN, WM_RBUTTONUP, WM_SETCURSOR, WM_SIZE, WM_SYSKEYDOWN,
-    WM_TIMER, WM_TOUCH, WNDCLASSEXW, WS_MAXIMIZEBOX, WS_OVERLAPPEDWINDOW, WS_POPUP, WS_THICKFRAME,
+    WM_TIMER, WM_TOUCH, WNDCLASSEXW, WS_EX_TOOLWINDOW, WS_MAXIMIZEBOX, WS_OVERLAPPEDWINDOW,
+    WS_POPUP, WS_THICKFRAME,
 };
 // 只用于 d2d 后端选择（RDP 远程会话下强制软渲染），随该 feature 一起门控。
 #[cfg(feature = "d2d")]
@@ -819,11 +820,9 @@ unsafe fn run_windowed(
         WINDOW_STYLE(WS_OVERLAPPEDWINDOW.0 & !(WS_THICKFRAME.0 | WS_MAXIMIZEBOX.0))
     };
 
-    // Use the normal redirected HWND path and explicitly preserve premultiplied
-    // alpha on Windows 11 builds that expose DWMWA_REDIRECTIONBITMAP_ALPHA. This
-    // lets DWM resolve transparent client pixels against the system material while
-    // retaining a safe opaque fallback on older builds.
-    let ex_style = WINDOW_EX_STYLE::default();
+    // Keep the launcher as a tray utility: WS_EX_TOOLWINDOW removes the popup
+    // from the taskbar and Alt+Tab while preserving activation and tray/global-hotkey access.
+    let ex_style = WS_EX_TOOLWINDOW;
     let hwnd = match CreateWindowExW(
         ex_style,
         CLASS_NAME,

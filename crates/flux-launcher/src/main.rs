@@ -464,7 +464,7 @@ fn shell_icon_rgba(target: &str) -> Option<Vec<u8>> {
         }
     }
 
-    let icon = extract_shell_icon_rgba(target);
+    let icon = extract_shell_thumbnail_rgba(target).or_else(|| extract_shell_icon_rgba(target));
     if let Ok(mut entries) = cache.lock() {
         entries.insert(target.to_owned(), icon.clone());
     }
@@ -474,6 +474,93 @@ fn shell_icon_rgba(target: &str) -> Option<Vec<u8>> {
 #[cfg(not(windows))]
 fn shell_icon_rgba(_target: &str) -> Option<Vec<u8>> {
     None
+}
+
+#[cfg(windows)]
+fn extract_shell_thumbnail_rgba(target: &str) -> Option<Vec<u8>> {
+    use std::ffi::c_void;
+    use std::mem::size_of;
+    use windows::core::{Interface, PCWSTR};
+    use windows::Win32::Foundation::SIZE;
+    use windows::Win32::Graphics::Gdi::{
+        CreateCompatibleDC, DeleteDC, DeleteObject, GetDIBits, BITMAPINFO, BITMAPINFOHEADER,
+        BI_RGB, DIB_RGB_COLORS, HGDIOBJ,
+    };
+    use windows::Win32::UI::Shell::{
+        IShellItem, IShellItemImageFactory, SHCreateItemFromParsingName, SIIGBF, SIIGBF_ICONONLY,
+        SIIGBF_SCALEUP,
+    };
+
+    const ICON_SIZE: i32 = 32;
+    let path: Vec<u16> = target.encode_utf16().chain(std::iter::once(0)).collect();
+    let shell_item: IShellItem =
+        unsafe { SHCreateItemFromParsingName(PCWSTR(path.as_ptr()), None).ok()? };
+    let image_factory: IShellItemImageFactory = shell_item.cast().ok()?;
+    let bitmap = unsafe {
+        image_factory
+            .GetImage(
+                SIZE {
+                    cx: ICON_SIZE,
+                    cy: ICON_SIZE,
+                },
+                SIIGBF(SIIGBF_ICONONLY.0 | SIIGBF_SCALEUP.0),
+            )
+            .ok()?
+    };
+    if bitmap.0.is_null() {
+        return None;
+    }
+
+    let hdc = unsafe { CreateCompatibleDC(None) };
+    if hdc.is_invalid() {
+        unsafe {
+            let _ = DeleteObject(HGDIOBJ(bitmap.0));
+        }
+        return None;
+    }
+    let mut bitmap_info = BITMAPINFO {
+        bmiHeader: BITMAPINFOHEADER {
+            biSize: size_of::<BITMAPINFOHEADER>() as u32,
+            biWidth: ICON_SIZE,
+            biHeight: -ICON_SIZE,
+            biPlanes: 1,
+            biBitCount: 32,
+            biCompression: BI_RGB.0,
+            ..Default::default()
+        },
+        ..Default::default()
+    };
+    let mut bgra = vec![0_u8; (ICON_SIZE * ICON_SIZE * 4) as usize];
+    let copied = unsafe {
+        GetDIBits(
+            hdc,
+            bitmap,
+            0,
+            ICON_SIZE as u32,
+            Some(bgra.as_mut_ptr().cast::<c_void>()),
+            &mut bitmap_info,
+            DIB_RGB_COLORS,
+        )
+    };
+    unsafe {
+        let _ = DeleteDC(hdc);
+        let _ = DeleteObject(HGDIOBJ(bitmap.0));
+    }
+    if copied == 0 {
+        return None;
+    }
+
+    let has_alpha = bgra.chunks_exact(4).any(|pixel| pixel[3] != 0);
+    let mut rgba = Vec::with_capacity(bgra.len());
+    for pixel in bgra.chunks_exact(4) {
+        rgba.extend([
+            pixel[2],
+            pixel[1],
+            pixel[0],
+            if has_alpha { pixel[3] } else { 255 },
+        ]);
+    }
+    Some(rgba)
 }
 
 #[cfg(windows)]
@@ -487,14 +574,14 @@ fn extract_shell_icon_rgba(target: &str) -> Option<Vec<u8>> {
         BITMAPINFOHEADER, BI_RGB, DIB_RGB_COLORS, HGDIOBJ,
     };
     use windows::Win32::UI::Shell::{
-        SHGetFileInfoW, SHFILEINFOW, SHGFI_FLAGS, SHGFI_ICON, SHGFI_SMALLICON,
+        SHGetFileInfoW, SHFILEINFOW, SHGFI_FLAGS, SHGFI_ICON, SHGFI_LARGEICON,
     };
     use windows::Win32::UI::WindowsAndMessaging::{DestroyIcon, DrawIconEx, DI_NORMAL};
 
-    const ICON_SIZE: i32 = 24;
+    const ICON_SIZE: i32 = 32;
     let path: Vec<u16> = target.encode_utf16().chain(std::iter::once(0)).collect();
     let mut file_info = SHFILEINFOW::default();
-    let flags = SHGFI_FLAGS(SHGFI_ICON.0 | SHGFI_SMALLICON.0);
+    let flags = SHGFI_FLAGS(SHGFI_ICON.0 | SHGFI_LARGEICON.0);
     let result = unsafe {
         SHGetFileInfoW(
             PCWSTR(path.as_ptr()),
@@ -647,15 +734,14 @@ fn result_row(
     };
     let icon = target.as_deref().and_then(shell_icon_rgba);
     let icon_element = if let Some(icon) = icon.as_deref() {
-        Element::image_rgba(24, 24, icon)
-            .width(28)
-            .height(28)
-            .corner(6.0)
+        Element::image_rgba(32, 32, icon)
+            .width(32)
+            .height(32)
+            .corner(7.0)
     } else {
         Element::label(glyph)
             .font_size(20.0)
             .fg(Color::rgba(201, 218, 240, 235))
-            .text_shadow(Color::rgba(8, 12, 20, 180))
             .width(28)
             .align(Align::Center)
     };
@@ -702,14 +788,12 @@ fn result_row(
                         .font_size(14.0)
                         .max_lines(1)
                         .truncate(Truncate::End)
-                        .text_shadow(Color::rgba(8, 12, 20, 230))
                         .width_match(),
                 )
                 .child(
                     Element::label(subtitle)
                         .font_size(12.0)
                         .fg(Color::rgba(248, 251, 255, 255))
-                        .text_shadow(Color::rgba(8, 12, 20, 220))
                         .max_lines(1)
                         .truncate(Truncate::End)
                         .width_match(),
@@ -719,7 +803,6 @@ fn result_row(
             Element::label_signal(trailing_signal)
                 .font_size(17.0)
                 .fg(Color::rgba(238, 246, 255, 230))
-                .text_shadow(Color::rgba(8, 12, 20, 190))
                 .width(22)
                 .align(Align::Center),
         )
@@ -812,7 +895,6 @@ fn main() {
         .height(44)
         .font_size(15.0)
         .font_weight(500)
-        .text_shadow(Color::rgba(8, 12, 20, 220))
         .corner(10.0)
         // The entire Search control stays transparent so the Windows Acrylic
         // material remains visible through the input, caret, and leading icon.
@@ -834,8 +916,7 @@ fn main() {
             .child(
                 Element::label(label)
                     .font_size(10.0)
-                    .fg(Color::rgba(222, 233, 248, 220))
-                    .text_shadow(Color::rgba(8, 12, 20, 140)),
+                    .fg(Color::rgba(222, 233, 248, 220)),
             )
     };
     let action_bar = Element::row()
@@ -850,7 +931,6 @@ fn main() {
             Element::label_signal(status)
                 .font_size(9.0)
                 .fg(Color::rgba(210, 224, 244, 175))
-                .text_shadow(Color::rgba(8, 12, 20, 130))
                 .max_lines(1)
                 .truncate(Truncate::End)
                 .weight(1.0),
@@ -913,7 +993,6 @@ fn main() {
                     })
                     .font_size(13.0)
                     .fg(Color::rgba(250, 252, 255, 255))
-                    .text_shadow(Color::rgba(8, 12, 20, 220))
                     .max_lines(1)
                     .truncate(Truncate::End)
                     .width_match(),
