@@ -35,6 +35,7 @@ const COMPACT_WINDOW_HEIGHT: i32 = 72;
 const EXPANDED_WINDOW_HEIGHT: i32 = 286;
 const ACTION_WINDOW_HEIGHT: i32 = 250;
 const SETTINGS_WINDOW_HEIGHT: i32 = 520;
+const LAUNCHER_FONT_FAMILY: &str = "Segoe UI Variable";
 const SEARCH_INTERVAL: Duration = Duration::from_millis(40);
 const EVERYTHING_MIN_QUERY_LEN: usize = 1;
 const PLUGIN_MIN_QUERY_LEN: usize = 2;
@@ -359,14 +360,15 @@ fn display_title(title: &str) -> String {
 }
 
 fn title_match_doc(title: &str, query: &str) -> RichDoc {
-    // Keep every title readable over both dark and light Acrylic samples. A
-    // semibold base also prevents non-matching portions from disappearing when
-    // the backdrop is bright or saturated; matched characters remain heavier.
+    // Follow the Windows 11 type hierarchy: regular body text, with stronger
+    // weight reserved for the characters matched by the current query.
     let normal = SpanStyle::new()
-        .weight(600)
+        .family(LAUNCHER_FONT_FAMILY)
+        .weight(400)
         .fg(Color::rgba(255, 255, 255, 255));
     let matched = SpanStyle::new()
-        .weight(750)
+        .family(LAUNCHER_FONT_FAMILY)
+        .weight(650)
         .fg(Color::rgba(255, 255, 255, 255));
     let mut para = Para::new();
 
@@ -770,6 +772,7 @@ fn result_row(
                 .spacing(1)
                 .child(
                     Element::rich_signal(title_doc_signal)
+                        .font_family(LAUNCHER_FONT_FAMILY)
                         .font_size(14.0)
                         .max_lines(1)
                         .truncate(Truncate::End)
@@ -777,6 +780,7 @@ fn result_row(
                 )
                 .child(
                     Element::label(subtitle)
+                        .font_family(LAUNCHER_FONT_FAMILY)
                         .font_size(12.0)
                         .fg(Color::rgba(248, 251, 255, 255))
                         .max_lines(1)
@@ -877,7 +881,7 @@ fn main() {
         .inline_completion(inline_completion)
         .show_focus_ring(false)
         .width_match()
-        .height(44)
+        .font_family(LAUNCHER_FONT_FAMILY)
         .font_size(15.0)
         .font_weight(500)
         .corner(10.0)
@@ -1728,6 +1732,7 @@ fn main() {
         .visible_signal(settings_visible);
     let content = Element::stack()
         .fill()
+        .font_family(LAUNCHER_FONT_FAMILY)
         .child(launcher_page)
         .child(settings_page);
 
