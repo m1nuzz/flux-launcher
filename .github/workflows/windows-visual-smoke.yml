@@ -28,6 +28,11 @@ on:
         required: false
         default: "0"
         type: string
+      pointer_interaction_smoke:
+        description: "Exercise result hover selection, wheel scrolling, and mouse click"
+        required: false
+        default: false
+        type: boolean
       tray_settings_smoke:
         description: "Exercise the tray Settings show lifecycle before measuring the panel"
         required: false
@@ -83,6 +88,9 @@ jobs:
           }
           if ("${{ inputs.tab_navigation_cycles }}" -ne "") {
             $captureParams.TabNavigationCycles = [int]"${{ inputs.tab_navigation_cycles }}"
+          }
+          if ("${{ inputs.pointer_interaction_smoke }}" -eq "true") {
+            $captureParams.PointerInteractionSmoke = $true
           }
           if ("${{ inputs.tray_settings_smoke }}" -eq "true") {
             $captureParams.TraySettingsSmoke = $true

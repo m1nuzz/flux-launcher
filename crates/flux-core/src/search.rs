@@ -1,4 +1,4 @@
-const MAX_RESULTS: usize = 8;
+const MAX_RESULTS: usize = 16;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum ResultKind {

@@ -9,7 +9,7 @@ use everything_ipc::wm::{EverythingClient, RequestFlags};
 use flux_core::SearchResult;
 use windui::prelude::Sender;
 
-const MAX_RESULTS: u32 = 8;
+const MAX_RESULTS: u32 = 16;
 const QUERY_TIMEOUT: Duration = Duration::from_millis(350);
 
 #[derive(Clone, Debug)]

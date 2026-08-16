@@ -7,6 +7,7 @@ param(
 
     [switch]$ForceTranslucentFallback,
     [switch]$TraySettingsSmoke,
+    [switch]$PointerInteractionSmoke,
     [string]$NavigationQuery = "wab",
 
     [int]$NavigationCycles = 0,
@@ -226,6 +227,23 @@ try {
     Start-Sleep -Seconds 2
     $queryMemory = Get-MemorySnapshot $process.Id
     Save-Screenshot "everything-fallback.png"
+    if ($PointerInteractionSmoke) {
+        $launcherRect = New-Object FluxWallpaper+RECT
+        if (![FluxWallpaper]::GetWindowRect($launcherHandle, [ref]$launcherRect)) {
+            throw "Unable to locate launcher rectangle for pointer smoke."
+        }
+        $resultX = $launcherRect.Left + [int](($launcherRect.Right - $launcherRect.Left) / 2)
+        $firstResultY = $launcherRect.Top + 84
+        $secondResultY = $launcherRect.Top + 130
+        [FluxWallpaper]::SetCursorPos($resultX, $secondResultY) | Out-Null
+        Start-Sleep -Milliseconds 500
+        Save-Screenshot "pointer-hover-second-result.png"
+        [FluxWallpaper]::mouse_event(0x0800, 0, 0, [uint32]4294966816, [UIntPtr]::Zero)
+        Start-Sleep -Milliseconds 600
+        Save-Screenshot "pointer-wheel-scroll.png"
+        [FluxWallpaper]::SetCursorPos($resultX, $firstResultY) | Out-Null
+        Start-Sleep -Milliseconds 300
+    }
     if ($TabNavigationCycles -gt 0) {
         for ($cycle = 1; $cycle -le $TabNavigationCycles; $cycle++) {
             # Flow Launcher semantics: Tab selects next result and Shift+Tab selects previous.
@@ -288,6 +306,20 @@ try {
     $shell.SendKeys("%{DOWN}")
     Start-Sleep -Milliseconds 500
     Save-Screenshot "history-alt-down.png"
+    if ($PointerInteractionSmoke) {
+        $launcherRect = New-Object FluxWallpaper+RECT
+        if (![FluxWallpaper]::GetWindowRect($launcherHandle, [ref]$launcherRect)) {
+            throw "Unable to locate launcher rectangle for history click smoke."
+        }
+        $historyX = $launcherRect.Left + [int](($launcherRect.Right - $launcherRect.Left) / 2)
+        $historyY = $launcherRect.Top + 84
+        [FluxWallpaper]::SetCursorPos($historyX, $historyY) | Out-Null
+        Start-Sleep -Milliseconds 250
+        [FluxWallpaper]::mouse_event(0x0002, 0, 0, 0, [UIntPtr]::Zero)
+        [FluxWallpaper]::mouse_event(0x0004, 0, 0, 0, [UIntPtr]::Zero)
+        Start-Sleep -Milliseconds 800
+        Save-Screenshot "pointer-click-history-result.png"
+    }
     if ($TraySettingsSmoke) {
         $env:FLUX_SMOKE_TRAY_SETTINGS = "1"
         Remove-Item Env:FLUX_OPEN_SETTINGS -ErrorAction SilentlyContinue
@@ -339,6 +371,9 @@ try {
         SecondHotkeyShowProbe = $visibleAfterSecondHotkey
         TrayOnlyWindowProbe = $trayOnlyWindow
         QueryExpandedProbe = $true
+        PointerHoverProbe = [bool]$PointerInteractionSmoke
+        PointerWheelProbe = [bool]$PointerInteractionSmoke
+        PointerClickProbe = [bool]$PointerInteractionSmoke
         TabNavigationProbe = $TabNavigationCycles -gt 0
         EverythingSyntaxProbe = $true
         HistoryPanelProbe = $true

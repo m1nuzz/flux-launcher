@@ -23,23 +23,24 @@ use flux_core::{
 };
 use plugins::{FlowPluginWorker, PluginInvocation, PluginQueryResponse};
 use windui::app::WindowSizeHandle;
-use windui::core::{ClipboardProvider, EventCtx, Widget};
-use windui::event::{Key, KeyEvent};
+use windui::core::{ClickFn, ClipboardProvider, EventCtx, Widget};
+use windui::event::{Event, Key, KeyEvent, MouseButton, PointerKind};
 use windui::prelude::*;
 use windui::render::{Canvas, Paint};
 
 const WINDOW_WIDTH: i32 = 420;
 const COMPACT_WINDOW_HEIGHT: i32 = 72;
-// Keep the result palette compact like the reference: search header, three visible
-// rows, and the command bar fit inside a short floating surface.
-const EXPANDED_WINDOW_HEIGHT: i32 = 286;
+// Keep the result palette compact like the reference while exposing a six-row
+// viewport; additional results remain available through the native wheel scroll.
+const EXPANDED_WINDOW_HEIGHT: i32 = 382;
 const ACTION_WINDOW_HEIGHT: i32 = 250;
+const RESULT_VIEWPORT_HEIGHT: i32 = 270;
 const SETTINGS_WINDOW_HEIGHT: i32 = 520;
 const LAUNCHER_FONT_FAMILY: &str = "Segoe UI Variable";
 const SEARCH_INTERVAL: Duration = Duration::from_millis(40);
 const EVERYTHING_MIN_QUERY_LEN: usize = 1;
 const PLUGIN_MIN_QUERY_LEN: usize = 2;
-const MAX_VISIBLE_RESULTS: usize = 8;
+const MAX_VISIBLE_RESULTS: usize = 16;
 
 #[derive(Default)]
 struct ProviderResults {
@@ -160,10 +161,37 @@ struct ResultRowAnchor {
     title_doc_signal: Signal<RichDoc>,
     trailing_signal: Signal<String>,
     selected_id: Signal<String>,
+    selected_index: Signal<usize>,
+    selection_touched: Signal<bool>,
+    rows_refresh: Signal<Vec<SearchResult>>,
     query: Signal<String>,
     selection_color: Signal<Color>,
+    on_click: Option<ClickFn>,
+    pressed: bool,
+    last_pointer: Option<(i32, i32)>,
     last_selected: Option<bool>,
     last_query: String,
+}
+
+impl ResultRowAnchor {
+    fn select_self(&self) {
+        if self.selected_id.get() == self.result_id {
+            return;
+        }
+        self.selection_touched.set(true);
+        self.selected_id.set(self.result_id.clone());
+        if let Some(index) = self
+            .rows_refresh
+            .get()
+            .iter()
+            .position(|result| result.id == self.result_id)
+        {
+            self.selected_index.set(index);
+        }
+        // Force the keyed list to refresh its reactive rows so selection painting
+        // and the selected-result scroll anchor update immediately on pointer input.
+        self.rows_refresh.set(self.rows_refresh.get());
+    }
 }
 
 impl Widget for ResultRowAnchor {
@@ -185,6 +213,69 @@ impl Widget for ResultRowAnchor {
             let row_id = ctx.id();
             let _ = ctx.tree_mut().scroll_into_view(row_id);
         }
+    }
+
+    fn on_event(&mut self, ctx: &mut EventCtx, event: &Event) -> bool {
+        let Event::Pointer(pointer) = event else {
+            return false;
+        };
+        match pointer.kind {
+            PointerKind::Enter => {
+                // Do not select merely because the window appeared under a
+                // stationary cursor; select on the first real Move instead.
+                self.last_pointer = None;
+                ctx.mark_dirty();
+                true
+            }
+            PointerKind::Move => {
+                let position = (pointer.pos.x, pointer.pos.y);
+                if self.last_pointer != Some(position) {
+                    self.last_pointer = Some(position);
+                    self.select_self();
+                    ctx.mark_dirty();
+                }
+                true
+            }
+            PointerKind::Leave => {
+                self.last_pointer = None;
+                ctx.mark_dirty();
+                true
+            }
+            PointerKind::Down if pointer.button == MouseButton::Left => {
+                self.select_self();
+                self.pressed = true;
+                ctx.capture();
+                ctx.mark_dirty();
+                true
+            }
+            PointerKind::Up if pointer.button == MouseButton::Left => {
+                let was_pressed = self.pressed;
+                self.pressed = false;
+                let inside = ctx.bounds().contains(pointer.pos);
+                ctx.release_capture();
+                ctx.mark_dirty();
+                if was_pressed && inside {
+                    if let Some(callback) = self.on_click.as_mut() {
+                        callback(ctx);
+                    }
+                }
+                true
+            }
+            _ => false,
+        }
+    }
+
+    fn take_click(&mut self, callback: ClickFn) {
+        self.on_click = Some(callback);
+    }
+
+    fn reset_interaction(&mut self) {
+        self.pressed = false;
+        self.last_pointer = None;
+    }
+
+    fn cursor(&self) -> windui::event::CursorShape {
+        windui::event::CursorShape::Hand
     }
 
     fn paint(
@@ -752,8 +843,14 @@ fn result_row(
             title_doc_signal,
             trailing_signal,
             selected_id,
+            selected_index,
+            selection_touched,
+            rows_refresh,
             query,
             selection_color,
+            on_click: None,
+            pressed: false,
+            last_pointer: None,
             last_selected: None,
             last_query: query.get(),
         })
@@ -929,7 +1026,7 @@ fn main() {
         )
         .visible_when(move || show_results.get() && !action_mode.get());
 
-    let result_list = Element::list_signal(
+    let result_list_body = Element::list_signal(
         result_source,
         |result| result.id.clone(),
         move |result| {
@@ -948,11 +1045,15 @@ fn main() {
             )
         },
     )
-    // Keep the expanded result area transparent so the window remains one
-    // continuous Acrylic surface. Only individual result rows draw controls.
-    .height(156)
-    .padding(6)
-    .visible_when(move || show_results.get() && !action_mode.get());
+    .width_match()
+    // Keep the result body transparent so the window remains one continuous
+    // Acrylic surface. Only individual result rows draw controls.
+    .padding(6);
+    let result_list = Element::scroll()
+        .width_match()
+        .height(RESULT_VIEWPORT_HEIGHT)
+        .child(result_list_body)
+        .visible_when(move || show_results.get() && !action_mode.get());
 
     let action_list = Element::list_signal(
         action_items_for_rows,

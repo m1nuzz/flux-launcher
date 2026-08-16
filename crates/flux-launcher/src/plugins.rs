@@ -13,7 +13,7 @@ use std::time::{Duration, Instant};
 use flux_core::{query_request_line, FlowAction, FlowPluginManifest, FlowResponse, SearchResult};
 use windui::prelude::Sender;
 
-const MAX_RESULTS: usize = 8;
+const MAX_RESULTS: usize = 16;
 const QUERY_TIMEOUT: Duration = Duration::from_millis(450);
 const DISCOVERY_REFRESH: Duration = Duration::from_secs(5);
 
