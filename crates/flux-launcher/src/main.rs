@@ -9,7 +9,7 @@ mod keyboard_layout;
 mod launch;
 mod plugins;
 
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
 use std::collections::{HashMap, HashSet};
 use std::rc::Rc;
 use std::sync::{Arc, Mutex, OnceLock, RwLock};
@@ -840,6 +840,9 @@ fn main() {
     let game_mode = signal(settings.game_mode);
     let game_mode_status = signal(game_mode_label(settings.game_mode));
     let settings_visible = signal(std::env::var_os("FLUX_OPEN_SETTINGS").is_some());
+    let tray_settings_smoke_pending = Rc::new(Cell::new(
+        std::env::var_os("FLUX_SMOKE_TRAY_SETTINGS").is_some(),
+    ));
     let show_results = signal(false);
     let activation_key = signal(settings.activation_hotkey.key.clone());
     let activation_ctrl = signal(settings.activation_hotkey.ctrl);
@@ -1035,6 +1038,8 @@ fn main() {
     let history_cursor_for_interval = history_cursor;
     let history_navigation_for_interval = history_navigation;
     let history_mode_for_interval = history_mode;
+    let settings_visible_for_interval = settings_visible;
+    let tray_settings_smoke_pending_for_interval = Rc::clone(&tray_settings_smoke_pending);
     let mut last_query = String::new();
     let mut sequence = 0_u64;
 
@@ -1754,7 +1759,15 @@ fn main() {
         .backdrop(Backdrop::Acrylic)
         .theme(launcher_theme())
         .content(content)
-        .on_interval(SEARCH_INTERVAL, move |_| {
+        .on_interval(SEARCH_INTERVAL, move |ctx| {
+            if tray_settings_smoke_pending_for_interval.replace(false) {
+                // Exercise the same lifecycle order as the tray Settings item,
+                // without relying on brittle screen-coordinate tray automation.
+                settings_visible_for_interval.set(true);
+                ctx.show_window();
+                size_for_interval.set(WINDOW_WIDTH, SETTINGS_WINDOW_HEIGHT);
+                return;
+            }
             let next_query = query_for_interval.get();
             let from_history = history_navigation_for_interval.get();
             history_navigation_for_interval.set(false);

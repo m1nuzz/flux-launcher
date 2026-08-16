@@ -6,7 +6,7 @@ param(
     [string]$OutputDirectory,
 
     [switch]$ForceTranslucentFallback,
-
+    [switch]$TraySettingsSmoke,
     [string]$NavigationQuery = "wab",
 
     [int]$NavigationCycles = 0
@@ -275,7 +275,13 @@ try {
     $shell.SendKeys("%{DOWN}")
     Start-Sleep -Milliseconds 500
     Save-Screenshot "history-alt-down.png"
-    $env:FLUX_OPEN_SETTINGS = "1"
+    if ($TraySettingsSmoke) {
+        $env:FLUX_SMOKE_TRAY_SETTINGS = "1"
+        Remove-Item Env:FLUX_OPEN_SETTINGS -ErrorAction SilentlyContinue
+    } else {
+        $env:FLUX_OPEN_SETTINGS = "1"
+        Remove-Item Env:FLUX_SMOKE_TRAY_SETTINGS -ErrorAction SilentlyContinue
+    }
     $settingsStdoutPath = Join-Path $OutputDirectory "settings.stdout.log"
     $settingsStderrPath = Join-Path $OutputDirectory "settings.stderr.log"
     $settingsProcess = Start-Process -FilePath $Executable -PassThru -RedirectStandardOutput $settingsStdoutPath -RedirectStandardError $settingsStderrPath
@@ -302,6 +308,7 @@ try {
             Stop-Process -Id $settingsProcess.Id -Force
         }
         Remove-Item Env:FLUX_OPEN_SETTINGS -ErrorAction SilentlyContinue
+        Remove-Item Env:FLUX_SMOKE_TRAY_SETTINGS -ErrorAction SilentlyContinue
     }
 
     $os = Get-CimInstance Win32_OperatingSystem
@@ -324,9 +331,11 @@ try {
         HistoryUpProbe = $true
         HistoryAltUpProbe = $true
         HistoryAltDownProbe = $true
+        SettingsOpenPath = if ($TraySettingsSmoke) { "tray-lifecycle" } else { "startup-env" }
         SettingsWindowFound = $settingsWindowFound
         SettingsWindowHeight = $settingsWindowHeight
         SettingsPanelProbe = $settingsWindowFound -and ($settingsWindowHeight -ge 400)
+        TraySettingsLifecycleProbe = (!$TraySettingsSmoke) -or ($settingsWindowFound -and ($settingsWindowHeight -ge 400))
         KeyboardSelectionProbe = $true
         ActionModeProbe = $true
         EnterActionProbe = $true
