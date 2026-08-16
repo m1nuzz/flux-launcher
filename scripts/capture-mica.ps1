@@ -5,7 +5,11 @@ param(
     [Parameter(Mandatory = $true)]
     [string]$OutputDirectory,
 
-    [switch]$ForceTranslucentFallback
+    [switch]$ForceTranslucentFallback,
+
+    [string]$NavigationQuery = "wab",
+
+    [int]$NavigationCycles = 0
 )
 
 $ErrorActionPreference = "Stop"
@@ -205,10 +209,20 @@ try {
     [FluxWallpaper]::mouse_event(0x0002, 0, 0, 0, [UIntPtr]::Zero)
     [FluxWallpaper]::mouse_event(0x0004, 0, 0, 0, [UIntPtr]::Zero)
     Start-Sleep -Milliseconds 250
-    $shell.SendKeys("wab")
+    $shell.SendKeys($NavigationQuery)
     Start-Sleep -Seconds 2
     $queryMemory = Get-MemorySnapshot $process.Id
     Save-Screenshot "everything-fallback.png"
+    if ($NavigationCycles -gt 0) {
+        for ($cycle = 1; $cycle -le $NavigationCycles; $cycle++) {
+            $shell.SendKeys("{UP}")
+            Start-Sleep -Milliseconds 180
+            Save-Screenshot ("navigation-cycle-{0:D2}-up.png" -f $cycle)
+            $shell.SendKeys("{DOWN}")
+            Start-Sleep -Milliseconds 180
+            Save-Screenshot ("navigation-cycle-{0:D2}-down.png" -f $cycle)
+        }
+    }
     # The WAB query exercises long App Paths and duplicate application-like entries.
     # Flow-style keyboard navigation: select the second result with Down,
     # enter action mode with Right, then execute the next action with Enter.

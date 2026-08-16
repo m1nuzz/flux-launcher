@@ -13,6 +13,16 @@ on:
         required: false
         default: false
         type: boolean
+      navigation_query:
+        description: "Optional targeted query for repeated Up/Down navigation smoke"
+        required: false
+        default: wab
+        type: string
+      navigation_cycles:
+        description: "Number of additional Up/Down cycles after the query"
+        required: false
+        default: "0"
+        type: string
   push:
     branches: [main]
 
@@ -54,6 +64,12 @@ jobs:
           }
           if ("${{ inputs.force_translucent_fallback }}" -eq "true") {
             $captureParams.ForceTranslucentFallback = $true
+          }
+          if ("${{ inputs.navigation_query }}" -ne "") {
+            $captureParams.NavigationQuery = "${{ inputs.navigation_query }}"
+          }
+          if ("${{ inputs.navigation_cycles }}" -ne "") {
+            $captureParams.NavigationCycles = [int]"${{ inputs.navigation_cycles }}"
           }
           & ./scripts/capture-mica.ps1 @captureParams
 
