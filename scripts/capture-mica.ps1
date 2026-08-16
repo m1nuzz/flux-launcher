@@ -195,11 +195,6 @@ try {
     Start-Sleep -Seconds 2
     $queryMemory = Get-MemorySnapshot $process.Id
     Save-Screenshot "everything-fallback.png"
-    # Native Everything syntax must remain usable in the always-on provider.
-    $shell.SendKeys("^a")
-    $shell.SendKeys("ext:zip")
-    Start-Sleep -Seconds 2
-    Save-Screenshot "everything-ext-zip.png"
     # The WAB query exercises long App Paths and duplicate application-like entries.
     # Flow-style keyboard navigation: select the second result with Down,
     # enter action mode with Right, then execute the next action with Enter.
@@ -212,7 +207,35 @@ try {
     $shell.SendKeys("{DOWN}")
     $shell.SendKeys("{ENTER}")
     Start-Sleep -Milliseconds 400
-
+    # Native Everything syntax must remain usable in the always-on provider.
+    $shell.SendKeys("^a")
+    $shell.SendKeys("ext:zip")
+    Start-Sleep -Seconds 2
+    Save-Screenshot "everything-ext-zip.png"
+    # Commit the syntax query too so history cycling has at least two entries.
+    $shell.SendKeys("{ENTER}")
+    Start-Sleep -Milliseconds 600
+    # Flow-style query history: Ctrl+H opens selectable history results.
+    $shell.SendKeys("^h")
+    Start-Sleep -Milliseconds 500
+    $historyMemory = Get-MemorySnapshot $process.Id
+    Save-Screenshot "history-panel.png"
+    $shell.SendKeys("{ENTER}")
+    Start-Sleep -Seconds 1
+    # Plain Up on an empty query recalls the latest committed search.
+    $shell.SendKeys("^a")
+    $shell.SendKeys("{BACKSPACE}")
+    Start-Sleep -Milliseconds 250
+    $shell.SendKeys("{UP}")
+    Start-Sleep -Seconds 1
+    Save-Screenshot "history-up-recall.png"
+    # Alt+Up/Alt+Down cycle older/newer committed queries.
+    $shell.SendKeys("%{UP}")
+    Start-Sleep -Milliseconds 500
+    Save-Screenshot "history-alt-up.png"
+    $shell.SendKeys("%{DOWN}")
+    Start-Sleep -Milliseconds 500
+    Save-Screenshot "history-alt-down.png"
     $env:FLUX_OPEN_SETTINGS = "1"
     $settingsStdoutPath = Join-Path $OutputDirectory "settings.stdout.log"
     $settingsStderrPath = Join-Path $OutputDirectory "settings.stderr.log"
@@ -242,6 +265,10 @@ try {
         SecondHotkeyShowProbe = $visibleAfterSecondHotkey
         QueryExpandedProbe = $true
         EverythingSyntaxProbe = $true
+        HistoryPanelProbe = $true
+        HistoryUpProbe = $true
+        HistoryAltUpProbe = $true
+        HistoryAltDownProbe = $true
         SettingsPanelProbe = $true
         KeyboardSelectionProbe = $true
         ActionModeProbe = $true
@@ -249,6 +276,7 @@ try {
         Memory = [ordered]@{
             Idle = $idleMemory
             Query = $queryMemory
+            HistoryPanel = $historyMemory
         }
     } | ConvertTo-Json | Set-Content -Encoding utf8 (Join-Path $OutputDirectory "environment.json")
 }

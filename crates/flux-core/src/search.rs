@@ -198,6 +198,27 @@ impl SearchModel {
     }
 }
 
+pub fn history_results(history: &[String], query: &str) -> Vec<SearchResult> {
+    let normalized = query.trim().to_ascii_lowercase();
+    history
+        .iter()
+        .enumerate()
+        .rev()
+        .filter(|(_, item)| {
+            normalized.is_empty() || item.to_ascii_lowercase().contains(&normalized)
+        })
+        .take(MAX_RESULTS)
+        .map(|(index, item)| SearchResult {
+            id: format!("history:{index}"),
+            title: item.clone(),
+            subtitle: String::from("Previous search"),
+            kind: ResultKind::Placeholder,
+            source: ResultSource::BuiltIn,
+            target: None,
+        })
+        .collect()
+}
+
 fn built_in_results(query: &str) -> Vec<SearchResult> {
     let normalized = query.trim().to_ascii_lowercase();
     let commands = [
@@ -265,6 +286,19 @@ mod tests {
         assert_eq!(model.selected_index(), last);
         model.select_next();
         assert_eq!(model.selected_index(), 0);
+    }
+
+    #[test]
+    fn history_results_are_newest_first_and_filterable() {
+        let history = vec![
+            String::from("steam"),
+            String::from("ext:zip"),
+            String::from("chrome"),
+        ];
+        let all = history_results(&history, "");
+        assert_eq!(all[0].title, "chrome");
+        assert_eq!(all[1].title, "ext:zip");
+        assert_eq!(history_results(&history, "zip")[0].title, "ext:zip");
     }
 
     #[test]

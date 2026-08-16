@@ -18,8 +18,8 @@ use std::time::Duration;
 use applications::{ApplicationResponse, ApplicationWorker};
 use everything::{EverythingResponse, EverythingWorker};
 use flux_core::{
-    rank_results, should_suppress_activation, HotkeyConfig, ResultKind, SearchModel, SearchResult,
-    Settings,
+    history_results, rank_results, should_suppress_activation, HotkeyConfig, ResultKind,
+    SearchModel, SearchResult, Settings,
 };
 use plugins::{FlowPluginWorker, PluginInvocation, PluginQueryResponse};
 use windui::app::WindowSizeHandle;
@@ -634,6 +634,7 @@ fn result_row(
     selection_color: Signal<Color>,
     settings: Arc<RwLock<Settings>>,
     query_history: Rc<RefCell<Vec<String>>>,
+    history_mode: Signal<bool>,
 ) -> Element {
     let id = result.id;
     let target = result.target;
@@ -723,6 +724,11 @@ fn result_row(
                 .align(Align::Center),
         )
         .on_click(move |_| {
+            if history_mode.get() {
+                query.set(title.clone());
+                history_mode.set(false);
+                return;
+            }
             record_query_history(&settings, &query_history, &query.get());
             selected_id.set(id.clone());
             selection_touched.set(true);
@@ -747,6 +753,7 @@ fn main() {
     let query_history = Rc::new(RefCell::new(settings.query_history.clone()));
     let history_cursor = signal(None::<usize>);
     let history_navigation = signal(false);
+    let history_mode = signal(false);
 
     let query = signal(String::new());
     let selected_id = signal(String::new());
@@ -787,6 +794,7 @@ fn main() {
     let actions_for_rows = Rc::clone(&plugin_actions);
     let settings_for_rows = Arc::clone(&shared_settings);
     let history_for_rows = Rc::clone(&query_history);
+    let history_mode_for_rows = history_mode;
     let action_items_for_rows = action_items;
     let action_index_for_rows = action_index;
     let action_mode_for_rows = action_mode;
@@ -864,6 +872,7 @@ fn main() {
                 selection_color,
                 Arc::clone(&settings_for_rows),
                 Rc::clone(&history_for_rows),
+                history_mode_for_rows,
             )
         },
     )
@@ -957,6 +966,7 @@ fn main() {
     let actions_for_interval = Rc::clone(&plugin_actions);
     let history_cursor_for_interval = history_cursor;
     let history_navigation_for_interval = history_navigation;
+    let history_mode_for_interval = history_mode;
     let mut last_query = String::new();
     let mut sequence = 0_u64;
 
@@ -1116,6 +1126,7 @@ fn main() {
     let inline_completion_for_keys = inline_completion;
     let settings_visible_for_keys = settings_visible;
     let query_history_for_keys = Rc::clone(&query_history);
+    let history_mode_for_keys = history_mode;
     let history_cursor_for_keys = history_cursor;
     let history_navigation_for_keys = history_navigation;
     let settings_for_history_for_keys = Arc::clone(&shared_settings);
@@ -1143,16 +1154,58 @@ fn main() {
             if history.is_empty() {
                 return false;
             }
-            let next = history_cursor_for_keys
-                .get()
-                .map(|index| index.saturating_sub(1))
-                .unwrap_or(history.len() - 1);
-            history_cursor_for_keys.set(Some(next));
-            history_navigation_for_keys.set(true);
-            query_for_keys.set(history[next].clone());
+            let filtered = history_results(&history, &query_for_keys.get());
+            history_mode_for_keys.set(true);
+            history_cursor_for_keys.set(None);
+            history_navigation_for_keys.set(false);
+            action_mode_for_keys.set(false);
+            action_items_for_keys.set(Vec::new());
+            inline_completion_for_keys.set(String::new());
+            selected_index_for_keys.set(0);
+            selected_id_for_keys.set(
+                filtered
+                    .first()
+                    .map(|result| result.id.clone())
+                    .unwrap_or_default(),
+            );
+            results_for_keys.set(filtered);
+            show_results_for_keys.set(true);
+            size_for_keys.set(WINDOW_WIDTH, EXPANDED_WINDOW_HEIGHT);
             return true;
         }
         let query = query_for_keys.get();
+        let history = query_history_for_keys.borrow();
+        let alt_down = alt_key_is_down();
+        if alt_down && !event.ctrl && !event.shift && matches!(event.key, Key::Up | Key::Down) {
+            if history.is_empty() {
+                return false;
+            }
+            let next = match (event.key, history_cursor_for_keys.get()) {
+                (Key::Up, Some(index)) => index.saturating_sub(1),
+                (Key::Down, Some(index)) => (index + 1).min(history.len() - 1),
+                (_, _) => history.len() - 1,
+            };
+            history_cursor_for_keys.set(Some(next));
+            history_navigation_for_keys.set(true);
+            history_mode_for_keys.set(false);
+            query_for_keys.set(history[next].clone());
+            return true;
+        }
+        if !history_mode_for_keys.get()
+            && event.key == Key::Up
+            && !alt_down
+            && !event.ctrl
+            && !event.shift
+            && query.trim().is_empty()
+        {
+            if let Some(latest) = history.last() {
+                history_cursor_for_keys.set(Some(history.len() - 1));
+                history_navigation_for_keys.set(true);
+                query_for_keys.set(latest.clone());
+                return true;
+            }
+        }
+        drop(history);
         if query.trim().is_empty() {
             return false;
         }
@@ -1170,6 +1223,17 @@ fn main() {
         }
 
         if event.key == Key::Enter && alt_key_is_down() {
+            if history_mode_for_keys.get() {
+                if let Some(result) = selected_result(
+                    &current_results,
+                    &selected_id_for_keys.get(),
+                    selected_index_for_keys.get(),
+                ) {
+                    query_for_keys.set(result.title.clone());
+                    history_mode_for_keys.set(false);
+                }
+                return true;
+            }
             record_query_history(
                 &settings_for_history_for_keys,
                 &query_history_for_keys,
@@ -1216,6 +1280,17 @@ fn main() {
                     return true;
                 }
                 Key::Enter | Key::Space => {
+                    if history_mode_for_keys.get() {
+                        if let Some(result) = selected_result(
+                            &current_results,
+                            &selected_id_for_keys.get(),
+                            selected_index_for_keys.get(),
+                        ) {
+                            query_for_keys.set(result.title.clone());
+                            history_mode_for_keys.set(false);
+                        }
+                        return true;
+                    }
                     record_query_history(
                         &settings_for_history_for_keys,
                         &query_history_for_keys,
@@ -1298,6 +1373,17 @@ fn main() {
                 true
             }
             Key::Enter => {
+                if history_mode_for_keys.get() {
+                    if let Some(result) = selected_result(
+                        &current_results,
+                        &selected_id_for_keys.get(),
+                        selected_index_for_keys.get(),
+                    ) {
+                        query_for_keys.set(result.title.clone());
+                        history_mode_for_keys.set(false);
+                    }
+                    return true;
+                }
                 record_query_history(
                     &settings_for_history_for_keys,
                     &query_history_for_keys,
@@ -1606,6 +1692,7 @@ fn main() {
             }
 
             let has_query = !next_query.trim().is_empty();
+            history_mode_for_interval.set(false);
             show_results_for_interval.set(has_query);
             size_for_interval.set(
                 WINDOW_WIDTH,
@@ -1680,6 +1767,9 @@ fn main() {
                     selected_index.set(0);
                     selection_touched.set(false);
                     show_results.set(false);
+                    history_mode.set(false);
+                    history_cursor.set(None);
+                    history_navigation.set(false);
                     action_mode.set(false);
                     action_index.set(0);
                     action_items.set(Vec::new());
