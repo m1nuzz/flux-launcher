@@ -124,7 +124,7 @@ The UI keeps result state bounded and uses background workers only for external 
 
 ## Smoke and memory evidence
 
-The latest successful Windows smoke run is available at [GitHub Actions run 31929497700](https://github.com/m1nuzz/flux-launcher/actions/runs/31929497700). It verifies the compact empty state before and after repeated hotkey show, typed-query expansion, native `ext:zip` syntax input, selectable Ctrl+H history, ranked results, keyboard action mode, Settings rendering, the tray-only style, the Acrylic reattachment lifecycle path, stable result icons through repeated `Edge` Up/Down navigation, and selected-row rendering without a redundant title marker.
+The latest successful Windows smoke run is available at [GitHub Actions run 31929990135](https://github.com/m1nuzz/flux-launcher/actions/runs/31929990135). It verifies the compact empty state before and after repeated hotkey show, typed-query expansion, native `ext:zip` syntax input, selectable Ctrl+H history, ranked results, keyboard action mode, the tray-only style, the Acrylic reattachment lifecycle path, stable result icons through repeated `Edge` Up/Down navigation, selected-row rendering without a redundant title marker, and Settings expansion with a measured 520 px window height.
 
 | State | Working set | Private bytes |
 | --- | ---: | ---: |
@@ -136,7 +136,7 @@ These are point-in-time smoke measurements, not a formal performance guarantee. 
 
 ## Release
 
-The current stable release is **[Flux Launcher v0.1.45](https://github.com/m1nuzz/flux-launcher/releases/tag/v0.1.45)** for Windows 11 x64. It includes the repeated-show Acrylic lifecycle fix, stale icon bitmap fix for result-list rebuilds, and the cleaner selected-row presentation without a redundant `>` marker. See the [GitHub Releases page](https://github.com/m1nuzz/flux-launcher/releases) for binaries and English release notes.
+The current stable release is **[Flux Launcher v0.1.46](https://github.com/m1nuzz/flux-launcher/releases/tag/v0.1.46)** for Windows 11 x64. It includes the repeated-show Acrylic lifecycle fix, stale icon bitmap fix for result-list rebuilds, cleaner selected-row presentation, and the Settings expansion fix. See the [GitHub Releases page](https://github.com/m1nuzz/flux-launcher/releases) for binaries and English release notes.
 
 ## License
 
