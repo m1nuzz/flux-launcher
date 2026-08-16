@@ -1543,14 +1543,16 @@ fn main() {
     let settings_for_clear_history = Arc::clone(&shared_settings);
     let history_for_clear = Rc::clone(&query_history);
     let history_cursor_for_clear = history_cursor;
+    // Settings shares the same continuous Acrylic surface as the launcher.
+    // Do not add a dark card here: it hides the blur and creates the old opaque
+    // search-style slab inside the transparent window.
     let settings_panel = Element::col()
         .fill()
         .padding(24)
         .spacing(14)
         .corner(20.0)
-        .bg(Color::rgba(18, 22, 30, 212))
-        .border(Color::rgba(255, 255, 255, 48), 1)
-        .shadow(Shadow::new(0.0, 18.0, 48.0, Color::rgba(0, 0, 0, 110)))
+        .bg(Color::rgba(0, 0, 0, 0))
+        .border(Color::rgba(0, 0, 0, 0), 0)
         .child(
             Element::row()
                 .width_match()
