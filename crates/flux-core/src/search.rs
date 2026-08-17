@@ -61,6 +61,16 @@ impl SearchResult {
     /// Lower sort key means a result is more useful for the current query.
     /// Applications deliberately outrank indexed files and folders.
     pub fn relevance(&self, query: &str) -> (u8, u8, String) {
+        let (priority, _, provider_tier, title_tier, title) = self.priority_relevance(query, &[]);
+        debug_assert_eq!(priority, 1);
+        (provider_tier, title_tier, title)
+    }
+
+    fn priority_relevance(
+        &self,
+        query: &str,
+        priorities: &[String],
+    ) -> (u8, usize, u8, u8, String) {
         let query = normalize(query);
         let title = normalize(&self.title);
         let subtitle = normalize(&self.subtitle);
@@ -80,7 +90,17 @@ impl SearchResult {
         } else {
             1
         };
+        let priority = if matches!(self.kind, ResultKind::Application) {
+            priorities
+                .iter()
+                .position(|id| id == &self.id)
+                .map(|index| index.saturating_add(1))
+        } else {
+            None
+        };
         (
+            priority.map_or(1, |_| 0),
+            priority.unwrap_or_default(),
             provider_tier,
             title_tier.saturating_add(subtitle_match),
             title,
@@ -127,6 +147,14 @@ fn is_application_path(path: &str) -> bool {
 
 pub fn rank_results(query: &str, results: &mut [SearchResult]) {
     results.sort_by_key(|result| result.relevance(query));
+}
+
+pub fn rank_results_with_priorities(
+    query: &str,
+    results: &mut [SearchResult],
+    priorities: &[String],
+) {
+    results.sort_by_key(|result| result.priority_relevance(query, priorities));
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -388,6 +416,38 @@ mod tests {
         rank_results("Steam", &mut results);
         assert_eq!(results[0].source, ResultSource::ApplicationCatalog);
         assert_eq!(results[0].title, "Steam");
+    }
+
+    #[test]
+    fn explicit_priority_outranks_all_other_application_results() {
+        let mut results = vec![
+            SearchResult {
+                id: String::from("application:steam"),
+                title: String::from("Steam"),
+                subtitle: String::from("Application • Start Menu"),
+                kind: ResultKind::Application,
+                source: ResultSource::ApplicationCatalog,
+                target: Some(String::from("C:/Steam.lnk")),
+            },
+            SearchResult {
+                id: String::from("application:chrome"),
+                title: String::from("Chrome"),
+                subtitle: String::from("Application • Start Menu"),
+                kind: ResultKind::Application,
+                source: ResultSource::ApplicationCatalog,
+                target: Some(String::from("C:/Chrome.lnk")),
+            },
+        ];
+        rank_results_with_priorities(
+            "app",
+            &mut results,
+            &[
+                String::from("application:chrome"),
+                String::from("application:steam"),
+            ],
+        );
+        assert_eq!(results[0].id, "application:chrome");
+        assert_eq!(results[1].id, "application:steam");
     }
 
     #[test]

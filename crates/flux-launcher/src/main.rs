@@ -19,8 +19,8 @@ use std::time::Duration;
 use applications::{ApplicationResponse, ApplicationWorker};
 use everything::{EverythingResponse, EverythingWorker, InstallationState};
 use flux_core::{
-    history_results, rank_results, should_suppress_activation, HotkeyConfig, MonitorPreference,
-    ResultKind, SearchModel, SearchResult, Settings,
+    history_results, rank_results_with_priorities, should_suppress_activation, HotkeyConfig,
+    MonitorPreference, PriorityEntry, ResultKind, SearchModel, SearchResult, Settings,
 };
 use plugins::{FlowPluginWorker, PluginInvocation, PluginQueryResponse};
 use windui::app::{CursorVisibilityHandle, WindowOpHandle, WindowPositionHandle, WindowSizeHandle};
@@ -99,7 +99,7 @@ impl ProviderResults {
         self.plugins.clear();
     }
 
-    fn merged(&self, query: &str) -> Vec<SearchResult> {
+    fn merged(&self, query: &str, priorities: &[String]) -> Vec<SearchResult> {
         let mut seen = HashSet::new();
         let mut merged = self
             .built_in
@@ -110,10 +110,25 @@ impl ProviderResults {
             .filter(|result| seen.insert(result.id.clone()))
             .cloned()
             .collect::<Vec<_>>();
-        rank_results(query, &mut merged);
+        rank_results_with_priorities(query, &mut merged, priorities);
         merged.truncate(MAX_VISIBLE_RESULTS);
         merged
     }
+}
+
+fn refresh_merged_results(
+    providers: &Rc<RefCell<ProviderResults>>,
+    query: Signal<String>,
+    priorities: Signal<Vec<PriorityEntry>>,
+    results: Signal<Vec<SearchResult>>,
+) {
+    let priority_ids = priorities
+        .get()
+        .into_iter()
+        .map(|entry| entry.id)
+        .collect::<Vec<_>>();
+    let merged = providers.borrow().merged(&query.get(), &priority_ids);
+    results.set(merged);
 }
 
 #[derive(Clone, Debug)]
@@ -123,6 +138,7 @@ enum ActionKind {
     OpenLocation,
     CopyPath,
     CopyName,
+    SetPriority,
     RunPlugin(PluginInvocation),
 }
 
@@ -142,6 +158,13 @@ fn actions_for_result(
         return actions;
     }
     if result.target.is_some() {
+        if matches!(result.kind, ResultKind::Application) {
+            actions.push(ActionItem {
+                id: format!("{}:set-priority", result.id),
+                label: String::from("Set as priority (move to top)"),
+                kind: ActionKind::SetPriority,
+            });
+        }
         actions.push(ActionItem {
             id: format!("{}:open", result.id),
             label: String::from("Open"),
@@ -390,6 +413,7 @@ fn execute_result_action(result: &SearchResult, action: &ActionKind) -> bool {
             windui::platform::Clipboard.set_text(&result.title);
             true
         }
+        ActionKind::SetPriority => false,
         ActionKind::RunPlugin(invocation) => {
             plugins::execute_async(invocation.clone());
             true
@@ -845,6 +869,79 @@ fn record_query_history(
     let _ = settings_guard.save();
 }
 
+fn set_result_priority(
+    settings: &Arc<RwLock<Settings>>,
+    priorities: Signal<Vec<PriorityEntry>>,
+    result: &SearchResult,
+) -> bool {
+    let Some(target) = result.target.as_deref() else {
+        return false;
+    };
+    if !matches!(result.kind, ResultKind::Application) {
+        return false;
+    }
+    let Ok(mut settings_guard) = settings.write() else {
+        return false;
+    };
+    settings_guard.add_priority(PriorityEntry {
+        id: result.id.clone(),
+        title: result.title.clone(),
+        target: target.to_owned(),
+    });
+    let entries = settings_guard.priority_entries.clone();
+    let saved = settings_guard.save().is_ok();
+    if saved {
+        priorities.set(entries);
+    }
+    saved
+}
+
+fn remove_priority_entry(
+    settings: &Arc<RwLock<Settings>>,
+    priorities: Signal<Vec<PriorityEntry>>,
+    id: &str,
+) -> bool {
+    let Ok(mut settings_guard) = settings.write() else {
+        return false;
+    };
+    if !settings_guard.remove_priority(id) {
+        return false;
+    }
+    let entries = settings_guard.priority_entries.clone();
+    let saved = settings_guard.save().is_ok();
+    if saved {
+        priorities.set(entries);
+    }
+    saved
+}
+
+fn move_priority_entry(
+    settings: &Arc<RwLock<Settings>>,
+    priorities: Signal<Vec<PriorityEntry>>,
+    id: &str,
+    direction: i32,
+) -> bool {
+    let Ok(mut settings_guard) = settings.write() else {
+        return false;
+    };
+    let Some(index) = settings_guard
+        .priority_entries
+        .iter()
+        .position(|entry| entry.id == id)
+    else {
+        return false;
+    };
+    if !settings_guard.move_priority(index, direction) {
+        return false;
+    }
+    let entries = settings_guard.priority_entries.clone();
+    let saved = settings_guard.save().is_ok();
+    if saved {
+        priorities.set(entries);
+    }
+    saved
+}
+
 fn set_game_mode(
     settings: &Arc<RwLock<Settings>>,
     game_mode: Signal<bool>,
@@ -1000,6 +1097,7 @@ fn main() {
     let activation_hotkey = hotkeys::activation_hotkey(&settings.activation_hotkey);
     let shared_settings = Arc::new(RwLock::new(settings.clone()));
     let query_history = Rc::new(RefCell::new(settings.query_history.clone()));
+    let priorities = signal(settings.priority_entries.clone());
     let history_cursor = signal(None::<usize>);
     let history_navigation = signal(false);
     let history_mode = signal(false);
@@ -1018,6 +1116,7 @@ fn main() {
     let game_mode = signal(settings.game_mode);
     let game_mode_status = signal(game_mode_label(settings.game_mode));
     let settings_visible = signal(std::env::var_os("FLUX_OPEN_SETTINGS").is_some());
+    let settings_tab = signal(0_usize);
     let tray_settings_smoke_pending = Rc::new(Cell::new(
         std::env::var_os("FLUX_SMOKE_TRAY_SETTINGS").is_some(),
     ));
@@ -1197,6 +1296,10 @@ fn main() {
             ),
     );
 
+    let settings_for_action_list = Arc::clone(&shared_settings);
+    let priorities_for_action_list = priorities;
+    let providers_for_action_list = Rc::clone(&provider_results);
+    let query_for_action_list = query;
     let action_list = Element::list_signal(
         action_items_for_rows,
         |item| item.id.clone(),
@@ -1204,6 +1307,10 @@ fn main() {
             let item_id = item.id.clone();
             let item_label = item.label.clone();
             let item_kind = item.kind.clone();
+            let settings_for_item_action = Arc::clone(&settings_for_action_list);
+            let priorities_for_item_action = priorities_for_action_list;
+            let providers_for_item_action = Rc::clone(&providers_for_action_list);
+            let query_for_item_action = query_for_action_list;
             let is_selected = action_items_for_rows
                 .get()
                 .iter()
@@ -1236,7 +1343,26 @@ fn main() {
                             &selected_for_rows.get(),
                             selected_index_for_rows.get(),
                         )
-                        .is_some_and(|result| execute_result_action(&result, &item_kind));
+                        .is_some_and(|result| {
+                            if matches!(item_kind, ActionKind::SetPriority) {
+                                let saved = set_result_priority(
+                                    &settings_for_item_action,
+                                    priorities_for_item_action,
+                                    &result,
+                                );
+                                if saved {
+                                    refresh_merged_results(
+                                        &providers_for_item_action,
+                                        query_for_item_action,
+                                        priorities_for_item_action,
+                                        result_source,
+                                    );
+                                }
+                                saved
+                            } else {
+                                execute_result_action(&result, &item_kind)
+                            }
+                        });
                         if executed {
                             ctx.hide_window();
                         }
@@ -1276,6 +1402,7 @@ fn main() {
     let selection_touched_for_interval = selection_touched;
     let sequence_for_interval = current_sequence;
     let providers_for_interval = Rc::clone(&provider_results);
+    let priorities_for_interval = priorities;
     let actions_for_interval = Rc::clone(&plugin_actions);
     let auto_enable_everything_for_interval = auto_enable_everything;
     let history_cursor_for_interval = history_cursor;
@@ -1322,6 +1449,7 @@ fn main() {
     let selection_touched_for_applications = selection_touched;
     let sequence_for_applications = current_sequence;
     let providers_for_applications = Rc::clone(&provider_results);
+    let priorities_for_applications = priorities;
     let application_sender = app.channel::<ApplicationResponse>(move |_, response| {
         if response.sequence != sequence_for_applications.get()
             || response.query != query_for_applications.get()
@@ -1333,7 +1461,14 @@ fn main() {
             return;
         }
         providers.applications = response.results;
-        let merged = providers.merged(&query_for_applications.get());
+        let merged = providers.merged(
+            &query_for_applications.get(),
+            &priorities_for_applications
+                .get()
+                .iter()
+                .map(|entry| entry.id.clone())
+                .collect::<Vec<_>>(),
+        );
         if !selection_touched_for_applications.get() {
             selected_index_for_applications.set(0);
             selected_id_for_applications.set(
@@ -1361,6 +1496,7 @@ fn main() {
     let selection_touched_for_everything = selection_touched;
     let sequence_for_everything = current_sequence;
     let providers_for_everything = Rc::clone(&provider_results);
+    let priorities_for_everything = priorities;
     let auto_enable_everything_for_response = auto_enable_everything;
     let everything_installed_for_response = everything_installed;
     let everything_status_for_response = everything_status;
@@ -1384,7 +1520,14 @@ fn main() {
             everything_installed_for_response.set(true);
             everything_status_for_response.set(String::from("Everything IPC is available"));
             providers.everything = response.results;
-            let merged = providers.merged(&query_for_everything.get());
+            let merged = providers.merged(
+                &query_for_everything.get(),
+                &priorities_for_everything
+                    .get()
+                    .iter()
+                    .map(|entry| entry.id.clone())
+                    .collect::<Vec<_>>(),
+            );
             if !selection_touched_for_everything.get() {
                 selected_index_for_everything.set(0);
                 selected_id_for_everything.set(
@@ -1444,6 +1587,7 @@ fn main() {
     let selection_touched_for_plugins = selection_touched;
     let sequence_for_plugins = current_sequence;
     let providers_for_plugins = Rc::clone(&provider_results);
+    let priorities_for_plugins = priorities;
     let actions_for_plugins = Rc::clone(&plugin_actions);
     let plugin_sender = app.channel::<PluginQueryResponse>(move |_, response| {
         if response.sequence != sequence_for_plugins.get()
@@ -1458,7 +1602,14 @@ fn main() {
         if response.available {
             providers.plugins = response.results;
             *actions_for_plugins.borrow_mut() = response.actions;
-            let merged = providers.merged(&query_for_plugins.get());
+            let merged = providers.merged(
+                &query_for_plugins.get(),
+                &priorities_for_plugins
+                    .get()
+                    .iter()
+                    .map(|entry| entry.id.clone())
+                    .collect::<Vec<_>>(),
+            );
             if !selection_touched_for_plugins.get() {
                 selected_index_for_plugins.set(0);
                 selected_id_for_plugins.set(
@@ -1519,6 +1670,10 @@ fn main() {
     let history_cursor_for_keys = history_cursor;
     let history_navigation_for_keys = history_navigation;
     let settings_for_history_for_keys = Arc::clone(&shared_settings);
+    let settings_for_priority_for_keys = Arc::clone(&shared_settings);
+    let priorities_for_keys = priorities;
+    let providers_for_keys = Rc::clone(&provider_results);
+    let query_for_priority_keys = query;
     let window_op_for_keys = window_op.clone();
     let cursor_visibility_for_keys = cursor_visibility.clone();
     let size_for_keys = window_size.clone();
@@ -1725,7 +1880,25 @@ fn main() {
                             .get(action_index_for_keys.get())
                             .cloned()
                         {
-                            if execute_result_action(&result, &action.kind) {
+                            let executed = if matches!(action.kind, ActionKind::SetPriority) {
+                                let saved = set_result_priority(
+                                    &settings_for_priority_for_keys,
+                                    priorities_for_keys,
+                                    &result,
+                                );
+                                if saved {
+                                    refresh_merged_results(
+                                        &providers_for_keys,
+                                        query_for_priority_keys,
+                                        priorities_for_keys,
+                                        results_for_keys,
+                                    );
+                                }
+                                saved
+                            } else {
+                                execute_result_action(&result, &action.kind)
+                            };
+                            if executed {
                                 window_op_for_keys.hide_window();
                             }
                         }
@@ -1942,6 +2115,131 @@ fn main() {
     let auto_enable_everything_for_apply = auto_enable_everything;
     let everything_status_for_apply = everything_status;
     let everything_installed_for_ui = everything_installed;
+    let settings_for_priority_ui = Arc::clone(&shared_settings);
+    let providers_for_priority_ui = Rc::clone(&provider_results);
+    let query_for_priority_ui = query;
+    let priority_list = Element::list_signal(
+        priorities,
+        |entry| entry.id.clone(),
+        move |entry| {
+            let entry_id = entry.id.clone();
+            let rank = priorities
+                .get()
+                .iter()
+                .position(|candidate| candidate.id == entry_id)
+                .map(|index| index + 1)
+                .unwrap_or_default();
+            let title = entry.title.clone();
+            let target = entry.target.clone();
+            let settings_for_up = Arc::clone(&settings_for_priority_ui);
+            let settings_for_down = Arc::clone(&settings_for_priority_ui);
+            let settings_for_remove = Arc::clone(&settings_for_priority_ui);
+            let providers_for_up = Rc::clone(&providers_for_priority_ui);
+            let providers_for_down = Rc::clone(&providers_for_priority_ui);
+            let providers_for_remove = Rc::clone(&providers_for_priority_ui);
+            let query_for_up = query_for_priority_ui;
+            let query_for_down = query_for_priority_ui;
+            let query_for_remove = query_for_priority_ui;
+            let id_for_up = entry_id.clone();
+            let id_for_down = entry_id.clone();
+            let id_for_remove = entry_id.clone();
+            Element::row()
+                .width_match()
+                .height(58)
+                .padding_xy(10, 5)
+                .spacing(8)
+                .corner(9.0)
+                .bg(Color::rgba(255, 255, 255, 12))
+                .child(
+                    Element::label(format!("{rank}"))
+                        .font_size(16.0)
+                        .fg(Color::rgba(170, 204, 255, 245))
+                        .width(24)
+                        .align(Align::Center),
+                )
+                .child(
+                    Element::col()
+                        .weight(1.0)
+                        .spacing(1)
+                        .child(
+                            Element::label(title)
+                                .font_size(13.0)
+                                .fg(Color::WHITE)
+                                .max_lines(1)
+                                .truncate(Truncate::End),
+                        )
+                        .child(
+                            Element::label(target)
+                                .font_size(10.0)
+                                .fg(Color::rgba(235, 241, 255, 170))
+                                .max_lines(1)
+                                .truncate(Truncate::End),
+                        ),
+                )
+                .child(
+                    Element::button("↑")
+                        .neutral()
+                        .outline_soft()
+                        .on_click(move |ctx| {
+                            if move_priority_entry(&settings_for_up, priorities, &id_for_up, -1) {
+                                refresh_merged_results(
+                                    &providers_for_up,
+                                    query_for_up,
+                                    priorities,
+                                    results,
+                                );
+                                ctx.toast_ok("Priority moved up");
+                            }
+                        }),
+                )
+                .child(
+                    Element::button("↓")
+                        .neutral()
+                        .outline_soft()
+                        .on_click(move |ctx| {
+                            if move_priority_entry(&settings_for_down, priorities, &id_for_down, 1)
+                            {
+                                refresh_merged_results(
+                                    &providers_for_down,
+                                    query_for_down,
+                                    priorities,
+                                    results,
+                                );
+                                ctx.toast_ok("Priority moved down");
+                            }
+                        }),
+                )
+                .child(
+                    Element::button("Remove")
+                        .neutral()
+                        .outline_soft()
+                        .on_click(move |ctx| {
+                            if remove_priority_entry(
+                                &settings_for_remove,
+                                priorities,
+                                &id_for_remove,
+                            ) {
+                                refresh_merged_results(
+                                    &providers_for_remove,
+                                    query_for_remove,
+                                    priorities,
+                                    results,
+                                );
+                                ctx.toast_ok("Priority removed");
+                            }
+                        }),
+                )
+        },
+    );
+    let priorities_empty = Element::label(
+        "No explicit priorities yet. Select an application, press Right, then choose Set as priority.",
+    )
+    .font_size(12.0)
+    .fg(Color::rgba(235, 241, 255, 185))
+    .max_lines(2)
+    .truncate(Truncate::End)
+    .visible_when(move || priorities.get().is_empty());
+
     // Settings shares the same continuous Acrylic surface as the launcher.
     // Do not add a dark card here: it hides the blur and creates the old opaque
     // search-style slab inside the transparent window.
@@ -1966,6 +2264,10 @@ fn main() {
                                 .fg(Color::rgba(235, 241, 255, 180)),
                         ),
                 )
+                .child(Element::segmented(
+                    vec!["General", "Priorities"],
+                    settings_tab,
+                ))
                 .child(
                     Element::button("Back")
                         .neutral()
@@ -1983,7 +2285,10 @@ fn main() {
                 ),
         )
         .child(
-            Element::scroll().weight(1.0).child(
+            Element::scroll()
+                .weight(1.0)
+                .visible_when(move || settings_tab.get() == 0)
+                .child(
                 Element::col()
                     .width_match()
                     .spacing(12)
@@ -2219,6 +2524,30 @@ fn main() {
                         }),
                     ),
             ),
+        )
+        .child(
+            Element::scroll()
+                .weight(1.0)
+                .visible_when(move || settings_tab.get() == 1)
+                .child(
+                    Element::col()
+                        .width_match()
+                        .spacing(10)
+                        .child(
+                            Element::label("Explicit application priorities")
+                                .font_size(17.0)
+                                .fg(Color::WHITE),
+                        )
+                        .child(
+                            Element::label("Only applications explicitly added with Set as priority appear here. Rank 1 is searched first.")
+                                .font_size(11.0)
+                                .fg(Color::rgba(235, 241, 255, 180))
+                                .max_lines(2)
+                                .truncate(Truncate::End),
+                        )
+                        .child(priorities_empty)
+                        .child(priority_list),
+                ),
         );
 
     let launcher_page = Element::stack()
@@ -2285,7 +2614,14 @@ fn main() {
             {
                 let mut providers = providers_for_interval.borrow_mut();
                 providers.reset(sequence, model.results().to_vec());
-                let merged = providers.merged(&next_query);
+                let merged = providers.merged(
+                    &next_query,
+                    &priorities_for_interval
+                        .get()
+                        .iter()
+                        .map(|entry| entry.id.clone())
+                        .collect::<Vec<_>>(),
+                );
                 selection_touched_for_interval.set(false);
                 selected_index.set(0);
                 selected_id.set(

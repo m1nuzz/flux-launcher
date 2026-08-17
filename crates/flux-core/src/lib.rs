@@ -11,6 +11,7 @@ pub use game_mode::{
     WindowClass,
 };
 pub use search::{
-    history_results, rank_results, ResultKind, ResultSource, SearchModel, SearchResult,
+    history_results, rank_results, rank_results_with_priorities, ResultKind, ResultSource,
+    SearchModel, SearchResult,
 };
-pub use settings::{HotkeyConfig, MonitorPreference, Settings};
+pub use settings::{HotkeyConfig, MonitorPreference, PriorityEntry, Settings};

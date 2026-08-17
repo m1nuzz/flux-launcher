@@ -7,6 +7,7 @@ const DEFAULT_CARET_DURATION_MS: u16 = 95;
 const MIN_CARET_DURATION_MS: u16 = 60;
 const MAX_CARET_DURATION_MS: u16 = 160;
 const MAX_QUERY_HISTORY: usize = 32;
+const MAX_PRIORITY_ENTRIES: usize = 64;
 
 fn enabled_by_default() -> bool {
     true
@@ -54,6 +55,13 @@ pub enum MonitorPreference {
 }
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Eq, Serialize)]
+pub struct PriorityEntry {
+    pub id: String,
+    pub title: String,
+    pub target: String,
+}
+
+#[derive(Clone, Debug, Deserialize, PartialEq, Eq, Serialize)]
 #[serde(default)]
 pub struct Settings {
     #[serde(default)]
@@ -79,6 +87,8 @@ pub struct Settings {
     pub smooth_caret_duration_ms: u16,
     #[serde(default)]
     pub query_history: Vec<String>,
+    #[serde(default)]
+    pub priority_entries: Vec<PriorityEntry>,
 }
 
 impl Default for Settings {
@@ -96,6 +106,7 @@ impl Default for Settings {
             monitor_preference: MonitorPreference::default(),
             smooth_caret_duration_ms: DEFAULT_CARET_DURATION_MS,
             query_history: Vec::new(),
+            priority_entries: Vec::new(),
         }
     }
 }
@@ -109,6 +120,53 @@ impl Settings {
             self.activation_hotkey = HotkeyConfig::default();
         }
         self.normalize_query_history();
+        self.normalize_priorities();
+    }
+
+    pub fn add_priority(&mut self, entry: PriorityEntry) {
+        self.priority_entries.retain(|item| item.id != entry.id);
+        self.priority_entries.insert(0, entry);
+        self.normalize_priorities();
+    }
+
+    pub fn remove_priority(&mut self, id: &str) -> bool {
+        let before = self.priority_entries.len();
+        self.priority_entries.retain(|item| item.id != id);
+        before != self.priority_entries.len()
+    }
+
+    pub fn move_priority(&mut self, index: usize, direction: i32) -> bool {
+        let Some(next) = index.checked_add_signed(direction as isize) else {
+            return false;
+        };
+        if next >= self.priority_entries.len() || index >= self.priority_entries.len() {
+            return false;
+        }
+        self.priority_entries.swap(index, next);
+        true
+    }
+
+    fn normalize_priorities(&mut self) {
+        let mut normalized = Vec::with_capacity(self.priority_entries.len());
+        for entry in self.priority_entries.drain(..) {
+            let id = entry.id.trim();
+            let title = entry.title.trim();
+            let target = entry.target.trim();
+            if id.is_empty()
+                || target.is_empty()
+                || title.is_empty()
+                || normalized.iter().any(|item: &PriorityEntry| item.id == id)
+            {
+                continue;
+            }
+            normalized.push(PriorityEntry {
+                id: id.to_owned(),
+                title: title.to_owned(),
+                target: target.to_owned(),
+            });
+        }
+        normalized.truncate(MAX_PRIORITY_ENTRIES);
+        self.priority_entries = normalized;
     }
 
     pub fn record_query(&mut self, query: &str) -> bool {
@@ -248,11 +306,79 @@ mod tests {
             monitor_preference: MonitorPreference::Foreground,
             smooth_caret_duration_ms: 120,
             query_history: vec![String::from("steam"), String::from("ext:zip")],
+            priority_entries: vec![PriorityEntry {
+                id: String::from("application:steam"),
+                title: String::from("Steam"),
+                target: String::from("C:/Steam.lnk"),
+            }],
         };
 
         expected.save_to(&path).unwrap();
         assert_eq!(Settings::load_from(&path).unwrap(), expected);
         fs::remove_file(path).unwrap();
+    }
+
+    #[test]
+    fn priorities_insert_newest_first_and_support_manual_management() {
+        let mut settings = Settings::default();
+        settings.add_priority(PriorityEntry {
+            id: String::from("application:one"),
+            title: String::from("One"),
+            target: String::from("C:/One.lnk"),
+        });
+        settings.add_priority(PriorityEntry {
+            id: String::from("application:two"),
+            title: String::from("Two"),
+            target: String::from("C:/Two.lnk"),
+        });
+        assert_eq!(
+            settings
+                .priority_entries
+                .iter()
+                .map(|entry| entry.id.as_str())
+                .collect::<Vec<_>>(),
+            ["application:two", "application:one"]
+        );
+        settings.add_priority(PriorityEntry {
+            id: String::from("application:one"),
+            title: String::from("One"),
+            target: String::from("C:/One.lnk"),
+        });
+        assert_eq!(settings.priority_entries[0].id, "application:one");
+        assert_eq!(settings.priority_entries.len(), 2);
+        assert!(settings.move_priority(0, 1));
+        assert_eq!(settings.priority_entries[1].id, "application:one");
+        assert!(settings.remove_priority("application:one"));
+        assert_eq!(settings.priority_entries.len(), 1);
+        assert!(!settings.remove_priority("missing"));
+    }
+
+    #[test]
+    fn normalize_priorities_discards_invalid_and_duplicate_entries() {
+        let mut settings = Settings {
+            priority_entries: vec![
+                PriorityEntry {
+                    id: String::from(" application:one "),
+                    title: String::from(" One "),
+                    target: String::from(" C:/One.lnk "),
+                },
+                PriorityEntry {
+                    id: String::from("application:one"),
+                    title: String::from("Duplicate"),
+                    target: String::from("C:/Duplicate.lnk"),
+                },
+                PriorityEntry {
+                    id: String::from("application:invalid"),
+                    title: String::new(),
+                    target: String::from("C:/Invalid.lnk"),
+                },
+            ],
+            ..Settings::default()
+        };
+        settings.normalize();
+        assert_eq!(settings.priority_entries.len(), 1);
+        assert_eq!(settings.priority_entries[0].id, "application:one");
+        assert_eq!(settings.priority_entries[0].target, "C:/One.lnk");
     }
 
     #[test]
