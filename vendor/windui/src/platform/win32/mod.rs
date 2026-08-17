@@ -1653,11 +1653,15 @@ unsafe fn apply_window_op(hwnd: HWND) {
         })
         .unwrap_or((None, None, None, None));
     run_window_op(hwnd, op);
+    // on_window_show may enqueue a cursor visibility request after ShowWindow;
+    // consume that second-stage request before returning to the message loop.
+    let cursor_visibility_after_op =
+        state_from(hwnd).and_then(|state| state.handler.take_cursor_visibility_request());
     let repositioned = position_request.is_some();
     run_window_position_request(hwnd, position_request);
     let resized = size_request.is_some();
     run_window_size_request(hwnd, size_request);
-    if cursor_visibility.is_some() {
+    if cursor_visibility.is_some() || cursor_visibility_after_op.is_some() {
         apply_current_cursor(hwnd);
     }
     // A resize after a visible show invalidates the old swap-chain frame. Queue
