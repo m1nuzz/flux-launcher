@@ -119,8 +119,6 @@ impl ProviderResults {
 #[derive(Clone, Debug)]
 enum ActionKind {
     Open,
-    OpenRecycleBin,
-    EmptyRecycleBin,
     RunAsAdmin,
     OpenLocation,
     CopyPath,
@@ -140,17 +138,8 @@ fn actions_for_result(
     plugin_actions: &HashMap<String, PluginInvocation>,
 ) -> Vec<ActionItem> {
     let mut actions = Vec::with_capacity(4);
-    if result.id == "recycle-bin" {
-        actions.push(ActionItem {
-            id: String::from("recycle-bin:open"),
-            label: String::from("Open Recycle Bin"),
-            kind: ActionKind::OpenRecycleBin,
-        });
-        actions.push(ActionItem {
-            id: String::from("recycle-bin:empty"),
-            label: String::from("Empty Recycle Bin"),
-            kind: ActionKind::EmptyRecycleBin,
-        });
+    if matches!(result.id.as_str(), "empty-recycle-bin" | "open-recycle-bin") {
+        return actions;
     }
     if result.target.is_some() {
         actions.push(ActionItem {
@@ -369,12 +358,6 @@ fn execute_result_action(result: &SearchResult, action: &ActionKind) {
             if let Some(target) = result.target.as_deref() {
                 let _ = launch::open_path(target);
             }
-        }
-        ActionKind::OpenRecycleBin => {
-            let _ = launch::open_recycle_bin();
-        }
-        ActionKind::EmptyRecycleBin => {
-            let _ = launch::empty_recycle_bin();
         }
         ActionKind::RunAsAdmin => {
             if let Some(target) = result.target.as_deref() {
@@ -871,15 +854,17 @@ fn result_row(
     settings: Arc<RwLock<Settings>>,
     query_history: Rc<RefCell<Vec<String>>>,
     history_mode: Signal<bool>,
+    recycle_bin_confirmation: Signal<bool>,
 ) -> Element {
     let id = result.id;
     let target = result.target;
     let title = result.title;
     let subtitle = result.subtitle;
-    let glyph = if subtitle.contains("Application") {
-        String::from("◉")
-    } else {
-        String::from("▣")
+    let (glyph, glyph_font) = match id.as_str() {
+        "empty-recycle-bin" => (String::from("\u{ea99}"), "Segoe Fluent Icons"),
+        "open-recycle-bin" => (String::from("\u{e74d}"), "Segoe Fluent Icons"),
+        _ if subtitle.contains("Application") => (String::from("◉"), LAUNCHER_FONT_FAMILY),
+        _ => (String::from("▣"), LAUNCHER_FONT_FAMILY),
     };
     let icon = target.as_deref().and_then(shell_icon_rgba);
     let icon_element = if let Some(icon) = icon.as_deref() {
@@ -889,6 +874,7 @@ fn result_row(
             .corner(7.0)
     } else {
         Element::label(glyph)
+            .font_family(glyph_font)
             .font_size(20.0)
             .fg(Color::rgba(201, 218, 240, 235))
             .width(28)
@@ -970,6 +956,14 @@ fn result_row(
                 selected_index.set(index);
             }
             rows_refresh.set(rows_refresh.get());
+            if id == "empty-recycle-bin" {
+                recycle_bin_confirmation.set(true);
+                return;
+            }
+            if id == "open-recycle-bin" {
+                let _ = launch::open_recycle_bin();
+                return;
+            }
             if let Some(target) = target.as_deref() {
                 let _ = launch::open_path(target);
                 return;
@@ -1054,7 +1048,6 @@ fn main() {
     let action_items_for_rows = action_items;
     let action_index_for_rows = action_index;
     let action_mode_for_rows = action_mode;
-    let recycle_bin_confirmation_for_rows = recycle_bin_confirmation;
     let action_window_slot_for_rows = Rc::clone(&action_window_slot);
     let query_for_rows = query;
     let inline_completion = signal(String::new());
@@ -1124,6 +1117,7 @@ fn main() {
             Arc::clone(&settings_for_rows),
             Rc::clone(&history_for_rows),
             history_mode_for_rows,
+            recycle_bin_confirmation,
         )
     })
     .width_match()
@@ -1216,9 +1210,7 @@ fn main() {
                 .on_click({
                     let action_window_slot = action_window_slot_for_rows.clone();
                     move |_| {
-                        if matches!(item_kind, ActionKind::EmptyRecycleBin) {
-                            recycle_bin_confirmation_for_rows.set(true);
-                        } else if let Some(result) = selected_result(
+                        if let Some(result) = selected_result(
                             &result_source.get(),
                             &selected_for_rows.get(),
                             selected_index_for_rows.get(),
@@ -1698,11 +1690,7 @@ fn main() {
                             .get(action_index_for_keys.get())
                             .cloned()
                         {
-                            if matches!(action.kind, ActionKind::EmptyRecycleBin) {
-                                recycle_bin_confirmation_for_keys.set(true);
-                            } else {
-                                execute_result_action(&result, &action.kind);
-                            }
+                            execute_result_action(&result, &action.kind);
                         }
                     }
                     action_mode_for_keys.set(false);
@@ -1790,7 +1778,9 @@ fn main() {
                     &selected_id_for_keys.get(),
                     selected_index_for_keys.get(),
                 ) {
-                    if result.id == "recycle-bin" {
+                    if result.id == "empty-recycle-bin" {
+                        recycle_bin_confirmation_for_keys.set(true);
+                    } else if result.id == "open-recycle-bin" {
                         let _ = launch::open_recycle_bin();
                     } else if let Some(target) = result.target.as_deref() {
                         let _ = launch::open_path(target);

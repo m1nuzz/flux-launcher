@@ -335,21 +335,25 @@ try {
     $shell.SendKeys("{ENTER}")
     Start-Sleep -Milliseconds 400
     if ($RecycleBinSmoke) {
-        # Verify the built-in command and its action list, then cancel. Never
-        # press Enter while Empty Recycle Bin is selected in CI.
+        # Flow-style behavior: Empty and Open are ordinary sibling results,
+        # with Empty first. Enter only the Empty row far enough to verify
+        # Flux's confirmation dialog, then cancel it without deleting anything.
         $shell.SendKeys("^a")
-        $shell.SendKeys("recycle")
+        $shell.SendKeys("recyclebin")
         Start-Sleep -Milliseconds 900
-        # The preceding generic navigation probe may leave a later result
-        # selected. Home makes the built-in Recycle Bin command deterministic.
         $shell.SendKeys("{HOME}")
         Start-Sleep -Milliseconds 350
-        Save-Screenshot "recycle-bin-result.png"
-        $shell.SendKeys("{RIGHT}")
-        Start-Sleep -Milliseconds 700
-        Save-Screenshot "recycle-bin-actions.png"
+        Save-Screenshot "recycle-bin-direct-results.png"
+        $shell.SendKeys("{ENTER}")
+        Start-Sleep -Milliseconds 500
+        Save-Screenshot "recycle-bin-empty-confirmation.png"
         $shell.SendKeys("{ESCAPE}")
         Start-Sleep -Milliseconds 350
+        $recycleBinDirectResultsProbe = $true
+        $recycleBinDestructiveActionInvoked = $false
+    } else {
+        $recycleBinDirectResultsProbe = $false
+        $recycleBinDestructiveActionInvoked = $false
     }
     # Native Everything syntax must remain usable in the always-on provider.
     $shell.SendKeys("^a")
@@ -470,7 +474,8 @@ try {
         EverythingStartupProbe = $everythingStartupProbe
         EverythingMissingStateProbe = [bool]$EverythingMissingSmoke
         RecycleBinProbe = [bool]$RecycleBinSmoke
-        RecycleBinDestructiveActionInvoked = $false
+        RecycleBinDirectResultsProbe = $recycleBinDirectResultsProbe
+        RecycleBinDestructiveActionInvoked = $recycleBinDestructiveActionInvoked
         EverythingWingetInstallCommandProbe = "winget install -e --id voidtools.Everything"
         TraySettingsLifecycleProbe = (!$TraySettingsSmoke) -or ($settingsWindowFound -and ($settingsWindowHeight -ge 400) -and ($settingsWindowWidth -ge 680))
         KeyboardSelectionProbe = $true
