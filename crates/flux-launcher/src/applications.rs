@@ -116,6 +116,54 @@ fn normalize(value: &str) -> String {
     value.trim().to_ascii_lowercase()
 }
 
+fn extract_executable_target(value: &str) -> Option<String> {
+    let value = value.trim();
+    if value.is_empty() {
+        return None;
+    }
+    if let Some(rest) = value.strip_prefix('"') {
+        return rest
+            .find('"')
+            .map(|end| rest[..end].trim().to_owned())
+            .filter(|target| !target.is_empty());
+    }
+    let lower = value.to_ascii_lowercase();
+    [".exe", ".com", ".bat", ".cmd"]
+        .iter()
+        .filter_map(|extension| lower.find(extension).map(|end| end + extension.len()))
+        .min()
+        .map(|end| value[..end].trim().to_owned())
+        .filter(|target| !target.is_empty())
+}
+
+fn expand_percent_variables(value: &str) -> Option<String> {
+    let mut output = String::with_capacity(value.len());
+    let mut rest = value;
+    while let Some(start) = rest.find('%') {
+        output.push_str(&rest[..start]);
+        let variable = &rest[start + 1..];
+        let end = variable.find('%')?;
+        let name = &variable[..end];
+        let replacement = std::env::var_os(name)?.to_string_lossy().into_owned();
+        output.push_str(&replacement);
+        rest = &variable[end + 1..];
+    }
+    output.push_str(rest);
+    Some(output)
+}
+
+fn is_executable_target(target: &str) -> bool {
+    let path = Path::new(target);
+    path.is_file()
+        && matches!(
+            path.extension()
+                .and_then(|extension| extension.to_str())
+                .map(|extension| extension.to_ascii_lowercase())
+                .as_deref(),
+            Some("exe") | Some("com") | Some("bat") | Some("cmd")
+        )
+}
+
 #[cfg(windows)]
 fn start_menu_roots() -> Vec<PathBuf> {
     let mut roots = Vec::with_capacity(2);
@@ -294,12 +342,9 @@ fn collect_app_paths(by_title: &mut HashMap<String, SearchResult>) {
             .trim_end_matches('\0')
             .trim()
             .to_owned();
-        let target = value
-            .strip_prefix('"')
-            .and_then(|rest| rest.find('"').map(|end| &rest[..end]))
-            .unwrap_or_else(|| value.split_whitespace().next().unwrap_or_default())
-            .to_owned();
-        if target.is_empty() {
+        let target = extract_executable_target(&value)?;
+        let target = expand_percent_variables(&target)?;
+        if !is_executable_target(&target) {
             return None;
         }
         let title = Path::new(key_name)
@@ -340,8 +385,51 @@ fn _keep_os_string_type_available(_: OsString) {}
 
 #[cfg(test)]
 mod tests {
-    use super::ApplicationCatalog;
+    use super::{
+        expand_percent_variables, extract_executable_target, is_executable_target,
+        ApplicationCatalog,
+    };
     use flux_core::{ResultKind, ResultSource, SearchResult};
+
+    #[test]
+    fn app_path_parser_extracts_executable_before_arguments() {
+        assert_eq!(
+            extract_executable_target(r#""C:\Program Files\Calibre\calibre.exe" --detach"#),
+            Some(String::from(r#"C:\Program Files\Calibre\calibre.exe"#))
+        );
+        assert_eq!(
+            extract_executable_target(r#"C:\Tools\tool.cmd /arg"#),
+            Some(String::from(r#"C:\Tools\tool.cmd"#))
+        );
+        assert_eq!(extract_executable_target("not an executable"), None);
+    }
+
+    #[test]
+    fn app_path_filter_requires_existing_supported_executable() {
+        let path = std::env::temp_dir().join(format!(
+            "flux-app-path-filter-{}-test.exe",
+            std::process::id()
+        ));
+        std::fs::write(&path, b"fixture").unwrap();
+        assert!(is_executable_target(path.to_str().unwrap()));
+        assert!(!is_executable_target(
+            path.with_extension("txt").to_str().unwrap()
+        ));
+        std::fs::remove_file(path).unwrap();
+        assert!(!is_executable_target("C:/missing/calibre-complete.exe"));
+    }
+
+    #[test]
+    fn app_path_environment_expansion_rejects_unknown_variables() {
+        assert_eq!(
+            expand_percent_variables(r#"C:\Tools\tool.exe"#),
+            Some(String::from(r#"C:\Tools\tool.exe"#))
+        );
+        assert_eq!(
+            expand_percent_variables("%FLUX_VARIABLE_THAT_DOES_NOT_EXIST%\\tool.exe"),
+            None
+        );
+    }
 
     #[test]
     fn application_catalog_search_is_title_based_and_application_tiered() {
