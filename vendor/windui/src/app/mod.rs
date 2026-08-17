@@ -239,6 +239,20 @@ impl WindowPositionHandle {
     }
 }
 
+/// A runtime handle for requesting a deferred native window operation.
+#[derive(Clone)]
+pub struct WindowOpHandle {
+    queue: Rc<RefCell<Option<WindowOp>>>,
+}
+
+impl WindowOpHandle {
+    /// Request that the native window be hidden after the current callback.
+    pub fn hide_window(&self) {
+        *self.queue.borrow_mut() = Some(WindowOp::Hide);
+        crate::anim::request_repaint();
+    }
+}
+
 pub struct App {
     cfg: WindowConfig,
     render: Option<RenderClosure>,
@@ -268,6 +282,8 @@ pub struct App {
     window_size_ops: Rc<RefCell<Option<(i32, i32)>>>,
     /// Pending logical top-left position requested through `WindowPositionHandle`.
     window_position_ops: Rc<RefCell<Option<(i32, i32)>>>,
+    /// Pending native operation requested through `WindowOpHandle`.
+    window_op_ops: Rc<RefCell<Option<WindowOp>>>,
 }
 
 impl App {
@@ -314,6 +330,7 @@ impl App {
             hotkey_ops: Rc::new(RefCell::new(Vec::new())),
             window_size_ops: Rc::new(RefCell::new(None)),
             window_position_ops: Rc::new(RefCell::new(None)),
+            window_op_ops: Rc::new(RefCell::new(None)),
         }
     }
 
@@ -571,6 +588,13 @@ impl App {
         }
     }
 
+    /// Return a runtime handle for requesting a deferred native window operation.
+    pub fn window_op_handle(&mut self) -> WindowOpHandle {
+        WindowOpHandle {
+            queue: self.window_op_ops.clone(),
+        }
+    }
+
     /// 改名为 [`App::hotkey_handle`]。
     #[deprecated(
         since = "0.12.0",
@@ -815,6 +839,7 @@ impl App {
                 self.hotkey_ops.clone(),
                 self.window_size_ops.clone(),
                 self.window_position_ops.clone(),
+                self.window_op_ops.clone(),
                 self.pumps,
                 self.intervals,
                 self.close_handler,
@@ -845,6 +870,7 @@ impl App {
             self.hotkey_ops.clone(),
             self.window_size_ops.clone(),
             self.window_position_ops.clone(),
+            self.window_op_ops.clone(),
             self.pumps,
             self.intervals,
             self.close_handler,
@@ -980,6 +1006,8 @@ struct UiHost {
     window_size_ops: Rc<RefCell<Option<(i32, i32)>>>,
     /// Runtime logical top-left position requests consumed by the platform.
     window_position_ops: Rc<RefCell<Option<(i32, i32)>>>,
+    /// Runtime native operation requests consumed by the platform.
+    window_op_ops: Rc<RefCell<Option<WindowOp>>>,
     /// 一次「按下关闭浮层」后，吞掉随之而来的 Up：避免该 Up 下发到控件树重新激活
     /// 浮层下方控件（典型：下拉按钮点一下又弹一遍——Down 关、Up 再开）。
     swallow_up: bool,
@@ -1110,6 +1138,7 @@ impl UiHost {
         hotkey_ops: Rc<RefCell<Vec<(usize, crate::event::HotkeyOp)>>>,
         window_size_ops: Rc<RefCell<Option<(i32, i32)>>>,
         window_position_ops: Rc<RefCell<Option<(i32, i32)>>>,
+        window_op_ops: Rc<RefCell<Option<WindowOp>>>,
         pumps: Vec<ChannelPump>,
         intervals: Vec<(std::time::Duration, AppCallback)>,
         close_handler: Option<CloseHandler>,
@@ -1149,6 +1178,7 @@ impl UiHost {
             hotkey_ops,
             window_size_ops,
             window_position_ops,
+            window_op_ops,
             swallow_up: false,
             pumps,
             interval_cbs,
@@ -1724,7 +1754,9 @@ impl AppHandler for UiHost {
     }
 
     fn take_window_op(&mut self) -> Option<WindowOp> {
-        self.pending_window_op.take()
+        self.pending_window_op
+            .take()
+            .or_else(|| self.window_op_ops.borrow_mut().take())
     }
 
     /// 控件经 `EventCtx` 请求的对话框优先；没有则取延迟闭包队列（已废弃的自由函数

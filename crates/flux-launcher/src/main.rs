@@ -23,7 +23,7 @@ use flux_core::{
     ResultKind, SearchModel, SearchResult, Settings,
 };
 use plugins::{FlowPluginWorker, PluginInvocation, PluginQueryResponse};
-use windui::app::{WindowPositionHandle, WindowSizeHandle};
+use windui::app::{WindowOpHandle, WindowPositionHandle, WindowSizeHandle};
 use windui::core::{ClickFn, ClipboardProvider, EventCtx, Widget};
 use windui::event::{Event, Key, KeyEvent, MouseButton, PointerKind};
 use windui::prelude::*;
@@ -1011,7 +1011,6 @@ fn main() {
     let action_mode = signal(false);
     let action_index = signal(0_usize);
     let recycle_bin_confirmation = signal(false);
-    let hide_after_launch = Rc::new(Cell::new(false));
     let action_items = signal(Vec::<ActionItem>::new());
     let action_window_slot = Rc::new(RefCell::new(None::<WindowSizeHandle>));
     let status = signal(String::from("Ready"));
@@ -1308,6 +1307,7 @@ fn main() {
     }
     let window_size = app.window_size_handle();
     let window_position = app.window_position_handle();
+    let window_op: WindowOpHandle = app.window_op_handle();
     *action_window_slot.borrow_mut() = Some(window_size.clone());
     let size_for_interval = window_size.clone();
     let size_for_visibility = window_size.clone();
@@ -1516,7 +1516,7 @@ fn main() {
     let history_cursor_for_keys = history_cursor;
     let history_navigation_for_keys = history_navigation;
     let settings_for_history_for_keys = Arc::clone(&shared_settings);
-    let hide_after_launch_for_keys = Rc::clone(&hide_after_launch);
+    let window_op_for_keys = window_op.clone();
     let size_for_keys = window_size.clone();
     let show_results_for_keys = show_results;
     let settings_for_game_hotkey = Arc::clone(&shared_settings);
@@ -1716,7 +1716,7 @@ fn main() {
                             .cloned()
                         {
                             if execute_result_action(&result, &action.kind) {
-                                hide_after_launch_for_keys.set(true);
+                                window_op_for_keys.hide_window();
                             }
                         }
                     }
@@ -1823,7 +1823,7 @@ fn main() {
                         false
                     };
                     if should_hide {
-                        hide_after_launch_for_keys.set(true);
+                        window_op_for_keys.hide_window();
                     }
                 }
                 true
@@ -2226,8 +2226,6 @@ fn main() {
         .child(launcher_page)
         .child(settings_page);
 
-    let hide_after_launch_for_interval = Rc::clone(&hide_after_launch);
-
     app.tray(tray)
         .hide_on_close()
         // The Win32 backend keeps this transparent on local Acrylic-capable
@@ -2242,10 +2240,6 @@ fn main() {
         .theme(launcher_theme())
         .content(content)
         .on_interval(SEARCH_INTERVAL, move |ctx| {
-            if hide_after_launch_for_interval.replace(false) {
-                ctx.hide_window();
-                return;
-            }
             if tray_settings_smoke_pending_for_interval.replace(false) {
                 // Exercise the same lifecycle order as the tray Settings item,
                 // without relying on brittle screen-coordinate tray automation.
