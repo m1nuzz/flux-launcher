@@ -253,7 +253,7 @@ try {
     Start-Sleep -Milliseconds 300
     [FluxWallpaper]::SetForegroundWindow($launcherHandle) | Out-Null
     Start-Sleep -Milliseconds 150
-    $enterHideQuery = if ([string]::IsNullOrWhiteSpace($NavigationQuery)) { "wab" } else { $NavigationQuery }
+    $enterHideQuery = "recyclebin"
     $shell.SendKeys($enterHideQuery)
     Start-Sleep -Seconds 2
     $queryMemory = Get-MemorySnapshot $process.Id
@@ -326,6 +326,7 @@ try {
     # The WAB query exercises long App Paths and duplicate application-like entries.
     # Enter must execute the selected normal result and hide the launcher.
     $shell.SendKeys("{HOME}")
+    $shell.SendKeys("{DOWN}")
     Start-Sleep -Milliseconds 350
     Save-Screenshot "keyboard-selection.png"
     [FluxWallpaper]::SetForegroundWindow($launcherHandle) | Out-Null
