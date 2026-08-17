@@ -1396,6 +1396,14 @@ unsafe extern "system" fn wnd_proc(
                 .and_then(|s| s.hotkeys.as_mut())
                 .and_then(|hs| hs.dispatch(wparam.0));
             run_window_op(hwnd, op);
+            // A global hotkey executes the window operation directly rather than
+            // through the deferred app-effects path, so drain cursor requests
+            // queued by the activation/show callback here as well.
+            let cursor_visibility =
+                state_from(hwnd).and_then(|state| state.handler.take_cursor_visibility_request());
+            if cursor_visibility.is_some() {
+                apply_current_cursor(hwnd);
+            }
             LRESULT(0)
         }
         tray::WM_TRAYICON => {
