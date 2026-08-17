@@ -653,6 +653,7 @@ fn alt_key_is_down() -> bool {
 
 #[cfg(windows)]
 static SHELL_ICON_CACHE: OnceLock<Mutex<HashMap<String, Option<Vec<u8>>>>> = OnceLock::new();
+static SETTINGS_SAVE_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
 
 #[cfg(windows)]
 fn shell_icon_rgba(target: &str) -> Option<Vec<u8>> {
@@ -879,6 +880,29 @@ fn launcher_theme() -> Theme {
     theme
 }
 
+fn settings_save_lock() -> &'static Mutex<()> {
+    SETTINGS_SAVE_LOCK.get_or_init(|| Mutex::new(()))
+}
+
+fn save_settings(settings: &Settings) -> bool {
+    let Ok(_save_guard) = settings_save_lock().lock() else {
+        return false;
+    };
+    settings.save().is_ok()
+}
+
+fn save_settings_async(settings: &Arc<RwLock<Settings>>) {
+    let settings = Arc::clone(settings);
+    let _ = std::thread::Builder::new()
+        .name(String::from("flux-settings-save"))
+        .spawn(move || {
+            // Read the latest settings snapshot after waiting for any mutation.
+            if let Ok(settings_guard) = settings.read() {
+                let _ = save_settings(&settings_guard);
+            }
+        });
+}
+
 fn record_query_history(
     settings: &Arc<RwLock<Settings>>,
     history: &Rc<RefCell<Vec<String>>>,
@@ -891,7 +915,9 @@ fn record_query_history(
         return;
     }
     *history.borrow_mut() = settings_guard.query_history.clone();
-    let _ = settings_guard.save();
+    drop(settings_guard);
+    // Keep Enter→hide free of synchronous filesystem I/O.
+    save_settings_async(settings);
 }
 
 fn set_result_priority(
@@ -914,7 +940,7 @@ fn set_result_priority(
         target: target.to_owned(),
     });
     let entries = settings_guard.priority_entries.clone();
-    let saved = settings_guard.save().is_ok();
+    let saved = save_settings(&settings_guard);
     if saved {
         priorities.set(entries);
     }
@@ -933,7 +959,7 @@ fn remove_priority_entry(
         return false;
     }
     let entries = settings_guard.priority_entries.clone();
-    let saved = settings_guard.save().is_ok();
+    let saved = save_settings(&settings_guard);
     if saved {
         priorities.set(entries);
     }
@@ -960,7 +986,7 @@ fn move_priority_entry(
         return false;
     }
     let entries = settings_guard.priority_entries.clone();
-    let saved = settings_guard.save().is_ok();
+    let saved = save_settings(&settings_guard);
     if saved {
         priorities.set(entries);
     }
@@ -977,7 +1003,7 @@ fn set_game_mode(
         settings.game_mode = enabled;
         game_mode.set(enabled);
         status.set(game_mode_label(enabled));
-        let _ = settings.save();
+        let _ = save_settings(&settings);
     }
 }
 
@@ -2467,7 +2493,7 @@ fn main() {
                             .child(Element::button("Clear history").on_click(move |ctx| {
                                 if let Ok(mut settings) = settings_for_clear_history.write() {
                                     settings.clear_query_history();
-                                    let _ = settings.save();
+                                    let _ = save_settings(&settings);
                                 }
                                 history_for_clear.borrow_mut().clear();
                                 history_cursor_for_clear.set(None);
@@ -2543,7 +2569,7 @@ fn main() {
                                         "Everything auto-enable is disabled in Flux settings",
                                     ));
                                 }
-                                let _ = settings.save();
+                                let _ = save_settings(&settings);
                             }
                             settings_visible_for_apply.set(false);
                             let selected_preference = monitor_preference_from_index(monitor_preference.get());
