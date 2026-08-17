@@ -1925,6 +1925,14 @@ pub(crate) fn show_and_activate(hwnd: HWND) {
         if let Some(state) = state_from(hwnd) {
             state.handler.on_window_show();
         }
+        // Apply the show request at the visibility transition itself. This is
+        // intentionally before the first nested paint so an activation cannot
+        // inherit the hidden cursor state from the previous query session.
+        let cursor_visibility =
+            state_from(hwnd).and_then(|state| state.handler.take_cursor_visibility_request());
+        if cursor_visibility == Some(true) {
+            apply_cursor(CursorShape::Arrow);
+        }
         if let Some(state) = state_from(hwnd) {
             let _guard = super::EventDispatchGuard::enter();
             let _ = state.handler.on_key(crate::event::KeyEvent {
