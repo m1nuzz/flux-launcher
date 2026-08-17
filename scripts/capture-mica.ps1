@@ -285,6 +285,13 @@ try {
         throw "Repeated Alt+Space moved the launcher vertically: $($repeatedHotkeyYPositions -join ', ')"
     }
 
+    # The first re-show clears the query by design. Restore a non-empty query
+    # before testing normal Enter execution and hide-after-launch behavior.
+    [FluxWallpaper]::SetForegroundWindow($launcherHandle) | Out-Null
+    $shell.SendKeys("^a")
+    $shell.SendKeys($enterHideQuery)
+    Start-Sleep -Seconds 2
+
     if ($PointerInteractionSmoke) {
         $launcherRect = New-Object FluxWallpaper+RECT
         if (![FluxWallpaper]::GetWindowRect($launcherHandle, [ref]$launcherRect)) {
