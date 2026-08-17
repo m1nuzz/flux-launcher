@@ -11,6 +11,7 @@ param(
     [switch]$EverythingMissingSmoke,
     [switch]$RecycleBinSmoke,
     [switch]$CursorVisibilitySmoke,
+    [switch]$ScrollbarGapSmoke,
     [string]$NavigationQuery = "wab",
 
     [int]$NavigationCycles = 0,
@@ -276,6 +277,7 @@ try {
     $cursorVisibleOnActivation = [FluxWallpaper]::IsCursorVisible()
     $cursorHiddenAfterTyping = $false
     $cursorVisibleAfterMove = $false
+    $scrollbarGapProbe = $false
     if ($CursorVisibilitySmoke) {
         $shell.SendKeys("x")
         Start-Sleep -Milliseconds 500
@@ -345,6 +347,19 @@ try {
         Save-Screenshot "pointer-wheel-scroll.png"
         [FluxWallpaper]::SetCursorPos($resultX, $firstResultY) | Out-Null
         Start-Sleep -Milliseconds 300
+    }
+    if ($ScrollbarGapSmoke) {
+        $launcherRect = New-Object FluxWallpaper+RECT
+        if (![FluxWallpaper]::GetWindowRect($launcherHandle, [ref]$launcherRect)) {
+            throw "Unable to locate launcher rectangle for scrollbar gap smoke."
+        }
+        $scrollX = $launcherRect.Right - 20
+        $scrollY = $launcherRect.Top + 180
+        [FluxWallpaper]::SetCursorPos($scrollX, $scrollY) | Out-Null
+        [FluxWallpaper]::mouse_event(0x0800, 0, 0, [uint32]4294966816, [UIntPtr]::Zero)
+        Start-Sleep -Milliseconds 600
+        Save-Screenshot "scrollbar-gap.png"
+        $scrollbarGapProbe = Test-Path (Join-Path $OutputDirectory "scrollbar-gap.png")
     }
     if ($TabNavigationCycles -gt 0) {
         for ($cycle = 1; $cycle -le $TabNavigationCycles; $cycle++) {
@@ -516,6 +531,7 @@ try {
         PointerHoverProbe = [bool]$PointerInteractionSmoke
         PointerWheelProbe = [bool]$PointerInteractionSmoke
         PointerClickProbe = [bool]$PointerInteractionSmoke
+        ScrollbarGapProbe = (!$ScrollbarGapSmoke) -or $scrollbarGapProbe
         TabNavigationProbe = $TabNavigationCycles -gt 0
         EverythingSyntaxProbe = $true
         HistoryPanelProbe = $true

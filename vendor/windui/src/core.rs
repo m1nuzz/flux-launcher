@@ -49,6 +49,9 @@ pub mod scrollbar {
     pub const MARGIN: f32 = 3.0;
     /// 滑块最小高度：内容极长时不至于缩成一个点而抓不住。
     pub const MIN_THUMB: f32 = 24.0;
+    /// Content-to-scrollbar visual gap. This is reserved in child layout while
+    /// the track stays at the container edge, so cards no longer touch the thumb.
+    pub const CONTENT_GAP: i32 = 6;
     /// 命中区宽度：比视觉宽度宽一倍有余，容忍手抖。
     pub const HIT_W: i32 = 16;
 
@@ -68,7 +71,7 @@ pub mod scrollbar {
 
     /// 滚动条在容器内实际占用的水平宽度（含内缩）。arrange 据此为内容让位。
     pub fn occupied_w(edge_inset: i32) -> i32 {
-        (TRACK_W + MARGIN) as i32 + edge_inset
+        (TRACK_W + MARGIN) as i32 + CONTENT_GAP + edge_inset
     }
 
     /// 滑块高度。绘制与拖动换算必须同源——否则拖起来会"跟不上鼠标"。
@@ -3369,10 +3372,20 @@ mod tests {
     fn scroll_content_width_reserves_room_for_inset_scrollbar() {
         let (tree, sid) = scroll_tree_of_width(200, 200);
         let child = tree.get(sid).unwrap().children[0];
+        let child_bounds = tree.get(child).unwrap().bounds;
         assert_eq!(
-            tree.get(child).unwrap().bounds.w,
+            child_bounds.w,
             200 - scrollbar::occupied_w(scrollbar::WINDOW_EDGE_INSET),
             "贴边容器内容宽须让出滚动条 + 内缩量"
+        );
+        let scrollbar_left = 200
+            - scrollbar::WINDOW_EDGE_INSET
+            - scrollbar::MARGIN as i32
+            - scrollbar::TRACK_W as i32;
+        assert_eq!(
+            scrollbar_left - child_bounds.right(),
+            scrollbar::CONTENT_GAP,
+            "content must have a deliberate visual gap before the scrollbar"
         );
         let (tree, sid) = scroll_tree_of_width(200, 100);
         let child = tree.get(sid).unwrap().children[0];
