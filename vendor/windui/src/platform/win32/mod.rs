@@ -1946,6 +1946,9 @@ pub(crate) fn show_and_activate(hwnd: HWND) {
         // Force the first visible D2D frame synchronously. Without this, a hidden
         // DirectComposition surface may not be presented until the next query edit.
         let _ = UpdateWindow(hwnd);
+        // Nested activation/paint messages may have refreshed the class cursor;
+        // reapply the logical cursor state after the complete show transition.
+        apply_current_cursor(hwnd);
     }
 }
 
