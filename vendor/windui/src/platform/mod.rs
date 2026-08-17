@@ -282,6 +282,9 @@ pub struct WindowConfig {
     pub bg: Color,
     /// 窗口居中显示。
     pub centered: bool,
+    /// Optional initial logical top-left screen position. Platform backends may
+    /// use this instead of centering when the window is first created.
+    pub initial_position: Option<(i32, i32)>,
     /// 允许用户调整窗口大小（默认 true）。
     pub resizable: bool,
     /// 截屏模式：渲染一帧离屏存 PNG 后立即退出，不创建窗口。
@@ -327,6 +330,7 @@ impl Default for WindowConfig {
             height: 600,
             bg: Color::hex(0xF3F3F3),
             centered: false,
+            initial_position: None,
             resizable: true,
             screenshot: None,
             screenshot_scale: 1.0,
@@ -464,7 +468,10 @@ pub trait AppHandler {
     fn take_window_size_request(&mut self) -> Option<(i32, i32)> {
         None
     }
-
+    /// Take the most recent requested logical top-left window position.
+    fn take_window_position_request(&mut self) -> Option<(i32, i32)> {
+        None
+    }
     /// 注册的定时器间隔（平台据此 SetTimer/NSTimer）。无则空。
     fn intervals(&self) -> Vec<std::time::Duration> {
         Vec::new()

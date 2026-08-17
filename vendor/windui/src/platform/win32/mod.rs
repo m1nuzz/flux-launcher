@@ -945,14 +945,17 @@ unsafe fn run_windowed(
         }
     }
 
-    // 居中窗口
-    if cfg.centered {
+    // Apply an explicit initial position before the first ShowWindow. This is used by
+    // launcher monitor preferences; the legacy primary-screen centering remains the fallback.
+    let mut rc = RECT::default();
+    let _ = GetWindowRect(hwnd, &mut rc);
+    let win_w = rc.right - rc.left;
+    let win_h = rc.bottom - rc.top;
+    if let Some((x, y)) = cfg.initial_position {
+        let _ = SetWindowPos(hwnd, None, x, y, 0, 0, SWP_NOZORDER | SWP_NOSIZE);
+    } else if cfg.centered {
         let screen_w = GetSystemMetrics(SM_CXSCREEN);
         let screen_h = GetSystemMetrics(SM_CYSCREEN);
-        let mut rc = RECT::default();
-        let _ = GetWindowRect(hwnd, &mut rc);
-        let win_w = rc.right - rc.left;
-        let win_h = rc.bottom - rc.top;
         let x = (screen_w - win_w) / 2;
         let y = (screen_h - win_h) / 2;
         let _ = SetWindowPos(hwnd, None, x, y, 0, 0, SWP_NOZORDER | SWP_NOSIZE);
@@ -1627,21 +1630,24 @@ unsafe fn handle_nchittest(hwnd: HWND, lparam: LPARAM) -> LRESULT {
 /// 两段式：`state_from` 的借用在取出 op 的那条语句结束时即释放，随后 `run_window_op`
 /// 里的 OS 调用才可能重入 `wnd_proc`（铁律 6）。
 unsafe fn apply_window_op(hwnd: HWND) {
-    let (op, size_request) = state_from(hwnd)
+    let (op, size_request, position_request) = state_from(hwnd)
         .map(|s| {
             (
                 s.handler.take_window_op(),
                 s.handler.take_window_size_request(),
+                s.handler.take_window_position_request(),
             )
         })
-        .unwrap_or((None, None));
+        .unwrap_or((None, None, None));
     run_window_op(hwnd, op);
+    let repositioned = position_request.is_some();
+    run_window_position_request(hwnd, position_request);
     let resized = size_request.is_some();
     run_window_size_request(hwnd, size_request);
     // A resize after a visible show invalidates the old swap-chain frame. Queue
     // one more paint after SetWindowPos so transparent D2D content is presented
     // at the new size instead of appearing only after the next query edit.
-    if resized && IsWindowVisible(hwnd).as_bool() {
+    if (resized || repositioned) && IsWindowVisible(hwnd).as_bool() {
         let _ = InvalidateRect(Some(hwnd), None, false);
     }
     // 运行期热键操作与窗口操作同点消费（HotkeyHandle 排队 → 此处落地）。
@@ -1675,6 +1681,21 @@ unsafe fn run_window_size_request(hwnd: HWND, request: Option<(i32, i32)>) {
     );
 }
 
+/// Applies a queued native screen position after all handler borrows are released.
+unsafe fn run_window_position_request(hwnd: HWND, request: Option<(i32, i32)>) {
+    let Some((x, y)) = request else {
+        return;
+    };
+    let _ = SetWindowPos(
+        hwnd,
+        None,
+        x,
+        y,
+        0,
+        0,
+        SWP_NOZORDER | SWP_NOACTIVATE | SWP_NOSIZE,
+    );
+}
 /// 消费运行期热键操作队列（改绑/启停），落地到 `HotkeyState`.
 /// 先经 handler 取队列（借 handler 字段），再对 hotkeys 字段执行——同一
 /// `WindowState` 的两个字段序贯借用，无别名。

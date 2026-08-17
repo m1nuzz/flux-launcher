@@ -43,6 +43,11 @@ on:
         required: false
         default: false
         type: boolean
+      monitor_preference_smoke:
+        description: "Run Primary/Cursor/Foreground monitor placement smoke"
+        required: false
+        default: false
+        type: boolean
   push:
     branches: [main]
 
@@ -104,6 +109,11 @@ jobs:
             $captureParams.TraySettingsSmoke = $true
           }
           & ./scripts/capture-mica.ps1 @captureParams
+
+      - name: Test monitor preference modes
+        if: ${{ inputs.monitor_preference_smoke == true || github.event_name == 'push' }}
+        shell: pwsh
+        run: ./scripts/monitor-preference-smoke.ps1 -Executable ./target/x86_64-pc-windows-msvc/release/flux-launcher.exe -OutputDirectory ./artifacts/mica-smoke
 
       - name: Upload visual evidence
         uses: actions/upload-artifact@v4

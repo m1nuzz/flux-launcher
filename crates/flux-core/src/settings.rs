@@ -42,6 +42,17 @@ impl Default for HotkeyConfig {
     }
 }
 
+#[derive(Clone, Copy, Debug, Default, Deserialize, PartialEq, Eq, Serialize)]
+pub enum MonitorPreference {
+    #[default]
+    #[serde(rename = "primary")]
+    Primary,
+    #[serde(rename = "cursor")]
+    Cursor,
+    #[serde(rename = "foreground")]
+    Foreground,
+}
+
 #[derive(Clone, Debug, Deserialize, PartialEq, Eq, Serialize)]
 #[serde(default)]
 pub struct Settings {
@@ -62,6 +73,8 @@ pub struct Settings {
     pub clear_query_on_activation: bool,
     #[serde(default = "enabled_by_default")]
     pub auto_enable_everything: bool,
+    #[serde(default)]
+    pub monitor_preference: MonitorPreference,
     #[serde(default = "default_caret_duration")]
     pub smooth_caret_duration_ms: u16,
     #[serde(default)]
@@ -80,6 +93,7 @@ impl Default for Settings {
             custom_selection_color: default_selection_color(),
             clear_query_on_activation: true,
             auto_enable_everything: true,
+            monitor_preference: MonitorPreference::default(),
             smooth_caret_duration_ms: DEFAULT_CARET_DURATION_MS,
             query_history: Vec::new(),
         }
@@ -208,6 +222,7 @@ mod tests {
         assert_eq!(settings.custom_selection_color, 0x4c8bf4);
         assert!(settings.clear_query_on_activation);
         assert!(settings.auto_enable_everything);
+        assert_eq!(settings.monitor_preference, MonitorPreference::Primary);
         assert_eq!(settings.smooth_caret_duration_ms, DEFAULT_CARET_DURATION_MS);
     }
 
@@ -230,12 +245,22 @@ mod tests {
             custom_selection_color: 0x12ab34,
             clear_query_on_activation: false,
             auto_enable_everything: false,
+            monitor_preference: MonitorPreference::Foreground,
             smooth_caret_duration_ms: 120,
             query_history: vec![String::from("steam"), String::from("ext:zip")],
         };
 
         expected.save_to(&path).unwrap();
         assert_eq!(Settings::load_from(&path).unwrap(), expected);
+        fs::remove_file(path).unwrap();
+    }
+
+    #[test]
+    fn missing_monitor_preference_uses_primary_default() {
+        let path = temporary_path("settings-monitor-default");
+        fs::write(&path, r#"{"activation_hotkey":{"key":"Space"}}"#).unwrap();
+        let settings = Settings::load_from(&path).unwrap();
+        assert_eq!(settings.monitor_preference, MonitorPreference::Primary);
         fs::remove_file(path).unwrap();
     }
 

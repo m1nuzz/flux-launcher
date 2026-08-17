@@ -13,4 +13,4 @@ pub use game_mode::{
 pub use search::{
     history_results, rank_results, ResultKind, ResultSource, SearchModel, SearchResult,
 };
-pub use settings::{HotkeyConfig, Settings};
+pub use settings::{HotkeyConfig, MonitorPreference, Settings};

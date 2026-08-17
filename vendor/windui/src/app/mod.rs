@@ -221,6 +221,24 @@ impl WindowSizeHandle {
     }
 }
 
+/// A runtime handle for requesting the native window's top-left screen position.
+///
+/// Coordinates use the platform's native screen coordinate space. Position requests are
+/// consumed by the platform after event dispatch, matching `WindowSizeHandle` and avoiding
+/// native window-procedure reentrancy from callbacks.
+#[derive(Clone)]
+pub struct WindowPositionHandle {
+    queue: Rc<RefCell<Option<(i32, i32)>>>,
+}
+
+impl WindowPositionHandle {
+    /// Request a top-left position in native screen coordinates for the current window.
+    pub fn set(&self, x: i32, y: i32) {
+        *self.queue.borrow_mut() = Some((x, y));
+        crate::anim::request_repaint();
+    }
+}
+
 pub struct App {
     cfg: WindowConfig,
     render: Option<RenderClosure>,
@@ -248,6 +266,8 @@ pub struct App {
     hotkey_ops: Rc<RefCell<Vec<(usize, crate::event::HotkeyOp)>>>,
     /// Pending logical client-area size requested through `WindowSizeHandle`.
     window_size_ops: Rc<RefCell<Option<(i32, i32)>>>,
+    /// Pending logical top-left position requested through `WindowPositionHandle`.
+    window_position_ops: Rc<RefCell<Option<(i32, i32)>>>,
 }
 
 impl App {
@@ -259,6 +279,7 @@ impl App {
                 height,
                 bg: Color::hex(0xF3F3F3),
                 centered: false,
+                initial_position: None,
                 resizable: true,
                 screenshot: None,
                 screenshot_scale: 1.0,
@@ -292,6 +313,7 @@ impl App {
             bg_explicit: false,
             hotkey_ops: Rc::new(RefCell::new(Vec::new())),
             window_size_ops: Rc::new(RefCell::new(None)),
+            window_position_ops: Rc::new(RefCell::new(None)),
         }
     }
 
@@ -326,6 +348,12 @@ impl App {
     /// 窗口居中显示。
     pub fn centered(mut self) -> Self {
         self.cfg.centered = true;
+        self
+    }
+
+    /// Set the initial top-left position in native screen coordinates.
+    pub fn position(mut self, x: i32, y: i32) -> Self {
+        self.cfg.initial_position = Some((x, y));
         self
     }
 
@@ -533,6 +561,13 @@ impl App {
     pub fn window_size_handle(&mut self) -> WindowSizeHandle {
         WindowSizeHandle {
             queue: self.window_size_ops.clone(),
+        }
+    }
+
+    /// Return a runtime handle for requesting the native window position.
+    pub fn window_position_handle(&mut self) -> WindowPositionHandle {
+        WindowPositionHandle {
+            queue: self.window_position_ops.clone(),
         }
     }
 
@@ -779,6 +814,7 @@ impl App {
                 !self.bg_explicit,
                 self.hotkey_ops.clone(),
                 self.window_size_ops.clone(),
+                self.window_position_ops.clone(),
                 self.pumps,
                 self.intervals,
                 self.close_handler,
@@ -808,6 +844,7 @@ impl App {
             !self.bg_explicit,
             self.hotkey_ops.clone(),
             self.window_size_ops.clone(),
+            self.window_position_ops.clone(),
             self.pumps,
             self.intervals,
             self.close_handler,
@@ -941,6 +978,8 @@ struct UiHost {
     hotkey_ops: Rc<RefCell<Vec<(usize, crate::event::HotkeyOp)>>>,
     /// Runtime logical client-area size requests consumed by the platform.
     window_size_ops: Rc<RefCell<Option<(i32, i32)>>>,
+    /// Runtime logical top-left position requests consumed by the platform.
+    window_position_ops: Rc<RefCell<Option<(i32, i32)>>>,
     /// 一次「按下关闭浮层」后，吞掉随之而来的 Up：避免该 Up 下发到控件树重新激活
     /// 浮层下方控件（典型：下拉按钮点一下又弹一遍——Down 关、Up 再开）。
     swallow_up: bool,
@@ -1070,6 +1109,7 @@ impl UiHost {
         bg_follows_theme: bool,
         hotkey_ops: Rc<RefCell<Vec<(usize, crate::event::HotkeyOp)>>>,
         window_size_ops: Rc<RefCell<Option<(i32, i32)>>>,
+        window_position_ops: Rc<RefCell<Option<(i32, i32)>>>,
         pumps: Vec<ChannelPump>,
         intervals: Vec<(std::time::Duration, AppCallback)>,
         close_handler: Option<CloseHandler>,
@@ -1108,6 +1148,7 @@ impl UiHost {
             bg_follows_theme,
             hotkey_ops,
             window_size_ops,
+            window_position_ops,
             swallow_up: false,
             pumps,
             interval_cbs,
@@ -1575,7 +1616,9 @@ impl AppHandler for UiHost {
     fn take_window_size_request(&mut self) -> Option<(i32, i32)> {
         self.window_size_ops.borrow_mut().take()
     }
-
+    fn take_window_position_request(&mut self) -> Option<(i32, i32)> {
+        self.window_position_ops.borrow_mut().take()
+    }
     fn on_close_request(&mut self) -> bool {
         self.resolve_close()
     }

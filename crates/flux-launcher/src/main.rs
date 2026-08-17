@@ -7,6 +7,7 @@ mod fullscreen;
 mod hotkeys;
 mod keyboard_layout;
 mod launch;
+mod monitor;
 mod plugins;
 
 use std::cell::{Cell, RefCell};
@@ -18,11 +19,11 @@ use std::time::Duration;
 use applications::{ApplicationResponse, ApplicationWorker};
 use everything::{EverythingResponse, EverythingWorker, InstallationState};
 use flux_core::{
-    history_results, rank_results, should_suppress_activation, HotkeyConfig, ResultKind,
-    SearchModel, SearchResult, Settings,
+    history_results, rank_results, should_suppress_activation, HotkeyConfig, MonitorPreference,
+    ResultKind, SearchModel, SearchResult, Settings,
 };
 use plugins::{FlowPluginWorker, PluginInvocation, PluginQueryResponse};
-use windui::app::WindowSizeHandle;
+use windui::app::{WindowPositionHandle, WindowSizeHandle};
 use windui::core::{ClickFn, ClipboardProvider, EventCtx, Widget};
 use windui::event::{Event, Key, KeyEvent, MouseButton, PointerKind};
 use windui::prelude::*;
@@ -42,6 +43,33 @@ const SEARCH_INTERVAL: Duration = Duration::from_millis(40);
 const EVERYTHING_MIN_QUERY_LEN: usize = 1;
 const PLUGIN_MIN_QUERY_LEN: usize = 2;
 const MAX_VISIBLE_RESULTS: usize = 16;
+
+fn monitor_preference_index(preference: MonitorPreference) -> usize {
+    match preference {
+        MonitorPreference::Primary => 0,
+        MonitorPreference::Cursor => 1,
+        MonitorPreference::Foreground => 2,
+    }
+}
+
+fn monitor_preference_from_index(index: usize) -> MonitorPreference {
+    match index {
+        1 => MonitorPreference::Cursor,
+        2 => MonitorPreference::Foreground,
+        _ => MonitorPreference::Primary,
+    }
+}
+
+fn request_monitor_position(
+    position: &WindowPositionHandle,
+    preference: MonitorPreference,
+    width: i32,
+    height: i32,
+) {
+    if let Some((x, y)) = monitor::centered_position(preference, width, height) {
+        position.set(x, y);
+    }
+}
 
 #[derive(Default)]
 struct ProviderResults {
@@ -960,6 +988,16 @@ fn main() {
     let custom_selection_color = signal(selection_color_hex(settings.custom_selection_color));
     let clear_query_on_activation = signal(settings.clear_query_on_activation);
     let auto_enable_everything = signal(settings.auto_enable_everything);
+    let initial_monitor_preference = std::env::var("FLUX_SMOKE_MONITOR_PREFERENCE")
+        .ok()
+        .and_then(|value| match value.to_ascii_lowercase().as_str() {
+            "primary" => Some(MonitorPreference::Primary),
+            "cursor" => Some(MonitorPreference::Cursor),
+            "foreground" => Some(MonitorPreference::Foreground),
+            _ => None,
+        })
+        .unwrap_or(settings.monitor_preference);
+    let monitor_preference = signal(monitor_preference_index(initial_monitor_preference));
     let initial_everything_state = everything::installation_state();
     let everything_installed = signal(initial_everything_state.is_installed());
     let everything_status = signal(if everything_installed.get() {
@@ -1170,7 +1208,13 @@ fn main() {
     let window_icon = tray_icon();
     let mut app =
         App::new("Flux Launcher", initial_width, initial_height).icon_rgba(16, 16, &window_icon);
+    if let Some((x, y)) =
+        monitor::centered_position(initial_monitor_preference, initial_width, initial_height)
+    {
+        app = app.position(x, y);
+    }
     let window_size = app.window_size_handle();
+    let window_position = app.window_position_handle();
     *action_window_slot.borrow_mut() = Some(window_size.clone());
     let size_for_interval = window_size.clone();
     let size_for_visibility = window_size.clone();
@@ -1338,12 +1382,32 @@ fn main() {
     let plugin_worker = FlowPluginWorker::spawn(plugin_sender);
 
     let settings_for_activation = Arc::clone(&shared_settings);
+    let position_for_activation = window_position.clone();
+    let show_results_for_activation = show_results;
+    let settings_visible_for_activation = settings_visible;
     let activation_handle = app.hotkey_handle(activation_hotkey, move |ctx| {
         let settings = settings_for_activation
             .read()
             .map(|settings| settings.clone())
             .unwrap_or_default();
         if !should_suppress_activation(&settings, fullscreen::foreground_is_fullscreen()) {
+            let height = if settings_visible_for_activation.get() {
+                SETTINGS_WINDOW_HEIGHT
+            } else if show_results_for_activation.get() {
+                EXPANDED_WINDOW_HEIGHT
+            } else {
+                COMPACT_WINDOW_HEIGHT
+            };
+            request_monitor_position(
+                &position_for_activation,
+                settings.monitor_preference,
+                if settings_visible_for_activation.get() {
+                    SETTINGS_WINDOW_WIDTH
+                } else {
+                    WINDOW_WIDTH
+                },
+                height,
+            );
             ctx.toggle_window();
         }
     });
@@ -1671,39 +1735,65 @@ fn main() {
     let settings_visible_for_left_click = settings_visible;
     let show_results_for_left_click = show_results;
     let size_for_left_click = window_size.clone();
+    let position_for_left_click = window_position.clone();
+    let settings_for_left_click = Arc::clone(&shared_settings);
     let show_results_for_tray = show_results;
     let size_for_tray = window_size.clone();
+    let position_for_tray = window_position.clone();
+    let settings_for_tray_position = Arc::clone(&shared_settings);
     let size_for_settings = window_size.clone();
+    let position_for_settings = window_position.clone();
+    let settings_for_settings_position = Arc::clone(&shared_settings);
     let tray = Tray::new()
         .tooltip("Flux Launcher")
         .icon_rgba(16, 16, &tray_icon())
         .on_left_click(move |ctx| {
             settings_visible_for_left_click.set(false);
-            size_for_left_click.set(
-                WINDOW_WIDTH,
-                if show_results_for_left_click.get() {
-                    EXPANDED_WINDOW_HEIGHT
-                } else {
-                    COMPACT_WINDOW_HEIGHT
-                },
-            );
+            let height = if show_results_for_left_click.get() {
+                EXPANDED_WINDOW_HEIGHT
+            } else {
+                COMPACT_WINDOW_HEIGHT
+            };
+            if let Ok(settings) = settings_for_left_click.read() {
+                request_monitor_position(
+                    &position_for_left_click,
+                    settings.monitor_preference,
+                    WINDOW_WIDTH,
+                    height,
+                );
+            }
+            size_for_left_click.set(WINDOW_WIDTH, height);
             ctx.show_window();
         })
         .menu(vec![
             TrayMenuItem::item("Show launcher", move |ctx| {
                 settings_visible_for_tray.set(false);
-                size_for_tray.set(
-                    WINDOW_WIDTH,
-                    if show_results_for_tray.get() {
-                        EXPANDED_WINDOW_HEIGHT
-                    } else {
-                        COMPACT_WINDOW_HEIGHT
-                    },
-                );
+                let height = if show_results_for_tray.get() {
+                    EXPANDED_WINDOW_HEIGHT
+                } else {
+                    COMPACT_WINDOW_HEIGHT
+                };
+                if let Ok(settings) = settings_for_tray_position.read() {
+                    request_monitor_position(
+                        &position_for_tray,
+                        settings.monitor_preference,
+                        WINDOW_WIDTH,
+                        height,
+                    );
+                }
+                size_for_tray.set(WINDOW_WIDTH, height);
                 ctx.show_window();
             }),
             TrayMenuItem::item("Settings", move |ctx| {
                 settings_visible.set(true);
+                if let Ok(settings) = settings_for_settings_position.read() {
+                    request_monitor_position(
+                        &position_for_settings,
+                        settings.monitor_preference,
+                        SETTINGS_WINDOW_WIDTH,
+                        SETTINGS_WINDOW_HEIGHT,
+                    );
+                }
                 // show_window invokes on_window_show, which clears the normal
                 // launcher state. Apply the Settings size after that lifecycle
                 // callback so it cannot overwrite the 520px panel height.
@@ -1725,6 +1815,7 @@ fn main() {
         ]);
 
     let settings_for_apply = Arc::clone(&shared_settings);
+    let position_for_apply = window_position.clone();
     let activation_handle_for_apply = activation_handle.clone();
     let game_mode_status_for_apply = game_mode_status;
     let settings_visible_for_apply = settings_visible;
@@ -1834,6 +1925,26 @@ fn main() {
                             clear_query_on_activation,
                         ),
                     ))
+                    .child(Element::field(
+                        "Open launcher on",
+                        Element::col()
+                            .spacing(6)
+                            .child(Element::radio(
+                                "Primary display",
+                                monitor_preference,
+                                0,
+                            ))
+                            .child(Element::radio(
+                                "Display with the mouse cursor",
+                                monitor_preference,
+                                1,
+                            ))
+                            .child(Element::radio(
+                                "Display with the focused window",
+                                monitor_preference,
+                                2,
+                            )),
+                    ))
                     .child(
                         Element::col()
                             .width_match()
@@ -1939,6 +2050,7 @@ fn main() {
                                 settings.custom_selection_color = custom_color;
                                 settings.clear_query_on_activation = clear_query_on_activation.get();
                                 settings.auto_enable_everything = auto_enable_everything_for_apply.get();
+                                settings.monitor_preference = monitor_preference_from_index(monitor_preference.get());
                                 settings.smooth_caret_duration_ms = duration;
                                 settings.normalize();
                                 selection_color.set(selection_color_for_settings(&settings));
@@ -1970,6 +2082,17 @@ fn main() {
                                 let _ = settings.save();
                             }
                             settings_visible_for_apply.set(false);
+                            let selected_preference = monitor_preference_from_index(monitor_preference.get());
+                            request_monitor_position(
+                                &position_for_apply,
+                                selected_preference,
+                                WINDOW_WIDTH,
+                                if show_results.get() {
+                                    EXPANDED_WINDOW_HEIGHT
+                                } else {
+                                    COMPACT_WINDOW_HEIGHT
+                                },
+                            );
                             size_for_apply.set(
                                 WINDOW_WIDTH,
                                 if show_results.get() {
