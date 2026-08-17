@@ -253,7 +253,8 @@ try {
     Start-Sleep -Milliseconds 300
     [FluxWallpaper]::SetForegroundWindow($launcherHandle) | Out-Null
     Start-Sleep -Milliseconds 150
-    $shell.SendKeys($NavigationQuery)
+    $enterHideQuery = if ([string]::IsNullOrWhiteSpace($NavigationQuery)) { "wab" } else { $NavigationQuery }
+    $shell.SendKeys($enterHideQuery)
     Start-Sleep -Seconds 2
     $queryMemory = Get-MemorySnapshot $process.Id
     Save-Screenshot "everything-fallback.png"
@@ -496,6 +497,7 @@ try {
         ActionModeProbe = $true
         EnterActionProbe = $true
         EnterLaunchHideProbe = $enterLaunchHidden
+        EnterHideQuery = $enterHideQuery
         Memory = [ordered]@{
             Idle = $idleMemory
             Query = $queryMemory
