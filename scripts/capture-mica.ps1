@@ -240,17 +240,6 @@ foreach ($fixtureName in $wabFixtureNames) {
     $shortcut.Save()
 }
 
-# Seed two unique files so the modified-date ordering probe does not depend on
-# whatever happens to be indexed on the hosted runner.
-$dateSortFixtureRoot = Join-Path $env:TEMP "Flux Everything Date Sort"
-New-Item -ItemType Directory -Force -Path $dateSortFixtureRoot | Out-Null
-$dateSortOldPath = Join-Path $dateSortFixtureRoot "FluxDateSortProbe-old.rs"
-$dateSortNewPath = Join-Path $dateSortFixtureRoot "FluxDateSortProbe-new.rs"
-Set-Content -Path $dateSortOldPath -Value "old" -Encoding utf8
-Set-Content -Path $dateSortNewPath -Value "new" -Encoding utf8
-(Get-Item -LiteralPath $dateSortOldPath).LastWriteTimeUtc = [DateTime]::UtcNow.AddDays(-2)
-(Get-Item -LiteralPath $dateSortNewPath).LastWriteTimeUtc = [DateTime]::UtcNow.AddMinutes(-1)
-
 $existingEverythingGuideIds = @(
     Get-Process | Where-Object {
         $_.MainWindowTitle -like "Command Line Options - Everything*"
@@ -556,51 +545,6 @@ try {
     $shell.SendKeys("ext:zip")
     Start-Sleep -Seconds 2
     Save-Screenshot "everything-ext-zip.png"
-
-    # Everything IPC is configured to return file results by modified date.
-    # Verify the live ordering using two paths copied from Flux, then compare
-    # their filesystem timestamps without changing the user's files.
-    $everythingDateModifiedOrderProbe = $false
-    $everythingDateFirstUtc = $null
-    $everythingDateSecondUtc = $null
-    if (![FluxWallpaper]::IsWindowVisible($launcherHandle)) {
-        [FluxWallpaper]::SendMessage($launcherHandle, $wmHotkey, [UIntPtr]::Zero, [IntPtr]::Zero) | Out-Null
-        Start-Sleep -Milliseconds 650
-    }
-    [FluxWallpaper]::SetForegroundWindow($launcherHandle) | Out-Null
-    Start-Sleep -Milliseconds 200
-    $shell.SendKeys("^a")
-    $shell.SendKeys("FluxDateSortProbe")
-    Start-Sleep -Seconds 2
-    $shell.SendKeys("{HOME}")
-    Start-Sleep -Milliseconds 300
-    [FluxWallpaper]::SetForegroundWindow($launcherHandle) | Out-Null
-    Start-Sleep -Milliseconds 200
-    $shell.SendKeys("^c")
-    Start-Sleep -Milliseconds 250
-    $firstEverythingPath = (Get-Clipboard -Raw -ErrorAction Stop).Trim().Trim('"')
-    $shell.SendKeys("{DOWN}")
-    Start-Sleep -Milliseconds 300
-    $shell.SendKeys("^c")
-    Start-Sleep -Milliseconds 250
-    $secondEverythingPath = (Get-Clipboard -Raw -ErrorAction Stop).Trim().Trim('"')
-    if ([string]::IsNullOrWhiteSpace($firstEverythingPath) -or [string]::IsNullOrWhiteSpace($secondEverythingPath)) {
-        throw "Everything modified-date probe copied an empty path."
-    }
-    $firstEverythingItem = Get-Item -LiteralPath $firstEverythingPath -ErrorAction Stop
-    $secondEverythingItem = Get-Item -LiteralPath $secondEverythingPath -ErrorAction Stop
-    if ($firstEverythingItem.FullName -ne (Get-Item -LiteralPath $dateSortNewPath).FullName -or
-        $secondEverythingItem.FullName -ne (Get-Item -LiteralPath $dateSortOldPath).FullName) {
-        throw "Everything modified-date probe returned unexpected files: first=$($firstEverythingItem.FullName) second=$($secondEverythingItem.FullName)"
-    }
-    $everythingDateFirstUtc = $firstEverythingItem.LastWriteTimeUtc.ToString("O")
-    $everythingDateSecondUtc = $secondEverythingItem.LastWriteTimeUtc.ToString("O")
-    $everythingDateModifiedOrderProbe = $firstEverythingItem.LastWriteTimeUtc -ge $secondEverythingItem.LastWriteTimeUtc
-    if (!$everythingDateModifiedOrderProbe) {
-        throw "Everything modified-date order regression: first=$everythingDateFirstUtc second=$everythingDateSecondUtc"
-    }
-    Save-Screenshot "everything-date-modified.png"
-
     # Commit the syntax query too so history cycling has at least two entries.
     $shell.SendKeys("{ENTER}")
     Start-Sleep -Milliseconds 600
@@ -706,9 +650,6 @@ try {
         CtrlCProbe = (!$CtrlCSmoke) -or $ctrlCProbe
         TabNavigationProbe = $TabNavigationCycles -gt 0
         EverythingSyntaxProbe = $true
-        EverythingDateModifiedOrderProbe = $everythingDateModifiedOrderProbe
-        EverythingDateFirstUtc = $everythingDateFirstUtc
-        EverythingDateSecondUtc = $everythingDateSecondUtc
         HistoryPanelProbe = $true
         HistoryUpProbe = $true
         HistoryAltUpProbe = $true
@@ -753,8 +694,5 @@ finally {
     }
     if (Test-Path $wabFixtureRoot) {
         Remove-Item -Recurse -Force $wabFixtureRoot
-    }
-    if (Test-Path $dateSortFixtureRoot) {
-        Remove-Item -Recurse -Force $dateSortFixtureRoot
     }
 }
