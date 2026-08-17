@@ -545,6 +545,40 @@ try {
     $shell.SendKeys("ext:zip")
     Start-Sleep -Seconds 2
     Save-Screenshot "everything-ext-zip.png"
+
+    # Everything IPC is configured to return file results by modified date.
+    # Verify the live ordering using two paths copied from Flux, then compare
+    # their filesystem timestamps without changing the user's files.
+    $everythingDateModifiedOrderProbe = $false
+    $everythingDateFirstUtc = $null
+    $everythingDateSecondUtc = $null
+    $shell.SendKeys("^a")
+    $shell.SendKeys("ext:rs")
+    Start-Sleep -Seconds 2
+    $shell.SendKeys("{HOME}")
+    Start-Sleep -Milliseconds 300
+    [FluxWallpaper]::SetForegroundWindow($launcherHandle) | Out-Null
+    $shell.SendKeys("^c")
+    Start-Sleep -Milliseconds 250
+    $firstEverythingPath = (Get-Clipboard -Raw -ErrorAction Stop).Trim().Trim('"')
+    $shell.SendKeys("{DOWN}")
+    Start-Sleep -Milliseconds 300
+    $shell.SendKeys("^c")
+    Start-Sleep -Milliseconds 250
+    $secondEverythingPath = (Get-Clipboard -Raw -ErrorAction Stop).Trim().Trim('"')
+    if ([string]::IsNullOrWhiteSpace($firstEverythingPath) -or [string]::IsNullOrWhiteSpace($secondEverythingPath)) {
+        throw "Everything modified-date probe copied an empty path."
+    }
+    $firstEverythingItem = Get-Item -LiteralPath $firstEverythingPath -ErrorAction Stop
+    $secondEverythingItem = Get-Item -LiteralPath $secondEverythingPath -ErrorAction Stop
+    $everythingDateFirstUtc = $firstEverythingItem.LastWriteTimeUtc.ToString("O")
+    $everythingDateSecondUtc = $secondEverythingItem.LastWriteTimeUtc.ToString("O")
+    $everythingDateModifiedOrderProbe = $firstEverythingItem.LastWriteTimeUtc -ge $secondEverythingItem.LastWriteTimeUtc
+    if (!$everythingDateModifiedOrderProbe) {
+        throw "Everything modified-date order regression: first=$everythingDateFirstUtc second=$everythingDateSecondUtc"
+    }
+    Save-Screenshot "everything-date-modified.png"
+
     # Commit the syntax query too so history cycling has at least two entries.
     $shell.SendKeys("{ENTER}")
     Start-Sleep -Milliseconds 600
@@ -650,6 +684,9 @@ try {
         CtrlCProbe = (!$CtrlCSmoke) -or $ctrlCProbe
         TabNavigationProbe = $TabNavigationCycles -gt 0
         EverythingSyntaxProbe = $true
+        EverythingDateModifiedOrderProbe = $everythingDateModifiedOrderProbe
+        EverythingDateFirstUtc = $everythingDateFirstUtc
+        EverythingDateSecondUtc = $everythingDateSecondUtc
         HistoryPanelProbe = $true
         HistoryUpProbe = $true
         HistoryAltUpProbe = $true

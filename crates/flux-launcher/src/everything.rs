@@ -8,7 +8,7 @@ use std::sync::{
 use std::thread;
 use std::time::Duration;
 
-use everything_ipc::wm::{EverythingClient, RequestFlags};
+use everything_ipc::wm::{EverythingClient, RequestFlags, Sort};
 use flux_core::SearchResult;
 use windui::prelude::Sender;
 
@@ -192,6 +192,7 @@ fn query_everything(
     let list = ipc_client
         .query_wait(&query)
         .request_flags(RequestFlags::FileName | RequestFlags::Path)
+        .sort(Sort::DateModifiedDescending)
         .max_results(MAX_RESULTS)
         .timeout(QUERY_TIMEOUT)
         .call();

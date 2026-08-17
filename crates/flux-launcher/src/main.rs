@@ -20,7 +20,8 @@ use applications::{ApplicationResponse, ApplicationWorker};
 use everything::{EverythingResponse, EverythingWorker, InstallationState};
 use flux_core::{
     history_results, rank_results_with_priorities, should_suppress_activation, HotkeyConfig,
-    MonitorPreference, PriorityEntry, ResultKind, SearchModel, SearchResult, Settings,
+    MonitorPreference, PriorityEntry, ResultKind, ResultSource, SearchModel, SearchResult,
+    Settings,
 };
 use plugins::{FlowPluginWorker, PluginInvocation, PluginQueryResponse};
 use windui::app::{CursorVisibilityHandle, WindowOpHandle, WindowPositionHandle, WindowSizeHandle};
@@ -123,8 +124,44 @@ impl ProviderResults {
             .cloned()
             .collect::<Vec<_>>();
         rank_results_with_priorities(query, &mut merged, priorities);
+        preserve_everything_file_order(&mut merged, &self.everything);
         merged.truncate(MAX_VISIBLE_RESULTS);
         merged
+    }
+}
+
+/// Keep Everything's native modified-date order for non-application files.
+///
+/// The global ranker still decides which provider tier occupies each result
+/// slot, so application results remain first. Only the Everything file slots
+/// are replaced in the order returned by the date-sorted IPC query.
+fn preserve_everything_file_order(merged: &mut [SearchResult], provider_order: &[SearchResult]) {
+    let mut available = merged
+        .iter()
+        .filter(|result| {
+            result.source == ResultSource::Everything && result.kind == ResultKind::File
+        })
+        .map(|result| (result.id.clone(), result.clone()))
+        .collect::<HashMap<_, _>>();
+    let slots = merged
+        .iter()
+        .enumerate()
+        .filter(|(_, result)| {
+            result.source == ResultSource::Everything && result.kind == ResultKind::File
+        })
+        .map(|(index, _)| index)
+        .collect::<Vec<_>>();
+
+    for (slot, provider_result) in slots
+        .into_iter()
+        .zip(provider_order.iter().filter(|result| {
+            result.source == ResultSource::Everything && result.kind == ResultKind::File
+        }))
+    {
+        let Some(result) = available.remove(&provider_result.id) else {
+            continue;
+        };
+        merged[slot] = result;
     }
 }
 
@@ -2789,11 +2826,43 @@ fn main() {
 #[cfg(test)]
 mod tests {
     use super::{
-        is_run_as_admin_key, launcher_window_geometry, quoted_result_path, COMPACT_WINDOW_HEIGHT,
-        EXPANDED_WINDOW_HEIGHT, WINDOW_WIDTH,
+        is_run_as_admin_key, launcher_window_geometry, preserve_everything_file_order,
+        quoted_result_path, COMPACT_WINDOW_HEIGHT, EXPANDED_WINDOW_HEIGHT, WINDOW_WIDTH,
     };
     use flux_core::{ResultKind, ResultSource, SearchResult};
     use windui::event::{Key, KeyEvent};
+
+    #[test]
+    fn everything_file_order_is_preserved_after_app_first_ranking() {
+        let application = SearchResult {
+            id: String::from("application:report-viewer"),
+            title: String::from("Report Viewer"),
+            subtitle: String::from("Application"),
+            kind: ResultKind::Application,
+            source: ResultSource::ApplicationCatalog,
+            target: Some(String::from(r"C:\\ReportViewer.lnk")),
+        };
+        let newest = SearchResult::file(
+            String::from(r"C:\\workspace\\report-z.txt"),
+            String::from("report-z.txt"),
+            String::from(r"C:\\workspace"),
+        );
+        let older = SearchResult::file(
+            String::from(r"C:\\workspace\\report-a.txt"),
+            String::from("report-a.txt"),
+            String::from(r"C:\\workspace"),
+        );
+        let newest_id = newest.id.clone();
+        let older_id = older.id.clone();
+        let mut merged = vec![application.clone(), older, newest];
+        let provider_order = vec![merged[2].clone(), merged[1].clone()];
+
+        preserve_everything_file_order(&mut merged, &provider_order);
+
+        assert_eq!(merged[0].id, application.id);
+        assert_eq!(merged[1].id, newest_id);
+        assert_eq!(merged[2].id, older_id);
+    }
 
     #[test]
     fn copy_path_always_uses_one_pair_of_quotes() {
