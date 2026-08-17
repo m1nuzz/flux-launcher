@@ -229,11 +229,6 @@ fn built_in_results(query: &str) -> Vec<SearchResult> {
             "Suppress launcher activation",
         ),
         (
-            "everything",
-            "Search with Everything",
-            "Index files and folders",
-        ),
-        (
             "recycle-bin",
             "Recycle Bin",
             "Open or empty the Recycle Bin",
@@ -301,11 +296,10 @@ mod tests {
     }
 
     #[test]
-    fn query_filters_results_case_insensitively() {
+    fn everything_is_not_a_built_in_command() {
         let mut model = SearchModel::new();
         model.set_query("EVERYTHING");
-        assert_eq!(model.results().len(), 1);
-        assert_eq!(model.selected().unwrap().id, "everything");
+        assert!(model.results().is_empty());
     }
 
     #[test]
