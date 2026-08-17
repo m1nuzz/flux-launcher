@@ -257,6 +257,33 @@ try {
     Start-Sleep -Seconds 2
     $queryMemory = Get-MemorySnapshot $process.Id
     Save-Screenshot "everything-fallback.png"
+
+    # Regression probe: keep the launcher on one monitor position while
+    # repeatedly toggling Alt+Space after a query has expanded the window.
+    $repeatedHotkeyYPositions = @()
+    for ($cycle = 1; $cycle -le 3; $cycle++) {
+        [FluxWallpaper]::SendMessage($launcherHandle, $wmHotkey, [UIntPtr]::Zero, [IntPtr]::Zero) | Out-Null
+        Start-Sleep -Milliseconds 450
+        if ([FluxWallpaper]::IsWindowVisible($launcherHandle)) {
+            throw "Repeated Alt+Space cycle $cycle did not hide the launcher."
+        }
+        [FluxWallpaper]::SendMessage($launcherHandle, $wmHotkey, [UIntPtr]::Zero, [IntPtr]::Zero) | Out-Null
+        Start-Sleep -Milliseconds 650
+        if (![FluxWallpaper]::IsWindowVisible($launcherHandle)) {
+            throw "Repeated Alt+Space cycle $cycle did not show the launcher."
+        }
+        $repeatRect = New-Object FluxWallpaper+RECT
+        if (![FluxWallpaper]::GetWindowRect($launcherHandle, [ref]$repeatRect)) {
+            throw "Unable to read launcher rectangle during repeated Alt+Space cycle $cycle."
+        }
+        $repeatedHotkeyYPositions += $repeatRect.Top
+        Save-Screenshot ("repeated-hotkey-cycle-{0:D2}.png" -f $cycle)
+    }
+    $repeatedHotkeyPositionProbe = @($repeatedHotkeyYPositions | Select-Object -Unique).Count -eq 1
+    if (!$repeatedHotkeyPositionProbe) {
+        throw "Repeated Alt+Space moved the launcher vertically: $($repeatedHotkeyYPositions -join ', ')"
+    }
+
     if ($PointerInteractionSmoke) {
         $launcherRect = New-Object FluxWallpaper+RECT
         if (![FluxWallpaper]::GetWindowRect($launcherHandle, [ref]$launcherRect)) {
@@ -421,6 +448,8 @@ try {
         RepeatShowEmptyProbe = $true
         FirstHotkeyHideProbe = $hiddenAfterFirstHotkey
         SecondHotkeyShowProbe = $visibleAfterSecondHotkey
+        RepeatedHotkeyPositionProbe = $repeatedHotkeyPositionProbe
+        RepeatedHotkeyYPositions = @($repeatedHotkeyYPositions)
         TrayOnlyWindowProbe = $trayOnlyWindow
         QueryExpandedProbe = $true
         PointerHoverProbe = [bool]$PointerInteractionSmoke

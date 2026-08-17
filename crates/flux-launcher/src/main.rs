@@ -71,6 +71,16 @@ fn request_monitor_position(
     }
 }
 
+fn launcher_window_geometry(settings_visible: bool, show_results: bool) -> (i32, i32) {
+    if settings_visible {
+        (SETTINGS_WINDOW_WIDTH, SETTINGS_WINDOW_HEIGHT)
+    } else if show_results {
+        (WINDOW_WIDTH, EXPANDED_WINDOW_HEIGHT)
+    } else {
+        (WINDOW_WIDTH, COMPACT_WINDOW_HEIGHT)
+    }
+}
+
 #[derive(Default)]
 struct ProviderResults {
     sequence: u64,
@@ -1285,6 +1295,7 @@ fn main() {
     *action_window_slot.borrow_mut() = Some(window_size.clone());
     let size_for_interval = window_size.clone();
     let size_for_visibility = window_size.clone();
+    let position_for_visibility = window_position.clone();
     let query_for_applications = query;
     let results_for_applications = results;
     let inline_completion_for_applications = inline_completion;
@@ -1458,21 +1469,14 @@ fn main() {
             .map(|settings| settings.clone())
             .unwrap_or_default();
         if !should_suppress_activation(&settings, fullscreen::foreground_is_fullscreen()) {
-            let height = if settings_visible_for_activation.get() {
-                SETTINGS_WINDOW_HEIGHT
-            } else if show_results_for_activation.get() {
-                EXPANDED_WINDOW_HEIGHT
-            } else {
-                COMPACT_WINDOW_HEIGHT
-            };
+            let (width, height) = launcher_window_geometry(
+                settings_visible_for_activation.get(),
+                show_results_for_activation.get(),
+            );
             request_monitor_position(
                 &position_for_activation,
                 settings.monitor_preference,
-                if settings_visible_for_activation.get() {
-                    SETTINGS_WINDOW_WIDTH
-                } else {
-                    WINDOW_WIDTH
-                },
+                width,
                 height,
             );
             ctx.toggle_window();
@@ -2286,16 +2290,21 @@ fn main() {
         .on_window_show({
             let settings = Arc::clone(&shared_settings);
             move || {
-                let (layout_enabled, clear_query) = settings
+                let (layout_enabled, clear_query, monitor_preference) = settings
                     .read()
                     .map(|settings| {
                         selection_color.set(selection_color_for_settings(&settings));
                         (
                             settings.switch_to_english_layout,
                             settings.clear_query_on_activation,
+                            settings.monitor_preference,
                         )
                     })
-                    .unwrap_or((true, clear_query_on_activation.get()));
+                    .unwrap_or((
+                        true,
+                        clear_query_on_activation.get(),
+                        MonitorPreference::Primary,
+                    ));
                 if layout_enabled {
                     keyboard_layout::switch_to_english();
                 }
@@ -2313,18 +2322,14 @@ fn main() {
                     action_index.set(0);
                     action_items.set(Vec::new());
                     inline_completion.set(String::new());
-                    size_for_visibility.set(
-                        if settings_visible.get() {
-                            SETTINGS_WINDOW_WIDTH
-                        } else {
-                            WINDOW_WIDTH
-                        },
-                        if settings_visible.get() {
-                            SETTINGS_WINDOW_HEIGHT
-                        } else {
-                            COMPACT_WINDOW_HEIGHT
-                        },
+                    let (width, height) = launcher_window_geometry(settings_visible.get(), false);
+                    request_monitor_position(
+                        &position_for_visibility,
+                        monitor_preference,
+                        width,
+                        height,
                     );
+                    size_for_visibility.set(width, height);
                 }
             }
         })
@@ -2341,4 +2346,23 @@ fn main() {
             }
         })
         .run();
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{
+        launcher_window_geometry, COMPACT_WINDOW_HEIGHT, EXPANDED_WINDOW_HEIGHT, WINDOW_WIDTH,
+    };
+
+    #[test]
+    fn activation_clear_uses_compact_geometry_after_expanded_query() {
+        assert_eq!(
+            launcher_window_geometry(false, true),
+            (WINDOW_WIDTH, EXPANDED_WINDOW_HEIGHT)
+        );
+        assert_eq!(
+            launcher_window_geometry(false, false),
+            (WINDOW_WIDTH, COMPACT_WINDOW_HEIGHT)
+        );
+    }
 }
