@@ -44,9 +44,9 @@ impl Default for HotkeyConfig {
 
 #[derive(Clone, Copy, Debug, Default, Deserialize, PartialEq, Eq, Serialize)]
 pub enum MonitorPreference {
-    #[default]
     #[serde(rename = "primary")]
     Primary,
+    #[default]
     #[serde(rename = "cursor")]
     Cursor,
     #[serde(rename = "foreground")]
@@ -222,7 +222,7 @@ mod tests {
         assert_eq!(settings.custom_selection_color, 0x4c8bf4);
         assert!(settings.clear_query_on_activation);
         assert!(settings.auto_enable_everything);
-        assert_eq!(settings.monitor_preference, MonitorPreference::Primary);
+        assert_eq!(settings.monitor_preference, MonitorPreference::Cursor);
         assert_eq!(settings.smooth_caret_duration_ms, DEFAULT_CARET_DURATION_MS);
     }
 
@@ -256,11 +256,11 @@ mod tests {
     }
 
     #[test]
-    fn missing_monitor_preference_uses_primary_default() {
+    fn missing_monitor_preference_uses_cursor_default() {
         let path = temporary_path("settings-monitor-default");
         fs::write(&path, r#"{"activation_hotkey":{"key":"Space"}}"#).unwrap();
         let settings = Settings::load_from(&path).unwrap();
-        assert_eq!(settings.monitor_preference, MonitorPreference::Primary);
+        assert_eq!(settings.monitor_preference, MonitorPreference::Cursor);
         fs::remove_file(path).unwrap();
     }
 

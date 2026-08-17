@@ -333,7 +333,19 @@ try {
     Save-Screenshot "actions-panel.png"
     $shell.SendKeys("{DOWN}")
     $shell.SendKeys("{ENTER}")
-    Start-Sleep -Milliseconds 400
+    Start-Sleep -Milliseconds 500
+    $enterLaunchHidden = ![FluxWallpaper]::IsWindowVisible($launcherHandle)
+    if (!$enterLaunchHidden) {
+        throw "Enter launch did not hide the launcher window."
+    }
+    # Restore the launcher for the remaining independent probes.
+    [FluxWallpaper]::SendMessage($launcherHandle, $wmHotkey, [UIntPtr]::Zero, [IntPtr]::Zero) | Out-Null
+    Start-Sleep -Milliseconds 650
+    if (![FluxWallpaper]::IsWindowVisible($launcherHandle)) {
+        throw "Unable to restore launcher after Enter hide probe."
+    }
+    [FluxWallpaper]::SetForegroundWindow($launcherHandle) | Out-Null
+    Start-Sleep -Milliseconds 200
     if ($RecycleBinSmoke) {
         # Flow-style behavior: Empty and Open are ordinary sibling results,
         # with Empty first. Enter only the Empty row far enough to verify
@@ -481,6 +493,7 @@ try {
         KeyboardSelectionProbe = $true
         ActionModeProbe = $true
         EnterActionProbe = $true
+        EnterLaunchHideProbe = $enterLaunchHidden
         Memory = [ordered]@{
             Idle = $idleMemory
             Query = $queryMemory

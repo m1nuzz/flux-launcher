@@ -352,30 +352,30 @@ impl Widget for ResultRowAnchor {
     }
 }
 
-fn execute_result_action(result: &SearchResult, action: &ActionKind) {
+fn execute_result_action(result: &SearchResult, action: &ActionKind) -> bool {
     match action {
-        ActionKind::Open => {
-            if let Some(target) = result.target.as_deref() {
-                let _ = launch::open_path(target);
-            }
-        }
-        ActionKind::RunAsAdmin => {
-            if let Some(target) = result.target.as_deref() {
-                let _ = launch::run_as_admin(target);
-            }
-        }
-        ActionKind::OpenLocation => {
-            if let Some(target) = result.target.as_deref() {
-                let _ = launch::open_file_location(target);
-            }
-        }
+        ActionKind::Open => result.target.as_deref().is_some_and(launch::open_path),
+        ActionKind::RunAsAdmin => result.target.as_deref().is_some_and(launch::run_as_admin),
+        ActionKind::OpenLocation => result
+            .target
+            .as_deref()
+            .is_some_and(launch::open_file_location),
         ActionKind::CopyPath => {
             if let Some(target) = result.target.as_deref() {
                 windui::platform::Clipboard.set_text(target);
+                true
+            } else {
+                false
             }
         }
-        ActionKind::CopyName => windui::platform::Clipboard.set_text(&result.title),
-        ActionKind::RunPlugin(invocation) => plugins::execute_async(invocation.clone()),
+        ActionKind::CopyName => {
+            windui::platform::Clipboard.set_text(&result.title);
+            true
+        }
+        ActionKind::RunPlugin(invocation) => {
+            plugins::execute_async(invocation.clone());
+            true
+        }
     }
 }
 
@@ -943,7 +943,7 @@ fn result_row(
                 .width(22)
                 .align(Align::Center),
         )
-        .on_click(move |_| {
+        .on_click(move |ctx| {
             if history_mode.get() {
                 query.set(title.clone());
                 history_mode.set(false);
@@ -961,15 +961,20 @@ fn result_row(
                 return;
             }
             if id == "open-recycle-bin" {
-                let _ = launch::open_recycle_bin();
+                if launch::open_recycle_bin() {
+                    ctx.hide_window();
+                }
                 return;
             }
             if let Some(target) = target.as_deref() {
-                let _ = launch::open_path(target);
+                if launch::open_path(target) {
+                    ctx.hide_window();
+                }
                 return;
             }
             if let Some(action) = plugin_actions.borrow().get(&id).cloned() {
                 plugins::execute_async(action);
+                ctx.hide_window();
             }
         })
 }
@@ -990,6 +995,7 @@ fn main() {
     let action_mode = signal(false);
     let action_index = signal(0_usize);
     let recycle_bin_confirmation = signal(false);
+    let hide_after_launch = Rc::new(Cell::new(false));
     let action_items = signal(Vec::<ActionItem>::new());
     let action_window_slot = Rc::new(RefCell::new(None::<WindowSizeHandle>));
     let status = signal(String::from("Ready"));
@@ -1209,13 +1215,15 @@ fn main() {
                 )
                 .on_click({
                     let action_window_slot = action_window_slot_for_rows.clone();
-                    move |_| {
-                        if let Some(result) = selected_result(
+                    move |ctx| {
+                        let executed = selected_result(
                             &result_source.get(),
                             &selected_for_rows.get(),
                             selected_index_for_rows.get(),
-                        ) {
-                            execute_result_action(&result, &item_kind);
+                        )
+                        .is_some_and(|result| execute_result_action(&result, &item_kind));
+                        if executed {
+                            ctx.hide_window();
                         }
                         action_mode_for_rows.set(false);
                         if let Some(handle) = action_window_slot.borrow().as_ref() {
@@ -1492,6 +1500,7 @@ fn main() {
     let history_cursor_for_keys = history_cursor;
     let history_navigation_for_keys = history_navigation;
     let settings_for_history_for_keys = Arc::clone(&shared_settings);
+    let hide_after_launch_for_keys = Rc::clone(&hide_after_launch);
     let size_for_keys = window_size.clone();
     let show_results_for_keys = show_results;
     let settings_for_game_hotkey = Arc::clone(&shared_settings);
@@ -1690,7 +1699,9 @@ fn main() {
                             .get(action_index_for_keys.get())
                             .cloned()
                         {
-                            execute_result_action(&result, &action.kind);
+                            if execute_result_action(&result, &action.kind) {
+                                hide_after_launch_for_keys.set(true);
+                            }
                         }
                     }
                     action_mode_for_keys.set(false);
@@ -1778,16 +1789,23 @@ fn main() {
                     &selected_id_for_keys.get(),
                     selected_index_for_keys.get(),
                 ) {
-                    if result.id == "empty-recycle-bin" {
+                    let should_hide = if result.id == "empty-recycle-bin" {
                         recycle_bin_confirmation_for_keys.set(true);
+                        false
                     } else if result.id == "open-recycle-bin" {
-                        let _ = launch::open_recycle_bin();
+                        launch::open_recycle_bin()
                     } else if let Some(target) = result.target.as_deref() {
-                        let _ = launch::open_path(target);
+                        launch::open_path(target)
                     } else if let Some(action) =
                         plugin_actions_for_keys.borrow().get(&result.id).cloned()
                     {
                         plugins::execute_async(action);
+                        true
+                    } else {
+                        false
+                    };
+                    if should_hide {
+                        hide_after_launch_for_keys.set(true);
                     }
                 }
                 true
@@ -2190,6 +2208,8 @@ fn main() {
         .child(launcher_page)
         .child(settings_page);
 
+    let hide_after_launch_for_interval = Rc::clone(&hide_after_launch);
+
     app.tray(tray)
         .hide_on_close()
         // The Win32 backend keeps this transparent on local Acrylic-capable
@@ -2204,6 +2224,10 @@ fn main() {
         .theme(launcher_theme())
         .content(content)
         .on_interval(SEARCH_INTERVAL, move |ctx| {
+            if hide_after_launch_for_interval.replace(false) {
+                ctx.hide_window();
+                return;
+            }
             if tray_settings_smoke_pending_for_interval.replace(false) {
                 // Exercise the same lifecycle order as the tray Settings item,
                 // without relying on brittle screen-coordinate tray automation.
