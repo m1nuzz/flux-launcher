@@ -482,10 +482,10 @@ try {
         Start-Sleep -Milliseconds 350
         try {
             $clipboardText = (Get-Clipboard -Raw -ErrorAction Stop).Trim()
+            Write-Host "Ctrl+C clipboard value: [$clipboardText]"
             $ctrlCProbe = $clipboardText.Length -gt 2 -and
                 $clipboardText.StartsWith('"') -and
-                $clipboardText.EndsWith('"') -and
-                $clipboardText.Contains("WAB")
+                $clipboardText.EndsWith('"')
         } catch {
             $ctrlCProbe = $false
         }
