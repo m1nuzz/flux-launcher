@@ -333,7 +333,8 @@ try {
     Save-Screenshot "actions-panel.png"
     # The first action is Open and is deterministic on the runner; avoid
     # selecting Run as admin because UAC policy can reject it.
-    $shell.SendKeys("{ENTER}")
+    $wmKeyDown = 0x0100
+    [FluxWallpaper]::SendMessage($launcherHandle, $wmKeyDown, [UIntPtr]::new(0x0D), [IntPtr]::Zero) | Out-Null
     Start-Sleep -Milliseconds 500
     $enterLaunchHidden = ![FluxWallpaper]::IsWindowVisible($launcherHandle)
     if (!$enterLaunchHidden) {
