@@ -222,16 +222,22 @@ try {
     }
     Save-Screenshot "mica-repeat-show-empty.png"
 
-    $bounds = [System.Windows.Forms.SystemInformation]::VirtualScreen
-    $searchX = $bounds.Left + [int]($bounds.Width / 2)
-    $searchY = $bounds.Top + [int]($bounds.Height / 2)
+    $launcherRect = New-Object FluxWallpaper+RECT
+    if (![FluxWallpaper]::GetWindowRect($launcherHandle, [ref]$launcherRect)) {
+        throw "Unable to locate launcher rectangle before typing the navigation query."
+    }
+    $searchX = $launcherRect.Left + [int](($launcherRect.Right - $launcherRect.Left) / 2)
+    $searchY = $launcherRect.Top + [int](($launcherRect.Bottom - $launcherRect.Top) / 2)
     $shell = New-Object -ComObject WScript.Shell
+    [FluxWallpaper]::SetForegroundWindow($launcherHandle) | Out-Null
     $shell.AppActivate($process.Id) | Out-Null
-    Start-Sleep -Milliseconds 250
+    Start-Sleep -Milliseconds 300
     [FluxWallpaper]::SetCursorPos($searchX, $searchY) | Out-Null
     [FluxWallpaper]::mouse_event(0x0002, 0, 0, 0, [UIntPtr]::Zero)
     [FluxWallpaper]::mouse_event(0x0004, 0, 0, 0, [UIntPtr]::Zero)
-    Start-Sleep -Milliseconds 250
+    Start-Sleep -Milliseconds 300
+    [FluxWallpaper]::SetForegroundWindow($launcherHandle) | Out-Null
+    Start-Sleep -Milliseconds 150
     $shell.SendKeys($NavigationQuery)
     Start-Sleep -Seconds 2
     $queryMemory = Get-MemorySnapshot $process.Id
