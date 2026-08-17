@@ -14,6 +14,7 @@ param(
     [switch]$ScrollbarGapSmoke,
     [switch]$QueryClearOnReopenSmoke,
     [switch]$CtrlRSmoke,
+    [switch]$CtrlCSmoke,
     [string]$NavigationQuery = "wab",
 
     [int]$NavigationCycles = 0,
@@ -311,6 +312,7 @@ try {
     $scrollbarGapProbe = $false
     $queryClearOnReopenProbe = $false
     $ctrlRProbe = $false
+    $ctrlCProbe = $false
     if ($CursorVisibilitySmoke) {
         $shell.SendKeys("x")
         Start-Sleep -Milliseconds 500
@@ -469,6 +471,28 @@ try {
     }
     [FluxWallpaper]::SetForegroundWindow($launcherHandle) | Out-Null
     Start-Sleep -Milliseconds 200
+    if ($CtrlCSmoke) {
+        $shell.SendKeys("^a")
+        $shell.SendKeys("wab")
+        Start-Sleep -Seconds 2
+        $shell.SendKeys("{HOME}")
+        Start-Sleep -Milliseconds 250
+        [FluxWallpaper]::SetForegroundWindow($launcherHandle) | Out-Null
+        $shell.SendKeys("^c")
+        Start-Sleep -Milliseconds 350
+        try {
+            $clipboardText = (Get-Clipboard -Raw -ErrorAction Stop).Trim()
+            $ctrlCProbe = $clipboardText.Length -gt 2 -and
+                $clipboardText.StartsWith('"') -and
+                $clipboardText.EndsWith('"') -and
+                $clipboardText.Contains("WAB")
+        } catch {
+            $ctrlCProbe = $false
+        }
+        if (!$ctrlCProbe) {
+            throw "Ctrl+C did not copy the selected result path in quotes."
+        }
+    }
     if ($CtrlRSmoke) {
         $shell.SendKeys("^a")
         $shell.SendKeys("wab")
@@ -616,6 +640,7 @@ try {
         ScrollbarGapProbe = (!$ScrollbarGapSmoke) -or $scrollbarGapProbe
         QueryClearOnReopenProbe = (!$QueryClearOnReopenSmoke) -or $queryClearOnReopenProbe
         CtrlRProbe = (!$CtrlRSmoke) -or $ctrlRProbe
+        CtrlCProbe = (!$CtrlCSmoke) -or $ctrlCProbe
         TabNavigationProbe = $TabNavigationCycles -gt 0
         EverythingSyntaxProbe = $true
         HistoryPanelProbe = $true

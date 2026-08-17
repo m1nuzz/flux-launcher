@@ -390,6 +390,26 @@ impl Widget for ResultRowAnchor {
     }
 }
 
+fn quoted_result_path(result: &SearchResult) -> Option<String> {
+    let target = result.target.as_deref()?.trim();
+    if target.is_empty() {
+        return None;
+    }
+    let target = target
+        .strip_prefix('"')
+        .and_then(|value| value.strip_suffix('"'))
+        .unwrap_or(target);
+    Some(format!("\"{target}\""))
+}
+
+fn copy_result_path(result: &SearchResult) -> bool {
+    let Some(path) = quoted_result_path(result) else {
+        return false;
+    };
+    windui::platform::Clipboard.set_text(&path);
+    true
+}
+
 fn execute_result_action(result: &SearchResult, action: &ActionKind) -> bool {
     match action {
         ActionKind::Open => {
@@ -413,14 +433,7 @@ fn execute_result_action(result: &SearchResult, action: &ActionKind) -> bool {
                 false
             }
         }
-        ActionKind::CopyPath => {
-            if let Some(target) = result.target.as_deref() {
-                windui::platform::Clipboard.set_text(target);
-                true
-            } else {
-                false
-            }
-        }
+        ActionKind::CopyPath => copy_result_path(result),
         ActionKind::CopyName => {
             windui::platform::Clipboard.set_text(&result.title);
             true
@@ -1718,6 +1731,23 @@ fn main() {
         {
             cursor_visibility_for_keys.hide();
         }
+        if event.ctrl
+            && matches!(
+                event.key,
+                Key::Other(0x43) | Key::Char('c') | Key::Char('C')
+            )
+        {
+            if let Some(result) = selected_result(
+                &results_for_keys.get(),
+                &selected_id_for_keys.get(),
+                selected_index_for_keys.get(),
+            ) {
+                if copy_result_path(&result) {
+                    return true;
+                }
+            }
+            return false;
+        }
         if event.ctrl && matches!(event.key, Key::Char('h') | Key::Char('H')) {
             let history = query_history_for_keys.borrow();
             if history.is_empty() {
@@ -2739,10 +2769,34 @@ fn main() {
 #[cfg(test)]
 mod tests {
     use super::{
-        is_run_as_admin_key, launcher_window_geometry, COMPACT_WINDOW_HEIGHT,
+        is_run_as_admin_key, launcher_window_geometry, quoted_result_path, COMPACT_WINDOW_HEIGHT,
         EXPANDED_WINDOW_HEIGHT, WINDOW_WIDTH,
     };
+    use flux_core::{ResultKind, ResultSource, SearchResult};
     use windui::event::{Key, KeyEvent};
+
+    #[test]
+    fn copy_path_always_uses_one_pair_of_quotes() {
+        let result = SearchResult {
+            id: String::from("file:test"),
+            title: String::from("Roaming"),
+            subtitle: String::new(),
+            kind: ResultKind::File,
+            source: ResultSource::Everything,
+            target: Some(String::from(r#"C:\Users\m1nus\AppData\Roaming"#)),
+        };
+        assert_eq!(
+            quoted_result_path(&result).as_deref(),
+            Some(r#""C:\Users\m1nus\AppData\Roaming""#)
+        );
+
+        let mut already_quoted = result.clone();
+        already_quoted.target = Some(String::from(r#""C:\Users\m1nus\AppData\Roaming""#));
+        assert_eq!(
+            quoted_result_path(&already_quoted).as_deref(),
+            Some(r#""C:\Users\m1nus\AppData\Roaming""#)
+        );
+    }
 
     #[test]
     fn ctrl_r_matches_win32_other_key_event() {

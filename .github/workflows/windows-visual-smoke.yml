@@ -63,6 +63,11 @@ on:
         required: false
         default: false
         type: boolean
+      ctrl_c_smoke:
+        description: "Verify Ctrl+C copies the selected result path in quotes"
+        required: false
+        default: false
+        type: boolean
       tray_settings_smoke:
         description: "Exercise the tray Settings show lifecycle before measuring the panel"
         required: false
@@ -144,6 +149,9 @@ jobs:
           }
           if ("${{ inputs.ctrl_r_smoke }}" -eq "true") {
             $captureParams.CtrlRSmoke = $true
+          }
+          if ("${{ inputs.ctrl_c_smoke }}" -eq "true") {
+            $captureParams.CtrlCSmoke = $true
           }
           if ("${{ inputs.tray_settings_smoke }}" -eq "true") {
             $captureParams.TraySettingsSmoke = $true
