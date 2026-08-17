@@ -16,6 +16,10 @@ const MAX_RESULTS: u32 = 16;
 const QUERY_TIMEOUT: Duration = Duration::from_millis(350);
 pub const WINGET_PACKAGE_ID: &str = "voidtools.Everything";
 
+fn startup_args() -> [&'static str; 1] {
+    ["-startup"]
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum InstallationState {
     Installed(PathBuf),
@@ -50,7 +54,7 @@ pub fn start_background_if_installed() -> Result<InstallationState, String> {
     #[cfg(windows)]
     {
         Command::new(path)
-            .arg("-background")
+            .args(startup_args())
             .spawn()
             .map_err(|error| format!("Unable to start Everything in the background: {error}"))?;
     }
@@ -236,7 +240,12 @@ fn join_everything_path(folder: &str, filename: &str) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::{join_everything_path, winget_install_args, WINGET_PACKAGE_ID};
+    use super::{join_everything_path, startup_args, winget_install_args, WINGET_PACKAGE_ID};
+
+    #[test]
+    fn startup_uses_official_background_option() {
+        assert_eq!(startup_args(), ["-startup"]);
+    }
 
     #[test]
     fn winget_install_uses_exact_official_package_id() {

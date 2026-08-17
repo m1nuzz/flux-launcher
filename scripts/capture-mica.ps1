@@ -187,11 +187,26 @@ foreach ($fixtureName in $wabFixtureNames) {
     $shortcut.Save()
 }
 
+$existingEverythingGuideIds = @(
+    Get-Process | Where-Object {
+        $_.MainWindowTitle -like "Command Line Options - Everything*"
+    } | Select-Object -ExpandProperty Id
+)
 $stdoutPath = Join-Path $OutputDirectory "launcher.stdout.log"
 $stderrPath = Join-Path $OutputDirectory "launcher.stderr.log"
 $process = Start-Process -FilePath $Executable -PassThru -RedirectStandardOutput $stdoutPath -RedirectStandardError $stderrPath
 try {
     Start-Sleep -Seconds 3
+    $newEverythingGuideWindows = @(
+        Get-Process | Where-Object {
+            $_.MainWindowTitle -like "Command Line Options - Everything*" -and
+            $existingEverythingGuideIds -notcontains $_.Id
+        }
+    )
+    $everythingStartupProbe = $newEverythingGuideWindows.Count -eq 0
+    if (!$everythingStartupProbe) {
+        throw "Everything startup opened its command-line guide window."
+    }
     $idleMemory = Get-MemorySnapshot $process.Id
     Save-Screenshot "mica-desktop.png"
 
@@ -423,6 +438,7 @@ try {
         SettingsWindowWidth = $settingsWindowWidth
         SettingsPanelProbe = $settingsWindowFound -and ($settingsWindowHeight -ge 400) -and ($settingsWindowWidth -ge 680)
         EverythingAutoEnableProbe = $true
+        EverythingStartupProbe = $everythingStartupProbe
         EverythingMissingStateProbe = [bool]$EverythingMissingSmoke
         RecycleBinProbe = [bool]$RecycleBinSmoke
         RecycleBinDestructiveActionInvoked = $false
