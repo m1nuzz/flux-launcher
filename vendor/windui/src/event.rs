@@ -137,6 +137,8 @@ pub enum CursorShape {
     Hand,
     /// 文本 I 形（文本输入/可编辑区）。
     Text,
+    /// Hidden while the user is typing; restored on real pointer movement.
+    Hidden,
 }
 
 /// 指针动作。

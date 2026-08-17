@@ -10,6 +10,7 @@ param(
     [switch]$PointerInteractionSmoke,
     [switch]$EverythingMissingSmoke,
     [switch]$RecycleBinSmoke,
+    [switch]$CursorVisibilitySmoke,
     [string]$NavigationQuery = "wab",
 
     [int]$NavigationCycles = 0,
@@ -68,6 +69,25 @@ public static class FluxWallpaper {
     }
     [DllImport("user32.dll", SetLastError = true)]
     public static extern bool GetWindowRect(IntPtr hwnd, out RECT rect);
+    [StructLayout(LayoutKind.Sequential)]
+    public struct CURSORINFO {
+        public int cbSize;
+        public int flags;
+        public IntPtr hCursor;
+        public POINT ptScreen;
+    }
+    [StructLayout(LayoutKind.Sequential)]
+    public struct POINT {
+        public int X;
+        public int Y;
+    }
+    [DllImport("user32.dll", SetLastError = true)]
+    public static extern bool GetCursorInfo(out CURSORINFO info);
+    public static bool IsCursorVisible() {
+        CURSORINFO info = new CURSORINFO();
+        info.cbSize = Marshal.SizeOf(typeof(CURSORINFO));
+        return GetCursorInfo(out info) && (info.flags & 0x00000001) != 0;
+    }
 }
 '@
 
@@ -253,6 +273,23 @@ try {
     Start-Sleep -Milliseconds 300
     [FluxWallpaper]::SetForegroundWindow($launcherHandle) | Out-Null
     Start-Sleep -Milliseconds 150
+    $cursorVisibleOnActivation = [FluxWallpaper]::IsCursorVisible()
+    $cursorHiddenAfterTyping = $false
+    $cursorVisibleAfterMove = $false
+    if ($CursorVisibilitySmoke) {
+        $shell.SendKeys("x")
+        Start-Sleep -Milliseconds 500
+        $cursorHiddenAfterTyping = ![FluxWallpaper]::IsCursorVisible()
+        [FluxWallpaper]::SetCursorPos($searchX + 6, $searchY + 6) | Out-Null
+        Start-Sleep -Milliseconds 350
+        $cursorVisibleAfterMove = [FluxWallpaper]::IsCursorVisible()
+        if (!$cursorVisibleOnActivation -or !$cursorHiddenAfterTyping -or !$cursorVisibleAfterMove) {
+            throw "Cursor visibility regression: activation=$cursorVisibleOnActivation hidden_after_typing=$cursorHiddenAfterTyping visible_after_move=$cursorVisibleAfterMove"
+        }
+        $shell.SendKeys("^a")
+        $shell.SendKeys("{BACKSPACE}")
+        Start-Sleep -Milliseconds 350
+    }
     $enterHideQuery = "recyclebin"
     $shell.SendKeys($enterHideQuery)
     Start-Sleep -Seconds 2
@@ -496,6 +533,10 @@ try {
         RecycleBinProbe = [bool]$RecycleBinSmoke
         RecycleBinDirectResultsProbe = $recycleBinDirectResultsProbe
         RecycleBinDestructiveActionInvoked = $recycleBinDestructiveActionInvoked
+        CursorVisibleOnActivation = $cursorVisibleOnActivation
+        CursorHiddenAfterTyping = $cursorHiddenAfterTyping
+        CursorVisibleAfterMove = $cursorVisibleAfterMove
+        CursorVisibilityProbe = (!$CursorVisibilitySmoke) -or ($cursorVisibleOnActivation -and $cursorHiddenAfterTyping -and $cursorVisibleAfterMove)
         EverythingWingetInstallCommandProbe = "winget install -e --id voidtools.Everything"
         TraySettingsLifecycleProbe = (!$TraySettingsSmoke) -or ($settingsWindowFound -and ($settingsWindowHeight -ge 400) -and ($settingsWindowWidth -ge 680))
         KeyboardSelectionProbe = $true

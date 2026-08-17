@@ -1481,16 +1481,28 @@ unsafe extern "system" fn wnd_proc(
     }
 }
 
-/// 按形状加载并设置系统光标（应答 WM_SETCURSOR）。加载失败时静默退回类光标。
+/// Apply a cursor shape (or a null cursor for the typing-hidden state).
 unsafe fn apply_cursor(shape: CursorShape) {
+    if shape == CursorShape::Hidden {
+        let _ = SetCursor(None);
+        return;
+    }
     let id = match shape {
         CursorShape::Hand => IDC_HAND,
         CursorShape::Text => IDC_IBEAM,
         CursorShape::Arrow => IDC_ARROW,
+        CursorShape::Hidden => unreachable!(),
     };
     if let Ok(cur) = LoadCursorW(None, id) {
         let _ = SetCursor(Some(cur));
     }
+}
+
+unsafe fn apply_current_cursor(hwnd: HWND) {
+    let shape = state_from(hwnd)
+        .map(|state| state.handler.cursor())
+        .unwrap_or(CursorShape::Arrow);
+    apply_cursor(shape);
 }
 
 /// 处理 WM_DROPFILES：解出拖入的文件路径与落点（客户区物理像素），交宿主路由。
@@ -1630,20 +1642,24 @@ unsafe fn handle_nchittest(hwnd: HWND, lparam: LPARAM) -> LRESULT {
 /// 两段式：`state_from` 的借用在取出 op 的那条语句结束时即释放，随后 `run_window_op`
 /// 里的 OS 调用才可能重入 `wnd_proc`（铁律 6）。
 unsafe fn apply_window_op(hwnd: HWND) {
-    let (op, size_request, position_request) = state_from(hwnd)
+    let (op, size_request, position_request, cursor_visibility) = state_from(hwnd)
         .map(|s| {
             (
                 s.handler.take_window_op(),
                 s.handler.take_window_size_request(),
                 s.handler.take_window_position_request(),
+                s.handler.take_cursor_visibility_request(),
             )
         })
-        .unwrap_or((None, None, None));
+        .unwrap_or((None, None, None, None));
     run_window_op(hwnd, op);
     let repositioned = position_request.is_some();
     run_window_position_request(hwnd, position_request);
     let resized = size_request.is_some();
     run_window_size_request(hwnd, size_request);
+    if cursor_visibility.is_some() {
+        apply_current_cursor(hwnd);
+    }
     // A resize after a visible show invalidates the old swap-chain frame. Queue
     // one more paint after SetWindowPos so transparent D2D content is presented
     // at the new size instead of appearing only after the next query edit.
@@ -2107,6 +2123,9 @@ unsafe fn dispatch_pointer_event(hwnd: HWND, ev: PointerEvent) {
     }
     // 自定义标题栏按钮请求的窗口操作（最小化/最大化）；在可能的关窗之前执行。
     apply_window_op(hwnd);
+    // Pointer movement can restore a cursor hidden during typing. Reapply after
+    // dispatch because WM_SETCURSOR may have run before WM_MOUSEMOVE.
+    apply_current_cursor(hwnd);
     // 原生文件对话框请求：此时 OS 捕获已在上面同步完毕，才轮到这个阻塞调用。
     apply_dialog_request(hwnd);
     if close {

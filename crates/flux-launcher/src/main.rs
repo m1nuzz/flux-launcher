@@ -23,7 +23,7 @@ use flux_core::{
     ResultKind, SearchModel, SearchResult, Settings,
 };
 use plugins::{FlowPluginWorker, PluginInvocation, PluginQueryResponse};
-use windui::app::{WindowOpHandle, WindowPositionHandle, WindowSizeHandle};
+use windui::app::{CursorVisibilityHandle, WindowOpHandle, WindowPositionHandle, WindowSizeHandle};
 use windui::core::{ClickFn, ClipboardProvider, EventCtx, Widget};
 use windui::event::{Event, Key, KeyEvent, MouseButton, PointerKind};
 use windui::prelude::*;
@@ -1308,6 +1308,7 @@ fn main() {
     let window_size = app.window_size_handle();
     let window_position = app.window_position_handle();
     let window_op: WindowOpHandle = app.window_op_handle();
+    let cursor_visibility: CursorVisibilityHandle = app.cursor_visibility_handle();
     *action_window_slot.borrow_mut() = Some(window_size.clone());
     let size_for_interval = window_size.clone();
     let size_for_visibility = window_size.clone();
@@ -1477,6 +1478,7 @@ fn main() {
 
     let settings_for_activation = Arc::clone(&shared_settings);
     let position_for_activation = window_position.clone();
+    let cursor_visibility_for_activation = cursor_visibility.clone();
     let show_results_for_activation = show_results;
     let settings_visible_for_activation = settings_visible;
     let activation_handle = app.hotkey_handle(activation_hotkey, move |ctx| {
@@ -1495,6 +1497,7 @@ fn main() {
                 width,
                 height,
             );
+            cursor_visibility_for_activation.show();
             ctx.toggle_window();
         }
     });
@@ -1517,6 +1520,7 @@ fn main() {
     let history_navigation_for_keys = history_navigation;
     let settings_for_history_for_keys = Arc::clone(&shared_settings);
     let window_op_for_keys = window_op.clone();
+    let cursor_visibility_for_keys = cursor_visibility.clone();
     let size_for_keys = window_size.clone();
     let show_results_for_keys = show_results;
     let settings_for_game_hotkey = Arc::clone(&shared_settings);
@@ -1535,6 +1539,12 @@ fn main() {
     app = app.on_key(move |event: KeyEvent| {
         if !event.pressed || settings_visible_for_keys.get() {
             return false;
+        }
+        if !event.ctrl
+            && !alt_key_is_down()
+            && matches!(event.key, Key::Char(_) | Key::Backspace | Key::Delete)
+        {
+            cursor_visibility_for_keys.hide();
         }
         if event.ctrl && matches!(event.key, Key::Char('h') | Key::Char('H')) {
             let history = query_history_for_keys.borrow();
@@ -2315,7 +2325,9 @@ fn main() {
         })
         .on_window_show({
             let settings = Arc::clone(&shared_settings);
+            let cursor_visibility_for_show = cursor_visibility.clone();
             move || {
+                cursor_visibility_for_show.show();
                 let (layout_enabled, clear_query, monitor_preference) = settings
                     .read()
                     .map(|settings| {

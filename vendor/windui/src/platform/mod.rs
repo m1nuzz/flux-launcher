@@ -472,6 +472,11 @@ pub trait AppHandler {
     fn take_window_position_request(&mut self) -> Option<(i32, i32)> {
         None
     }
+    /// Take the most recent cursor visibility request. `true` shows the cursor;
+    /// `false` hides it until a real pointer movement restores it.
+    fn take_cursor_visibility_request(&mut self) -> Option<bool> {
+        None
+    }
     /// 注册的定时器间隔（平台据此 SetTimer/NSTimer）。无则空。
     fn intervals(&self) -> Vec<std::time::Duration> {
         Vec::new()

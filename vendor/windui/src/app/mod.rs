@@ -253,6 +253,26 @@ impl WindowOpHandle {
     }
 }
 
+/// A runtime handle for controlling whether the current native cursor is visible.
+#[derive(Clone)]
+pub struct CursorVisibilityHandle {
+    queue: Rc<RefCell<Option<bool>>>,
+}
+
+impl CursorVisibilityHandle {
+    /// Keep the cursor visible and reapply the effective cursor shape.
+    pub fn show(&self) {
+        *self.queue.borrow_mut() = Some(true);
+        crate::anim::request_repaint();
+    }
+
+    /// Hide the cursor until the next real pointer movement.
+    pub fn hide(&self) {
+        *self.queue.borrow_mut() = Some(false);
+        crate::anim::request_repaint();
+    }
+}
+
 pub struct App {
     cfg: WindowConfig,
     render: Option<RenderClosure>,
@@ -284,6 +304,8 @@ pub struct App {
     window_position_ops: Rc<RefCell<Option<(i32, i32)>>>,
     /// Pending native operation requested through `WindowOpHandle`.
     window_op_ops: Rc<RefCell<Option<WindowOp>>>,
+    /// Pending cursor visibility request requested through `CursorVisibilityHandle`.
+    cursor_visibility_ops: Rc<RefCell<Option<bool>>>,
 }
 
 impl App {
@@ -331,6 +353,7 @@ impl App {
             window_size_ops: Rc::new(RefCell::new(None)),
             window_position_ops: Rc::new(RefCell::new(None)),
             window_op_ops: Rc::new(RefCell::new(None)),
+            cursor_visibility_ops: Rc::new(RefCell::new(None)),
         }
     }
 
@@ -595,6 +618,13 @@ impl App {
         }
     }
 
+    /// Return a runtime handle for controlling cursor visibility.
+    pub fn cursor_visibility_handle(&mut self) -> CursorVisibilityHandle {
+        CursorVisibilityHandle {
+            queue: self.cursor_visibility_ops.clone(),
+        }
+    }
+
     /// 改名为 [`App::hotkey_handle`]。
     #[deprecated(
         since = "0.12.0",
@@ -840,6 +870,7 @@ impl App {
                 self.window_size_ops.clone(),
                 self.window_position_ops.clone(),
                 self.window_op_ops.clone(),
+                self.cursor_visibility_ops.clone(),
                 self.pumps,
                 self.intervals,
                 self.close_handler,
@@ -871,6 +902,7 @@ impl App {
             self.window_size_ops.clone(),
             self.window_position_ops.clone(),
             self.window_op_ops.clone(),
+            self.cursor_visibility_ops.clone(),
             self.pumps,
             self.intervals,
             self.close_handler,
@@ -1008,6 +1040,10 @@ struct UiHost {
     window_position_ops: Rc<RefCell<Option<(i32, i32)>>>,
     /// Runtime native operation requests consumed by the platform.
     window_op_ops: Rc<RefCell<Option<WindowOp>>>,
+    /// Runtime cursor visibility requests consumed by the platform.
+    cursor_visibility_ops: Rc<RefCell<Option<bool>>>,
+    /// Whether the effective cursor should currently be hidden.
+    cursor_hidden: bool,
     /// 一次「按下关闭浮层」后，吞掉随之而来的 Up：避免该 Up 下发到控件树重新激活
     /// 浮层下方控件（典型：下拉按钮点一下又弹一遍——Down 关、Up 再开）。
     swallow_up: bool,
@@ -1139,6 +1175,7 @@ impl UiHost {
         window_size_ops: Rc<RefCell<Option<(i32, i32)>>>,
         window_position_ops: Rc<RefCell<Option<(i32, i32)>>>,
         window_op_ops: Rc<RefCell<Option<WindowOp>>>,
+        cursor_visibility_ops: Rc<RefCell<Option<bool>>>,
         pumps: Vec<ChannelPump>,
         intervals: Vec<(std::time::Duration, AppCallback)>,
         close_handler: Option<CloseHandler>,
@@ -1179,6 +1216,8 @@ impl UiHost {
             window_size_ops,
             window_position_ops,
             window_op_ops,
+            cursor_visibility_ops,
+            cursor_hidden: false,
             swallow_up: false,
             pumps,
             interval_cbs,
@@ -1518,6 +1557,9 @@ impl AppHandler for UiHost {
     }
 
     fn on_pointer(&mut self, mut ev: crate::event::PointerEvent) -> bool {
+        if ev.kind == PointerKind::Move {
+            self.cursor_hidden = false;
+        }
         self.sync_clock();
         // 物理坐标 → 逻辑坐标（布局与命中均在逻辑空间）。
         let s = self.scale;
@@ -1759,6 +1801,14 @@ impl AppHandler for UiHost {
             .or_else(|| self.window_op_ops.borrow_mut().take())
     }
 
+    fn take_cursor_visibility_request(&mut self) -> Option<bool> {
+        let request = self.cursor_visibility_ops.borrow_mut().take();
+        if let Some(visible) = request {
+            self.cursor_hidden = !visible;
+        }
+        request
+    }
+
     /// 控件经 `EventCtx` 请求的对话框优先；没有则取延迟闭包队列（已废弃的自由函数
     /// `defer_blocking` 的遗留入口）。
     fn take_dialog_request(&mut self) -> Option<DialogRequest> {
@@ -1766,6 +1816,9 @@ impl AppHandler for UiHost {
     }
 
     fn cursor(&self) -> CursorShape {
+        if self.cursor_hidden {
+            return CursorShape::Hidden;
+        }
         // 菜单浮层激活时用箭头（菜单项自管悬停高亮）。
         if self.menu.is_open() {
             return CursorShape::Arrow;
