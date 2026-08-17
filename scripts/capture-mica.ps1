@@ -240,6 +240,17 @@ foreach ($fixtureName in $wabFixtureNames) {
     $shortcut.Save()
 }
 
+# Seed two unique files so the modified-date ordering probe does not depend on
+# whatever happens to be indexed on the hosted runner.
+$dateSortFixtureRoot = Join-Path $env:TEMP "Flux Everything Date Sort"
+New-Item -ItemType Directory -Force -Path $dateSortFixtureRoot | Out-Null
+$dateSortOldPath = Join-Path $dateSortFixtureRoot "FluxDateSortProbe-old.rs"
+$dateSortNewPath = Join-Path $dateSortFixtureRoot "FluxDateSortProbe-new.rs"
+Set-Content -Path $dateSortOldPath -Value "old" -Encoding utf8
+Set-Content -Path $dateSortNewPath -Value "new" -Encoding utf8
+(Get-Item -LiteralPath $dateSortOldPath).LastWriteTimeUtc = [DateTime]::UtcNow.AddDays(-2)
+(Get-Item -LiteralPath $dateSortNewPath).LastWriteTimeUtc = [DateTime]::UtcNow.AddMinutes(-1)
+
 $existingEverythingGuideIds = @(
     Get-Process | Where-Object {
         $_.MainWindowTitle -like "Command Line Options - Everything*"
@@ -552,12 +563,15 @@ try {
     $everythingDateModifiedOrderProbe = $false
     $everythingDateFirstUtc = $null
     $everythingDateSecondUtc = $null
+    [FluxWallpaper]::SetForegroundWindow($launcherHandle) | Out-Null
+    Start-Sleep -Milliseconds 200
     $shell.SendKeys("^a")
-    $shell.SendKeys("ext:rs")
+    $shell.SendKeys("FluxDateSortProbe")
     Start-Sleep -Seconds 2
     $shell.SendKeys("{HOME}")
     Start-Sleep -Milliseconds 300
     [FluxWallpaper]::SetForegroundWindow($launcherHandle) | Out-Null
+    Start-Sleep -Milliseconds 200
     $shell.SendKeys("^c")
     Start-Sleep -Milliseconds 250
     $firstEverythingPath = (Get-Clipboard -Raw -ErrorAction Stop).Trim().Trim('"')
@@ -571,6 +585,10 @@ try {
     }
     $firstEverythingItem = Get-Item -LiteralPath $firstEverythingPath -ErrorAction Stop
     $secondEverythingItem = Get-Item -LiteralPath $secondEverythingPath -ErrorAction Stop
+    if ($firstEverythingItem.FullName -ne (Get-Item -LiteralPath $dateSortNewPath).FullName -or
+        $secondEverythingItem.FullName -ne (Get-Item -LiteralPath $dateSortOldPath).FullName) {
+        throw "Everything modified-date probe returned unexpected files: first=$($firstEverythingItem.FullName) second=$($secondEverythingItem.FullName)"
+    }
     $everythingDateFirstUtc = $firstEverythingItem.LastWriteTimeUtc.ToString("O")
     $everythingDateSecondUtc = $secondEverythingItem.LastWriteTimeUtc.ToString("O")
     $everythingDateModifiedOrderProbe = $firstEverythingItem.LastWriteTimeUtc -ge $secondEverythingItem.LastWriteTimeUtc
@@ -731,5 +749,8 @@ finally {
     }
     if (Test-Path $wabFixtureRoot) {
         Remove-Item -Recurse -Force $wabFixtureRoot
+    }
+    if (Test-Path $dateSortFixtureRoot) {
+        Remove-Item -Recurse -Force $dateSortFixtureRoot
     }
 }
