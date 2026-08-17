@@ -1196,16 +1196,12 @@ fn main() {
                     Color::rgba(255, 255, 255, 14)
                 })
                 .child(
-                    Element::label(if is_selected {
-                        format!("> {item_label}")
-                    } else {
-                        item_label
-                    })
-                    .font_size(13.0)
-                    .fg(Color::rgba(250, 252, 255, 255))
-                    .max_lines(1)
-                    .truncate(Truncate::End)
-                    .width_match(),
+                    Element::label(item_label)
+                        .font_size(13.0)
+                        .fg(Color::rgba(250, 252, 255, 255))
+                        .max_lines(1)
+                        .truncate(Truncate::End)
+                        .width_match(),
                 )
                 .on_click({
                     let action_window_slot = action_window_slot_for_rows.clone();
