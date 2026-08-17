@@ -44,6 +44,14 @@ const EVERYTHING_MIN_QUERY_LEN: usize = 1;
 const PLUGIN_MIN_QUERY_LEN: usize = 2;
 const MAX_VISIBLE_RESULTS: usize = 16;
 
+fn is_run_as_admin_key(event: &KeyEvent) -> bool {
+    event.ctrl
+        && matches!(
+            event.key,
+            Key::Other(0x52) | Key::Char('r') | Key::Char('R')
+        )
+}
+
 fn monitor_preference_index(preference: MonitorPreference) -> usize {
     match preference {
         MonitorPreference::Primary => 0,
@@ -392,14 +400,11 @@ fn execute_result_action(result: &SearchResult, action: &ActionKind) -> bool {
                 false
             }
         }
-        ActionKind::RunAsAdmin => {
-            if let Some(target) = result.target.as_deref() {
-                let _ = launch::run_as_admin(target);
-                true
-            } else {
-                false
-            }
-        }
+        ActionKind::RunAsAdmin => result
+            .target
+            .as_deref()
+            .map(launch::run_as_admin)
+            .unwrap_or(false),
         ActionKind::OpenLocation => {
             if let Some(target) = result.target.as_deref() {
                 let _ = launch::open_file_location(target);
@@ -1924,7 +1929,7 @@ fn main() {
             }
         }
 
-        if event.ctrl && matches!(event.key, Key::Char('r') | Key::Char('R')) {
+        if is_run_as_admin_key(&event) {
             record_query_history(
                 &settings_for_history_for_keys,
                 &query_history_for_keys,
@@ -1936,7 +1941,9 @@ fn main() {
                 selected_index_for_keys.get(),
             ) {
                 if let Some(target) = result.target.as_deref() {
-                    let _ = launch::run_as_admin(target);
+                    if launch::run_as_admin(target) {
+                        window_op_for_keys.hide_window();
+                    }
                 }
             }
             return true;
@@ -2732,8 +2739,26 @@ fn main() {
 #[cfg(test)]
 mod tests {
     use super::{
-        launcher_window_geometry, COMPACT_WINDOW_HEIGHT, EXPANDED_WINDOW_HEIGHT, WINDOW_WIDTH,
+        is_run_as_admin_key, launcher_window_geometry, COMPACT_WINDOW_HEIGHT,
+        EXPANDED_WINDOW_HEIGHT, WINDOW_WIDTH,
     };
+    use windui::event::{Key, KeyEvent};
+
+    #[test]
+    fn ctrl_r_matches_win32_other_key_event() {
+        assert!(is_run_as_admin_key(&KeyEvent {
+            key: Key::Other(0x52),
+            pressed: true,
+            shift: false,
+            ctrl: true,
+        }));
+        assert!(!is_run_as_admin_key(&KeyEvent {
+            key: Key::Other(0x52),
+            pressed: true,
+            shift: false,
+            ctrl: false,
+        }));
+    }
 
     #[test]
     fn activation_clear_uses_compact_geometry_after_expanded_query() {

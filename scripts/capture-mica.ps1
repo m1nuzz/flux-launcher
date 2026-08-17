@@ -13,6 +13,7 @@ param(
     [switch]$CursorVisibilitySmoke,
     [switch]$ScrollbarGapSmoke,
     [switch]$QueryClearOnReopenSmoke,
+    [switch]$CtrlRSmoke,
     [string]$NavigationQuery = "wab",
 
     [int]$NavigationCycles = 0,
@@ -309,6 +310,7 @@ try {
     $cursorVisibleAfterMove = $false
     $scrollbarGapProbe = $false
     $queryClearOnReopenProbe = $false
+    $ctrlRProbe = $false
     if ($CursorVisibilitySmoke) {
         $shell.SendKeys("x")
         Start-Sleep -Milliseconds 500
@@ -467,6 +469,25 @@ try {
     }
     [FluxWallpaper]::SetForegroundWindow($launcherHandle) | Out-Null
     Start-Sleep -Milliseconds 200
+    if ($CtrlRSmoke) {
+        $shell.SendKeys("^a")
+        $shell.SendKeys("wab")
+        Start-Sleep -Seconds 2
+        $shell.SendKeys("{HOME}")
+        Start-Sleep -Milliseconds 250
+        [FluxWallpaper]::SetForegroundWindow($launcherHandle) | Out-Null
+        $shell.SendKeys("^r")
+        Start-Sleep -Milliseconds 900
+        $ctrlRProbe = ![FluxWallpaper]::IsWindowVisible($launcherHandle)
+        if (!$ctrlRProbe) {
+            throw "Ctrl+R did not launch the selected result with elevation."
+        }
+        [FluxWallpaper]::SendMessage($launcherHandle, $wmHotkey, [UIntPtr]::Zero, [IntPtr]::Zero) | Out-Null
+        Start-Sleep -Milliseconds 650
+        if (![FluxWallpaper]::IsWindowVisible($launcherHandle)) {
+            throw "Unable to restore launcher after Ctrl+R smoke."
+        }
+    }
     if ($RecycleBinSmoke) {
         # Flow-style behavior: Empty and Open are ordinary sibling results,
         # with Empty first. Enter only the Empty row far enough to verify
@@ -594,6 +615,7 @@ try {
         PointerClickProbe = [bool]$PointerInteractionSmoke
         ScrollbarGapProbe = (!$ScrollbarGapSmoke) -or $scrollbarGapProbe
         QueryClearOnReopenProbe = (!$QueryClearOnReopenSmoke) -or $queryClearOnReopenProbe
+        CtrlRProbe = (!$CtrlRSmoke) -or $ctrlRProbe
         TabNavigationProbe = $TabNavigationCycles -gt 0
         EverythingSyntaxProbe = $true
         HistoryPanelProbe = $true
