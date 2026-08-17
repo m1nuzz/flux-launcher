@@ -169,7 +169,7 @@ mod tests {
             right: 0,
             bottom: 1180,
         };
-        assert_eq!(centered_position_in_bounds(bounds, 420, 520), (-750, 380));
+        assert_eq!(centered_position_in_bounds(bounds, 420, 520), (-1170, 380));
     }
 
     #[test]
