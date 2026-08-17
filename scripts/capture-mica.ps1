@@ -324,16 +324,13 @@ try {
         }
     }
     # The WAB query exercises long App Paths and duplicate application-like entries.
-    # Flow-style keyboard navigation: select the second result with Down,
-    # enter action mode with Right, then execute the next action with Enter.
-    $shell.SendKeys("{DOWN}")
+    # Enter must execute the selected normal result and hide the launcher.
+    $shell.SendKeys("{HOME}")
     Start-Sleep -Milliseconds 350
     Save-Screenshot "keyboard-selection.png"
-    $shell.SendKeys("{RIGHT}")
-    Start-Sleep -Milliseconds 500
-    Save-Screenshot "actions-panel.png"
-    # The first action is Open and is deterministic on the runner; avoid
-    # selecting Run as admin because UAC policy can reject it.
+    [FluxWallpaper]::SetForegroundWindow($launcherHandle) | Out-Null
+    # Send Enter to the exact launcher HWND so this probe cannot be intercepted
+    # by the desktop shell or a different foreground process.
     $wmKeyDown = 0x0100
     [FluxWallpaper]::SendMessage($launcherHandle, $wmKeyDown, [UIntPtr]::new(0x0D), [IntPtr]::Zero) | Out-Null
     Start-Sleep -Milliseconds 500
