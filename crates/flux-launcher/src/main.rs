@@ -71,6 +71,10 @@ fn request_monitor_position(
     }
 }
 
+fn request_scroll(scroll_pending: Signal<bool>) {
+    scroll_pending.set(true);
+}
+
 fn launcher_window_geometry(settings_visible: bool, show_results: bool) -> (i32, i32) {
     if settings_visible {
         (SETTINGS_WINDOW_WIDTH, SETTINGS_WINDOW_HEIGHT)
@@ -230,6 +234,7 @@ struct ResultRowAnchor {
     selection_touched: Signal<bool>,
     rows_refresh: Signal<Vec<SearchResult>>,
     query: Signal<String>,
+    scroll_pending: Signal<bool>,
     selection_color: Signal<Color>,
     on_click: Option<ClickFn>,
     pressed: bool,
@@ -265,6 +270,7 @@ impl Widget for ResultRowAnchor {
         let query = self.query.get();
         let selection_changed = self.last_selected != Some(selected);
         let query_changed = self.last_query != query;
+        let scroll_requested = self.scroll_pending.get();
         if selection_changed || query_changed {
             self.title_doc_signal
                 .set(title_match_doc(&self.title, &query));
@@ -273,16 +279,17 @@ impl Widget for ResultRowAnchor {
             } else {
                 String::new()
             });
-            self.last_selected = Some(selected);
-            self.last_query = query;
         }
-        // Scroll only when this row becomes selected or the query creates a new
-        // result set. Calling scroll_into_view on every layout/update pass feeds
-        // the ScrollWidget's own layout mutation back into the next frame and can
-        // make the viewport oscillate between two positions while typing.
-        if selected && (selection_changed || query_changed) {
+        self.last_selected = Some(selected);
+        self.last_query = query;
+        // Scroll only after an explicit query/keyboard request. Wheel scrolling,
+        // hover selection, and list repaints must never call scroll_into_view;
+        // doing so feeds a layout mutation back into the ScrollWidget and pins
+        // the viewport to the selected row (usually the top).
+        if selected && scroll_requested {
             let row_id = ctx.id();
             let _ = ctx.tree_mut().scroll_into_view(row_id);
+            self.scroll_pending.set(false);
         }
     }
 
@@ -965,6 +972,7 @@ fn result_row(
     rows_refresh: Signal<Vec<SearchResult>>,
     plugin_actions: Rc<RefCell<HashMap<String, PluginInvocation>>>,
     query: Signal<String>,
+    scroll_pending: Signal<bool>,
     selection_color: Signal<Color>,
     settings: Arc<RwLock<Settings>>,
     query_history: Rc<RefCell<Vec<String>>>,
@@ -1013,6 +1021,7 @@ fn result_row(
             selection_touched,
             rows_refresh,
             query,
+            scroll_pending,
             selection_color,
             on_click: None,
             pressed: false,
@@ -1170,6 +1179,7 @@ fn main() {
     let action_mode_for_rows = action_mode;
     let action_window_slot_for_rows = Rc::clone(&action_window_slot);
     let query_for_rows = query;
+    let scroll_request_for_rows = signal(false);
     let inline_completion = signal(String::new());
 
     let search_box = Element::text_input(query, "Search")
@@ -1233,6 +1243,7 @@ fn main() {
             result_source,
             Rc::clone(&actions_for_rows),
             query_for_rows,
+            scroll_request_for_rows,
             selection_color,
             Arc::clone(&settings_for_rows),
             Rc::clone(&history_for_rows),
@@ -1402,6 +1413,7 @@ fn main() {
     let selection_touched_for_interval = selection_touched;
     let sequence_for_interval = current_sequence;
     let providers_for_interval = Rc::clone(&provider_results);
+    let scroll_request_for_interval = scroll_request_for_rows;
     let priorities_for_interval = priorities;
     let actions_for_interval = Rc::clone(&plugin_actions);
     let auto_enable_everything_for_interval = auto_enable_everything;
@@ -1657,6 +1669,7 @@ fn main() {
     let results_for_keys = results;
     let selected_id_for_keys = selected_id;
     let selected_index_for_keys = selected_index;
+    let scroll_request_for_keys = scroll_request_for_rows;
     let selection_touched_for_keys = selection_touched;
     let action_mode_for_keys = action_mode;
     let action_index_for_keys = action_index;
@@ -1793,6 +1806,7 @@ fn main() {
                 selected_id_for_keys.set(result.id.clone());
             }
             results_for_keys.set(current_results);
+            request_scroll(scroll_request_for_keys);
             return true;
         }
 
@@ -1947,6 +1961,7 @@ fn main() {
                     selected_id_for_keys.set(result.id.clone());
                 }
                 results_for_keys.set(current_results);
+                request_scroll(scroll_request_for_keys);
                 true
             }
             Key::Right => {
@@ -2633,6 +2648,7 @@ fn main() {
                 inline_completion_for_interval.set(inline_completion_suffix(&next_query, &merged));
                 results_for_interval.set(merged);
             }
+            request_scroll(scroll_request_for_interval);
             action_mode.set(false);
             action_index.set(0);
             action_items.set(Vec::new());
