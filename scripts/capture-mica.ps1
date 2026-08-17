@@ -563,6 +563,10 @@ try {
     $everythingDateModifiedOrderProbe = $false
     $everythingDateFirstUtc = $null
     $everythingDateSecondUtc = $null
+    if (![FluxWallpaper]::IsWindowVisible($launcherHandle)) {
+        [FluxWallpaper]::SendMessage($launcherHandle, $wmHotkey, [UIntPtr]::Zero, [IntPtr]::Zero) | Out-Null
+        Start-Sleep -Milliseconds 650
+    }
     [FluxWallpaper]::SetForegroundWindow($launcherHandle) | Out-Null
     Start-Sleep -Milliseconds 200
     $shell.SendKeys("^a")
