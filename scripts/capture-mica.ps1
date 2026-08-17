@@ -298,6 +298,10 @@ try {
         $shell.SendKeys("^a")
         $shell.SendKeys("recycle")
         Start-Sleep -Milliseconds 900
+        # The preceding generic navigation probe may leave a later result
+        # selected. Home makes the built-in Recycle Bin command deterministic.
+        $shell.SendKeys("{HOME}")
+        Start-Sleep -Milliseconds 350
         Save-Screenshot "recycle-bin-result.png"
         $shell.SendKeys("{RIGHT}")
         Start-Sleep -Milliseconds 700
