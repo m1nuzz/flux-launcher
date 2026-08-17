@@ -184,7 +184,7 @@ impl UiHost {
             if let Some(i) = hit {
                 let text = self.toast.items[i].req.text.clone();
                 let item = MenuItem::run(
-                    "复制内容",
+                    "Copy",
                     move |_ctx| {
                         use crate::core::ClipboardProvider;
                         crate::platform::Clipboard.set_text(&text);

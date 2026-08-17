@@ -962,10 +962,10 @@ impl TextInput {
             ctrl: true,
         };
         vec![
-            MenuItem::key("剪切", ctrl(0x58), has_sel && !pw), // VK_X
-            MenuItem::key("复制", ctrl(0x43), has_sel && !pw), // VK_C
-            MenuItem::key("粘贴", ctrl(0x56), true),           // VK_V
-            MenuItem::key("全选", ctrl(0x41), has_text),       // VK_A
+            MenuItem::key("Cut", ctrl(0x58), has_sel && !pw), // VK_X
+            MenuItem::key("Copy", ctrl(0x43), has_sel && !pw), // VK_C
+            MenuItem::key("Paste", ctrl(0x56), true),         // VK_V
+            MenuItem::key("Select All", ctrl(0x41), has_text), // VK_A
         ]
     }
     /// 选中 `idx` 所在逻辑行（两 '\n' 之间）。单行文本无 '\n' 即全选。
@@ -1933,6 +1933,18 @@ mod tests {
     fn run(s: &str, idx: usize) -> (usize, usize) {
         let chars: Vec<char> = s.chars().collect();
         word_run(&chars, idx)
+    }
+
+    #[test]
+    fn context_menu_uses_english_labels() {
+        let text = signal(String::from("hello"));
+        let input = TextInput::new(text, String::new());
+        let labels = input
+            .context_menu_items()
+            .into_iter()
+            .map(|item| item.label)
+            .collect::<Vec<_>>();
+        assert_eq!(labels, ["Cut", "Copy", "Paste", "Select All"]);
     }
 
     #[test]
