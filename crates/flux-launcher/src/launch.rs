@@ -23,6 +23,29 @@ pub fn open_path(path: &str) -> bool {
     }
 }
 
+/// Schedule a shell launch without blocking the launcher UI thread.
+///
+/// ShellExecute may wait for shell association/DDE work before returning. The
+/// launcher hides first, then uses this fire-and-forget path so Enter feels
+/// instantaneous even when Explorer or an associated application is slow.
+pub fn open_path_async(path: &str) {
+    let path = path.to_owned();
+    let _ = std::thread::Builder::new()
+        .name(String::from("flux-shell-launch"))
+        .spawn(move || {
+            let _ = open_path(&path);
+        });
+}
+
+/// Schedule opening the Recycle Bin without blocking the launcher UI thread.
+pub fn open_recycle_bin_async() {
+    let _ = std::thread::Builder::new()
+        .name(String::from("flux-shell-launch"))
+        .spawn(|| {
+            let _ = open_recycle_bin();
+        });
+}
+
 #[cfg(windows)]
 pub fn open_recycle_bin() -> bool {
     shell_execute("open", "shell:RecycleBinFolder", None)

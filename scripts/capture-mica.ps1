@@ -457,11 +457,18 @@ try {
     # Send Enter to the exact launcher HWND so this probe cannot be intercepted
     # by the desktop shell or a different foreground process.
     $wmKeyDown = 0x0100
+    $enterDispatchTimer = [System.Diagnostics.Stopwatch]::StartNew()
     [FluxWallpaper]::SendMessage($launcherHandle, $wmKeyDown, [UIntPtr]::new(0x0D), [IntPtr]::Zero) | Out-Null
+    $enterDispatchTimer.Stop()
+    $enterHideDispatchMilliseconds = [Math]::Round($enterDispatchTimer.Elapsed.TotalMilliseconds, 2)
     Start-Sleep -Milliseconds 500
     $enterLaunchHidden = ![FluxWallpaper]::IsWindowVisible($launcherHandle)
+    $enterHideLatencyProbe = $enterLaunchHidden -and ($enterHideDispatchMilliseconds -lt 250)
     if (!$enterLaunchHidden) {
         throw "Enter launch did not hide the launcher window."
+    }
+    if (!$enterHideLatencyProbe) {
+        throw "Enter hide dispatch took $enterHideDispatchMilliseconds ms; expected less than 250 ms."
     }
     # Restore the launcher for the remaining independent probes.
     [FluxWallpaper]::SendMessage($launcherHandle, $wmHotkey, [UIntPtr]::Zero, [IntPtr]::Zero) | Out-Null
@@ -668,6 +675,8 @@ try {
         ActionModeProbe = $true
         EnterActionProbe = $true
         EnterLaunchHideProbe = $enterLaunchHidden
+        EnterHideDispatchMilliseconds = $enterHideDispatchMilliseconds
+        EnterHideLatencyProbe = $enterHideLatencyProbe
         EnterHideQuery = $enterHideQuery
         Memory = [ordered]@{
             Idle = $idleMemory

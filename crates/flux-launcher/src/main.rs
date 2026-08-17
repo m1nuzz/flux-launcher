@@ -414,7 +414,7 @@ fn execute_result_action(result: &SearchResult, action: &ActionKind) -> bool {
     match action {
         ActionKind::Open => {
             if let Some(target) = result.target.as_deref() {
-                let _ = launch::open_path(target);
+                launch::open_path_async(target);
                 true
             } else {
                 false
@@ -1103,13 +1103,13 @@ fn result_row(
                 return;
             }
             if id == "open-recycle-bin" {
-                let _ = launch::open_recycle_bin();
                 ctx.hide_window();
+                launch::open_recycle_bin_async();
                 return;
             }
             if let Some(target) = target.as_deref() {
-                let _ = launch::open_path(target);
                 ctx.hide_window();
+                launch::open_path_async(target);
                 return;
             }
             if let Some(action) = plugin_actions.borrow().get(&id).cloned() {
@@ -2039,25 +2039,19 @@ fn main() {
                     &selected_id_for_keys.get(),
                     selected_index_for_keys.get(),
                 ) {
-                    let should_hide = if result.id == "empty-recycle-bin" {
+                    if result.id == "empty-recycle-bin" {
                         recycle_bin_confirmation_for_keys.set(true);
-                        false
                     } else if result.id == "open-recycle-bin" {
-                        let _ = launch::open_recycle_bin();
-                        true
+                        window_op_for_keys.hide_window();
+                        launch::open_recycle_bin_async();
                     } else if let Some(target) = result.target.as_deref() {
-                        let _ = launch::open_path(target);
-                        true
+                        window_op_for_keys.hide_window();
+                        launch::open_path_async(target);
                     } else if let Some(action) =
                         plugin_actions_for_keys.borrow().get(&result.id).cloned()
                     {
-                        plugins::execute_async(action);
-                        true
-                    } else {
-                        false
-                    };
-                    if should_hide {
                         window_op_for_keys.hide_window();
+                        plugins::execute_async(action);
                     }
                 }
                 true
