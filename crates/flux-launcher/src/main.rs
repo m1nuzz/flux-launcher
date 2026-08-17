@@ -354,12 +354,30 @@ impl Widget for ResultRowAnchor {
 
 fn execute_result_action(result: &SearchResult, action: &ActionKind) -> bool {
     match action {
-        ActionKind::Open => result.target.as_deref().is_some_and(launch::open_path),
-        ActionKind::RunAsAdmin => result.target.as_deref().is_some_and(launch::run_as_admin),
-        ActionKind::OpenLocation => result
-            .target
-            .as_deref()
-            .is_some_and(launch::open_file_location),
+        ActionKind::Open => {
+            if let Some(target) = result.target.as_deref() {
+                let _ = launch::open_path(target);
+                true
+            } else {
+                false
+            }
+        }
+        ActionKind::RunAsAdmin => {
+            if let Some(target) = result.target.as_deref() {
+                let _ = launch::run_as_admin(target);
+                true
+            } else {
+                false
+            }
+        }
+        ActionKind::OpenLocation => {
+            if let Some(target) = result.target.as_deref() {
+                let _ = launch::open_file_location(target);
+                true
+            } else {
+                false
+            }
+        }
         ActionKind::CopyPath => {
             if let Some(target) = result.target.as_deref() {
                 windui::platform::Clipboard.set_text(target);
@@ -961,15 +979,13 @@ fn result_row(
                 return;
             }
             if id == "open-recycle-bin" {
-                if launch::open_recycle_bin() {
-                    ctx.hide_window();
-                }
+                let _ = launch::open_recycle_bin();
+                ctx.hide_window();
                 return;
             }
             if let Some(target) = target.as_deref() {
-                if launch::open_path(target) {
-                    ctx.hide_window();
-                }
+                let _ = launch::open_path(target);
+                ctx.hide_window();
                 return;
             }
             if let Some(action) = plugin_actions.borrow().get(&id).cloned() {
@@ -1793,9 +1809,11 @@ fn main() {
                         recycle_bin_confirmation_for_keys.set(true);
                         false
                     } else if result.id == "open-recycle-bin" {
-                        launch::open_recycle_bin()
+                        let _ = launch::open_recycle_bin();
+                        true
                     } else if let Some(target) = result.target.as_deref() {
-                        launch::open_path(target)
+                        let _ = launch::open_path(target);
+                        true
                     } else if let Some(action) =
                         plugin_actions_for_keys.borrow().get(&result.id).cloned()
                     {
