@@ -24,6 +24,21 @@ pub fn open_path(path: &str) -> bool {
 }
 
 #[cfg(windows)]
+pub fn open_recycle_bin() -> bool {
+    shell_execute("open", "shell:RecycleBinFolder", None)
+}
+
+#[cfg(windows)]
+pub fn empty_recycle_bin() -> bool {
+    use windows::core::PCWSTR;
+    use windows::Win32::UI::Shell::{SHEmptyRecycleBinW, SHERB_NOPROGRESSUI, SHERB_NOSOUND};
+
+    // Keep the Windows confirmation prompt enabled. Flux asks for confirmation
+    // first, then Windows provides its standard final safety prompt.
+    unsafe { SHEmptyRecycleBinW(None, PCWSTR::null(), SHERB_NOPROGRESSUI | SHERB_NOSOUND).is_ok() }
+}
+
+#[cfg(windows)]
 pub fn run_as_admin(path: &str) -> bool {
     shell_execute("runas", path, None)
 }
@@ -74,6 +89,16 @@ fn shell_execute(verb: &str, target: &str, arguments: Option<&str>) -> bool {
 
 #[cfg(not(windows))]
 pub fn open_path(_path: &str) -> bool {
+    false
+}
+
+#[cfg(not(windows))]
+pub fn open_recycle_bin() -> bool {
+    false
+}
+
+#[cfg(not(windows))]
+pub fn empty_recycle_bin() -> bool {
     false
 }
 

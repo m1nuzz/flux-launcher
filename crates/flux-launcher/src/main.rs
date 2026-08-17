@@ -109,6 +109,8 @@ impl ProviderResults {
 #[derive(Clone, Debug)]
 enum ActionKind {
     Open,
+    OpenRecycleBin,
+    EmptyRecycleBin,
     RunAsAdmin,
     OpenLocation,
     CopyPath,
@@ -128,6 +130,18 @@ fn actions_for_result(
     plugin_actions: &HashMap<String, PluginInvocation>,
 ) -> Vec<ActionItem> {
     let mut actions = Vec::with_capacity(4);
+    if result.id == "recycle-bin" {
+        actions.push(ActionItem {
+            id: String::from("recycle-bin:open"),
+            label: String::from("Open Recycle Bin"),
+            kind: ActionKind::OpenRecycleBin,
+        });
+        actions.push(ActionItem {
+            id: String::from("recycle-bin:empty"),
+            label: String::from("Empty Recycle Bin"),
+            kind: ActionKind::EmptyRecycleBin,
+        });
+    }
     if result.target.is_some() {
         actions.push(ActionItem {
             id: format!("{}:open", result.id),
@@ -345,6 +359,12 @@ fn execute_result_action(result: &SearchResult, action: &ActionKind) {
             if let Some(target) = result.target.as_deref() {
                 let _ = launch::open_path(target);
             }
+        }
+        ActionKind::OpenRecycleBin => {
+            let _ = launch::open_recycle_bin();
+        }
+        ActionKind::EmptyRecycleBin => {
+            let _ = launch::empty_recycle_bin();
         }
         ActionKind::RunAsAdmin => {
             if let Some(target) = result.target.as_deref() {
@@ -965,6 +985,7 @@ fn main() {
     let selection_touched = signal(false);
     let action_mode = signal(false);
     let action_index = signal(0_usize);
+    let recycle_bin_confirmation = signal(false);
     let action_items = signal(Vec::<ActionItem>::new());
     let action_window_slot = Rc::new(RefCell::new(None::<WindowSizeHandle>));
     let status = signal(String::from("Ready"));
@@ -1023,6 +1044,7 @@ fn main() {
     let action_items_for_rows = action_items;
     let action_index_for_rows = action_index;
     let action_mode_for_rows = action_mode;
+    let recycle_bin_confirmation_for_rows = recycle_bin_confirmation;
     let action_window_slot_for_rows = Rc::clone(&action_window_slot);
     let query_for_rows = query;
     let inline_completion = signal(String::new());
@@ -1104,6 +1126,52 @@ fn main() {
         .child(result_list_body)
         .visible_when(move || show_results.get() && !action_mode.get());
 
+    let confirmation_for_close = recycle_bin_confirmation;
+    let confirmation_for_cancel = recycle_bin_confirmation;
+    let confirmation_for_empty = recycle_bin_confirmation;
+    let status_for_confirmation = status;
+    let recycle_bin_dialog = Element::dialog_panel(
+        recycle_bin_confirmation,
+        "Empty Recycle Bin",
+        360,
+        move |_| confirmation_for_close.set(false),
+        Element::col()
+            .spacing(8)
+            .child(
+                Element::label("This permanently deletes all items in the Recycle Bin.")
+                    .font_size(13.0)
+                    .fg(Color::rgba(245, 248, 255, 245)),
+            )
+            .child(
+                Element::label("This action cannot be undone.")
+                    .font_size(12.0)
+                    .fg(Color::rgba(255, 190, 190, 235)),
+            ),
+        Element::row()
+            .width_match()
+            .spacing(8)
+            .child(Element::flex_spacer())
+            .child(
+                Element::button("Cancel")
+                    .neutral()
+                    .outline_soft()
+                    .on_click(move |_| confirmation_for_cancel.set(false)),
+            )
+            .child(
+                Element::button("Empty Recycle Bin")
+                    .danger()
+                    .on_click(move |_| {
+                        confirmation_for_empty.set(false);
+                        if launch::empty_recycle_bin() {
+                            status_for_confirmation.set(String::from("Recycle Bin emptied"));
+                        } else {
+                            status_for_confirmation
+                                .set(String::from("Could not empty the Recycle Bin"));
+                        }
+                    }),
+            ),
+    );
+
     let action_list = Element::list_signal(
         action_items_for_rows,
         |item| item.id.clone(),
@@ -1142,7 +1210,9 @@ fn main() {
                 .on_click({
                     let action_window_slot = action_window_slot_for_rows.clone();
                     move |_| {
-                        if let Some(result) = selected_result(
+                        if matches!(item_kind, ActionKind::EmptyRecycleBin) {
+                            recycle_bin_confirmation_for_rows.set(true);
+                        } else if let Some(result) = selected_result(
                             &result_source.get(),
                             &selected_for_rows.get(),
                             selected_index_for_rows.get(),
@@ -1170,7 +1240,8 @@ fn main() {
         .child(search_box)
         .child(result_list)
         .child(action_bar)
-        .child(action_list);
+        .child(action_list)
+        .child(recycle_bin_dialog);
     let launcher_surface = Element::stack()
         .fill()
         .bg(Color::rgba(0, 0, 0, 0))
@@ -1420,6 +1491,7 @@ fn main() {
     let action_mode_for_keys = action_mode;
     let action_index_for_keys = action_index;
     let action_items_for_keys = action_items;
+    let recycle_bin_confirmation_for_keys = recycle_bin_confirmation;
     let plugin_actions_for_keys = Rc::clone(&plugin_actions);
     let inline_completion_for_keys = inline_completion;
     let settings_visible_for_keys = settings_visible;
@@ -1626,7 +1698,11 @@ fn main() {
                             .get(action_index_for_keys.get())
                             .cloned()
                         {
-                            execute_result_action(&result, &action.kind);
+                            if matches!(action.kind, ActionKind::EmptyRecycleBin) {
+                                recycle_bin_confirmation_for_keys.set(true);
+                            } else {
+                                execute_result_action(&result, &action.kind);
+                            }
                         }
                     }
                     action_mode_for_keys.set(false);
@@ -1714,7 +1790,9 @@ fn main() {
                     &selected_id_for_keys.get(),
                     selected_index_for_keys.get(),
                 ) {
-                    if let Some(target) = result.target.as_deref() {
+                    if result.id == "recycle-bin" {
+                        let _ = launch::open_recycle_bin();
+                    } else if let Some(target) = result.target.as_deref() {
                         let _ = launch::open_path(target);
                     } else if let Some(action) =
                         plugin_actions_for_keys.borrow().get(&result.id).cloned()

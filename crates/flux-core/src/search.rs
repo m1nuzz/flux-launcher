@@ -233,6 +233,11 @@ fn built_in_results(query: &str) -> Vec<SearchResult> {
             "Search with Everything",
             "Index files and folders",
         ),
+        (
+            "recycle-bin",
+            "Recycle Bin",
+            "Open or empty the Recycle Bin",
+        ),
         ("plugins", "Plugin directory", "Manage native Flow plugins"),
         ("about", "About Flux Launcher", "Version and diagnostics"),
     ];
@@ -244,6 +249,7 @@ fn built_in_results(query: &str) -> Vec<SearchResult> {
                 || id.contains(&normalized)
                 || title.to_ascii_lowercase().contains(&normalized)
                 || subtitle.to_ascii_lowercase().contains(&normalized)
+                || (*id == "recycle-bin" && matches!(normalized.as_str(), "trash" | "корзина"))
         })
         .take(MAX_RESULTS)
         .map(|(id, title, subtitle)| SearchResult {
@@ -268,6 +274,30 @@ mod tests {
         assert!(!model.results().is_empty());
         assert!(model.results().len() <= MAX_RESULTS);
         assert_eq!(model.selected_index(), 0);
+    }
+
+    #[test]
+    fn recycle_bin_command_appears_on_recycle_query() {
+        let mut model = SearchModel::new();
+        model.set_query("recycle");
+        assert_eq!(model.results().len(), 1);
+        assert_eq!(model.selected().unwrap().id, "recycle-bin");
+    }
+
+    #[test]
+    fn recycle_bin_command_appears_on_trash_query() {
+        let mut model = SearchModel::new();
+        model.set_query("trash");
+        assert_eq!(model.results().len(), 1);
+        assert_eq!(model.selected().unwrap().id, "recycle-bin");
+    }
+
+    #[test]
+    fn recycle_bin_command_appears_on_russian_alias_query() {
+        let mut model = SearchModel::new();
+        model.set_query("корзина");
+        assert_eq!(model.results().len(), 1);
+        assert_eq!(model.selected().unwrap().id, "recycle-bin");
     }
 
     #[test]

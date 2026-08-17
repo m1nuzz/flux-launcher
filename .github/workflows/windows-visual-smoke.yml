@@ -38,6 +38,11 @@ on:
         required: false
         default: false
         type: boolean
+      recycle_bin_smoke:
+        description: "Exercise Recycle Bin search and action mode without emptying it"
+        required: false
+        default: false
+        type: boolean
       tray_settings_smoke:
         description: "Exercise the tray Settings show lifecycle before measuring the panel"
         required: false
@@ -104,6 +109,9 @@ jobs:
           }
           if ("${{ inputs.everything_missing_smoke }}" -eq "true") {
             $captureParams.EverythingMissingSmoke = $true
+          }
+          if ("${{ inputs.recycle_bin_smoke }}" -eq "true") {
+            $captureParams.RecycleBinSmoke = $true
           }
           if ("${{ inputs.tray_settings_smoke }}" -eq "true") {
             $captureParams.TraySettingsSmoke = $true

@@ -9,6 +9,7 @@ param(
     [switch]$TraySettingsSmoke,
     [switch]$PointerInteractionSmoke,
     [switch]$EverythingMissingSmoke,
+    [switch]$RecycleBinSmoke,
     [string]$NavigationQuery = "wab",
 
     [int]$NavigationCycles = 0,
@@ -285,6 +286,19 @@ try {
     $shell.SendKeys("{DOWN}")
     $shell.SendKeys("{ENTER}")
     Start-Sleep -Milliseconds 400
+    if ($RecycleBinSmoke) {
+        # Verify the built-in command and its action list, then cancel. Never
+        # press Enter while Empty Recycle Bin is selected in CI.
+        $shell.SendKeys("^a")
+        $shell.SendKeys("recycle")
+        Start-Sleep -Milliseconds 900
+        Save-Screenshot "recycle-bin-result.png"
+        $shell.SendKeys("{RIGHT}")
+        Start-Sleep -Milliseconds 700
+        Save-Screenshot "recycle-bin-actions.png"
+        $shell.SendKeys("{ESCAPE}")
+        Start-Sleep -Milliseconds 350
+    }
     # Native Everything syntax must remain usable in the always-on provider.
     $shell.SendKeys("^a")
     $shell.SendKeys("ext:zip")
@@ -400,6 +414,8 @@ try {
         SettingsPanelProbe = $settingsWindowFound -and ($settingsWindowHeight -ge 400) -and ($settingsWindowWidth -ge 680)
         EverythingAutoEnableProbe = $true
         EverythingMissingStateProbe = [bool]$EverythingMissingSmoke
+        RecycleBinProbe = [bool]$RecycleBinSmoke
+        RecycleBinDestructiveActionInvoked = $false
         EverythingWingetInstallCommandProbe = "winget install -e --id voidtools.Everything"
         TraySettingsLifecycleProbe = (!$TraySettingsSmoke) -or ($settingsWindowFound -and ($settingsWindowHeight -ge 400) -and ($settingsWindowWidth -ge 680))
         KeyboardSelectionProbe = $true
