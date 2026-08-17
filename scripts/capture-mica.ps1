@@ -12,6 +12,7 @@ param(
     [switch]$RecycleBinSmoke,
     [switch]$CursorVisibilitySmoke,
     [switch]$ScrollbarGapSmoke,
+    [switch]$QueryClearOnReopenSmoke,
     [string]$NavigationQuery = "wab",
 
     [int]$NavigationCycles = 0,
@@ -112,6 +113,35 @@ function Save-Screenshot([string]$FileName) {
     finally {
         $graphics.Dispose()
         $bitmap.Dispose()
+    }
+}
+
+function Compare-ScreenshotRegion(
+    [string]$FirstPath,
+    [string]$SecondPath,
+    [int]$X,
+    [int]$Y,
+    [int]$Width,
+    [int]$Height
+) {
+    $first = New-Object System.Drawing.Bitmap $FirstPath
+    $second = New-Object System.Drawing.Bitmap $SecondPath
+    try {
+        $total = 0L
+        $samples = 0
+        for ($py = 0; $py -lt $Height; $py += 3) {
+            for ($px = 0; $px -lt $Width; $px += 3) {
+                $a = $first.GetPixel($X + $px, $Y + $py)
+                $b = $second.GetPixel($X + $px, $Y + $py)
+                $total += [Math]::Abs($a.R - $b.R) + [Math]::Abs($a.G - $b.G) + [Math]::Abs($a.B - $b.B)
+                $samples++
+            }
+        }
+        return $samples -gt 0 -and (($total / [double]$samples) -lt 18.0)
+    }
+    finally {
+        $first.Dispose()
+        $second.Dispose()
     }
 }
 
@@ -278,6 +308,7 @@ try {
     $cursorHiddenAfterTyping = $false
     $cursorVisibleAfterMove = $false
     $scrollbarGapProbe = $false
+    $queryClearOnReopenProbe = $false
     if ($CursorVisibilitySmoke) {
         $shell.SendKeys("x")
         Start-Sleep -Milliseconds 500
@@ -297,6 +328,36 @@ try {
     Start-Sleep -Seconds 2
     $queryMemory = Get-MemorySnapshot $process.Id
     Save-Screenshot "everything-fallback.png"
+
+    if ($QueryClearOnReopenSmoke) {
+        [FluxWallpaper]::SendMessage($launcherHandle, $wmHotkey, [UIntPtr]::Zero, [IntPtr]::Zero) | Out-Null
+        Start-Sleep -Milliseconds 500
+        if ([FluxWallpaper]::IsWindowVisible($launcherHandle)) {
+            throw "Query-clear smoke could not hide the launcher before reopen."
+        }
+        [FluxWallpaper]::SendMessage($launcherHandle, $wmHotkey, [UIntPtr]::Zero, [IntPtr]::Zero) | Out-Null
+        Start-Sleep -Milliseconds 350
+        if (![FluxWallpaper]::IsWindowVisible($launcherHandle)) {
+            throw "Query-clear smoke could not show the launcher after hide."
+        }
+        Save-Screenshot "query-clear-reopen.png"
+        $reopenRect = New-Object FluxWallpaper+RECT
+        if (![FluxWallpaper]::GetWindowRect($launcherHandle, [ref]$reopenRect)) {
+            throw "Unable to locate launcher rectangle for query-clear smoke."
+        }
+        $emptyScreenshot = Join-Path $OutputDirectory "mica-repeat-show-empty.png"
+        $reopenScreenshot = Join-Path $OutputDirectory "query-clear-reopen.png"
+        $queryClearOnReopenProbe = Compare-ScreenshotRegion `
+            $emptyScreenshot `
+            $reopenScreenshot `
+            ($reopenRect.Left - [System.Windows.Forms.SystemInformation]::VirtualScreen.Left) `
+            ($reopenRect.Top - [System.Windows.Forms.SystemInformation]::VirtualScreen.Top) `
+            ($reopenRect.Right - $reopenRect.Left) `
+            72
+        if (!$queryClearOnReopenProbe) {
+            throw "Query-clear smoke detected stale content in the reopened search bar."
+        }
+    }
 
     # Regression probe: keep the launcher on one monitor position while
     # repeatedly toggling Alt+Space after a query has expanded the window.
@@ -532,6 +593,7 @@ try {
         PointerWheelProbe = [bool]$PointerInteractionSmoke
         PointerClickProbe = [bool]$PointerInteractionSmoke
         ScrollbarGapProbe = (!$ScrollbarGapSmoke) -or $scrollbarGapProbe
+        QueryClearOnReopenProbe = (!$QueryClearOnReopenSmoke) -or $queryClearOnReopenProbe
         TabNavigationProbe = $TabNavigationCycles -gt 0
         EverythingSyntaxProbe = $true
         HistoryPanelProbe = $true

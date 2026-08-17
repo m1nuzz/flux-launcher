@@ -1451,7 +1451,6 @@ fn main() {
     *action_window_slot.borrow_mut() = Some(window_size.clone());
     let size_for_interval = window_size.clone();
     let size_for_visibility = window_size.clone();
-    let position_for_visibility = window_position.clone();
     let query_for_applications = query;
     let results_for_applications = results;
     let inline_completion_for_applications = inline_completion;
@@ -2680,23 +2679,32 @@ fn main() {
             let cursor_visibility_for_show = cursor_visibility.clone();
             move || {
                 cursor_visibility_for_show.show();
-                let (layout_enabled, clear_query, monitor_preference) = settings
+                let layout_enabled = settings
                     .read()
                     .map(|settings| {
                         selection_color.set(selection_color_for_settings(&settings));
+                        settings.switch_to_english_layout
+                    })
+                    .unwrap_or(true);
+                if layout_enabled {
+                    keyboard_layout::switch_to_english();
+                }
+            }
+        })
+        .on_window_hide({
+            let settings = Arc::clone(&shared_settings);
+            move || {
+                let (enabled, clear_query) = settings
+                    .read()
+                    .map(|settings| {
                         (
                             settings.switch_to_english_layout,
                             settings.clear_query_on_activation,
-                            settings.monitor_preference,
                         )
                     })
-                    .unwrap_or((
-                        true,
-                        clear_query_on_activation.get(),
-                        MonitorPreference::Primary,
-                    ));
-                if layout_enabled {
-                    keyboard_layout::switch_to_english();
+                    .unwrap_or((true, clear_query_on_activation.get()));
+                if enabled {
+                    keyboard_layout::restore_previous();
                 }
                 if clear_query {
                     query.set(String::new());
@@ -2712,26 +2720,9 @@ fn main() {
                     action_index.set(0);
                     action_items.set(Vec::new());
                     inline_completion.set(String::new());
+                    scroll_request_for_rows.set(false);
                     let (width, height) = launcher_window_geometry(settings_visible.get(), false);
-                    request_monitor_position(
-                        &position_for_visibility,
-                        monitor_preference,
-                        width,
-                        height,
-                    );
                     size_for_visibility.set(width, height);
-                }
-            }
-        })
-        .on_window_hide({
-            let settings = Arc::clone(&shared_settings);
-            move || {
-                let enabled = settings
-                    .read()
-                    .map(|settings| settings.switch_to_english_layout)
-                    .unwrap_or(true);
-                if enabled {
-                    keyboard_layout::restore_previous();
                 }
             }
         })
