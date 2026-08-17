@@ -331,7 +331,8 @@ try {
     $shell.SendKeys("{RIGHT}")
     Start-Sleep -Milliseconds 500
     Save-Screenshot "actions-panel.png"
-    $shell.SendKeys("{DOWN}")
+    # The first action is Open and is deterministic on the runner; avoid
+    # selecting Run as admin because UAC policy can reject it.
     $shell.SendKeys("{ENTER}")
     Start-Sleep -Milliseconds 500
     $enterLaunchHidden = ![FluxWallpaper]::IsWindowVisible($launcherHandle)
