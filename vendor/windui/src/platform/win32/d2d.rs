@@ -14,6 +14,7 @@ use std::collections::HashMap;
 
 use windows::core::{Interface, HRESULT, PCWSTR};
 use windows::Win32::Foundation::{D2DERR_RECREATE_TARGET, HWND};
+use windows::Win32::UI::WindowsAndMessaging::IsWindowVisible;
 use windows::Win32::Graphics::Direct2D::Common::{
     D2D1_ALPHA_MODE_PREMULTIPLIED, D2D1_COLOR_F, D2D1_COMPOSITE_MODE_SOURCE_OVER,
     D2D1_GRADIENT_STOP, D2D1_PIXEL_FORMAT, D2D_RECT_F, D2D_SIZE_U,
