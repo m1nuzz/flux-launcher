@@ -430,7 +430,7 @@ try {
     # before testing normal Enter execution and hide-after-launch behavior.
     [FluxWallpaper]::SetForegroundWindow($launcherHandle) | Out-Null
     $shell.SendKeys("^a")
-    $shell.SendKeys($enterHideQuery)
+    $shell.SendKeys($navigationProbeQuery)
     Start-Sleep -Seconds 2
 
     if ($PointerInteractionSmoke) {
