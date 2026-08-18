@@ -239,6 +239,12 @@ foreach ($fixtureName in $wabFixtureNames) {
     $shortcut.Description = "Flux WAB smoke application fixture"
     $shortcut.Save()
 }
+$launchProbeShortcut = $shortcutShell.CreateShortcut((Join-Path $wabFixtureRoot "Flux Launch Probe.lnk"))
+$launchProbeShortcut.TargetPath = Join-Path $env:WINDIR "System32\cmd.exe"
+$launchProbeShortcut.Arguments = "/c exit"
+$launchProbeShortcut.WorkingDirectory = $env:WINDIR
+$launchProbeShortcut.Description = "Flux process creation smoke fixture"
+$launchProbeShortcut.Save()
 
 $existingEverythingGuideIds = @(
     Get-Process | Where-Object {
@@ -501,6 +507,59 @@ try {
     }
     [FluxWallpaper]::SetForegroundWindow($launcherHandle) | Out-Null
     Start-Sleep -Milliseconds 200
+    $launchProbeQuery = "flux"
+    $shell.SendKeys("^a")
+    $shell.SendKeys($launchProbeQuery)
+    Start-Sleep -Seconds 2
+    $shell.SendKeys("{HOME}")
+    Start-Sleep -Milliseconds 250
+    [FluxWallpaper]::SetForegroundWindow($launcherHandle) | Out-Null
+    $launchProbeTraceBeforeCount = if (Test-Path $launchTracePath) { @(Get-Content $launchTracePath).Count } else { 0 }
+    $launchProbeTimer = [System.Diagnostics.Stopwatch]::StartNew()
+    [FluxWallpaper]::SendMessage($launcherHandle, $wmKeyDown, [UIntPtr]::new(0x0D), [IntPtr]::Zero) | Out-Null
+    $launchProbeTimer.Stop()
+    $launchProbeHideDispatchMilliseconds = [Math]::Round($launchProbeTimer.Elapsed.TotalMilliseconds, 2)
+    Start-Sleep -Milliseconds 500
+    $launchProbeTraceLines = if (Test-Path $launchTracePath) {
+        @(Get-Content $launchTracePath | Select-Object -Skip $launchProbeTraceBeforeCount)
+    } else {
+        @()
+    }
+    $launchProbeDispatchLine = $launchProbeTraceLines | Where-Object { $_ -match "`tlaunch-dispatch$" } | Select-Object -First 1
+    $launchProbeHideLine = $launchProbeTraceLines | Where-Object { $_ -match "`twindow-hide$" } | Select-Object -First 1
+    $launchProbeProcessLine = $launchProbeTraceLines | Where-Object { $_ -match "`tprocess-created$" } | Select-Object -First 1
+    $launchProbeDispatchTimestamp = if ($launchProbeDispatchLine) { [double]($launchProbeDispatchLine -split "`t", 2)[0] } else { 0.0 }
+    $launchProbeHideTimestamp = if ($launchProbeHideLine) { [double]($launchProbeHideLine -split "`t", 2)[0] } else { 0.0 }
+    $launchProbeProcessTimestamp = if ($launchProbeProcessLine) { [double]($launchProbeProcessLine -split "`t", 2)[0] } else { 0.0 }
+    $launchProbeDispatchBeforeHide =
+        $launchProbeDispatchTimestamp -gt 0.0 -and
+        $launchProbeHideTimestamp -gt 0.0 -and
+        $launchProbeDispatchTimestamp -le $launchProbeHideTimestamp
+    $launchProbeProcessCreated = $launchProbeProcessTimestamp -gt 0.0
+    $launchProbeProcessCreatedBeforeHide =
+        $launchProbeProcessCreated -and
+        $launchProbeHideTimestamp -gt 0.0 -and
+        $launchProbeProcessTimestamp -le $launchProbeHideTimestamp
+    $launchProbeProcessCreationMilliseconds = if ($launchProbeProcessCreated) {
+        [Math]::Round($launchProbeProcessTimestamp - $launchProbeDispatchTimestamp, 3)
+    } else {
+        0.0
+    }
+    $launchProbeDispatchToHideMilliseconds = if ($launchProbeDispatchBeforeHide) {
+        [Math]::Round($launchProbeHideTimestamp - $launchProbeDispatchTimestamp, 3)
+    } else {
+        0.0
+    }
+    $launchProcessCreationProbe =
+        $launchProbeDispatchBeforeHide -and $launchProbeProcessCreated
+    if (!$launchProcessCreationProbe) {
+        throw "Launch process probe failed: dispatch_before_hide=$launchProbeDispatchBeforeHide, process_created=$launchProbeProcessCreated."
+    }
+    [FluxWallpaper]::SendMessage($launcherHandle, $wmHotkey, [UIntPtr]::Zero, [IntPtr]::Zero) | Out-Null
+    Start-Sleep -Milliseconds 650
+    if (![FluxWallpaper]::IsWindowVisible($launcherHandle)) {
+        throw "Unable to restore launcher after process creation smoke."
+    }
     if ($CtrlCSmoke) {
         $shell.SendKeys("^a")
         $shell.SendKeys("wab")
@@ -706,6 +765,12 @@ try {
         EnterProcessCreatedTimestamp = $processCreatedTimestamp
         EnterWindowHideTimestamp = $windowHideTimestamp
         EnterHideQuery = $enterHideQuery
+        LaunchProcessCreationProbe = $launchProcessCreationProbe
+        LaunchProbeQuery = $launchProbeQuery
+        LaunchProbeDispatchBeforeHide = $launchProbeDispatchBeforeHide
+        LaunchProbeProcessCreatedBeforeHide = $launchProbeProcessCreatedBeforeHide
+        LaunchProbeProcessCreationMilliseconds = $launchProbeProcessCreationMilliseconds
+        LaunchProbeDispatchToHideMilliseconds = $launchProbeDispatchToHideMilliseconds
         Memory = [ordered]@{
             Idle = $idleMemory
             Query = $queryMemory
