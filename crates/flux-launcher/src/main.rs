@@ -303,9 +303,9 @@ impl ResultRowAnchor {
         {
             self.selected_index.set(index);
         }
-        // Force the keyed list to refresh its reactive rows so selection painting
-        // and the selected-result scroll anchor update immediately on pointer input.
-        self.rows_refresh.set(self.rows_refresh.get());
+        // The row itself is reactive, so selection painting updates without
+        // rebuilding the whole list. Rebuilding here would discard the current
+        // row geometry before scroll_into_view can reveal the selected result.
     }
 }
 
@@ -1160,7 +1160,6 @@ fn result_row(
             if let Some(index) = rows_refresh.get().iter().position(|result| result.id == id) {
                 selected_index.set(index);
             }
-            rows_refresh.set(rows_refresh.get());
             if id == "empty-recycle-bin" {
                 recycle_bin_confirmation.set(true);
                 return;
@@ -1938,7 +1937,9 @@ fn main() {
             if let Some(result) = current_results.get(next) {
                 selected_id_for_keys.set(result.id.clone());
             }
-            results_for_keys.set(current_results);
+            // Keep the existing row tree intact while changing only selection.
+            // Rebuilding the DynList here resets row geometry and prevents the
+            // pending scroll request from bringing the next result into view.
             request_scroll(scroll_request_for_keys);
             return true;
         }
@@ -2095,7 +2096,8 @@ fn main() {
                 if let Some(result) = current_results.get(next) {
                     selected_id_for_keys.set(result.id.clone());
                 }
-                results_for_keys.set(current_results);
+                // Preserve the current row geometry so scroll_into_view can
+                // move the viewport after the selected result changes.
                 request_scroll(scroll_request_for_keys);
                 true
             }
