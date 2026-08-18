@@ -14,12 +14,12 @@ on:
         default: false
         type: boolean
       navigation_query:
-        description: "Optional targeted query for repeated Up/Down navigation smoke"
+        description: "Optional targeted query for monotonic Down navigation smoke"
         required: false
         default: wab
         type: string
       navigation_cycles:
-        description: "Number of additional Up/Down cycles after the query"
+        description: "Number of monotonic Down presses after the query for viewport-scroll regression"
         required: false
         default: "0"
         type: string

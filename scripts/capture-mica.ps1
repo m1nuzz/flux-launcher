@@ -475,10 +475,10 @@ try {
         }
     }
     if ($NavigationCycles -gt 0) {
+        # Monotonic Down navigation is intentional: sending Up immediately
+        # before Down would cancel the selection movement and hide a broken
+        # viewport update by returning to the first result every cycle.
         for ($cycle = 1; $cycle -le $NavigationCycles; $cycle++) {
-            $shell.SendKeys("{UP}")
-            Start-Sleep -Milliseconds 180
-            Save-Screenshot ("navigation-cycle-{0:D2}-up.png" -f $cycle)
             $shell.SendKeys("{DOWN}")
             Start-Sleep -Milliseconds 180
             Save-Screenshot ("navigation-cycle-{0:D2}-down.png" -f $cycle)
