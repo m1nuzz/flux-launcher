@@ -247,6 +247,9 @@ $existingEverythingGuideIds = @(
 )
 $stdoutPath = Join-Path $OutputDirectory "launcher.stdout.log"
 $stderrPath = Join-Path $OutputDirectory "launcher.stderr.log"
+$launchTracePath = Join-Path $OutputDirectory "launch-trace.log"
+Remove-Item $launchTracePath -Force -ErrorAction SilentlyContinue
+$env:FLUX_LAUNCH_TRACE_FILE = $launchTracePath
 $process = Start-Process -FilePath $Executable -PassThru -RedirectStandardOutput $stdoutPath -RedirectStandardError $stderrPath
 try {
     Start-Sleep -Seconds 3
@@ -457,18 +460,38 @@ try {
     # Send Enter to the exact launcher HWND so this probe cannot be intercepted
     # by the desktop shell or a different foreground process.
     $wmKeyDown = 0x0100
+    $traceBeforeEnterCount = if (Test-Path $launchTracePath) { @(Get-Content $launchTracePath).Count } else { 0 }
     $enterDispatchTimer = [System.Diagnostics.Stopwatch]::StartNew()
     [FluxWallpaper]::SendMessage($launcherHandle, $wmKeyDown, [UIntPtr]::new(0x0D), [IntPtr]::Zero) | Out-Null
     $enterDispatchTimer.Stop()
     $enterHideDispatchMilliseconds = [Math]::Round($enterDispatchTimer.Elapsed.TotalMilliseconds, 2)
     Start-Sleep -Milliseconds 500
+    $enterTraceLines = if (Test-Path $launchTracePath) {
+        @(Get-Content $launchTracePath | Select-Object -Skip $traceBeforeEnterCount)
+    } else {
+        @()
+    }
+    $launchDispatchLine = $enterTraceLines | Where-Object { $_ -match "`tlaunch-dispatch$" } | Select-Object -First 1
+    $windowHideLine = $enterTraceLines | Where-Object { $_ -match "`twindow-hide$" } | Select-Object -First 1
+    $processCreatedLine = $enterTraceLines | Where-Object { $_ -match "`tprocess-created$" } | Select-Object -First 1
+    $launchDispatchTimestamp = if ($launchDispatchLine) { [double]($launchDispatchLine -split "`t", 2)[0] } else { 0.0 }
+    $windowHideTimestamp = if ($windowHideLine) { [double]($windowHideLine -split "`t", 2)[0] } else { 0.0 }
+    $processCreatedTimestamp = if ($processCreatedLine) { [double]($processCreatedLine -split "`t", 2)[0] } else { 0.0 }
+    $enterLaunchDispatchBeforeHideProbe =
+        $launchDispatchTimestamp -gt 0.0 -and
+        $windowHideTimestamp -gt 0.0 -and
+        $launchDispatchTimestamp -le $windowHideTimestamp
+    $enterProcessCreatedBeforeHideProbe =
+        $processCreatedTimestamp -gt 0.0 -and
+        $windowHideTimestamp -gt 0.0 -and
+        $processCreatedTimestamp -le $windowHideTimestamp
     $enterLaunchHidden = ![FluxWallpaper]::IsWindowVisible($launcherHandle)
-    $enterHideLatencyProbe = $enterLaunchHidden -and ($enterHideDispatchMilliseconds -lt 250)
+    $enterHideLatencyProbe = $enterLaunchHidden -and ($enterHideDispatchMilliseconds -lt 250) -and $enterLaunchDispatchBeforeHideProbe
     if (!$enterLaunchHidden) {
         throw "Enter launch did not hide the launcher window."
     }
     if (!$enterHideLatencyProbe) {
-        throw "Enter hide dispatch took $enterHideDispatchMilliseconds ms; expected less than 250 ms."
+        throw "Enter launch/hide ordering failed: dispatch_before_hide=$enterLaunchDispatchBeforeHideProbe, hide_dispatch_ms=$enterHideDispatchMilliseconds."
     }
     # Restore the launcher for the remaining independent probes.
     [FluxWallpaper]::SendMessage($launcherHandle, $wmHotkey, [UIntPtr]::Zero, [IntPtr]::Zero) | Out-Null
@@ -677,6 +700,11 @@ try {
         EnterLaunchHideProbe = $enterLaunchHidden
         EnterHideDispatchMilliseconds = $enterHideDispatchMilliseconds
         EnterHideLatencyProbe = $enterHideLatencyProbe
+        EnterLaunchDispatchBeforeHideProbe = $enterLaunchDispatchBeforeHideProbe
+        EnterProcessCreatedBeforeHideProbe = $enterProcessCreatedBeforeHideProbe
+        EnterLaunchDispatchTimestamp = $launchDispatchTimestamp
+        EnterProcessCreatedTimestamp = $processCreatedTimestamp
+        EnterWindowHideTimestamp = $windowHideTimestamp
         EnterHideQuery = $enterHideQuery
         Memory = [ordered]@{
             Idle = $idleMemory
@@ -695,4 +723,5 @@ finally {
     if (Test-Path $wabFixtureRoot) {
         Remove-Item -Recurse -Force $wabFixtureRoot
     }
+    Remove-Item Env:FLUX_LAUNCH_TRACE_FILE -ErrorAction SilentlyContinue
 }

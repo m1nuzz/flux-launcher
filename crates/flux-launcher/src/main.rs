@@ -1166,13 +1166,13 @@ fn result_row(
                 return;
             }
             if id == "open-recycle-bin" {
-                ctx.hide_window();
                 launch::open_recycle_bin_async();
+                ctx.hide_window();
                 return;
             }
             if let Some(target) = target.as_deref() {
-                ctx.hide_window();
                 launch::open_path_async(target);
+                ctx.hide_window();
                 return;
             }
             if let Some(action) = plugin_actions.borrow().get(&id).cloned() {
@@ -2105,16 +2105,16 @@ fn main() {
                     if result.id == "empty-recycle-bin" {
                         recycle_bin_confirmation_for_keys.set(true);
                     } else if result.id == "open-recycle-bin" {
-                        window_op_for_keys.hide_window();
                         launch::open_recycle_bin_async();
-                    } else if let Some(target) = result.target.as_deref() {
                         window_op_for_keys.hide_window();
+                    } else if let Some(target) = result.target.as_deref() {
                         launch::open_path_async(target);
+                        window_op_for_keys.hide_window();
                     } else if let Some(action) =
                         plugin_actions_for_keys.borrow().get(&result.id).cloned()
                     {
-                        window_op_for_keys.hide_window();
                         plugins::execute_async(action);
+                        window_op_for_keys.hide_window();
                     }
                 }
                 true
@@ -2788,6 +2788,7 @@ fn main() {
         .on_window_hide({
             let settings = Arc::clone(&shared_settings);
             move || {
+                launch::trace_launch_event("window-hide");
                 let (enabled, clear_query) = settings
                     .read()
                     .map(|settings| {
