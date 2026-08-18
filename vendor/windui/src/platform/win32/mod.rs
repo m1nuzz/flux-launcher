@@ -23,7 +23,7 @@ use windows::Win32::Foundation::{
     COLORREF, HINSTANCE, HWND, LPARAM, LRESULT, POINT, RECT, TRUE, WPARAM,
 };
 use windows::Win32::Graphics::Dwm::{
-    DwmExtendFrameIntoClientArea, DwmIsCompositionEnabled, DwmSetWindowAttribute,
+    DwmExtendFrameIntoClientArea, DwmFlush, DwmIsCompositionEnabled, DwmSetWindowAttribute,
     DWMSBT_MAINWINDOW, DWMSBT_NONE, DWMSBT_TRANSIENTWINDOW, DWMWA_BORDER_COLOR, DWMWA_COLOR_NONE,
     DWMWA_SYSTEMBACKDROP_TYPE, DWMWA_WINDOW_CORNER_PREFERENCE, DWMWCP_ROUND,
     DWM_SYSTEMBACKDROP_TYPE,
@@ -905,6 +905,8 @@ unsafe fn run_windowed(
     // swapchain. The composition visual must be attached after the system backdrop
     // exists so transparent pixels resolve against the Acrylic surface.
     apply_system_backdrop(hwnd, cfg.backdrop);
+    // Flush DWM's material attribute before the first composition surface is created.
+    let _ = DwmFlush();
 
     // GPU 后端选择：`cfg.renderer` 想要 GPU（或调试环境变量 WINDUI_D2D=1 强制）时，
     // 尝试用 Direct2D 后端替换软后端。try_create 需要已就绪的 HWND 与客户区尺寸，
@@ -1917,6 +1919,9 @@ pub(crate) fn show_and_activate(hwnd: HWND) {
         if let Some(state) = state_from(hwnd) {
             state.backend.on_show(hwnd);
         }
+        // Force DWM to commit the transparent material and composition visual
+        // before the HWND becomes visible for the first time in this activation.
+        let _ = DwmFlush();
         if IsIconic(hwnd).as_bool() {
             let _ = ShowWindow(hwnd, SW_RESTORE);
         } else {
@@ -1932,6 +1937,7 @@ pub(crate) fn show_and_activate(hwnd: HWND) {
                 apply_system_backdrop(hwnd, backdrop);
             }
         }
+        let _ = DwmFlush();
         let _ = SetForegroundWindow(hwnd);
         // Apply the show request at the visibility transition itself. This is
         // intentionally before the first nested paint so an activation cannot
