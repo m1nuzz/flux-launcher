@@ -1722,7 +1722,21 @@ fn main() {
     let settings_for_activation = Arc::clone(&shared_settings);
     let position_for_activation = window_position.clone();
     let cursor_visibility_for_activation = cursor_visibility.clone();
+    let size_for_activation = window_size.clone();
+    let query_for_activation = query;
+    let results_for_activation = results;
+    let selected_id_for_activation = selected_id;
+    let selected_index_for_activation = selected_index;
+    let selection_touched_for_activation = selection_touched;
     let show_results_for_activation = show_results;
+    let history_mode_for_activation = history_mode;
+    let history_cursor_for_activation = history_cursor;
+    let history_navigation_for_activation = history_navigation;
+    let action_mode_for_activation = action_mode;
+    let action_index_for_activation = action_index;
+    let action_items_for_activation = action_items;
+    let inline_completion_for_activation = inline_completion;
+    let scroll_request_for_activation = scroll_request_for_rows;
     let settings_visible_for_activation = settings_visible;
     let activation_handle = app.hotkey_handle(activation_hotkey, move |ctx| {
         let settings = settings_for_activation
@@ -1730,6 +1744,28 @@ fn main() {
             .map(|settings| settings.clone())
             .unwrap_or_default();
         if !should_suppress_activation(&settings, fullscreen::foreground_is_fullscreen()) {
+            // Clear before toggling visibility. The previous implementation did
+            // this only from on_window_hide, which allowed the old query frame to
+            // survive in the compositor until the next repaint after re-show.
+            if settings.clear_query_on_activation {
+                query_for_activation.set(String::new());
+                results_for_activation.set(Vec::new());
+                selected_id_for_activation.set(String::new());
+                selected_index_for_activation.set(0);
+                selection_touched_for_activation.set(false);
+                show_results_for_activation.set(false);
+                history_mode_for_activation.set(false);
+                history_cursor_for_activation.set(None);
+                history_navigation_for_activation.set(false);
+                action_mode_for_activation.set(false);
+                action_index_for_activation.set(0);
+                action_items_for_activation.set(Vec::new());
+                inline_completion_for_activation.set(String::new());
+                scroll_request_for_activation.set(false);
+                let (compact_width, compact_height) =
+                    launcher_window_geometry(settings_visible_for_activation.get(), false);
+                size_for_activation.set(compact_width, compact_height);
+            }
             let (width, height) = launcher_window_geometry(
                 settings_visible_for_activation.get(),
                 show_results_for_activation.get(),

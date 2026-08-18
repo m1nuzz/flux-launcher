@@ -1063,12 +1063,12 @@ unsafe fn run_windowed(
     // 启动即隐藏：常驻托盘类应用不该在启动时闪一下窗口。此处**不调用 ShowWindow**，
     // 窗口保持初始的不可见态，等托盘点击或全局热键送来 WindowOp::Show。
     if !cfg.start_hidden {
-        let _ = ShowWindow(hwnd, SW_SHOW);
-        // Layout mutations from on_window_show must happen after the HWND is
-        // visible, otherwise a clear-query resize can race Acrylic setup.
+        // AppHandler::on_window_show is a pre-show hook. Prepare query/layout
+        // state before ShowWindow so the first visible frame is already current.
         if let Some(state) = state_from(hwnd) {
             state.handler.on_window_show();
         }
+        let _ = ShowWindow(hwnd, SW_SHOW);
         let _ = InvalidateRect(Some(hwnd), None, false);
         let _ = UpdateWindow(hwnd);
     }
@@ -1901,6 +1901,22 @@ fn move_to_smoke_display(hwnd: HWND) {
 pub(crate) fn show_and_activate(hwnd: HWND) {
     move_to_smoke_display(hwnd);
     unsafe {
+        // Prepare app state and DWM material while the HWND is still hidden. This
+        // prevents one stale query/backdrop frame from being exposed on re-show.
+        if let Some(state) = state_from(hwnd) {
+            state.handler.on_window_show();
+        }
+        #[cfg(feature = "d2d")]
+        {
+            let backdrop = state_from(hwnd).map(|state| state.backdrop);
+            if let Some(backdrop) = backdrop {
+                apply_system_backdrop(hwnd, backdrop);
+            }
+        }
+        #[cfg(feature = "d2d")]
+        if let Some(state) = state_from(hwnd) {
+            state.backend.on_show(hwnd);
+        }
         if IsIconic(hwnd).as_bool() {
             let _ = ShowWindow(hwnd, SW_RESTORE);
         } else {
@@ -1916,15 +1932,7 @@ pub(crate) fn show_and_activate(hwnd: HWND) {
                 apply_system_backdrop(hwnd, backdrop);
             }
         }
-        if let Some(state) = state_from(hwnd) {
-            state.backend.on_show(hwnd);
-        }
         let _ = SetForegroundWindow(hwnd);
-        // The visible HWND now owns a valid DWM/DirectComposition target.
-        // Apply query-clear and other show-state mutations only after that point.
-        if let Some(state) = state_from(hwnd) {
-            state.handler.on_window_show();
-        }
         // Apply the show request at the visibility transition itself. This is
         // intentionally before the first nested paint so an activation cannot
         // inherit the hidden cursor state from the previous query session.
