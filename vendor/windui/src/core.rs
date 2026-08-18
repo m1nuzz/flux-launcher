@@ -4008,14 +4008,14 @@ mod tests {
             .iter()
             .map(|i| (i.label.as_str(), i.enabled))
             .collect();
-        // 无选区：剪切/复制禁用；有文本：全选启用；粘贴恒启用。
+        // No selection: Cut/Copy disabled; Paste always enabled; Select All enabled for text.
         assert_eq!(
             labels,
             vec![
-                ("剪切", false),
-                ("复制", false),
-                ("粘贴", true),
-                ("全选", true)
+                ("Cut", false),
+                ("Copy", false),
+                ("Paste", true),
+                ("Select All", true)
             ]
         );
     }

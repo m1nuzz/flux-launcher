@@ -158,6 +158,14 @@ jobs:
           }
           & ./scripts/capture-mica.ps1 @captureParams
 
+      - name: Upload launcher binary
+        if: ${{ always() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: flux-launcher-windows-x64-smoke
+          path: target/x86_64-pc-windows-msvc/release/flux-launcher.exe
+          if-no-files-found: error
+
       - name: Test monitor preference modes
         if: ${{ inputs.monitor_preference_smoke == true || github.event_name == 'push' }}
         shell: pwsh

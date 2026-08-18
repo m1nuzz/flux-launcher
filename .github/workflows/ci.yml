@@ -39,3 +39,4 @@ jobs:
         with:
           name: flux-launcher-windows-x64
           path: target/x86_64-pc-windows-msvc/release/flux-launcher.exe
+          if-no-files-found: error
