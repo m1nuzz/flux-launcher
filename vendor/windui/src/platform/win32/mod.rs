@@ -1915,32 +1915,26 @@ pub(crate) fn show_and_activate(hwnd: HWND) {
                 apply_system_backdrop(hwnd, backdrop);
             }
         }
-        #[cfg(feature = "d2d")]
-        if let Some(state) = state_from(hwnd) {
-            state.backend.on_show(hwnd);
-        }
-        // Force DWM to commit the transparent material and composition visual
-        // before the HWND becomes visible for the first time in this activation.
-        let _ = DwmFlush();
-        // Paint the current empty/session state while the HWND is still hidden.
-        // A hidden DirectComposition surface can otherwise retain its old opaque
-        // frame until the next query-driven resize or repaint.
-        if let Some(state) = state_from(hwnd) {
-            state.paint(hwnd);
-        }
+        // Prepare the first visible paint without drawing through a hidden HWND.
+        // The D2D composition surface must be presented only after ShowWindow so
+        // DWM latches its transparent premultiplied frame for this activation.
+        let _ = InvalidateRect(Some(hwnd), None, false);
         if IsIconic(hwnd).as_bool() {
             let _ = ShowWindow(hwnd, SW_RESTORE);
         } else {
             let _ = ShowWindow(hwnd, SW_SHOW);
         }
-        // Reapply DWM attributes and recommit the DirectComposition visual after
-        // every hidden-to-visible transition. DWM can detach a hidden target;
-        // without this, Acrylic may appear only after a later resize or query edit.
+        // Reapply DWM attributes and recommit the DirectComposition visual only
+        // after the HWND is visible. This makes the following UpdateWindow the
+        // first visible Present instead of relying on a hidden swapchain frame.
         #[cfg(feature = "d2d")]
         {
             let backdrop = state_from(hwnd).map(|state| state.backdrop);
             if let Some(backdrop) = backdrop {
                 apply_system_backdrop(hwnd, backdrop);
+            }
+            if let Some(state) = state_from(hwnd) {
+                state.backend.on_show(hwnd);
             }
         }
         let _ = DwmFlush();

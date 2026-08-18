@@ -578,10 +578,12 @@ impl WinRenderBackend for D2DBackend {
             self.lost = true;
             return false;
         }
-        // DXGI 呈现路径不走 BeginPaint/EndPaint，必须显式验证整个客户区更新区域，
-        // 否则 Windows 持续重投 WM_PAINT → 忙循环、单核 100%，破坏空闲零 CPU 设计。
-        // 这让 backend.paint 自包含完成"呈现 + 验证更新区域"契约，与 SkiaBackend 对称。
-        let _ = ValidateRect(Some(hwnd), None);
+        // A hidden pre-show composition paint must not consume the update region:
+        // the first visible WM_PAINT is what makes DWM latch the transparent frame.
+        // Once visible, validate the region to avoid a WM_PAINT busy loop.
+        if IsWindowVisible(hwnd).as_bool() {
+            let _ = ValidateRect(Some(hwnd), None);
+        }
         false
     }
 }
