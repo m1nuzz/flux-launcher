@@ -95,9 +95,7 @@ pub fn open_file_location(path: &str) -> bool {
 fn shell_execute(verb: &str, target: &str, arguments: Option<&str>) -> bool {
     use windows::core::PCWSTR;
     use windows::Win32::Foundation::{CloseHandle, HWND};
-    use windows::Win32::UI::Shell::{
-        ShellExecuteExW, SHELLEXECUTEINFOW, SEE_MASK_NOCLOSEPROCESS,
-    };
+    use windows::Win32::UI::Shell::{ShellExecuteExW, SEE_MASK_NOCLOSEPROCESS, SHELLEXECUTEINFOW};
     use windows::Win32::UI::WindowsAndMessaging::SW_SHOWNORMAL;
 
     let directory = Path::new(target)
