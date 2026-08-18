@@ -1922,6 +1922,12 @@ pub(crate) fn show_and_activate(hwnd: HWND) {
         // Force DWM to commit the transparent material and composition visual
         // before the HWND becomes visible for the first time in this activation.
         let _ = DwmFlush();
+        // Paint the current empty/session state while the HWND is still hidden.
+        // A hidden DirectComposition surface can otherwise retain its old opaque
+        // frame until the next query-driven resize or repaint.
+        if let Some(state) = state_from(hwnd) {
+            state.paint(hwnd);
+        }
         if IsIconic(hwnd).as_bool() {
             let _ = ShowWindow(hwnd, SW_RESTORE);
         } else {
