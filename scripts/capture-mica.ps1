@@ -257,11 +257,11 @@ foreach ($fixtureName in $wabFixtureNames) {
     $shortcut.Description = "Flux WAB smoke application fixture"
     $shortcut.Save()
 }
-$launchProbeShortcut = $shortcutShell.CreateShortcut((Join-Path $wabFixtureRoot "Flux Launch Probe.lnk"))
+$launchProbeShortcut = $shortcutShell.CreateShortcut((Join-Path $wabFixtureRoot "Zq7LaunchProbe.lnk"))
 $launchProbeShortcut.TargetPath = Join-Path $env:WINDIR "System32\cmd.exe"
 $launchProbeShortcut.Arguments = "/c exit"
 $launchProbeShortcut.WorkingDirectory = $env:WINDIR
-$launchProbeShortcut.Description = "Flux process creation smoke fixture"
+$launchProbeShortcut.Description = "Zq7LaunchProbe deterministic process creation smoke fixture"
 $launchProbeShortcut.Save()
 
 $existingEverythingGuideIds = @(
@@ -529,7 +529,7 @@ try {
     }
     [FluxWallpaper]::SetForegroundWindow($launcherHandle) | Out-Null
     Start-Sleep -Milliseconds 200
-    $launchProbeQuery = "flux"
+    $launchProbeQuery = "zq7launchprobe"
     $shell.SendKeys("^a")
     $shell.SendKeys($launchProbeQuery)
     Start-Sleep -Seconds 2
@@ -541,7 +541,7 @@ try {
     [FluxWallpaper]::SendMessage($launcherHandle, $wmKeyDown, [UIntPtr]::new(0x0D), [IntPtr]::Zero) | Out-Null
     $launchProbeTimer.Stop()
     $launchProbeHideDispatchMilliseconds = [Math]::Round($launchProbeTimer.Elapsed.TotalMilliseconds, 2)
-    Start-Sleep -Milliseconds 500
+    Start-Sleep -Milliseconds 1500
     $launchProbeTraceLines = if (Test-Path $launchTracePath) {
         @(Get-Content $launchTracePath | Select-Object -Skip $launchProbeTraceBeforeCount)
     } else {
