@@ -64,6 +64,24 @@ public static class FluxWallpaper {
     public static extern IntPtr SendMessage(IntPtr hwnd, uint message, UIntPtr wParam, IntPtr lParam);
     [DllImport("user32.dll", SetLastError = true)]
     public static extern IntPtr GetForegroundWindow();
+    [DllImport("user32.dll", SetLastError = true)]
+    public static extern bool EnumWindows(EnumWindowsProc callback, IntPtr lParam);
+    [DllImport("user32.dll", SetLastError = true)]
+    public static extern uint GetWindowThreadProcessId(IntPtr hWnd, out uint processId);
+    public delegate bool EnumWindowsProc(IntPtr hWnd, IntPtr lParam);
+    public static IntPtr FindWindowByProcessId(uint targetProcessId) {
+        IntPtr found = IntPtr.Zero;
+        EnumWindows((hWnd, lParam) => {
+            uint processId;
+            GetWindowThreadProcessId(hWnd, out processId);
+            if (processId == targetProcessId && IsWindowVisible(hWnd)) {
+                found = hWnd;
+                return false;
+            }
+            return true;
+        }, IntPtr.Zero);
+        return found;
+    }
     [StructLayout(LayoutKind.Sequential)]
     public struct RECT {
         public int Left;
@@ -276,7 +294,11 @@ try {
     # while the query is empty. Capture this before any query edit, so a later
     # repaint cannot hide a failure where the DirectComposition surface attaches
     # only after typing.
+    $process.Refresh()
     $launcherHandle = $process.MainWindowHandle
+    if ($launcherHandle -eq [IntPtr]::Zero) {
+        $launcherHandle = [FluxWallpaper]::FindWindowByProcessId([uint32]$process.Id)
+    }
     if ($launcherHandle -eq [IntPtr]::Zero) { throw "Flux launcher has no main window handle." }
     if (![FluxWallpaper]::IsWindowVisible($launcherHandle)) { throw "Launcher is not visible before hotkey regression probe." }
     $exStyle = [FluxWallpaper]::GetWindowLongPtr($launcherHandle, -20).ToInt64()
