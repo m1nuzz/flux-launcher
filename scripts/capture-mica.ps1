@@ -359,7 +359,13 @@ try {
         Start-Sleep -Milliseconds 350
     }
     $enterHideQuery = "recyclebin"
-    $shell.SendKeys($enterHideQuery)
+    $navigationProbeQuery = if ($NavigationCycles -gt 0 -and $NavigationQuery.Trim().Length -gt 0) {
+        $NavigationQuery.Trim()
+    } else {
+        $enterHideQuery
+    }
+    Write-Host "Navigation probe query: $navigationProbeQuery"
+    $shell.SendKeys($navigationProbeQuery)
     Start-Sleep -Seconds 2
     $queryMemory = Get-MemorySnapshot $process.Id
     Save-Screenshot "everything-fallback.png"
