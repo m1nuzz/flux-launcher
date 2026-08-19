@@ -31,6 +31,14 @@ if ($installerExitCode -ne 0) {
 
 $installedExe = Join-Path $installRoot "flux-launcher.exe"
 if (-not (Test-Path $installedExe)) {
+    Write-Host "Install root contents:"
+    if (Test-Path $workRoot) {
+        Get-ChildItem -Path $workRoot -Force -Recurse | Select-Object FullName, Length
+    }
+    if (Test-Path $logPath) {
+        Write-Host "Inno Setup log:"
+        Get-Content $logPath
+    }
     throw "Installed executable was not found at $installedExe"
 }
 
