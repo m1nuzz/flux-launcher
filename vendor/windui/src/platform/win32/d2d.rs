@@ -501,7 +501,10 @@ impl WinRenderBackend for D2DBackend {
             super::trace_show_event(
                 hwnd,
                 "d2d.on_show.desc",
-                &format!("swapchain={}x{} target={}x{}", desc.Width, desc.Height, width, height),
+                &format!(
+                    "swapchain={}x{} target={}x{}",
+                    desc.Width, desc.Height, width, height
+                ),
             );
             if desc.Width == width && desc.Height == height {
                 super::trace_show_event(hwnd, "d2d.on_show.match", "phase=no_resize");
@@ -620,7 +623,11 @@ impl WinRenderBackend for D2DBackend {
         // 也可能返回，不能当错误），仅设备移除/重置时标记 lost。
         super::trace_show_event(hwnd, "d2d.present.before", "phase=present");
         let hr = self.swapchain.Present(1, DXGI_PRESENT(0));
-        super::trace_show_event(hwnd, "d2d.present.after", &format!("phase=present_done hr={hr:?}"));
+        super::trace_show_event(
+            hwnd,
+            "d2d.present.after",
+            &format!("phase=present_done hr={hr:?}"),
+        );
         if is_device_lost(hr) {
             self.lost = true;
             return false;

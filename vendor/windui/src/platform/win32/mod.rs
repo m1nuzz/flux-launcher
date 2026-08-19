@@ -1985,7 +1985,11 @@ pub(crate) fn show_and_activate(hwnd: HWND) {
         // Drain geometry once while hidden, without consuming cursor requests.
         // This settles compact dimensions before the first visible Present.
         apply_window_geometry_requests(hwnd);
-        trace_show_event(hwnd, "show.after_hidden_geometry", "phase=hidden_geometry_settled");
+        trace_show_event(
+            hwnd,
+            "show.after_hidden_geometry",
+            "phase=hidden_geometry_settled",
+        );
         #[cfg(feature = "d2d")]
         {
             let backdrop = state_from(hwnd).map(|state| state.backdrop);
@@ -2003,7 +2007,11 @@ pub(crate) fn show_and_activate(hwnd: HWND) {
             0,
             SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE | SWP_FRAMECHANGED,
         );
-        trace_show_event(hwnd, "show.after_frame_changed", "phase=hidden_dwm_frame_ready");
+        trace_show_event(
+            hwnd,
+            "show.after_frame_changed",
+            "phase=hidden_dwm_frame_ready",
+        );
         // Prepare the first visible paint without drawing through a hidden HWND.
         // The D2D composition surface must be presented only after ShowWindow so
         // DWM latches its transparent premultiplied frame for this activation.
@@ -2027,7 +2035,11 @@ pub(crate) fn show_and_activate(hwnd: HWND) {
             if let Some(state) = state_from(hwnd) {
                 trace_show_event(hwnd, "show.before_backend_on_show", "phase=backend_on_show");
                 state.backend.on_show(hwnd);
-                trace_show_event(hwnd, "show.after_backend_on_show", "phase=backend_on_show_done");
+                trace_show_event(
+                    hwnd,
+                    "show.after_backend_on_show",
+                    "phase=backend_on_show_done",
+                );
             }
         }
         let _ = SetForegroundWindow(hwnd);
@@ -2035,9 +2047,17 @@ pub(crate) fn show_and_activate(hwnd: HWND) {
         // This prevents a late request from resizing the surface immediately
         // after DWM samples the first transparent backbuffer.
         let _ = InvalidateRect(Some(hwnd), None, false);
-        trace_show_event(hwnd, "show.before_first_update", "phase=first_visible_present");
+        trace_show_event(
+            hwnd,
+            "show.before_first_update",
+            "phase=first_visible_present",
+        );
         let _ = UpdateWindow(hwnd);
-        trace_show_event(hwnd, "show.after_first_update", "phase=first_visible_present_done");
+        trace_show_event(
+            hwnd,
+            "show.after_first_update",
+            "phase=first_visible_present_done",
+        );
         let _ = DwmFlush();
         trace_show_event(hwnd, "show.after_first_flush", "phase=first_dwm_flush_done");
         // Apply the show request at the visibility transition itself. This is
