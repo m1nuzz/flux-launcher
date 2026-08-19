@@ -21,7 +21,6 @@ AppPublisherURL={#AppUrl}
 AppSupportURL={#AppUrl}/issues
 AppUpdatesURL={#AppUrl}/releases/latest
 AppCopyright=Copyright (C) 2026 m1nuzz
-AppDescription={#AppDescription}
 DefaultDirName={localappdata}\Programs\Flux Launcher
 DefaultGroupName={#AppName}
 DisableProgramGroupPage=yes
