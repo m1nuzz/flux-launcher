@@ -17,7 +17,7 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/m1nuzz/flux-launcher/releases/latest/download/flux-launcher.exe">Download</a>
+  <a href="https://github.com/m1nuzz/flux-launcher/releases/latest/download/FluxLauncher-Setup.exe">Download</a>
   · <a href="#features">Features</a>
   · <a href="#usage">Usage</a>
   · <a href="#performance">Performance</a>
@@ -146,7 +146,7 @@ The Windows CI workflow additionally runs formatting, Clippy with warnings denie
 
 ## Project status
 
-Flux Launcher is actively developed. The `main` branch may contain improvements that have not yet been packaged into a stable release. Download the [latest build](https://github.com/m1nuzz/flux-launcher/releases/latest/download/flux-launcher.exe), or follow development in the [issue tracker](https://github.com/m1nuzz/flux-launcher/issues).
+Flux Launcher is actively developed. The `main` branch may contain improvements that have not yet been packaged into a stable release. Download the [latest installer](https://github.com/m1nuzz/flux-launcher/releases/latest/download/FluxLauncher-Setup.exe), or follow development in the [issue tracker](https://github.com/m1nuzz/flux-launcher/issues).
 
 ## Support
 
