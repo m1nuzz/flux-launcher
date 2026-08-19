@@ -916,6 +916,7 @@ impl App {
             self.close_handler,
             self.key_handler,
             self.show_handler,
+            self.activated_handler,
             self.hide_handler,
             self.hide_on_close,
         )
