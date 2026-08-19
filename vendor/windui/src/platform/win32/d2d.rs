@@ -496,12 +496,10 @@ impl WinRenderBackend for D2DBackend {
         // The DComp visual keeps the swapchain content across SW_HIDE/SW_SHOW;
         // an unconditional ResizeBuffers here creates an undefined alpha frame
         // that DWM can display as a solid gray surface before the next repaint.
-        let mut desc = DXGI_SWAP_CHAIN_DESC1::default();
-        if self.swapchain.GetDesc1(&mut desc).is_ok()
-            && desc.Width == width
-            && desc.Height == height
-        {
-            return;
+        if let Ok(desc) = self.swapchain.GetDesc1() {
+            if desc.Width == width && desc.Height == height {
+                return;
+            }
         }
 
         // A real client-size change still needs the existing resize discipline.
