@@ -3,6 +3,7 @@ members = [
     "crates/flow-plugin-fixture",
     "crates/flux-core",
     "crates/flux-launcher",
+    "crates/obsidian-plugin",
 ]
 resolver = "2"
 

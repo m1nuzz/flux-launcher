@@ -1,0 +1,8 @@
+{
+  "ID": "flux.obsidian.builtin",
+  "Name": "Obsidian",
+  "Description": "Search Obsidian vault notes and files",
+  "Language": "Executable_V2",
+  "ExecuteFileName": "flux-obsidian-plugin.exe",
+  "ActionKeywords": ["ob"]
+}

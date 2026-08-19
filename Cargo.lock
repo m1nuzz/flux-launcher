@@ -275,6 +275,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "flux-obsidian-plugin"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "font-types"
 version = "0.12.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"

@@ -719,6 +719,27 @@ fn title_match_doc(title: &str, query: &str) -> RichDoc {
     RichDoc::new().para(para)
 }
 
+fn normalize_everything_query(query: &str) -> String {
+    let trimmed = query.trim();
+    let Some(rest) = trimmed.strip_prefix('.') else {
+        return trimmed.to_owned();
+    };
+    let (extension, remainder) = rest.split_once(char::is_whitespace).unwrap_or((rest, ""));
+    if extension.is_empty()
+        || !extension
+            .chars()
+            .all(|character| character.is_ascii_alphanumeric())
+    {
+        return trimmed.to_owned();
+    }
+    let remainder = remainder.trim();
+    if remainder.is_empty() {
+        format!("ext:{extension}")
+    } else {
+        format!("ext:{extension} {remainder}")
+    }
+}
+
 fn inline_completion_suffix(query: &str, results: &[SearchResult]) -> String {
     let trimmed = query.trim();
     if trimmed.is_empty() {
@@ -1305,6 +1326,8 @@ fn main() {
     let custom_selection_color = signal(selection_color_hex(settings.custom_selection_color));
     let clear_query_on_activation = signal(settings.clear_query_on_activation);
     let auto_enable_everything = signal(settings.auto_enable_everything);
+    let obsidian_enabled = signal(settings.obsidian_enabled);
+    let obsidian_alias = signal(settings.obsidian_alias.clone());
     let initial_monitor_preference = std::env::var("FLUX_SMOKE_MONITOR_PREFERENCE")
         .ok()
         .and_then(|value| match value.to_ascii_lowercase().as_str() {
@@ -1584,6 +1607,8 @@ fn main() {
     let priorities_for_interval = priorities;
     let actions_for_interval = Rc::clone(&plugin_actions);
     let auto_enable_everything_for_interval = auto_enable_everything;
+    let obsidian_enabled_for_interval = obsidian_enabled;
+    let obsidian_alias_for_interval = obsidian_alias;
     let history_mode_for_interval = history_mode;
     let settings_visible_for_interval = settings_visible;
     let tray_settings_smoke_pending_for_interval = Rc::clone(&tray_settings_smoke_pending);
@@ -1684,7 +1709,7 @@ fn main() {
             return;
         }
         if response.sequence != sequence_for_everything.get()
-            || response.query != query_for_everything.get()
+            || response.query != normalize_everything_query(&query_for_everything.get())
         {
             return;
         }
@@ -2374,6 +2399,8 @@ fn main() {
     let history_for_clear = Rc::clone(&query_history);
     let history_cursor_for_clear = history_cursor;
     let auto_enable_everything_for_apply = auto_enable_everything;
+    let obsidian_enabled_for_apply = obsidian_enabled;
+    let obsidian_alias_for_apply = obsidian_alias;
     let everything_status_for_apply = everything_status;
     let everything_installed_for_ui = everything_installed;
     let settings_for_priority_ui = Arc::clone(&shared_settings);
@@ -2526,7 +2553,7 @@ fn main() {
                         ),
                 )
                 .child(Element::segmented(
-                    vec!["General", "Priorities"],
+                    vec!["General", "Priorities", "Plugins"],
                     settings_tab,
                 ))
                 .child(
@@ -2765,6 +2792,8 @@ fn main() {
                                 settings.custom_selection_color = custom_color;
                                 settings.clear_query_on_activation = clear_query_on_activation.get();
                                 settings.auto_enable_everything = auto_enable_everything_for_apply.get();
+                                settings.obsidian_enabled = obsidian_enabled_for_apply.get();
+                                settings.obsidian_alias = obsidian_alias_for_apply.get();
                                 settings.monitor_preference = monitor_preference_from_index(monitor_preference.get());
                                 settings.smooth_caret_duration_ms = duration;
                                 settings.normalize();
@@ -2824,6 +2853,39 @@ fn main() {
                         }),
                     ),
             ),
+        )
+        .child(
+            Element::scroll()
+                .weight(1.0)
+                .visible_when(move || settings_tab.get() == 2)
+                .child(
+                    Element::col()
+                        .width_match()
+                        .spacing(12)
+                        .child(Element::label("Native plugins").font_size(17.0).fg(Color::WHITE))
+                        .child(
+                            Element::label("Configure built-in native Rust plugins without Python or C# runtimes.")
+                                .font_size(11.0)
+                                .fg(Color::rgba(235, 241, 255, 180))
+                                .max_lines(2)
+                                .truncate(Truncate::End),
+                        )
+                        .child(Element::field(
+                            "Obsidian",
+                            Element::checkbox("Enable Obsidian vault search", obsidian_enabled),
+                        ))
+                        .child(Element::field(
+                            "Action keyword",
+                            Element::text_input(obsidian_alias, "ob").width_match(),
+                        ))
+                        .child(
+                            Element::label("Search notes and vault files with the configured keyword, for example: ob meeting. Use `ob create project` to create a new note.")
+                                .font_size(11.0)
+                                .fg(Color::rgba(235, 241, 255, 175))
+                                .max_lines(3)
+                                .truncate(Truncate::End),
+                        ),
+                ),
         )
         .child(
             Element::scroll()
@@ -2942,15 +3004,21 @@ fn main() {
                 ));
                 application_worker.request(sequence, next_query.clone());
                 // Everything is the always-on file provider for every non-empty
-                // query. Pass the raw query unchanged so native Everything syntax
-                // such as `ext:zip`, `parent:`, `file:`, and `dm:today` works.
+                // query. Native Everything syntax such as `ext:zip`, `parent:`,
+                // `file:`, and `dm:today` stays unchanged; a leading `.ext`
+                // shorthand is normalized only for this provider.
                 if auto_enable_everything_for_interval.get()
                     && next_query.trim().len() >= EVERYTHING_MIN_QUERY_LEN
                 {
-                    everything_worker.request(sequence, next_query.clone());
+                    everything_worker.request(sequence, normalize_everything_query(&next_query));
                 }
                 if next_query.trim().len() >= PLUGIN_MIN_QUERY_LEN {
-                    plugin_worker.request(sequence, next_query.clone());
+                    plugin_worker.request(
+                        sequence,
+                        next_query.clone(),
+                        obsidian_enabled_for_interval.get(),
+                        obsidian_alias_for_interval.get(),
+                    );
                 }
             }
             last_query = next_query;
@@ -3019,8 +3087,9 @@ fn main() {
 mod tests {
     use super::{
         actions_for_result, history_cursor_step, hover_position_changed, is_run_as_admin_key,
-        launcher_window_geometry, merge_application_duplicates, preserve_everything_file_order,
-        quoted_result_path, COMPACT_WINDOW_HEIGHT, EXPANDED_WINDOW_HEIGHT, WINDOW_WIDTH,
+        launcher_window_geometry, merge_application_duplicates, normalize_everything_query,
+        preserve_everything_file_order, quoted_result_path, COMPACT_WINDOW_HEIGHT,
+        EXPANDED_WINDOW_HEIGHT, WINDOW_WIDTH,
     };
     use flux_core::{ResultKind, ResultSource, SearchResult};
     use windui::event::{Key, KeyEvent};
@@ -3170,6 +3239,22 @@ mod tests {
         assert!(hover_position_changed(&mut last, (240, 120)));
         assert!(!hover_position_changed(&mut last, (240, 120)));
         assert!(hover_position_changed(&mut last, (241, 120)));
+    }
+
+    #[test]
+    fn extension_aliases_normalize_only_the_everything_query_prefix() {
+        assert_eq!(normalize_everything_query(".zip"), "ext:zip");
+        assert_eq!(
+            normalize_everything_query(".mp4 something"),
+            "ext:mp4 something"
+        );
+        assert_eq!(
+            normalize_everything_query("  .pdf  report  "),
+            "ext:pdf report"
+        );
+        assert_eq!(normalize_everything_query("ext:zip"), "ext:zip");
+        assert_eq!(normalize_everything_query("settings"), "settings");
+        assert_eq!(normalize_everything_query("."), ".");
     }
 
     #[test]

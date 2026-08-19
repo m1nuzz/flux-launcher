@@ -23,9 +23,9 @@ The primary interaction is intentionally minimal. With an empty query, Flux show
 | Smooth Caret | Optional ease-out visual caret transition with configurable duration; IME coordinates remain exact |
 | Global hotkey | Configurable modifier/key combination, default `Alt+Space` |
 | Game Mode | Fullscreen suppression enabled by default, manual toggle through `Ctrl+F12` and the tray |
-| Flow plugins | `Executable` and `Executable_V2` newline-delimited JSON-RPC plugins only |
+| Flow plugins | `Executable` and `Executable_V2` newline-delimited JSON-RPC plugins only; bundled native Rust Obsidian plugin with configurable keyword |
 | Tray | Left-click show action and right-click menu for Show launcher, Settings, Game Mode, and Exit; uses the transparent `assets/ico.png` branding icon |
-| Settings | Hotkey editor, fullscreen protection, Game Mode, Smooth Caret, caret duration, monitor preference, Everything auto-enable/install status, and atomic JSON persistence |
+| Settings | Hotkey editor, fullscreen protection, Game Mode, Smooth Caret, caret duration, monitor preference, Everything auto-enable/install status, Obsidian enable/keyword controls, and atomic JSON persistence |
 | License | MIT |
 
 ## Requirements
@@ -84,7 +84,7 @@ The search field remains focused while the result list is navigated. `ArrowUp` a
 
 ## Everything integration
 
-Flux uses the Everything IPC protocol through the `everything-ipc` crate. Every non-empty query is dispatched in a background worker, including native Everything syntax such as `ext:zip`, `parent:`, `file:`, `folder:`, and `dm:today`. Requests use a short timeout, reject stale query sequences, and return at most 16 results. When enabled and installed, Flux starts Everything in background mode for IPC search. If Everything is missing, disabled, or cannot answer within the timeout, Flux remains usable without it and Settings exposes the English installation prompt.
+Flux uses the Everything IPC protocol through the `everything-ipc` crate. Every non-empty query is dispatched in a background worker, including native Everything syntax such as `ext:zip`, `parent:`, `file:`, `folder:`, and `dm:today`. A leading extension shorthand such as `.zip` or `.mp4 video` is normalized to `ext:zip` or `ext:mp4 video` only for the Everything request; application and plugin queries receive the original text. Requests use a short timeout, reject stale query sequences, and return at most 16 results. When enabled and installed, Flux starts Everything in background mode for IPC search. If Everything is missing, disabled, or cannot answer within the timeout, Flux remains usable without it and Settings exposes the English installation prompt.
 
 Install Everything from [voidtools](https://www.voidtools.com/) and leave its IPC service enabled to obtain indexed file and folder results. No Everything installation is required for the built-in palette or Flow plugin results.
 
@@ -107,6 +107,8 @@ A minimal manifest has the following shape:
 
 The repository contains a Rust fixture under `crates/flow-plugin-fixture` and a CI smoke installation under `tests/fixtures/flow-native-plugin`. Native plugins should keep query handling bounded and return standard Flow Launcher JSON-RPC result objects.
 
+The release artifact also includes the native Rust Obsidian plugin under `FluxPlugins\Obsidian`. Copy that directory to `%APPDATA%\FluxLauncher\Plugins\Obsidian` to enable automatic discovery. Flux reads vault paths from `%APPDATA%\obsidian\obsidian.json`, searches Markdown, Canvas, Excalidraw, image, JSON, and CSV files, opens results with `obsidian://` URIs, and supports note creation through `<keyword> create <name>`. Settings > Plugins controls the default `ob` keyword and enable state.
+
 ## Architecture
 
 The workspace separates portable behavior from Windows integration:
@@ -116,6 +118,7 @@ The workspace separates portable behavior from Windows integration:
 | `crates/flux-core` | Settings persistence, hotkey policy, Game Mode policy, search models, and Flow wire models with unit tests |
 | `crates/flux-launcher` | windui application, native Windows integrations, Everything worker, plugin host, tray, and launch actions |
 | `crates/flow-plugin-fixture` | Native executable Flow JSON-RPC fixture used by integration smoke tests |
+| `crates/obsidian-plugin` | Native Rust Obsidian vault/file search and note creation plugin |
 | `vendor/windui` | Pinned local windui fork containing the Mica/DirectComposition seam, runtime window sizing, and Smooth Caret support |
 | `scripts/capture-mica.ps1` | Proactive Windows screenshot, input, plugin, Settings, memory, pointer, and optional forced-fallback smoke harness |
 | `scripts/monitor-preference-smoke.ps1` | Windows smoke for Primary, Cursor, and Foreground monitor placement modes |

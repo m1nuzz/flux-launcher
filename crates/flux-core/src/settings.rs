@@ -21,6 +21,10 @@ fn default_selection_color() -> u32 {
     0x4c8bf4
 }
 
+fn default_obsidian_alias() -> String {
+    String::from("ob")
+}
+
 #[derive(Clone, Debug, Deserialize, PartialEq, Eq, Serialize)]
 #[serde(default)]
 pub struct HotkeyConfig {
@@ -81,6 +85,10 @@ pub struct Settings {
     pub clear_query_on_activation: bool,
     #[serde(default = "enabled_by_default")]
     pub auto_enable_everything: bool,
+    #[serde(default = "enabled_by_default")]
+    pub obsidian_enabled: bool,
+    #[serde(default = "default_obsidian_alias")]
+    pub obsidian_alias: String,
     #[serde(default)]
     pub monitor_preference: MonitorPreference,
     #[serde(default = "default_caret_duration")]
@@ -103,6 +111,8 @@ impl Default for Settings {
             custom_selection_color: default_selection_color(),
             clear_query_on_activation: true,
             auto_enable_everything: true,
+            obsidian_enabled: true,
+            obsidian_alias: default_obsidian_alias(),
             monitor_preference: MonitorPreference::default(),
             smooth_caret_duration_ms: DEFAULT_CARET_DURATION_MS,
             query_history: Vec::new(),
@@ -118,6 +128,10 @@ impl Settings {
             .clamp(MIN_CARET_DURATION_MS, MAX_CARET_DURATION_MS);
         if self.activation_hotkey.key.trim().is_empty() {
             self.activation_hotkey = HotkeyConfig::default();
+        }
+        self.obsidian_alias = self.obsidian_alias.trim().to_owned();
+        if self.obsidian_alias.is_empty() {
+            self.obsidian_alias = default_obsidian_alias();
         }
         self.normalize_query_history();
         self.normalize_priorities();
@@ -280,6 +294,8 @@ mod tests {
         assert_eq!(settings.custom_selection_color, 0x4c8bf4);
         assert!(settings.clear_query_on_activation);
         assert!(settings.auto_enable_everything);
+        assert!(settings.obsidian_enabled);
+        assert_eq!(settings.obsidian_alias, "ob");
         assert_eq!(settings.monitor_preference, MonitorPreference::Cursor);
         assert_eq!(settings.smooth_caret_duration_ms, DEFAULT_CARET_DURATION_MS);
     }
@@ -303,6 +319,8 @@ mod tests {
             custom_selection_color: 0x12ab34,
             clear_query_on_activation: false,
             auto_enable_everything: false,
+            obsidian_enabled: false,
+            obsidian_alias: String::from("notes"),
             monitor_preference: MonitorPreference::Foreground,
             smooth_caret_duration_ms: 120,
             query_history: vec![String::from("steam"), String::from("ext:zip")],
@@ -379,6 +397,16 @@ mod tests {
         assert_eq!(settings.priority_entries.len(), 1);
         assert_eq!(settings.priority_entries[0].id, "application:one");
         assert_eq!(settings.priority_entries[0].target, "C:/One.lnk");
+    }
+
+    #[test]
+    fn missing_obsidian_fields_use_backward_compatible_defaults() {
+        let path = temporary_path("settings-obsidian-default");
+        fs::write(&path, r#"{"activation_hotkey":{"key":"Space"}}"#).unwrap();
+        let settings = Settings::load_from(&path).unwrap();
+        assert!(settings.obsidian_enabled);
+        assert_eq!(settings.obsidian_alias, "ob");
+        fs::remove_file(path).unwrap();
     }
 
     #[test]

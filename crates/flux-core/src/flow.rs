@@ -23,12 +23,36 @@ impl FlowPluginManifest {
     }
 
     pub fn accepts_query(&self, query: &str) -> bool {
-        self.action_keywords.is_empty()
-            || self
-                .action_keywords
-                .iter()
-                .any(|keyword| keyword == "*" || query.starts_with(keyword))
+        self.matching_action_keyword(query).is_some()
     }
+
+    pub fn matching_action_keyword(&self, query: &str) -> Option<&str> {
+        if self.action_keywords.is_empty() {
+            return Some("*");
+        }
+        self.action_keywords
+            .iter()
+            .filter(|keyword| *keyword == "*" || has_action_keyword_prefix(query, keyword))
+            .max_by_key(|keyword| keyword.len())
+            .map(String::as_str)
+    }
+
+    pub fn search_for_action_keyword<'a>(&self, query: &'a str, keyword: &str) -> &'a str {
+        if keyword == "*" {
+            return query.trim();
+        }
+        let Some(rest) = query.strip_prefix(keyword) else {
+            return query.trim();
+        };
+        rest.trim_start_matches(|character: char| character == ':' || character.is_whitespace())
+    }
+}
+
+fn has_action_keyword_prefix(query: &str, keyword: &str) -> bool {
+    query == keyword
+        || query.strip_prefix(keyword).is_some_and(|rest| {
+            rest.starts_with(':') || rest.chars().next().is_some_and(char::is_whitespace)
+        })
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -88,15 +112,24 @@ pub struct FlowAction {
 }
 
 pub fn query_request_line(id: u64, query: &str) -> serde_json::Result<String> {
+    query_request_line_with_keyword(id, query, query, "*")
+}
+
+pub fn query_request_line_with_keyword(
+    id: u64,
+    raw_query: &str,
+    search: &str,
+    action_keyword: &str,
+) -> serde_json::Result<String> {
     let request = FlowRequest {
         jsonrpc: "2.0",
         id,
         method: "query",
         params: [
             serde_json::to_value(FlowQueryParams {
-                raw_query: query,
-                search: query,
-                action_keyword: "*",
+                raw_query,
+                search,
+                action_keyword,
             })?,
             serde_json::json!({}),
         ],
@@ -122,7 +155,16 @@ mod tests {
         let manifest: FlowPluginManifest = serde_json::from_str(EXECUTABLE_MANIFEST).unwrap();
         assert!(manifest.is_native_executable());
         assert!(manifest.accepts_query("fx: query"));
+        assert!(manifest.accepts_query("fxylophone"));
         assert!(manifest.accepts_query("ordinary query"));
+        let specific: FlowPluginManifest =
+            serde_json::from_str(&EXECUTABLE_MANIFEST.replace(", \"*\"]", "]")).unwrap();
+        assert!(!specific.accepts_query("fxylophone"));
+        assert_eq!(manifest.matching_action_keyword("fx: query"), Some("fx:"));
+        assert_eq!(
+            manifest.search_for_action_keyword("fx: query", "fx:"),
+            "query"
+        );
 
         let csharp: FlowPluginManifest =
             serde_json::from_str(&EXECUTABLE_MANIFEST.replace("Executable_V2", "CSharp")).unwrap();
@@ -135,6 +177,9 @@ mod tests {
         assert!(line.contains("\"jsonrpc\":\"2.0\""));
         assert!(line.contains("\"method\":\"query\""));
         assert!(line.contains("\"rawQuery\":\"notepad\""));
+        let line = query_request_line_with_keyword(18, "ob Notes", "Notes", "ob").unwrap();
+        assert!(line.contains("\"search\":\"Notes\""));
+        assert!(line.contains("\"actionKeyword\":\"ob\""));
     }
 
     #[test]

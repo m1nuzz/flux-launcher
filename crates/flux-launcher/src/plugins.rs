@@ -10,7 +10,9 @@ use std::sync::{
 use std::thread;
 use std::time::{Duration, Instant};
 
-use flux_core::{query_request_line, FlowAction, FlowPluginManifest, FlowResponse, SearchResult};
+use flux_core::{
+    query_request_line_with_keyword, FlowAction, FlowPluginManifest, FlowResponse, SearchResult,
+};
 use windui::prelude::Sender;
 
 const MAX_RESULTS: usize = 16;
@@ -39,6 +41,8 @@ pub struct PluginQueryResponse {
 struct PluginRequest {
     sequence: u64,
     query: String,
+    obsidian_enabled: bool,
+    obsidian_keyword: String,
 }
 
 #[derive(Clone, Debug)]
@@ -88,9 +92,20 @@ impl FlowPluginWorker {
         Self { latest, wake }
     }
 
-    pub fn request(&self, sequence: u64, query: String) {
+    pub fn request(
+        &self,
+        sequence: u64,
+        query: String,
+        obsidian_enabled: bool,
+        obsidian_keyword: String,
+    ) {
         if let Ok(mut latest) = self.latest.lock() {
-            *latest = Some(PluginRequest { sequence, query });
+            *latest = Some(PluginRequest {
+                sequence,
+                query,
+                obsidian_enabled,
+                obsidian_keyword,
+            });
             let _ = self.wake.try_send(());
         }
     }
@@ -119,7 +134,9 @@ pub fn execute_async(invocation: PluginInvocation) {
 fn query_plugins(plugins: &[PluginDescriptor], request: PluginRequest) -> PluginQueryResponse {
     let candidates = plugins
         .iter()
-        .filter(|plugin| plugin.manifest.accepts_query(&request.query))
+        .filter_map(|plugin| {
+            action_keyword_for_plugin(plugin, &request).map(|keyword| (plugin, keyword))
+        })
         .collect::<Vec<_>>();
     if candidates.is_empty() {
         return PluginQueryResponse {
@@ -132,27 +149,36 @@ fn query_plugins(plugins: &[PluginDescriptor], request: PluginRequest) -> Plugin
         };
     }
 
-    let request_line = match query_request_line(1, &request.query) {
-        Ok(request_line) => request_line,
-        Err(error) => {
-            return PluginQueryResponse {
-                sequence: request.sequence,
-                query: request.query,
-                results: Vec::new(),
-                status: format!("Unable to serialize Flow query: {error}"),
-                available: false,
-                actions: HashMap::new(),
-            };
-        }
-    };
-
     let mut results = Vec::with_capacity(MAX_RESULTS);
     let mut actions = HashMap::new();
     let mut failures = 0_usize;
-    for plugin in candidates {
+    for (plugin, action_keyword) in candidates {
         if results.len() >= MAX_RESULTS {
             break;
         }
+        let search = if is_obsidian_plugin(plugin) {
+            request
+                .query
+                .strip_prefix(&action_keyword)
+                .map(|rest| {
+                    rest.trim_start_matches(|character: char| {
+                        character == ':' || character.is_whitespace()
+                    })
+                })
+                .unwrap_or(request.query.trim())
+        } else {
+            plugin
+                .manifest
+                .search_for_action_keyword(&request.query, &action_keyword)
+        };
+        let request_line =
+            match query_request_line_with_keyword(1, &request.query, search, &action_keyword) {
+                Ok(request_line) => request_line,
+                Err(_) => {
+                    failures += 1;
+                    continue;
+                }
+            };
         let response = invoke_json_line(&plugin.executable, &plugin.directory, &request_line)
             .and_then(|line| {
                 serde_json::from_str::<FlowResponse>(&line).map_err(|error| error.to_string())
@@ -182,6 +208,35 @@ fn query_plugins(plugins: &[PluginDescriptor], request: PluginRequest) -> Plugin
         status,
         actions,
     }
+}
+
+fn action_keyword_for_plugin(plugin: &PluginDescriptor, request: &PluginRequest) -> Option<String> {
+    if is_obsidian_plugin(plugin) {
+        if !request.obsidian_enabled {
+            return None;
+        }
+        let keyword = request.obsidian_keyword.trim();
+        let keyword = if keyword.is_empty() { "ob" } else { keyword };
+        return has_keyword_boundary(&request.query, keyword).then(|| keyword.to_owned());
+    }
+    plugin
+        .manifest
+        .matching_action_keyword(&request.query)
+        .map(str::to_owned)
+}
+
+fn is_obsidian_plugin(plugin: &PluginDescriptor) -> bool {
+    plugin
+        .manifest
+        .id
+        .eq_ignore_ascii_case("flux.obsidian.builtin")
+}
+
+fn has_keyword_boundary(query: &str, keyword: &str) -> bool {
+    query == keyword
+        || query.strip_prefix(keyword).is_some_and(|rest| {
+            rest.starts_with(':') || rest.chars().next().is_some_and(char::is_whitespace)
+        })
 }
 
 fn append_plugin_results(
