@@ -28,6 +28,10 @@ jobs:
         with:
           targets: x86_64-pc-windows-msvc
 
+      - name: Install Inno Setup
+        shell: pwsh
+        run: choco install innosetup --no-progress --yes
+
       - name: Build release binaries
         shell: pwsh
         run: |
@@ -70,13 +74,23 @@ jobs:
             -Executable ./target/x86_64-pc-windows-msvc/release/flux-launcher.exe `
             -OutputDirectory ./artifacts/windows-ui-release
 
-      - name: Prepare release files
+      - name: Prepare installer and portable release files
         shell: pwsh
         run: |
-          New-Item -ItemType Directory -Force -Path ./artifacts/windows-ui-release/package | Out-Null
-          Copy-Item ./target/x86_64-pc-windows-msvc/release/flux-launcher.exe ./artifacts/windows-ui-release/package/FluxLauncher-Windows11-x64.exe
+          $version = "${{ inputs.release_tag }}".TrimStart("v")
+          ./scripts/build-installer.ps1 `
+            -AppVersion $version `
+            -OutputDirectory ./artifacts/windows-ui-release/package
           Copy-Item ./target/x86_64-pc-windows-msvc/release/flow-plugin-fixture.exe ./artifacts/windows-ui-release/package/flow-plugin-fixture.exe
           Get-ChildItem ./artifacts/windows-ui-release/package -File -Recurse | Get-FileHash -Algorithm SHA256 | Format-Table -AutoSize
+
+      - name: Smoke installer and uninstall
+        shell: pwsh
+        run: |
+          ./scripts/installer-smoke.ps1 `
+            -Installer ./artifacts/windows-ui-release/package/FluxLauncher-Setup.exe `
+            -ExpectedExe ./target/x86_64-pc-windows-msvc/release/flux-launcher.exe `
+            -WorkDirectory ./artifacts/windows-ui-release/installer-smoke
 
       - name: Publish UI release and screenshots
         uses: softprops/action-gh-release@v2
@@ -91,7 +105,8 @@ jobs:
 
             The workflow records DWM preflight diagnostics. GitHub standard runners may not expose live DWM Acrylic because of remote desktop composition; validate final material appearance on a physical Windows 11 desktop or a configured GPU/larger runner.
           files: |
-            ./artifacts/windows-ui-release/package/FluxLauncher-Windows11-x64.exe
+            ./artifacts/windows-ui-release/package/FluxLauncher-Setup.exe
+            ./artifacts/windows-ui-release/package/FluxLauncher-Portable.exe
             ./artifacts/windows-ui-release/package/flow-plugin-fixture.exe
             ./artifacts/windows-ui-release/mica-desktop.png
             ./artifacts/windows-ui-release/keyboard-selection.png

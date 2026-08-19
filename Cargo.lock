@@ -249,14 +249,14 @@ checksum = "98de4bbd547a563b716d8dfa9aad1cb19bfab00f4fa09a6a4ed21dbcf44ce9c4"
 
 [[package]]
 name = "flow-plugin-fixture"
-version = "0.1.0"
+version = "0.1.51"
 dependencies = [
  "serde_json",
 ]
 
 [[package]]
 name = "flux-core"
-version = "0.1.0"
+version = "0.1.51"
 dependencies = [
  "serde",
  "serde_json",
@@ -264,7 +264,7 @@ dependencies = [
 
 [[package]]
 name = "flux-launcher"
-version = "0.1.0"
+version = "0.1.51"
 dependencies = [
  "everything-ipc",
  "flux-core",
@@ -280,7 +280,7 @@ dependencies = [
 
 [[package]]
 name = "flux-plugin-example"
-version = "0.1.0"
+version = "0.1.51"
 dependencies = [
  "flux-plugin-sdk",
  "serde",
@@ -289,7 +289,7 @@ dependencies = [
 
 [[package]]
 name = "flux-plugin-sdk"
-version = "0.1.0"
+version = "0.1.51"
 dependencies = [
  "serde",
  "serde_json",

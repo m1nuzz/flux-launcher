@@ -11,6 +11,7 @@ mod launch;
 mod monitor;
 mod native_host;
 mod plugins;
+mod startup;
 
 use std::cell::{Cell, RefCell};
 use std::collections::{HashMap, HashSet};
@@ -1344,7 +1345,8 @@ fn result_row(
 fn main() {
     let mut args = std::env::args_os();
     let _executable = args.next();
-    if args.next().as_deref() == Some(std::ffi::OsStr::new("--plugin-host")) {
+    let mode = args.next();
+    if mode.as_deref() == Some(std::ffi::OsStr::new("--plugin-host")) {
         let root = args
             .next()
             .map(std::path::PathBuf::from)
@@ -1353,8 +1355,12 @@ fn main() {
         native_host::run(root);
         return;
     }
+    let startup_launch = mode.as_deref() == Some(std::ffi::OsStr::new("--startup"));
 
     let settings = Settings::load_or_default();
+    if let Err(error) = startup::set_enabled(settings.start_with_windows) {
+        eprintln!("Could not synchronize Windows startup setting: {error}");
+    }
     let activation_hotkey = hotkeys::activation_hotkey(&settings.activation_hotkey);
     let shared_settings = Arc::new(RwLock::new(settings.clone()));
     let query_history = Rc::new(RefCell::new(settings.query_history.clone()));
@@ -1394,6 +1400,7 @@ fn main() {
     let use_system_accent = signal(settings.use_system_accent);
     let custom_selection_color = signal(selection_color_hex(settings.custom_selection_color));
     let clear_query_on_activation = signal(settings.clear_query_on_activation);
+    let start_with_windows = signal(settings.start_with_windows);
     let auto_enable_everything = signal(settings.auto_enable_everything);
     let obsidian_enabled = signal(settings.obsidian_enabled);
     let obsidian_alias = signal(settings.obsidian_alias.clone());
@@ -2527,6 +2534,7 @@ fn main() {
     let settings_for_clear_history = Arc::clone(&shared_settings);
     let history_for_clear = Rc::clone(&query_history);
     let history_cursor_for_clear = history_cursor;
+    let start_with_windows_for_apply = start_with_windows;
     let auto_enable_everything_for_apply = auto_enable_everything;
     let obsidian_enabled_for_apply = obsidian_enabled;
     let obsidian_alias_for_apply = obsidian_alias;
@@ -2799,6 +2807,13 @@ fn main() {
                         ),
                     ))
                     .child(Element::field(
+                        "Windows startup",
+                        Element::checkbox(
+                            "Start Flux automatically with Windows",
+                            start_with_windows,
+                        ),
+                    ))
+                    .child(Element::field(
                         "Open launcher on",
                         Element::col()
                             .spacing(6)
@@ -2922,6 +2937,7 @@ fn main() {
                                 settings.use_system_accent = use_system_accent.get();
                                 settings.custom_selection_color = custom_color;
                                 settings.clear_query_on_activation = clear_query_on_activation.get();
+                                settings.start_with_windows = start_with_windows_for_apply.get();
                                 settings.auto_enable_everything = auto_enable_everything_for_apply.get();
                                 settings.obsidian_enabled = obsidian_enabled_for_apply.get();
                                 settings.obsidian_alias = obsidian_alias_for_apply.get();
@@ -2961,6 +2977,9 @@ fn main() {
                                     ));
                                 }
                                 let _ = save_settings(&settings);
+                                if let Err(error) = startup::set_enabled(settings.start_with_windows) {
+                                    ctx.toast_ok(format!("Startup setting failed: {error}"));
+                                }
                             }
                             settings_visible_for_apply.set(false);
                             let selected_preference = monitor_preference_from_index(monitor_preference.get());
@@ -3089,6 +3108,11 @@ fn main() {
         .child(launcher_page)
         .child(settings_page);
 
+    let app = if startup_launch {
+        app.start_hidden()
+    } else {
+        app
+    };
     app.tray(tray)
         .hide_on_close()
         // The Win32 backend keeps this transparent on local Acrylic-capable

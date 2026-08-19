@@ -2,6 +2,12 @@ name: Windows release artifact
 
 on:
   workflow_dispatch:
+    inputs:
+      app_version:
+        description: "Installer/package version, for example 0.1.51"
+        required: false
+        default: "0.1.51"
+        type: string
 
 permissions:
   contents: read
@@ -18,14 +24,25 @@ jobs:
         with:
           targets: x86_64-pc-windows-msvc
 
+      - name: Install Inno Setup
+        shell: pwsh
+        run: choco install innosetup --no-progress --yes
+
       - name: Build release binaries
         shell: pwsh
+        run: cargo build --release --target x86_64-pc-windows-msvc -p flux-launcher -p flow-plugin-fixture
+
+      - name: Build installer and portable package
+        shell: pwsh
+        run: ./scripts/build-installer.ps1 -AppVersion "${{ inputs.app_version }}"
+
+      - name: Smoke installer and uninstall
+        shell: pwsh
         run: |
-          cargo build --release --target x86_64-pc-windows-msvc -p flux-launcher -p flow-plugin-fixture
-          New-Item -ItemType Directory -Force -Path artifacts/FluxLauncher-Windows11-x64 | Out-Null
-          Copy-Item target/x86_64-pc-windows-msvc/release/flux-launcher.exe artifacts/FluxLauncher-Windows11-x64/FluxLauncher-Windows11-x64.exe
-          Copy-Item target/x86_64-pc-windows-msvc/release/flow-plugin-fixture.exe artifacts/FluxLauncher-Windows11-x64/flow-plugin-fixture.exe
-          Get-ChildItem artifacts/FluxLauncher-Windows11-x64 -File -Recurse | Get-FileHash -Algorithm SHA256 | Format-Table -AutoSize
+          ./scripts/installer-smoke.ps1 `
+            -Installer ./artifacts/FluxLauncher-Windows11-x64/FluxLauncher-Setup.exe `
+            -ExpectedExe ./target/x86_64-pc-windows-msvc/release/flux-launcher.exe `
+            -WorkDirectory ./artifacts/installer-smoke
 
       - name: Upload release artifact
         uses: actions/upload-artifact@v4

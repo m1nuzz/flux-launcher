@@ -88,6 +88,8 @@ pub struct Settings {
     #[serde(default = "enabled_by_default")]
     pub clear_query_on_activation: bool,
     #[serde(default = "enabled_by_default")]
+    pub start_with_windows: bool,
+    #[serde(default = "enabled_by_default")]
     pub auto_enable_everything: bool,
     #[serde(default = "enabled_by_default")]
     pub obsidian_enabled: bool,
@@ -118,6 +120,7 @@ impl Default for Settings {
             use_system_accent: true,
             custom_selection_color: default_selection_color(),
             clear_query_on_activation: true,
+            start_with_windows: true,
             auto_enable_everything: true,
             obsidian_enabled: true,
             obsidian_alias: default_obsidian_alias(),
@@ -307,6 +310,7 @@ mod tests {
         assert!(settings.use_system_accent);
         assert_eq!(settings.custom_selection_color, 0x4c8bf4);
         assert!(settings.clear_query_on_activation);
+        assert!(settings.start_with_windows);
         assert!(settings.auto_enable_everything);
         assert!(settings.obsidian_enabled);
         assert_eq!(settings.obsidian_alias, "ob");
@@ -334,6 +338,7 @@ mod tests {
             use_system_accent: false,
             custom_selection_color: 0x12ab34,
             clear_query_on_activation: false,
+            start_with_windows: false,
             auto_enable_everything: false,
             obsidian_enabled: false,
             obsidian_alias: String::from("notes"),
@@ -422,6 +427,7 @@ mod tests {
         let path = temporary_path("settings-obsidian-default");
         fs::write(&path, r#"{"activation_hotkey":{"key":"Space"}}"#).unwrap();
         let settings = Settings::load_from(&path).unwrap();
+        assert!(settings.start_with_windows);
         assert!(settings.obsidian_enabled);
         assert_eq!(settings.obsidian_alias, "ob");
         assert!(settings.google_enabled);

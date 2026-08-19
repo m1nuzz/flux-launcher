@@ -39,11 +39,21 @@ Flux is designed for users who want a fast, keyboard-first Windows launcher with
 | Built-in providers | Google Search with `g` and Obsidian vault search with `ob` |
 | Plugin compatibility | Legacy Flow `Executable`/`Executable_V2` JSON-RPC plugins plus isolated native Rust community plugins |
 | Keyboard workflow | Result navigation, action mode, history, copy path, run as administrator, and open file location |
-| Windows integration | Global hotkeys, fullscreen-aware Game Mode, Windows accent color, system tray, Recycle Bin commands, and monitor selection |
+| Windows integration | Global hotkeys, fullscreen-aware Game Mode, Windows accent color, system tray, Recycle Bin commands, monitor selection, and optional Windows startup |
 
 ## Install
 
-Flux Launcher is portable. Download the [latest Windows 11 x64 build](https://github.com/m1nuzz/flux-launcher/releases/latest/download/flux-launcher.exe), place it in a folder of your choice, and run it. Flux does not require Everything, but Everything is recommended for indexed file and folder search. If it is not installed, Flux can offer the following command from Settings:
+For most users, install Flux Launcher with the [latest Windows 11 installer](https://github.com/m1nuzz/flux-launcher/releases/latest/download/FluxLauncher-Setup.exe). The installer is the recommended option, registers Flux in Windows startup with **Start Flux Launcher automatically with Windows** enabled by default, and adds a Start Menu shortcut. The same setting can be changed later in `Settings > General > Windows startup`.
+
+You can also install or upgrade Flux with WinGet:
+
+```powershell
+winget install --id m1nuzz.FluxLauncher --exact
+```
+
+If you do not want an installer, download the [latest portable build](https://github.com/m1nuzz/flux-launcher/releases/latest/download/FluxLauncher-Portable.exe) and run it directly. Portable mode uses the same startup preference; disable `Start Flux automatically with Windows` in Settings if you do not want it registered.
+
+Flux does not require Everything, but Everything is recommended for indexed file and folder search. If it is not installed, Flux can offer the following command from Settings:
 
 ```powershell
 winget install -e --id voidtools.Everything
