@@ -21,12 +21,15 @@ jobs:
       - name: Build release binaries
         shell: pwsh
         run: |
-          cargo build --release --target x86_64-pc-windows-msvc -p flux-launcher -p flow-plugin-fixture -p flux-obsidian-plugin
+          cargo build --release --target x86_64-pc-windows-msvc -p flux-launcher -p flow-plugin-fixture -p flux-obsidian-plugin -p flux-google-plugin
           New-Item -ItemType Directory -Force -Path artifacts/FluxLauncher-Windows11-x64/FluxPlugins/Obsidian | Out-Null
+          New-Item -ItemType Directory -Force -Path artifacts/FluxLauncher-Windows11-x64/FluxPlugins/Google | Out-Null
           Copy-Item target/x86_64-pc-windows-msvc/release/flux-launcher.exe artifacts/FluxLauncher-Windows11-x64/FluxLauncher-Windows11-x64.exe
           Copy-Item target/x86_64-pc-windows-msvc/release/flow-plugin-fixture.exe artifacts/FluxLauncher-Windows11-x64/flow-plugin-fixture.exe
           Copy-Item crates/obsidian-plugin/plugin.json artifacts/FluxLauncher-Windows11-x64/FluxPlugins/Obsidian/plugin.json
           Copy-Item target/x86_64-pc-windows-msvc/release/flux-obsidian-plugin.exe artifacts/FluxLauncher-Windows11-x64/FluxPlugins/Obsidian/flux-obsidian-plugin.exe
+          Copy-Item crates/google-plugin/plugin.json artifacts/FluxLauncher-Windows11-x64/FluxPlugins/Google/plugin.json
+          Copy-Item target/x86_64-pc-windows-msvc/release/flux-google-plugin.exe artifacts/FluxLauncher-Windows11-x64/FluxPlugins/Google/flux-google-plugin.exe
           Get-ChildItem artifacts/FluxLauncher-Windows11-x64 -File -Recurse | Get-FileHash -Algorithm SHA256 | Format-Table -AutoSize
 
       - name: Upload release artifact

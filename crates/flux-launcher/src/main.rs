@@ -1328,6 +1328,8 @@ fn main() {
     let auto_enable_everything = signal(settings.auto_enable_everything);
     let obsidian_enabled = signal(settings.obsidian_enabled);
     let obsidian_alias = signal(settings.obsidian_alias.clone());
+    let google_enabled = signal(settings.google_enabled);
+    let google_alias = signal(settings.google_alias.clone());
     let initial_monitor_preference = std::env::var("FLUX_SMOKE_MONITOR_PREFERENCE")
         .ok()
         .and_then(|value| match value.to_ascii_lowercase().as_str() {
@@ -1609,6 +1611,8 @@ fn main() {
     let auto_enable_everything_for_interval = auto_enable_everything;
     let obsidian_enabled_for_interval = obsidian_enabled;
     let obsidian_alias_for_interval = obsidian_alias;
+    let google_enabled_for_interval = google_enabled;
+    let google_alias_for_interval = google_alias;
     let history_mode_for_interval = history_mode;
     let settings_visible_for_interval = settings_visible;
     let tray_settings_smoke_pending_for_interval = Rc::clone(&tray_settings_smoke_pending);
@@ -2401,6 +2405,8 @@ fn main() {
     let auto_enable_everything_for_apply = auto_enable_everything;
     let obsidian_enabled_for_apply = obsidian_enabled;
     let obsidian_alias_for_apply = obsidian_alias;
+    let google_enabled_for_apply = google_enabled;
+    let google_alias_for_apply = google_alias;
     let everything_status_for_apply = everything_status;
     let everything_installed_for_ui = everything_installed;
     let settings_for_priority_ui = Arc::clone(&shared_settings);
@@ -2794,6 +2800,8 @@ fn main() {
                                 settings.auto_enable_everything = auto_enable_everything_for_apply.get();
                                 settings.obsidian_enabled = obsidian_enabled_for_apply.get();
                                 settings.obsidian_alias = obsidian_alias_for_apply.get();
+                                settings.google_enabled = google_enabled_for_apply.get();
+                                settings.google_alias = google_alias_for_apply.get();
                                 settings.monitor_preference = monitor_preference_from_index(monitor_preference.get());
                                 settings.smooth_caret_duration_ms = duration;
                                 settings.normalize();
@@ -2880,6 +2888,21 @@ fn main() {
                         ))
                         .child(
                             Element::label("Search notes and vault files with the configured keyword, for example: ob meeting. Use `ob create project` to create a new note.")
+                                .font_size(11.0)
+                                .fg(Color::rgba(235, 241, 255, 175))
+                                .max_lines(3)
+                                .truncate(Truncate::End),
+                        )
+                        .child(Element::field(
+                            "Google Search",
+                            Element::checkbox("Enable Google web search", google_enabled),
+                        ))
+                        .child(Element::field(
+                            "Action keyword",
+                            Element::text_input(google_alias, "g").width_match(),
+                        ))
+                        .child(
+                            Element::label("Search the web with the configured keyword, for example: g space exploration. The result opens in your default browser.")
                                 .font_size(11.0)
                                 .fg(Color::rgba(235, 241, 255, 175))
                                 .max_lines(3)
@@ -3018,6 +3041,8 @@ fn main() {
                         next_query.clone(),
                         obsidian_enabled_for_interval.get(),
                         obsidian_alias_for_interval.get(),
+                        google_enabled_for_interval.get(),
+                        google_alias_for_interval.get(),
                     );
                 }
             }

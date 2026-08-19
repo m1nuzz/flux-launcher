@@ -4,6 +4,7 @@ members = [
     "crates/flux-core",
     "crates/flux-launcher",
     "crates/obsidian-plugin",
+    "crates/google-plugin",
 ]
 resolver = "2"
 

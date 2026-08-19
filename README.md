@@ -23,9 +23,9 @@ The primary interaction is intentionally minimal. With an empty query, Flux show
 | Smooth Caret | Optional ease-out visual caret transition with configurable duration; IME coordinates remain exact |
 | Global hotkey | Configurable modifier/key combination, default `Alt+Space` |
 | Game Mode | Fullscreen suppression enabled by default, manual toggle through `Ctrl+F12` and the tray |
-| Flow plugins | `Executable` and `Executable_V2` newline-delimited JSON-RPC plugins only; bundled native Rust Obsidian plugin with configurable keyword |
+| Flow plugins | `Executable` and `Executable_V2` newline-delimited JSON-RPC plugins only; bundled native Rust Obsidian and Google Search plugins with configurable keywords |
 | Tray | Left-click show action and right-click menu for Show launcher, Settings, Game Mode, and Exit; uses the transparent `assets/ico.png` branding icon |
-| Settings | Hotkey editor, fullscreen protection, Game Mode, Smooth Caret, caret duration, monitor preference, Everything auto-enable/install status, Obsidian enable/keyword controls, and atomic JSON persistence |
+| Settings | Hotkey editor, fullscreen protection, Game Mode, Smooth Caret, caret duration, monitor preference, Everything auto-enable/install status, Obsidian/Google plugin enable and keyword controls, and atomic JSON persistence |
 | License | MIT |
 
 ## Requirements
@@ -109,6 +109,8 @@ The repository contains a Rust fixture under `crates/flow-plugin-fixture` and a 
 
 The release artifact also includes the native Rust Obsidian plugin under `FluxPlugins\Obsidian`. Copy that directory to `%APPDATA%\FluxLauncher\Plugins\Obsidian` to enable automatic discovery. Flux reads vault paths from `%APPDATA%\obsidian\obsidian.json`, searches Markdown, Canvas, Excalidraw, image, JSON, and CSV files, opens results with `obsidian://` URIs, and supports note creation through `<keyword> create <name>`. Settings > Plugins controls the default `ob` keyword and enable state.
 
+The same artifact includes the native Rust Google Search plugin under `FluxPlugins\Google`. Copy it to `%APPDATA%\FluxLauncher\Plugins\Google`. Its default keyword is `g`, so `g space exploration` returns a Flow-compatible result that opens `https://www.google.com/search?q=space%20exploration` in the default browser. Settings > Plugins can disable the plugin or change the keyword. The implementation deliberately does not embed a browser engine or perform background autocomplete requests; it keeps the launcher native, private by default, and fast.
+
 ## Architecture
 
 The workspace separates portable behavior from Windows integration:
@@ -119,6 +121,7 @@ The workspace separates portable behavior from Windows integration:
 | `crates/flux-launcher` | windui application, native Windows integrations, Everything worker, plugin host, tray, and launch actions |
 | `crates/flow-plugin-fixture` | Native executable Flow JSON-RPC fixture used by integration smoke tests |
 | `crates/obsidian-plugin` | Native Rust Obsidian vault/file search and note creation plugin |
+| `crates/google-plugin` | Native Rust Google web-search action plugin |
 | `vendor/windui` | Pinned local windui fork containing the Mica/DirectComposition seam, runtime window sizing, and Smooth Caret support |
 | `scripts/capture-mica.ps1` | Proactive Windows screenshot, input, plugin, Settings, memory, pointer, and optional forced-fallback smoke harness |
 | `scripts/monitor-preference-smoke.ps1` | Windows smoke for Primary, Cursor, and Foreground monitor placement modes |

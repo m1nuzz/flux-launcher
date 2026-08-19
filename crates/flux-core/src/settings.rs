@@ -25,6 +25,10 @@ fn default_obsidian_alias() -> String {
     String::from("ob")
 }
 
+fn default_google_alias() -> String {
+    String::from("g")
+}
+
 #[derive(Clone, Debug, Deserialize, PartialEq, Eq, Serialize)]
 #[serde(default)]
 pub struct HotkeyConfig {
@@ -89,6 +93,10 @@ pub struct Settings {
     pub obsidian_enabled: bool,
     #[serde(default = "default_obsidian_alias")]
     pub obsidian_alias: String,
+    #[serde(default = "enabled_by_default")]
+    pub google_enabled: bool,
+    #[serde(default = "default_google_alias")]
+    pub google_alias: String,
     #[serde(default)]
     pub monitor_preference: MonitorPreference,
     #[serde(default = "default_caret_duration")]
@@ -113,6 +121,8 @@ impl Default for Settings {
             auto_enable_everything: true,
             obsidian_enabled: true,
             obsidian_alias: default_obsidian_alias(),
+            google_enabled: true,
+            google_alias: default_google_alias(),
             monitor_preference: MonitorPreference::default(),
             smooth_caret_duration_ms: DEFAULT_CARET_DURATION_MS,
             query_history: Vec::new(),
@@ -132,6 +142,10 @@ impl Settings {
         self.obsidian_alias = self.obsidian_alias.trim().to_owned();
         if self.obsidian_alias.is_empty() {
             self.obsidian_alias = default_obsidian_alias();
+        }
+        self.google_alias = self.google_alias.trim().to_owned();
+        if self.google_alias.is_empty() {
+            self.google_alias = default_google_alias();
         }
         self.normalize_query_history();
         self.normalize_priorities();
@@ -296,6 +310,8 @@ mod tests {
         assert!(settings.auto_enable_everything);
         assert!(settings.obsidian_enabled);
         assert_eq!(settings.obsidian_alias, "ob");
+        assert!(settings.google_enabled);
+        assert_eq!(settings.google_alias, "g");
         assert_eq!(settings.monitor_preference, MonitorPreference::Cursor);
         assert_eq!(settings.smooth_caret_duration_ms, DEFAULT_CARET_DURATION_MS);
     }
@@ -321,6 +337,8 @@ mod tests {
             auto_enable_everything: false,
             obsidian_enabled: false,
             obsidian_alias: String::from("notes"),
+            google_enabled: false,
+            google_alias: String::from("search"),
             monitor_preference: MonitorPreference::Foreground,
             smooth_caret_duration_ms: 120,
             query_history: vec![String::from("steam"), String::from("ext:zip")],
@@ -406,6 +424,8 @@ mod tests {
         let settings = Settings::load_from(&path).unwrap();
         assert!(settings.obsidian_enabled);
         assert_eq!(settings.obsidian_alias, "ob");
+        assert!(settings.google_enabled);
+        assert_eq!(settings.google_alias, "g");
         fs::remove_file(path).unwrap();
     }
 

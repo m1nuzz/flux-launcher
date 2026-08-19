@@ -43,6 +43,8 @@ struct PluginRequest {
     query: String,
     obsidian_enabled: bool,
     obsidian_keyword: String,
+    google_enabled: bool,
+    google_keyword: String,
 }
 
 #[derive(Clone, Debug)]
@@ -98,6 +100,8 @@ impl FlowPluginWorker {
         query: String,
         obsidian_enabled: bool,
         obsidian_keyword: String,
+        google_enabled: bool,
+        google_keyword: String,
     ) {
         if let Ok(mut latest) = self.latest.lock() {
             *latest = Some(PluginRequest {
@@ -105,6 +109,8 @@ impl FlowPluginWorker {
                 query,
                 obsidian_enabled,
                 obsidian_keyword,
+                google_enabled,
+                google_keyword,
             });
             let _ = self.wake.try_send(());
         }
@@ -156,7 +162,7 @@ fn query_plugins(plugins: &[PluginDescriptor], request: PluginRequest) -> Plugin
         if results.len() >= MAX_RESULTS {
             break;
         }
-        let search = if is_obsidian_plugin(plugin) {
+        let search = if is_obsidian_plugin(plugin) || is_google_plugin(plugin) {
             request
                 .query
                 .strip_prefix(&action_keyword)
@@ -219,6 +225,14 @@ fn action_keyword_for_plugin(plugin: &PluginDescriptor, request: &PluginRequest)
         let keyword = if keyword.is_empty() { "ob" } else { keyword };
         return has_keyword_boundary(&request.query, keyword).then(|| keyword.to_owned());
     }
+    if is_google_plugin(plugin) {
+        if !request.google_enabled {
+            return None;
+        }
+        let keyword = request.google_keyword.trim();
+        let keyword = if keyword.is_empty() { "g" } else { keyword };
+        return has_keyword_boundary(&request.query, keyword).then(|| keyword.to_owned());
+    }
     plugin
         .manifest
         .matching_action_keyword(&request.query)
@@ -230,6 +244,13 @@ fn is_obsidian_plugin(plugin: &PluginDescriptor) -> bool {
         .manifest
         .id
         .eq_ignore_ascii_case("flux.obsidian.builtin")
+}
+
+fn is_google_plugin(plugin: &PluginDescriptor) -> bool {
+    plugin
+        .manifest
+        .id
+        .eq_ignore_ascii_case("flux.google.builtin")
 }
 
 fn has_keyword_boundary(query: &str, keyword: &str) -> bool {
@@ -389,4 +410,18 @@ fn invoke_json_line(
 fn terminate_process(child: &mut Child) {
     let _ = child.kill();
     let _ = child.wait();
+}
+
+#[cfg(test)]
+mod tests {
+    use super::has_keyword_boundary;
+
+    #[test]
+    fn google_keyword_requires_a_token_boundary() {
+        assert!(has_keyword_boundary("g space exploration", "g"));
+        assert!(has_keyword_boundary("g:space exploration", "g"));
+        assert!(has_keyword_boundary("g", "g"));
+        assert!(!has_keyword_boundary("gaming", "g"));
+        assert!(!has_keyword_boundary("", "g"));
+    }
 }

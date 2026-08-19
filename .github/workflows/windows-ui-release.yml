@@ -31,7 +31,7 @@ jobs:
       - name: Build release binaries
         shell: pwsh
         run: |
-          cargo build --release --target x86_64-pc-windows-msvc -p flux-launcher -p flow-plugin-fixture -p flux-obsidian-plugin
+          cargo build --release --target x86_64-pc-windows-msvc -p flux-launcher -p flow-plugin-fixture -p flux-obsidian-plugin -p flux-google-plugin
           $pluginRoot = Join-Path $env:APPDATA "FluxLauncher\Plugins\NativeFlowFixture"
           New-Item -ItemType Directory -Force -Path $pluginRoot | Out-Null
           Copy-Item ./tests/fixtures/flow-native-plugin/plugin.json (Join-Path $pluginRoot "plugin.json") -Force
@@ -59,8 +59,11 @@ jobs:
           Copy-Item ./target/x86_64-pc-windows-msvc/release/flux-launcher.exe ./artifacts/windows-ui-release/package/FluxLauncher-Windows11-x64.exe
           Copy-Item ./target/x86_64-pc-windows-msvc/release/flow-plugin-fixture.exe ./artifacts/windows-ui-release/package/flow-plugin-fixture.exe
           New-Item -ItemType Directory -Force -Path ./artifacts/windows-ui-release/package/FluxPlugins/Obsidian | Out-Null
+          New-Item -ItemType Directory -Force -Path ./artifacts/windows-ui-release/package/FluxPlugins/Google | Out-Null
           Copy-Item ./crates/obsidian-plugin/plugin.json ./artifacts/windows-ui-release/package/FluxPlugins/Obsidian/plugin.json
           Copy-Item ./target/x86_64-pc-windows-msvc/release/flux-obsidian-plugin.exe ./artifacts/windows-ui-release/package/FluxPlugins/Obsidian/flux-obsidian-plugin.exe
+          Copy-Item ./crates/google-plugin/plugin.json ./artifacts/windows-ui-release/package/FluxPlugins/Google/plugin.json
+          Copy-Item ./target/x86_64-pc-windows-msvc/release/flux-google-plugin.exe ./artifacts/windows-ui-release/package/FluxPlugins/Google/flux-google-plugin.exe
           Get-ChildItem ./artifacts/windows-ui-release/package -File -Recurse | Get-FileHash -Algorithm SHA256 | Format-Table -AutoSize
 
       - name: Publish UI release and screenshots
@@ -80,6 +83,8 @@ jobs:
             ./artifacts/windows-ui-release/package/flow-plugin-fixture.exe
             ./artifacts/windows-ui-release/package/FluxPlugins/Obsidian/plugin.json
             ./artifacts/windows-ui-release/package/FluxPlugins/Obsidian/flux-obsidian-plugin.exe
+            ./artifacts/windows-ui-release/package/FluxPlugins/Google/plugin.json
+            ./artifacts/windows-ui-release/package/FluxPlugins/Google/flux-google-plugin.exe
             ./artifacts/windows-ui-release/mica-desktop.png
             ./artifacts/windows-ui-release/keyboard-selection.png
             ./artifacts/windows-ui-release/actions-panel.png
