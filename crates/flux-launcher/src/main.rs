@@ -1253,6 +1253,8 @@ fn main() {
     ));
     let show_results = signal(false);
     let activation_key = signal(settings.activation_hotkey.key.clone());
+    let activation_display = signal(hotkeys::display_config(&settings.activation_hotkey));
+    let activation_recording = signal(false);
     let activation_ctrl = signal(settings.activation_hotkey.ctrl);
     let activation_alt = signal(settings.activation_hotkey.alt);
     let activation_shift = signal(settings.activation_hotkey.shift);
@@ -1822,6 +1824,14 @@ fn main() {
         }
     });
 
+    let activation_handle_for_recorder = activation_handle.clone();
+    let activation_recording_for_keys = activation_recording;
+    let activation_display_for_keys = activation_display;
+    let activation_key_for_keys = activation_key;
+    let activation_ctrl_for_keys = activation_ctrl;
+    let activation_alt_for_keys = activation_alt;
+    let activation_shift_for_keys = activation_shift;
+    let activation_meta_for_keys = activation_meta;
     let query_for_keys = query;
     let results_for_keys = results;
     let selected_id_for_keys = selected_id;
@@ -1862,6 +1872,25 @@ fn main() {
     });
 
     app = app.on_key(move |event: KeyEvent| {
+        if activation_recording_for_keys.get() {
+            if event.pressed {
+                if let Some(configuration) = hotkeys::capture_config(
+                    &event,
+                    alt_key_is_down(),
+                    hotkeys::meta_key_is_down(),
+                ) {
+                    activation_key_for_keys.set(configuration.key.clone());
+                    activation_ctrl_for_keys.set(configuration.ctrl);
+                    activation_alt_for_keys.set(configuration.alt);
+                    activation_shift_for_keys.set(configuration.shift);
+                    activation_meta_for_keys.set(configuration.meta);
+                    activation_display_for_keys.set(hotkeys::display_config(&configuration));
+                    activation_recording_for_keys.set(false);
+                    activation_handle_for_recorder.set_enabled(true);
+                }
+            }
+            return true;
+        }
         if !event.pressed || settings_visible_for_keys.get() {
             return false;
         }
@@ -2292,6 +2321,11 @@ fn main() {
     let settings_for_apply = Arc::clone(&shared_settings);
     let position_for_apply = window_position.clone();
     let activation_handle_for_apply = activation_handle.clone();
+    let activation_handle_for_record_button = activation_handle.clone();
+    let activation_recording_for_record_button = activation_recording;
+    let activation_recording_for_apply = activation_recording;
+    let activation_display_for_ui = activation_display;
+    let activation_display_for_apply = activation_display;
     let game_mode_status_for_apply = game_mode_status;
     let settings_visible_for_apply = settings_visible;
     let show_results_for_back = show_results;
@@ -2482,7 +2516,36 @@ fn main() {
                     .spacing(12)
                     .child(Element::field(
                         "Activation key",
-                        Element::text_input(activation_key, "Space").width_match(),
+                        Element::col()
+                            .width_match()
+                            .spacing(6)
+                            .child(
+                                Element::row()
+                                    .width_match()
+                                    .spacing(8)
+                                    .child(
+                                        Element::label_signal(activation_display_for_ui)
+                                            .width_match()
+                                            .padding_xy(10, 8)
+                                            .bg(Color::rgba(255, 255, 255, 24))
+                                            .corner(8.0),
+                                    )
+                                    .child(
+                                        Element::button("Record key")
+                                            .neutral()
+                                            .on_click(move |ctx| {
+                                                activation_recording_for_record_button.set(true);
+                                                activation_handle_for_record_button.set_enabled(false);
+                                                ctx.toast_ok("Press the desired activation key");
+                                            }),
+                                    ),
+                            )
+                            .child(
+                                Element::label("Click Record key, then press one key or a key combination")
+                                    .font_size(11.0)
+                                    .fg(Color::rgba(235, 241, 255, 170))
+                                    .visible_when(move || activation_recording_for_record_button.get()),
+                            ),
                     ))
                     .child(
                         Element::row()
@@ -2660,10 +2723,14 @@ fn main() {
                                 settings.monitor_preference = monitor_preference_from_index(monitor_preference.get());
                                 settings.smooth_caret_duration_ms = duration;
                                 settings.normalize();
+                                activation_recording_for_apply.set(false);
+                                activation_display_for_apply
+                                    .set(hotkeys::display_config(&settings.activation_hotkey));
                                 selection_color.set(selection_color_for_settings(&settings));
                                 custom_selection_color.set(selection_color_hex(settings.custom_selection_color));
                                 activation_handle_for_apply
                                     .set(hotkeys::activation_hotkey(&settings.activation_hotkey));
+                                activation_handle_for_apply.set_enabled(true);
                                 game_mode_status_for_apply.set(game_mode_label(settings.game_mode));
                                 if settings.auto_enable_everything {
                                     match everything::start_background_if_installed() {
