@@ -669,15 +669,24 @@ unsafe fn apply_system_backdrop(hwnd: HWND, backdrop: Backdrop) {
         cyTopHeight: -1,
         cyBottomHeight: -1,
     };
-    let _ = DwmExtendFrameIntoClientArea(hwnd, &full_frame);
-    if DwmSetWindowAttribute(
+    let extend_result = DwmExtendFrameIntoClientArea(hwnd, &full_frame);
+    trace_show_event(
+        hwnd,
+        "dwm.extend_frame",
+        &format!("phase=material_setup result={extend_result:?}"),
+    );
+    let backdrop_result = DwmSetWindowAttribute(
         hwnd,
         DWMWA_SYSTEMBACKDROP_TYPE,
         &kind as *const _ as *const c_void,
         size_of::<DWM_SYSTEMBACKDROP_TYPE>() as u32,
-    )
-    .is_ok()
-    {
+    );
+    trace_show_event(
+        hwnd,
+        "dwm.system_backdrop",
+        &format!("phase=material_setup result={backdrop_result:?}"),
+    );
+    if backdrop_result.is_ok() {
         return;
     }
 
@@ -2032,6 +2041,23 @@ pub(crate) fn show_and_activate(hwnd: HWND) {
             if let Some(backdrop) = backdrop {
                 apply_system_backdrop(hwnd, backdrop);
             }
+            // The first frame change occurs while hidden. Repeat it after the
+            // visible DWM material reapply so the client backdrop is latched
+            // for this HWND activation before the first transparent Present.
+            let _ = SetWindowPos(
+                hwnd,
+                None,
+                0,
+                0,
+                0,
+                0,
+                SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE | SWP_FRAMECHANGED,
+            );
+            trace_show_event(
+                hwnd,
+                "show.after_visible_frame_changed",
+                "phase=visible_dwm_frame_ready",
+            );
             if let Some(state) = state_from(hwnd) {
                 trace_show_event(hwnd, "show.before_backend_on_show", "phase=backend_on_show");
                 state.backend.on_show(hwnd);
