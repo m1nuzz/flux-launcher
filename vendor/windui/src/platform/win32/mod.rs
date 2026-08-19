@@ -577,9 +577,13 @@ fn system_material_supported() -> bool {
     )
 }
 
-/// Applies the public DWM system backdrop first. The legacy WCA Acrylic policy is
-/// used only when the public attribute is unavailable, so two material policies do
-/// not compete for the same HWND.
+/// Applies the requested DWM material to the HWND.
+///
+/// Acrylic uses the legacy WCA policy as the primary path because this window owns
+/// a transparent DirectComposition swapchain. On affected Windows 11 builds the
+/// public transient-window material is accepted but becomes a uniform gray slab
+/// behind custom DComp content until a later client resize. Mica keeps the public
+/// DWM attribute path.
 unsafe fn apply_system_backdrop(hwnd: HWND, backdrop: Backdrop) {
     let is_remote = GetSystemMetrics(SM_REMOTESESSION) != 0;
     let composition_enabled = DwmIsCompositionEnabled()
@@ -619,16 +623,59 @@ unsafe fn apply_system_backdrop(hwnd: HWND, backdrop: Backdrop) {
         );
         return;
     }
-    // Request the host backdrop brush for custom client composition. This keeps
-    // the public DWM material available to the DirectComposition visual instead of
-    // reducing the client surface to a uniform fallback color.
+
+    if backdrop == Backdrop::Acrylic {
+        // Clear public system material state before enabling WCA Acrylic. Keeping
+        // TRANSIENTWINDOW/host backdrop enabled at the same time can leave a
+        // uniform DWM slab over a transparent custom composition surface.
+        let none = DWMSBT_NONE;
+        let clear_public = DwmSetWindowAttribute(
+            hwnd,
+            DWMWA_SYSTEMBACKDROP_TYPE,
+            &none as *const _ as *const c_void,
+            size_of::<DWM_SYSTEMBACKDROP_TYPE>() as u32,
+        );
+        const DWMWA_USE_HOSTBACKDROPBRUSH: windows::Win32::Graphics::Dwm::DWMWINDOWATTRIBUTE =
+            windows::Win32::Graphics::Dwm::DWMWINDOWATTRIBUTE(17);
+        let disable_host_backdrop: i32 = 0;
+        let clear_host = DwmSetWindowAttribute(
+            hwnd,
+            DWMWA_USE_HOSTBACKDROPBRUSH,
+            &disable_host_backdrop as *const _ as *const c_void,
+            size_of::<i32>() as u32,
+        );
+        trace_show_event(
+            hwnd,
+            "dwm.legacy_acrylic.clear_public",
+            &format!("system={clear_public:?} host={clear_host:?}"),
+        );
+        let full_frame = MARGINS {
+            cxLeftWidth: -1,
+            cxRightWidth: -1,
+            cyTopHeight: -1,
+            cyBottomHeight: -1,
+        };
+        let extend_result = DwmExtendFrameIntoClientArea(hwnd, &full_frame);
+        trace_show_event(
+            hwnd,
+            "dwm.legacy_acrylic",
+            &format!("phase=extend_frame result={extend_result:?}"),
+        );
+        apply_acrylic_policy(hwnd);
+        trace_show_event(hwnd, "dwm.legacy_acrylic", "phase=policy_applied");
+        return;
+    }
+
+    // Mica uses the public DWM material path. The host backdrop brush is not
+    // enabled here because the Flux content is already transparent and owns
+    // its DirectComposition visual.
     const DWMWA_USE_HOSTBACKDROPBRUSH: windows::Win32::Graphics::Dwm::DWMWINDOWATTRIBUTE =
         windows::Win32::Graphics::Dwm::DWMWINDOWATTRIBUTE(17);
-    let use_host_backdrop: i32 = 1;
+    let disable_host_backdrop: i32 = 0;
     let _ = DwmSetWindowAttribute(
         hwnd,
         DWMWA_USE_HOSTBACKDROPBRUSH,
-        &use_host_backdrop as *const _ as *const c_void,
+        &disable_host_backdrop as *const _ as *const c_void,
         size_of::<i32>() as u32,
     );
 
