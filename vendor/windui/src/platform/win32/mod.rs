@@ -2116,6 +2116,9 @@ pub(crate) fn show_and_activate(hwnd: HWND) {
             }
         }
         let _ = SetForegroundWindow(hwnd);
+        if let Some(state) = state_from(hwnd) {
+            state.handler.on_window_activated();
+        }
         // Present one settled visible frame before injecting focus/navigation.
         // This prevents a late request from resizing the surface immediately
         // after DWM samples the first transparent backbuffer.

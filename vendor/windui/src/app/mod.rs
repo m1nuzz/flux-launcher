@@ -289,6 +289,7 @@ pub struct App {
     key_handler: Option<KeyHandler>,
     /// Optional callbacks around native window visibility transitions.
     show_handler: Option<VisibilityHandler>,
+    activated_handler: Option<VisibilityHandler>,
     hide_handler: Option<VisibilityHandler>,
     /// 关闭请求转为隐藏窗口。与 `close_handler` 同属核心层的关闭决策链输入，
     /// 平台层对此无感知，故不放 `WindowConfig`。
@@ -346,6 +347,7 @@ impl App {
             close_handler: None,
             key_handler: None,
             show_handler: None,
+            activated_handler: None,
             hide_handler: None,
             hide_on_close: false,
             bg_explicit: false,
@@ -837,6 +839,11 @@ impl App {
         self.show_handler = Some(Box::new(f));
         self
     }
+    /// Run a callback immediately after the native window has been shown and activated.
+    pub fn on_window_activated(mut self, f: impl FnMut() + 'static) -> Self {
+        self.activated_handler = Some(Box::new(f));
+        self
+    }
     /// Run a callback immediately before the native window is hidden.
     pub fn on_window_hide(mut self, f: impl FnMut() + 'static) -> Self {
         self.hide_handler = Some(Box::new(f));
@@ -876,6 +883,7 @@ impl App {
                 self.close_handler,
                 self.key_handler,
                 self.show_handler,
+                self.activated_handler,
                 self.hide_handler,
                 self.hide_on_close,
             ))
@@ -1061,6 +1069,7 @@ struct UiHost {
     key_handler: Option<KeyHandler>,
     /// Optional callbacks around native window visibility transitions.
     show_handler: Option<VisibilityHandler>,
+    activated_handler: Option<VisibilityHandler>,
     hide_handler: Option<VisibilityHandler>,
     /// 关闭请求转为隐藏窗口（常驻托盘类应用）。
     hide_on_close: bool,
@@ -1181,6 +1190,7 @@ impl UiHost {
         close_handler: Option<CloseHandler>,
         key_handler: Option<KeyHandler>,
         show_handler: Option<VisibilityHandler>,
+        activated_handler: Option<VisibilityHandler>,
         hide_handler: Option<VisibilityHandler>,
         hide_on_close: bool,
     ) -> Self {
@@ -1226,6 +1236,7 @@ impl UiHost {
             close_handler,
             key_handler,
             show_handler,
+            activated_handler,
             hide_handler,
             hide_on_close,
             resolving_close: false,
@@ -1696,6 +1707,11 @@ impl AppHandler for UiHost {
     }
     fn on_window_show(&mut self) {
         if let Some(handler) = self.show_handler.as_mut() {
+            handler();
+        }
+    }
+    fn on_window_activated(&mut self) {
+        if let Some(handler) = self.activated_handler.as_mut() {
             handler();
         }
     }

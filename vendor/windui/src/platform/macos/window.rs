@@ -919,6 +919,7 @@ impl ContentView {
                         win.makeKeyAndOrderFront(None);
                         // 隐藏期间应用可能已失去激活态，仅 orderFront 不足以到前台。
                         NSApplication::sharedApplication(MainThreadMarker::from(self)).activate();
+                        self.ivars().borrow_mut().handler.on_window_activated();
                     }
                     WindowOp::Hide => {
                         win.orderOut(None);
@@ -933,6 +934,7 @@ impl ContentView {
                             win.makeKeyAndOrderFront(None);
                             NSApplication::sharedApplication(MainThreadMarker::from(self))
                                 .activate();
+                            self.ivars().borrow_mut().handler.on_window_activated();
                         }
                     }
                 }

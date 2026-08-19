@@ -2918,12 +2918,17 @@ fn main() {
             let cursor_visibility_for_show = cursor_visibility.clone();
             move || {
                 cursor_visibility_for_show.show();
+                if let Ok(settings) = settings.read() {
+                    selection_color.set(selection_color_for_settings(&settings));
+                }
+            }
+        })
+        .on_window_activated({
+            let settings = Arc::clone(&shared_settings);
+            move || {
                 let layout_enabled = settings
                     .read()
-                    .map(|settings| {
-                        selection_color.set(selection_color_for_settings(&settings));
-                        settings.switch_to_english_layout
-                    })
+                    .map(|settings| settings.switch_to_english_layout)
                     .unwrap_or(true);
                 if layout_enabled {
                     keyboard_layout::switch_to_english();

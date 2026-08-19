@@ -421,6 +421,8 @@ pub trait AppHandler {
     }
     /// Called immediately before the native window is shown and activated.
     fn on_window_show(&mut self) {}
+    /// Called immediately after the native window has been shown and activated.
+    fn on_window_activated(&mut self) {}
     /// Called immediately after the native window is hidden.
     fn on_window_hide(&mut self) {}
     /// 当前是否处于指针捕获态。平台据此调用 OS 的 SetCapture/ReleaseCapture，
