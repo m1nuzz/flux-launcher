@@ -2954,7 +2954,9 @@ mod tests {
             subtitle: String::from("Application • App Paths"),
             kind: ResultKind::Application,
             source: ResultSource::ApplicationCatalog,
-            target: Some(String::from(r"C:\Program Files\Google\Chrome\Application\chrome.exe")),
+            target: Some(String::from(
+                r"C:\Program Files\Google\Chrome\Application\chrome.exe",
+            )),
         };
         let start_menu = SearchResult {
             id: String::from("application:start-menu:google-chrome"),
@@ -2962,7 +2964,9 @@ mod tests {
             subtitle: String::from("Application • Start Menu"),
             kind: ResultKind::Application,
             source: ResultSource::ApplicationCatalog,
-            target: Some(String::from(r"C:/Program Files/Google/Chrome/Application/chrome.exe")),
+            target: Some(String::from(
+                r"C:/Program Files/Google/Chrome/Application/chrome.exe",
+            )),
         };
         let everything = SearchResult::file(
             String::from(r"C:\Program Files\Google\Chrome\Application\chrome.exe"),

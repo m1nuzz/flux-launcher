@@ -219,7 +219,10 @@ fn resolve_shell_link_target(path: &str) -> Option<(String, String)> {
             .ok()?;
         let mut arguments = [0_u16; 32_768];
         link.GetArguments(&mut arguments).ok()?;
-        let target_end = target.iter().position(|value| *value == 0).unwrap_or(target.len());
+        let target_end = target
+            .iter()
+            .position(|value| *value == 0)
+            .unwrap_or(target.len());
         let arguments_end = arguments
             .iter()
             .position(|value| *value == 0)
@@ -517,8 +520,14 @@ mod tests {
     fn canonical_application_identity_normalizes_windows_target_paths() {
         let first = canonical_application_id(r"C:\Program Files\Google\Chrome\chrome.exe");
         let second = canonical_target_key(r"c:/Program Files/Google/Chrome/chrome.exe");
-        assert_eq!(first.as_deref(), Some("application:target:c:\\program files\\google\\chrome\\chrome.exe"));
-        assert_eq!(second.as_deref(), Some("c:\\program files\\google\\chrome\\chrome.exe"));
+        assert_eq!(
+            first.as_deref(),
+            Some("application:target:c:\\program files\\google\\chrome\\chrome.exe")
+        );
+        assert_eq!(
+            second.as_deref(),
+            Some("c:\\program files\\google\\chrome\\chrome.exe")
+        );
     }
 
     #[test]
