@@ -726,6 +726,17 @@ fn inline_completion_suffix(query: &str, results: &[SearchResult]) -> String {
         .unwrap_or_default()
 }
 
+fn history_cursor_step(history_len: usize, cursor: Option<usize>, key: Key) -> Option<usize> {
+    if history_len == 0 {
+        return None;
+    }
+    Some(match (key, cursor) {
+        (Key::Up, Some(index)) => index.saturating_sub(1),
+        (Key::Down, Some(index)) => (index + 1).min(history_len - 1),
+        (_, _) => history_len - 1,
+    })
+}
+
 #[cfg(windows)]
 fn alt_key_is_down() -> bool {
     use windows::Win32::UI::Input::KeyboardAndMouse::{GetKeyState, VK_MENU};
@@ -1237,7 +1248,6 @@ fn main() {
     let query_history = Rc::new(RefCell::new(settings.query_history.clone()));
     let priorities = signal(settings.priority_entries.clone());
     let history_cursor = signal(None::<usize>);
-    let history_navigation = signal(false);
     let history_mode = signal(false);
 
     let query = signal(String::new());
@@ -1548,8 +1558,6 @@ fn main() {
     let priorities_for_interval = priorities;
     let actions_for_interval = Rc::clone(&plugin_actions);
     let auto_enable_everything_for_interval = auto_enable_everything;
-    let history_cursor_for_interval = history_cursor;
-    let history_navigation_for_interval = history_navigation;
     let history_mode_for_interval = history_mode;
     let settings_visible_for_interval = settings_visible;
     let tray_settings_smoke_pending_for_interval = Rc::clone(&tray_settings_smoke_pending);
@@ -1781,7 +1789,6 @@ fn main() {
     let show_results_for_activation = show_results;
     let history_mode_for_activation = history_mode;
     let history_cursor_for_activation = history_cursor;
-    let history_navigation_for_activation = history_navigation;
     let action_mode_for_activation = action_mode;
     let action_index_for_activation = action_index;
     let action_items_for_activation = action_items;
@@ -1806,7 +1813,6 @@ fn main() {
                 show_results_for_activation.set(false);
                 history_mode_for_activation.set(false);
                 history_cursor_for_activation.set(None);
-                history_navigation_for_activation.set(false);
                 action_mode_for_activation.set(false);
                 action_index_for_activation.set(0);
                 action_items_for_activation.set(Vec::new());
@@ -1855,7 +1861,6 @@ fn main() {
     let query_history_for_keys = Rc::clone(&query_history);
     let history_mode_for_keys = history_mode;
     let history_cursor_for_keys = history_cursor;
-    let history_navigation_for_keys = history_navigation;
     let settings_for_history_for_keys = Arc::clone(&shared_settings);
     let settings_for_priority_for_keys = Arc::clone(&shared_settings);
     let priorities_for_keys = priorities;
@@ -1899,10 +1904,12 @@ fn main() {
         if !event.pressed || settings_visible_for_keys.get() {
             return false;
         }
+        let alt_down = alt_key_is_down();
         if !event.ctrl
-            && !alt_key_is_down()
+            && !alt_down
             && matches!(event.key, Key::Char(_) | Key::Backspace | Key::Delete)
         {
+            history_cursor_for_keys.set(None);
             cursor_visibility_for_keys.hide();
         }
         if event.ctrl
@@ -1930,7 +1937,6 @@ fn main() {
             let filtered = history_results(&history, &query_for_keys.get());
             history_mode_for_keys.set(true);
             history_cursor_for_keys.set(None);
-            history_navigation_for_keys.set(false);
             action_mode_for_keys.set(false);
             action_items_for_keys.set(Vec::new());
             inline_completion_for_keys.set(String::new());
@@ -1948,18 +1954,14 @@ fn main() {
         }
         let query = query_for_keys.get();
         let history = query_history_for_keys.borrow();
-        let alt_down = alt_key_is_down();
         if alt_down && !event.ctrl && !event.shift && matches!(event.key, Key::Up | Key::Down) {
             if history.is_empty() {
                 return false;
             }
-            let next = match (event.key, history_cursor_for_keys.get()) {
-                (Key::Up, Some(index)) => index.saturating_sub(1),
-                (Key::Down, Some(index)) => (index + 1).min(history.len() - 1),
-                (_, _) => history.len() - 1,
+            let Some(next) = history_cursor_step(history.len(), history_cursor_for_keys.get(), event.key) else {
+                return false;
             };
             history_cursor_for_keys.set(Some(next));
-            history_navigation_for_keys.set(true);
             history_mode_for_keys.set(false);
             query_for_keys.set(history[next].clone());
             return true;
@@ -1973,8 +1975,7 @@ fn main() {
         {
             if let Some(latest) = history.last() {
                 history_cursor_for_keys.set(Some(history.len() - 1));
-                history_navigation_for_keys.set(true);
-                query_for_keys.set(latest.clone());
+                    query_for_keys.set(latest.clone());
                 return true;
             }
         }
@@ -2848,11 +2849,6 @@ fn main() {
                 return;
             }
             let next_query = query_for_interval.get();
-            let from_history = history_navigation_for_interval.get();
-            history_navigation_for_interval.set(false);
-            if !from_history {
-                history_cursor_for_interval.set(None);
-            }
             if next_query == last_query {
                 return;
             }
@@ -2967,7 +2963,6 @@ fn main() {
                     show_results.set(false);
                     history_mode.set(false);
                     history_cursor.set(None);
-                    history_navigation.set(false);
                     action_mode.set(false);
                     action_index.set(0);
                     action_items.set(Vec::new());
@@ -2984,7 +2979,7 @@ fn main() {
 #[cfg(test)]
 mod tests {
     use super::{
-        hover_position_changed, is_run_as_admin_key, launcher_window_geometry,
+        history_cursor_step, hover_position_changed, is_run_as_admin_key, launcher_window_geometry,
         merge_application_duplicates, preserve_everything_file_order, quoted_result_path,
         COMPACT_WINDOW_HEIGHT, EXPANDED_WINDOW_HEIGHT, WINDOW_WIDTH,
     };
@@ -3094,6 +3089,24 @@ mod tests {
             shift: false,
             ctrl: false,
         }));
+    }
+
+    #[test]
+    fn history_cursor_walks_older_and_newer_queries() {
+        let mut cursor = None;
+        cursor = history_cursor_step(4, cursor, Key::Up);
+        assert_eq!(cursor, Some(3));
+        cursor = history_cursor_step(4, cursor, Key::Up);
+        assert_eq!(cursor, Some(2));
+        cursor = history_cursor_step(4, cursor, Key::Up);
+        assert_eq!(cursor, Some(1));
+        cursor = history_cursor_step(4, cursor, Key::Down);
+        assert_eq!(cursor, Some(2));
+        cursor = history_cursor_step(4, cursor, Key::Down);
+        assert_eq!(cursor, Some(3));
+        cursor = history_cursor_step(4, cursor, Key::Down);
+        assert_eq!(cursor, Some(3));
+        assert_eq!(history_cursor_step(0, cursor, Key::Up), None);
     }
 
     #[test]
