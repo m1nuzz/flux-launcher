@@ -15,9 +15,14 @@ $installRoot = Join-Path $WorkDirectory "installed"
 $logPath = Join-Path $WorkDirectory "installer.log"
 New-Item -ItemType Directory -Force -Path $installRoot | Out-Null
 
-& $Installer /VERYSILENT /SUPPRESSMSGBOXES /NORESTART /LOG=$logPath /DIR="$installRoot"
-if ($LASTEXITCODE -ne 0) {
-    throw "Installer exited with code $LASTEXITCODE"
+& $Installer /VERYSILENT /SUPPRESSMSGBOXES /NORESTART "/LOG=$logPath" "/DIR=$installRoot"
+$installerExitCode = if ($null -eq $LASTEXITCODE) { 0 } else { [int]$LASTEXITCODE }
+Write-Host "Installer exit code: $installerExitCode"
+if ($installerExitCode -ne 0) {
+    if (Test-Path $logPath) {
+        Get-Content $logPath
+    }
+    throw "Installer exited with code $installerExitCode"
 }
 
 $installedExe = Join-Path $installRoot "flux-launcher.exe"
@@ -44,8 +49,10 @@ if ($null -eq $uninstaller) {
     throw "Inno Setup uninstaller was not found"
 }
 & $uninstaller.FullName /VERYSILENT /SUPPRESSMSGBOXES /NORESTART
-if ($LASTEXITCODE -ne 0) {
-    throw "Uninstaller exited with code $LASTEXITCODE"
+$uninstallerExitCode = if ($null -eq $LASTEXITCODE) { 0 } else { [int]$LASTEXITCODE }
+Write-Host "Uninstaller exit code: $uninstallerExitCode"
+if ($uninstallerExitCode -ne 0) {
+    throw "Uninstaller exited with code $uninstallerExitCode"
 }
 
 if (Test-Path $installedExe) {
