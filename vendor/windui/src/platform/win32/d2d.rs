@@ -12,7 +12,7 @@
 use std::cell::{Cell, RefCell};
 use std::collections::HashMap;
 
-use windows::core::{Interface, HRESULT, PCWSTR};
+use windows::core::{Interface, HRESULT, PCWSTR, Result};
 use windows::Win32::Foundation::{D2DERR_RECREATE_TARGET, HWND, RECT};
 
 use windows::Win32::Graphics::Direct2D::Common::{
@@ -162,6 +162,13 @@ impl CompositionPresenter {
             target,
             visual,
         })
+    }
+
+    unsafe fn reattach(&self, swapchain: &IDXGISwapChain1) -> Result<()> {
+        self.visual.SetContent(swapchain)?;
+        self.target.SetRoot(&self.visual)?;
+        self.device.Commit()?;
+        Ok(())
     }
 }
 
@@ -497,6 +504,14 @@ impl WinRenderBackend for D2DBackend {
         // The DComp visual keeps the swapchain content across SW_HIDE/SW_SHOW;
         // an unconditional ResizeBuffers here creates an undefined alpha frame
         // that DWM can display as a solid gray surface before the next repaint.
+        if let Some(presenter) = self.composition.as_ref() {
+            let result = presenter.reattach(&self.swapchain);
+            super::trace_show_event(
+                hwnd,
+                "dcomp.reattach",
+                &format!("phase=on_show result={result:?}"),
+            );
+        }
         if let Ok(desc) = self.swapchain.GetDesc1() {
             super::trace_show_event(
                 hwnd,
