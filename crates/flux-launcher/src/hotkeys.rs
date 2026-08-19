@@ -1,5 +1,5 @@
 use flux_core::HotkeyConfig;
-use windui::event::{KeyEvent, Key as EventKey};
+use windui::event::{Key as EventKey, KeyEvent};
 use windui::prelude::{Hotkey, Key};
 
 pub fn activation_hotkey(config: &HotkeyConfig) -> Hotkey {
@@ -125,9 +125,7 @@ fn key_name(key: EventKey) -> Option<String> {
 fn is_modifier_key(key: EventKey) -> bool {
     matches!(
         key,
-        EventKey::Other(
-            0x10 | 0x11 | 0x12 | 0x5B | 0x5C | 0xA0 | 0xA1 | 0xA2 | 0xA3 | 0xA4 | 0xA5
-        )
+        EventKey::Other(0x10 | 0x11 | 0x12 | 0x5B | 0x5C | 0xA0 | 0xA1 | 0xA2 | 0xA3 | 0xA4 | 0xA5)
     )
 }
 
@@ -173,7 +171,9 @@ fn named_virtual_key(value: &str) -> Option<u32> {
         "NUMPADDIVIDE" => Some(0x6F),
         _ => value
             .strip_prefix("NUMPAD")
-            .filter(|number| number.len() == 1 && number.chars().all(|value| value.is_ascii_digit()))
+            .filter(|number| {
+                number.len() == 1 && number.chars().all(|value| value.is_ascii_digit())
+            })
             .and_then(|number| number.parse::<u32>().ok())
             .filter(|number| *number <= 9)
             .map(|number| 0x60 + number),

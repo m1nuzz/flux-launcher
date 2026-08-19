@@ -1874,11 +1874,9 @@ fn main() {
     app = app.on_key(move |event: KeyEvent| {
         if activation_recording_for_keys.get() {
             if event.pressed {
-                if let Some(configuration) = hotkeys::capture_config(
-                    &event,
-                    alt_key_is_down(),
-                    hotkeys::meta_key_is_down(),
-                ) {
+                if let Some(configuration) =
+                    hotkeys::capture_config(&event, alt_key_is_down(), hotkeys::meta_key_is_down())
+                {
                     activation_key_for_keys.set(configuration.key.clone());
                     activation_ctrl_for_keys.set(configuration.ctrl);
                     activation_alt_for_keys.set(configuration.alt);
