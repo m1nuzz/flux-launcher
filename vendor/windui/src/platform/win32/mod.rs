@@ -13,8 +13,12 @@ pub use tray::{Tray, TrayCtx, TrayMenuItem};
 
 use std::cell::Cell;
 use std::ffi::c_void;
+use std::fs::OpenOptions;
+use std::io::Write;
 use std::mem::size_of;
 use std::path::PathBuf;
+use std::sync::OnceLock;
+use std::time::Instant;
 
 use tiny_skia::Pixmap;
 
@@ -90,6 +94,31 @@ use crate::geometry::{Color, Point, Size};
 thread_local! {
     /// wnd_proc 入口处写入当前 HWND；PickDialog::pick_* 读取以注入父窗口。
     static ACTIVE_HWND: Cell<isize> = const { Cell::new(0) };
+}
+
+static TRACE_SHOW_START: OnceLock<Instant> = OnceLock::new();
+
+/// Write repeat-show diagnostics only when explicitly enabled by the environment.
+/// The trace is intentionally local to the UI thread and has no default overhead.
+pub(super) unsafe fn trace_show_event(hwnd: HWND, label: &str, detail: &str) {
+    let enabled = std::env::var_os("FLUX_TRACE_SHOW").is_some_and(|value| value != "0");
+    if !enabled {
+        return;
+    }
+    let start = TRACE_SHOW_START.get_or_init(Instant::now);
+    let elapsed_ms = start.elapsed().as_secs_f64() * 1000.0;
+    let visible = IsWindowVisible(hwnd).as_bool();
+    let mut rect = RECT::default();
+    let _ = GetClientRect(hwnd, &mut rect);
+    let line = format!(
+        "{elapsed_ms:>12.3} ms label={label} visible={visible} client={}x{} {detail}\n",
+        rect.right - rect.left,
+        rect.bottom - rect.top,
+    );
+    let path = std::env::temp_dir().join("flux-launcher-show-trace.log");
+    if let Ok(mut file) = OpenOptions::new().create(true).append(true).open(path) {
+        let _ = file.write_all(line.as_bytes());
+    }
 }
 
 /// 供 platform::inject_parent 读取当前活跃窗口句柄（单线程，消息循环内保证有效）。
@@ -390,13 +419,16 @@ impl WindowState {
 
     /// 渲染并呈现到窗口。后端报告失效（D2D 设备丢失且连续重建失败）时降级为软后端。
     unsafe fn paint(&mut self, hwnd: HWND) {
+        trace_show_event(hwnd, "state.paint.enter", "phase=begin");
         // Never Present a composition swapchain while its HWND is hidden. A
         // hidden DComp Present can become the stale frame sampled on the next
         // SW_SHOW and appear as a solid gray surface until the next edit.
         if !IsWindowVisible(hwnd).as_bool() {
+            trace_show_event(hwnd, "state.paint.hidden", "phase=skip_present");
             let _ = ValidateRect(Some(hwnd), None);
             return;
         }
+        trace_show_event(hwnd, "state.paint.visible", "phase=backend_paint");
         let bg = if self.transparent {
             Color::rgba(0, 0, 0, 0)
         } else {
@@ -1206,6 +1238,7 @@ unsafe extern "system" fn wnd_proc(
             DefWindowProcW(hwnd, msg, wparam, lparam)
         }
         WM_PAINT => {
+            trace_show_event(hwnd, "wm_paint.enter", "phase=begin");
             if let Some(state) = state_from(hwnd) {
                 state.paint(hwnd);
             }
@@ -1218,6 +1251,7 @@ unsafe extern "system" fn wnd_proc(
             // 顺序与指针路径一致：窗口操作（含热键队列）→ 对话框 → 关窗。三者都在
             // `state` 借用之外执行（铁律 6）：run_window_op 与阻塞式对话框都会同步重入本函数。
             apply_window_op(hwnd);
+            trace_show_event(hwnd, "wm_paint.after_op", "phase=after_window_op");
             apply_dialog_request(hwnd);
             if state_from(hwnd)
                 .map(|s| s.handler.wants_close())
@@ -1265,6 +1299,7 @@ unsafe extern "system" fn wnd_proc(
             // 再重绘。lParam 低/高字为新客户区宽/高（物理像素）。
             let w = (lparam.0 & 0xffff) as i32;
             let h = ((lparam.0 >> 16) & 0xffff) as i32;
+            trace_show_event(hwnd, "wm_size", &format!("phase=begin size={}x{}", w, h));
             if let Some(state) = state_from(hwnd) {
                 state.backend.resize(w, h);
                 if state.in_size_move {
@@ -1401,6 +1436,7 @@ unsafe extern "system" fn wnd_proc(
         // WM_ACTIVATE 回本函数，届时会再 `state_from` 一次。若此刻第一段的借用还活着，
         // 就是两个 `&mut WindowState` 并存的 UB（无 RefCell，不会 panic，只会静默出错）。
         WM_HOTKEY => {
+            trace_show_event(hwnd, "wm_hotkey.enter", "phase=begin");
             let op = state_from(hwnd)
                 .and_then(|s| s.hotkeys.as_mut())
                 .and_then(|hs| hs.dispatch(wparam.0));
@@ -1408,13 +1444,17 @@ unsafe extern "system" fn wnd_proc(
             // ShowWindow so DComp/WM_SIZE see the compact client rect on the
             // first visible frame. Preserve the cursor request for show_and_activate.
             if !IsWindowVisible(hwnd).as_bool() {
+                trace_show_event(hwnd, "wm_hotkey.before_geometry", "phase=hidden_pre_drain");
                 apply_window_geometry_requests(hwnd);
+                trace_show_event(hwnd, "wm_hotkey.after_geometry", "phase=hidden_post_drain");
             }
             run_window_op(hwnd, op);
+            trace_show_event(hwnd, "wm_hotkey.after_op", "phase=after_window_op");
             // The hide callback queues the next compact geometry after SW_HIDE;
             // drain it immediately while the HWND is still hidden. This keeps
             // the next Alt+Space activation on a fresh, size-matched surface.
             apply_window_op(hwnd);
+            trace_show_event(hwnd, "wm_hotkey.exit", "phase=end");
             LRESULT(0)
         }
         tray::WM_TRAYICON => {
@@ -1936,6 +1976,7 @@ fn move_to_smoke_display(hwnd: HWND) {
 pub(crate) fn show_and_activate(hwnd: HWND) {
     move_to_smoke_display(hwnd);
     unsafe {
+        trace_show_event(hwnd, "show.enter", "phase=begin");
         // Prepare app state and DWM material while the HWND is still hidden. This
         // prevents one stale query/backdrop frame from being exposed on re-show.
         if let Some(state) = state_from(hwnd) {
@@ -1944,6 +1985,7 @@ pub(crate) fn show_and_activate(hwnd: HWND) {
         // Drain geometry once while hidden, without consuming cursor requests.
         // This settles compact dimensions before the first visible Present.
         apply_window_geometry_requests(hwnd);
+        trace_show_event(hwnd, "show.after_hidden_geometry", "phase=hidden_geometry_settled");
         #[cfg(feature = "d2d")]
         {
             let backdrop = state_from(hwnd).map(|state| state.backdrop);
@@ -1961,15 +2003,18 @@ pub(crate) fn show_and_activate(hwnd: HWND) {
             0,
             SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE | SWP_FRAMECHANGED,
         );
+        trace_show_event(hwnd, "show.after_frame_changed", "phase=hidden_dwm_frame_ready");
         // Prepare the first visible paint without drawing through a hidden HWND.
         // The D2D composition surface must be presented only after ShowWindow so
         // DWM latches its transparent premultiplied frame for this activation.
         let _ = InvalidateRect(Some(hwnd), None, false);
+        trace_show_event(hwnd, "show.before_show_window", "phase=before_show_window");
         if IsIconic(hwnd).as_bool() {
             let _ = ShowWindow(hwnd, SW_RESTORE);
         } else {
             let _ = ShowWindow(hwnd, SW_SHOW);
         }
+        trace_show_event(hwnd, "show.after_show_window", "phase=after_show_window");
         // Reapply DWM attributes and recommit the DirectComposition visual only
         // after the HWND is visible. This makes the following UpdateWindow the
         // first visible Present instead of relying on a hidden swapchain frame.
@@ -1980,7 +2025,9 @@ pub(crate) fn show_and_activate(hwnd: HWND) {
                 apply_system_backdrop(hwnd, backdrop);
             }
             if let Some(state) = state_from(hwnd) {
+                trace_show_event(hwnd, "show.before_backend_on_show", "phase=backend_on_show");
                 state.backend.on_show(hwnd);
+                trace_show_event(hwnd, "show.after_backend_on_show", "phase=backend_on_show_done");
             }
         }
         let _ = SetForegroundWindow(hwnd);
@@ -1988,8 +2035,11 @@ pub(crate) fn show_and_activate(hwnd: HWND) {
         // This prevents a late request from resizing the surface immediately
         // after DWM samples the first transparent backbuffer.
         let _ = InvalidateRect(Some(hwnd), None, false);
+        trace_show_event(hwnd, "show.before_first_update", "phase=first_visible_present");
         let _ = UpdateWindow(hwnd);
+        trace_show_event(hwnd, "show.after_first_update", "phase=first_visible_present_done");
         let _ = DwmFlush();
+        trace_show_event(hwnd, "show.after_first_flush", "phase=first_dwm_flush_done");
         // Apply the show request at the visibility transition itself. This is
         // intentionally after the first visible frame so cursor state cannot
         // alter the initial DComp sample.

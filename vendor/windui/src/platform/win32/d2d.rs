@@ -487,6 +487,7 @@ fn is_device_lost(hr: HRESULT) -> bool {
 
 impl WinRenderBackend for D2DBackend {
     unsafe fn on_show(&mut self, hwnd: HWND) {
+        super::trace_show_event(hwnd, "d2d.on_show.enter", "phase=begin");
         let mut rc = RECT::default();
         let _ = GetClientRect(hwnd, &mut rc);
         let width = (rc.right - rc.left).max(1) as u32;
@@ -497,7 +498,13 @@ impl WinRenderBackend for D2DBackend {
         // an unconditional ResizeBuffers here creates an undefined alpha frame
         // that DWM can display as a solid gray surface before the next repaint.
         if let Ok(desc) = self.swapchain.GetDesc1() {
+            super::trace_show_event(
+                hwnd,
+                "d2d.on_show.desc",
+                &format!("swapchain={}x{} target={}x{}", desc.Width, desc.Height, width, height),
+            );
             if desc.Width == width && desc.Height == height {
+                super::trace_show_event(hwnd, "d2d.on_show.match", "phase=no_resize");
                 return;
             }
         }
@@ -505,6 +512,11 @@ impl WinRenderBackend for D2DBackend {
         // A real client-size change still needs the existing resize discipline.
         self.context.SetTarget(None);
         self.target_bitmap = None;
+        super::trace_show_event(
+            hwnd,
+            "d2d.on_show.resize",
+            &format!("phase=before_resize target={}x{}", width, height),
+        );
         if let Err(error) = self.swapchain.ResizeBuffers(
             0,
             width,
@@ -520,6 +532,7 @@ impl WinRenderBackend for D2DBackend {
             return;
         }
         let _ = self.bind_target();
+        super::trace_show_event(hwnd, "d2d.on_show.resize_done", "phase=after_resize");
         // Keep the existing DComp visual/content binding. The next visible
         // WM_PAINT presents the resized swapchain before DWM samples it.
     }
@@ -605,7 +618,9 @@ impl WinRenderBackend for D2DBackend {
         }
         // Present(1, 0)：与垂直同步对齐，呈现一帧。返回 HRESULT（DXGI_STATUS_OCCLUDED 等成功码
         // 也可能返回，不能当错误），仅设备移除/重置时标记 lost。
+        super::trace_show_event(hwnd, "d2d.present.before", "phase=present");
         let hr = self.swapchain.Present(1, DXGI_PRESENT(0));
+        super::trace_show_event(hwnd, "d2d.present.after", &format!("phase=present_done hr={hr:?}"));
         if is_device_lost(hr) {
             self.lost = true;
             return false;
