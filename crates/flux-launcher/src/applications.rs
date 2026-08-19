@@ -284,7 +284,7 @@ unsafe fn property_store_arguments(
 
     let store: IPropertyStore = link.cast().ok()?;
     let value: PROPVARIANT = store.GetValue(&PKEY_Link_Arguments).ok()?;
-    let result = (|| {
+    (|| {
         let header = unsafe { &value.Anonymous.Anonymous };
         if header.vt != VT_LPWSTR {
             return None;
@@ -294,8 +294,7 @@ unsafe fn property_store_arguments(
             return None;
         }
         unsafe { pointer.to_string().ok() }
-    })();
-    result
+    })()
 }
 
 #[cfg(not(windows))]
