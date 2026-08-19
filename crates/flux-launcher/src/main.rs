@@ -1958,7 +1958,9 @@ fn main() {
             if history.is_empty() {
                 return false;
             }
-            let Some(next) = history_cursor_step(history.len(), history_cursor_for_keys.get(), event.key) else {
+            let Some(next) =
+                history_cursor_step(history.len(), history_cursor_for_keys.get(), event.key)
+            else {
                 return false;
             };
             history_cursor_for_keys.set(Some(next));
@@ -1975,7 +1977,7 @@ fn main() {
         {
             if let Some(latest) = history.last() {
                 history_cursor_for_keys.set(Some(history.len() - 1));
-                    query_for_keys.set(latest.clone());
+                query_for_keys.set(latest.clone());
                 return true;
             }
         }
