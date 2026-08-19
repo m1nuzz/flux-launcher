@@ -330,6 +330,14 @@ struct ResultRowAnchor {
     last_query: String,
 }
 
+fn hover_position_changed(last: &mut Option<(i32, i32)>, position: (i32, i32)) -> bool {
+    if *last == Some(position) {
+        return false;
+    }
+    *last = Some(position);
+    true
+}
+
 impl ResultRowAnchor {
     fn select_self(&self) {
         if self.selected_id.get() == self.result_id {
@@ -388,14 +396,13 @@ impl Widget for ResultRowAnchor {
             PointerKind::Enter => {
                 // Do not select merely because the window appeared under a
                 // stationary cursor; select on the first real Move instead.
-                self.last_pointer = None;
+                self.last_pointer = Some((pointer.pos.x, pointer.pos.y));
                 ctx.mark_dirty();
                 true
             }
             PointerKind::Move => {
                 let position = (pointer.pos.x, pointer.pos.y);
-                if self.last_pointer != Some(position) {
-                    self.last_pointer = Some(position);
+                if hover_position_changed(&mut self.last_pointer, position) {
                     self.select_self();
                     ctx.mark_dirty();
                 }
@@ -2977,9 +2984,9 @@ fn main() {
 #[cfg(test)]
 mod tests {
     use super::{
-        is_run_as_admin_key, launcher_window_geometry, merge_application_duplicates,
-        preserve_everything_file_order, quoted_result_path, COMPACT_WINDOW_HEIGHT,
-        EXPANDED_WINDOW_HEIGHT, WINDOW_WIDTH,
+        hover_position_changed, is_run_as_admin_key, launcher_window_geometry,
+        merge_application_duplicates, preserve_everything_file_order, quoted_result_path,
+        COMPACT_WINDOW_HEIGHT, EXPANDED_WINDOW_HEIGHT, WINDOW_WIDTH,
     };
     use flux_core::{ResultKind, ResultSource, SearchResult};
     use windui::event::{Key, KeyEvent};
@@ -3087,6 +3094,14 @@ mod tests {
             shift: false,
             ctrl: false,
         }));
+    }
+
+    #[test]
+    fn stationary_pointer_after_enter_does_not_trigger_hover_selection() {
+        let mut last = None;
+        assert!(hover_position_changed(&mut last, (240, 120)));
+        assert!(!hover_position_changed(&mut last, (240, 120)));
+        assert!(hover_position_changed(&mut last, (241, 120)));
     }
 
     #[test]
