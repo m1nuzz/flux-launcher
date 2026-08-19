@@ -1133,7 +1133,7 @@ fn result_row(
     history_mode: Signal<bool>,
     recycle_bin_confirmation: Signal<bool>,
     settings_visible: Signal<bool>,
-    window_size: WindowSizeHandle,
+    window_size_slot: Rc<RefCell<Option<WindowSizeHandle>>>,
 ) -> Element {
     let id = result.id;
     let target = result.target;
@@ -1241,7 +1241,9 @@ fn result_row(
             }
             if id == "flux-settings" {
                 settings_visible.set(true);
-                window_size.set(SETTINGS_WINDOW_WIDTH, SETTINGS_WINDOW_HEIGHT);
+                if let Some(window_size) = window_size_slot.borrow().as_ref() {
+                    window_size.set(SETTINGS_WINDOW_WIDTH, SETTINGS_WINDOW_HEIGHT);
+                }
                 return;
             }
             if id == "open-recycle-bin" {
@@ -1342,7 +1344,7 @@ fn main() {
     let query_for_rows = query;
     let scroll_request_for_rows = signal(false);
     let settings_visible_for_rows = settings_visible;
-    let size_for_rows = window_size.clone();
+    let window_size_slot_for_rows = Rc::clone(&action_window_slot);
     let inline_completion = signal(String::new());
 
     let search_box = Element::text_input(query, "Search")
@@ -1413,7 +1415,7 @@ fn main() {
             history_mode_for_rows,
             recycle_bin_confirmation,
             settings_visible_for_rows,
-            size_for_rows.clone(),
+            Rc::clone(&window_size_slot_for_rows),
         )
     })
     .width_match()
