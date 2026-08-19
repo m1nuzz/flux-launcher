@@ -228,14 +228,10 @@ fn normalize_windows_path(value: &str) -> String {
 fn resolve_shell_link_target(path: &str) -> Option<(String, String)> {
     use windows::core::{Interface, GUID, PCWSTR};
     use windows::Win32::Foundation::HWND;
-    use windows::Win32::Storage::EnhancedStorage::PKEY_Link_Arguments;
-    use windows::Win32::System::Com::StructuredStorage::PROPVARIANT;
     use windows::Win32::System::Com::{
         CoCreateInstance, CoInitializeEx, CoUninitialize, IPersistFile, CLSCTX_INPROC_SERVER,
         COINIT_APARTMENTTHREADED, STGM_READ,
     };
-    use windows::Win32::System::Variant::VT_LPWSTR;
-    use windows::Win32::UI::Shell::PropertiesSystem::IPropertyStore;
     use windows::Win32::UI::Shell::{IShellLinkW, SLGP_RAWPATH};
 
     const CLSID_SHELL_LINK: GUID = GUID::from_u128(0x0002_1401_0000_0000_c000_0000_0000_0046);
@@ -277,7 +273,14 @@ fn resolve_shell_link_target(path: &str) -> Option<(String, String)> {
 }
 
 #[cfg(windows)]
-unsafe fn property_store_arguments(link: &IShellLinkW) -> Option<String> {
+unsafe fn property_store_arguments(
+    link: &windows::Win32::UI::Shell::IShellLinkW,
+) -> Option<String> {
+    use windows::Win32::Storage::EnhancedStorage::PKEY_Link_Arguments;
+    use windows::Win32::System::Com::StructuredStorage::{PropVariantClear, PROPVARIANT};
+    use windows::Win32::System::Variant::VT_LPWSTR;
+    use windows::Win32::UI::Shell::PropertiesSystem::IPropertyStore;
+
     let store: IPropertyStore = link.cast().ok()?;
     let mut value: PROPVARIANT = store.GetValue(&PKEY_Link_Arguments).ok()?;
     let result = (|| {
@@ -292,7 +295,7 @@ unsafe fn property_store_arguments(link: &IShellLinkW) -> Option<String> {
         unsafe { pointer.to_string().ok() }
     })();
     unsafe {
-        windows::Win32::System::Variant::PropVariantClear(&mut value).ok();
+        PropVariantClear(&mut value).ok();
     }
     result
 }
