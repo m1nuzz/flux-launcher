@@ -201,15 +201,14 @@ fn normalize_windows_path(value: &str) -> String {
 
 #[cfg(windows)]
 fn resolve_shell_link_target(path: &str) -> Option<(String, String)> {
-    use windows::core::{GUID, Interface, PCWSTR};
+    use windows::core::{Interface, GUID, PCWSTR};
     use windows::Win32::System::Com::{
         CoCreateInstance, CoInitializeEx, CoUninitialize, IPersistFile, CLSCTX_INPROC_SERVER,
         COINIT_APARTMENTTHREADED, STGM_READ,
     };
     use windows::Win32::UI::Shell::{IShellLinkW, SLGP_RAWPATH};
 
-    const CLSID_SHELL_LINK: GUID =
-        GUID::from_u128(0x0002_1401_0000_0000_c000_0000_0000_0046);
+    const CLSID_SHELL_LINK: GUID = GUID::from_u128(0x0002_1401_0000_0000_c000_0000_0000_0046);
     let initialized = unsafe { CoInitializeEx(None, COINIT_APARTMENTTHREADED).is_ok() };
     let result = (|| unsafe {
         let link: IShellLinkW =
