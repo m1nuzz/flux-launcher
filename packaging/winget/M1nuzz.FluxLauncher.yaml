@@ -1,0 +1,34 @@
+PackageIdentifier: M1nuzz.FluxLauncher
+PackageVersion: 0.1.51
+PackageLocale: en-US
+Publisher: m1nuzz
+PublisherUrl: https://github.com/m1nuzz
+PackageName: Flux Launcher
+PackageUrl: https://github.com/m1nuzz/flux-launcher
+License: MIT
+LicenseUrl: https://github.com/m1nuzz/flux-launcher/blob/main/LICENSE
+ShortDescription: A lightweight native Windows 11 launcher and file search tool built with Rust and windui.
+Description: Flux Launcher is a keyboard-first Windows 11 launcher with Acrylic UI, Everything IPC file search, global hotkeys, built-in Google and Obsidian providers, legacy Flow plugin compatibility, and native Rust community plugins.
+Moniker: flux
+Tags:
+  - launcher
+  - windows-launcher
+  - productivity
+  - search
+  - everything
+  - rust
+  - windows-11
+  - flow-launcher-alternative
+ReleaseNotesUrl: https://github.com/m1nuzz/flux-launcher/releases/tag/v0.1.51
+ManifestType: defaultLocale
+ManifestVersion: 1.12.0
+
+Installers:
+  - Architecture: x64
+    InstallerType: inno
+    InstallerUrl: https://github.com/m1nuzz/flux-launcher/releases/download/v0.1.51/FluxLauncher-Setup.exe
+    InstallerSha256: AE1E7A25640BEA36B5A41AA63F0F47D5FF62A1D71EB12FA93DB1994734E87BC8
+    UpgradeBehavior: install
+    InstallerSwitches:
+      Silent: /VERYSILENT /SUPPRESSMSGBOXES /NORESTART
+      SilentWithProgress: /SILENT /SUPPRESSMSGBOXES /NORESTART
