@@ -100,10 +100,7 @@ impl ApplicationCatalog {
         let mut results = self
             .entries
             .iter()
-            .filter(|result| {
-                let title = normalize(&result.title);
-                title.contains(&normalized)
-            })
+            .filter(|result| application_matches_query(result, &normalized))
             .cloned()
             .collect::<Vec<_>>();
         rank_results(query, &mut results);
@@ -114,6 +111,23 @@ impl ApplicationCatalog {
 
 fn normalize(value: &str) -> String {
     value.trim().to_ascii_lowercase()
+}
+
+fn application_matches_query(result: &SearchResult, normalized_query: &str) -> bool {
+    let title = normalize(&result.title);
+    if title.contains(normalized_query) {
+        return true;
+    }
+    let Some(identity) = result.id.strip_prefix("application:target:") else {
+        return false;
+    };
+    let executable = identity
+        .split_once('|')
+        .map_or(identity, |(target, _)| target)
+        .rsplit('\\')
+        .next()
+        .unwrap_or_default();
+    normalize(executable).contains(normalized_query)
 }
 
 /// Returns the canonical identity for an application result.
@@ -148,7 +162,11 @@ pub(crate) fn canonical_target_key(target: &str) -> Option<String> {
             let key = normalize_windows_path(&resolved);
             let arguments = normalize(&arguments);
             return Some(if arguments.is_empty() {
-                key
+                if is_chrome_proxy_target(&resolved) {
+                    format!("{key}|shortcut:{}", normalize_windows_path(target))
+                } else {
+                    key
+                }
             } else {
                 format!("{key}|args:{arguments}")
             });
@@ -185,6 +203,13 @@ fn source_rank(result: &SearchResult) -> u8 {
     }
 }
 
+fn is_chrome_proxy_target(value: &str) -> bool {
+    normalize_windows_path(value)
+        .rsplit('\\')
+        .next()
+        .is_some_and(|name| name == "chrome_proxy.exe")
+}
+
 fn is_shortcut_path(value: &str) -> bool {
     Path::new(value)
         .extension()
@@ -202,10 +227,15 @@ fn normalize_windows_path(value: &str) -> String {
 #[cfg(windows)]
 fn resolve_shell_link_target(path: &str) -> Option<(String, String)> {
     use windows::core::{Interface, GUID, PCWSTR};
+    use windows::Win32::Foundation::HWND;
+    use windows::Win32::Storage::EnhancedStorage::PKEY_Link_Arguments;
     use windows::Win32::System::Com::{
         CoCreateInstance, CoInitializeEx, CoUninitialize, IPersistFile, CLSCTX_INPROC_SERVER,
         COINIT_APARTMENTTHREADED, STGM_READ,
     };
+    use windows::Win32::System::Com::StructuredStorage::PROPVARIANT;
+    use windows::Win32::System::Variant::VT_LPWSTR;
+    use windows::Win32::UI::Shell::PropertiesSystem::IPropertyStore;
     use windows::Win32::UI::Shell::{IShellLinkW, SLGP_RAWPATH};
 
     const CLSID_SHELL_LINK: GUID = GUID::from_u128(0x0002_1401_0000_0000_c000_0000_0000_0046);
@@ -219,6 +249,7 @@ fn resolve_shell_link_target(path: &str) -> Option<(String, String)> {
             .chain(std::iter::once(0))
             .collect::<Vec<_>>();
         persist.Load(PCWSTR(wide_path.as_ptr()), STGM_READ).ok()?;
+        link.Resolve(HWND::default(), 0x0001).ok()?;
         let mut target = [0_u16; 32_768];
         link.GetPath(&mut target, std::ptr::null_mut(), SLGP_RAWPATH.0 as u32)
             .ok()?;
@@ -233,11 +264,35 @@ fn resolve_shell_link_target(path: &str) -> Option<(String, String)> {
             .position(|value| *value == 0)
             .unwrap_or(arguments.len());
         let resolved = String::from_utf16_lossy(&target[..target_end]);
-        let arguments = String::from_utf16_lossy(&arguments[..arguments_end]);
+        let mut arguments = String::from_utf16_lossy(&arguments[..arguments_end]);
+        if arguments.trim().is_empty() {
+            arguments = property_store_arguments(&link).unwrap_or_default();
+        }
         (!resolved.trim().is_empty()).then_some((resolved, arguments))
     })();
     if initialized {
         unsafe { CoUninitialize() };
+    }
+    result
+}
+
+#[cfg(windows)]
+unsafe fn property_store_arguments(link: &IShellLinkW) -> Option<String> {
+    let store: IPropertyStore = link.cast().ok()?;
+    let mut value: PROPVARIANT = store.GetValue(&PKEY_Link_Arguments).ok()?;
+    let result = (|| {
+        let header = unsafe { value.Anonymous.Anonymous };
+        if header.vt != VT_LPWSTR {
+            return None;
+        }
+        let pointer = unsafe { header.Anonymous.pwszVal };
+        if pointer.is_null() {
+            return None;
+        }
+        unsafe { pointer.to_string().ok() }
+    })();
+    unsafe {
+        windows::Win32::System::Variant::PropVariantClear(&mut value).ok();
     }
     result
 }
@@ -591,5 +646,37 @@ mod tests {
         assert_eq!(results.len(), 1);
         assert_eq!(results[0].title, "Steam");
         assert_eq!(results[0].kind, ResultKind::Application);
+    }
+
+    #[test]
+    fn chrome_web_apps_match_by_proxy_executable_and_keep_distinct_app_ids() {
+        let catalog = ApplicationCatalog {
+            entries: vec![
+                SearchResult {
+                    id: String::from(
+                        r"application:target:c:\\program files\\google\\chrome\\application\\chrome_proxy.exe|args:--profile-directory=default --app-id=perplexity",
+                    ),
+                    title: String::from("Perplexity"),
+                    subtitle: String::from("Application • Start Menu"),
+                    kind: ResultKind::Application,
+                    source: ResultSource::ApplicationCatalog,
+                    target: Some(String::from(r"C:\\Users\\m1nus\\Perplexity.lnk")),
+                },
+                SearchResult {
+                    id: String::from(
+                        r"application:target:c:\\program files\\google\\chrome\\application\\chrome_proxy.exe|args:--profile-directory=default --app-id=grok",
+                    ),
+                    title: String::from("Grok"),
+                    subtitle: String::from("Application • Start Menu"),
+                    kind: ResultKind::Application,
+                    source: ResultSource::ApplicationCatalog,
+                    target: Some(String::from(r"C:\\Users\\m1nus\\Grok.lnk")),
+                },
+            ],
+        };
+        let results = catalog.search("chrome");
+        assert_eq!(results.len(), 2);
+        assert!(results.iter().any(|result| result.title == "Perplexity"));
+        assert!(results.iter().any(|result| result.title == "Grok"));
     }
 }
