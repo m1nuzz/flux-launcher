@@ -1937,7 +1937,6 @@ pub(crate) fn show_and_activate(hwnd: HWND) {
                 state.backend.on_show(hwnd);
             }
         }
-        let _ = DwmFlush();
         let _ = SetForegroundWindow(hwnd);
         // Apply the show request at the visibility transition itself. This is
         // intentionally before the first nested paint so an activation cannot
@@ -1957,9 +1956,11 @@ pub(crate) fn show_and_activate(hwnd: HWND) {
             });
             let _ = InvalidateRect(Some(hwnd), None, false);
         }
-        // Force the first visible D2D frame synchronously. Without this, a hidden
-        // DirectComposition surface may not be presented until the next query edit.
+        // Present the fresh post-show backbuffer before flushing DWM. Flushing
+        // earlier can make DWM sample the previous activation's composition
+        // frame, which is why empty Acrylic appears only after the next edit.
         let _ = UpdateWindow(hwnd);
+        let _ = DwmFlush();
         // Nested activation/paint messages may have refreshed the class cursor;
         // reapply the logical cursor state after the complete show transition.
         apply_current_cursor(hwnd);

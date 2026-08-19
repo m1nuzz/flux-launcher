@@ -13,7 +13,7 @@ use std::cell::{Cell, RefCell};
 use std::collections::HashMap;
 
 use windows::core::{Interface, HRESULT, PCWSTR};
-use windows::Win32::Foundation::{D2DERR_RECREATE_TARGET, HWND};
+use windows::Win32::Foundation::{D2DERR_RECREATE_TARGET, HWND, RECT};
 
 use windows::Win32::Graphics::Direct2D::Common::{
     D2D1_ALPHA_MODE_PREMULTIPLIED, D2D1_COLOR_F, D2D1_COMPOSITE_MODE_SOURCE_OVER,
@@ -58,7 +58,7 @@ use windows::Win32::Graphics::Dxgi::{
     DXGI_SWAP_EFFECT_FLIP_SEQUENTIAL, DXGI_USAGE_RENDER_TARGET_OUTPUT,
 };
 use windows::Win32::Graphics::Gdi::ValidateRect;
-use windows::Win32::UI::WindowsAndMessaging::IsWindowVisible;
+use windows::Win32::UI::WindowsAndMessaging::{GetClientRect, IsWindowVisible};
 use windows_numerics::{Matrix3x2, Vector2};
 
 use super::{AppHandler, WinRenderBackend};
@@ -486,7 +486,36 @@ fn is_device_lost(hr: HRESULT) -> bool {
 }
 
 impl WinRenderBackend for D2DBackend {
-    unsafe fn on_show(&mut self, _hwnd: HWND) {
+    unsafe fn on_show(&mut self, hwnd: HWND) {
+        // Force DWM to latch a fresh transparent frame for every activation.
+        // Recommitting the same visual and swapchain is not sufficient when the
+        // window was hidden without a client-size change since the last show.
+        let mut rc = RECT::default();
+        let _ = GetClientRect(hwnd, &mut rc);
+        let width = (rc.right - rc.left).max(1) as u32;
+        let height = (rc.bottom - rc.top).max(1) as u32;
+
+        // Release all references to the current backbuffer before ResizeBuffers,
+        // matching the existing resize path. The next visible paint will bind a
+        // fresh target and Present it through the already attached DComp visual.
+        self.context.SetTarget(None);
+        self.target_bitmap = None;
+        if let Err(error) = self.swapchain.ResizeBuffers(
+            0,
+            width,
+            height,
+            DXGI_FORMAT_UNKNOWN,
+            DXGI_SWAP_CHAIN_FLAG(0),
+        ) {
+            if is_device_lost(error.code()) {
+                self.lost = true;
+                return;
+            }
+            debug_assert!(false, "ResizeBuffers on show failed: {error:?}");
+            return;
+        }
+        let _ = self.bind_target();
+
         if let Some(composition) = self.composition.as_ref() {
             let _ = composition.visual.SetContent(&self.swapchain);
             let _ = composition.target.SetRoot(&composition.visual);
