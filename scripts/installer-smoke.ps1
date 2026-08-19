@@ -11,11 +11,15 @@ param(
 $ErrorActionPreference = "Stop"
 $runKey = "HKCU:\Software\Microsoft\Windows\CurrentVersion\Run"
 $runValueName = "Flux Launcher"
-$installRoot = Join-Path $WorkDirectory "installed"
-$logPath = Join-Path $WorkDirectory "installer.log"
+New-Item -ItemType Directory -Force -Path $WorkDirectory | Out-Null
+$workRoot = (Resolve-Path $WorkDirectory).Path
+$installerPath = (Resolve-Path $Installer).Path
+$expectedExePath = (Resolve-Path $ExpectedExe).Path
+$installRoot = Join-Path $workRoot "installed"
+$logPath = Join-Path $workRoot "installer.log"
 New-Item -ItemType Directory -Force -Path $installRoot | Out-Null
 
-& $Installer /VERYSILENT /SUPPRESSMSGBOXES /NORESTART "/LOG=$logPath" "/DIR=$installRoot"
+& $installerPath /VERYSILENT /SUPPRESSMSGBOXES /NORESTART "/LOG=$logPath" "/DIR=$installRoot"
 $installerExitCode = if ($null -eq $LASTEXITCODE) { 0 } else { [int]$LASTEXITCODE }
 Write-Host "Installer exit code: $installerExitCode"
 if ($installerExitCode -ne 0) {
@@ -31,7 +35,7 @@ if (-not (Test-Path $installedExe)) {
 }
 
 $installedHash = (Get-FileHash -Algorithm SHA256 $installedExe).Hash
-$expectedHash = (Get-FileHash -Algorithm SHA256 $ExpectedExe).Hash
+$expectedHash = (Get-FileHash -Algorithm SHA256 $expectedExePath).Hash
 if ($installedHash -ne $expectedHash) {
     throw "Installed executable hash mismatch: expected $expectedHash, got $installedHash"
 }
