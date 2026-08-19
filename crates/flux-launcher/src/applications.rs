@@ -220,7 +220,7 @@ fn resolve_shell_link_target(path: &str) -> Option<(String, String)> {
             .collect::<Vec<_>>();
         persist.Load(PCWSTR(wide_path.as_ptr()), STGM_READ).ok()?;
         let mut target = [0_u16; 32_768];
-        link.GetPath(&mut target, std::ptr::null_mut(), SLGP_RAWPATH.0)
+        link.GetPath(&mut target, std::ptr::null_mut(), SLGP_RAWPATH.0 as u32)
             .ok()?;
         let mut arguments = [0_u16; 32_768];
         link.GetArguments(&mut arguments).ok()?;
