@@ -19,8 +19,19 @@ $installRoot = Join-Path $workRoot "installed"
 $logPath = Join-Path $workRoot "installer.log"
 New-Item -ItemType Directory -Force -Path $installRoot | Out-Null
 
-& $installerPath /VERYSILENT /SUPPRESSMSGBOXES /NORESTART "/LOG=$logPath" "/DIR=$installRoot"
-$installerExitCode = if ($null -eq $LASTEXITCODE) { 0 } else { [int]$LASTEXITCODE }
+$installerProcess = Start-Process `
+    -FilePath $installerPath `
+    -ArgumentList @(
+        "/VERYSILENT",
+        "/SUPPRESSMSGBOXES",
+        "/NORESTART",
+        "/LOG=$logPath",
+        "/DIR=$installRoot"
+    ) `
+    -WorkingDirectory $workRoot `
+    -Wait `
+    -PassThru
+$installerExitCode = [int]$installerProcess.ExitCode
 Write-Host "Installer exit code: $installerExitCode"
 if ($installerExitCode -ne 0) {
     if (Test-Path $logPath) {
@@ -60,8 +71,12 @@ $uninstaller = Get-ChildItem -Path $installRoot -Filter "unins*.exe" -File | Sel
 if ($null -eq $uninstaller) {
     throw "Inno Setup uninstaller was not found"
 }
-& $uninstaller.FullName /VERYSILENT /SUPPRESSMSGBOXES /NORESTART
-$uninstallerExitCode = if ($null -eq $LASTEXITCODE) { 0 } else { [int]$LASTEXITCODE }
+$uninstallerProcess = Start-Process `
+    -FilePath $uninstaller.FullName `
+    -ArgumentList @("/VERYSILENT", "/SUPPRESSMSGBOXES", "/NORESTART") `
+    -Wait `
+    -PassThru
+$uninstallerExitCode = [int]$uninstallerProcess.ExitCode
 Write-Host "Uninstaller exit code: $uninstallerExitCode"
 if ($uninstallerExitCode -ne 0) {
     throw "Uninstaller exited with code $uninstallerExitCode"
