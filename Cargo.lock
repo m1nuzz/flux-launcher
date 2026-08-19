@@ -263,13 +263,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "flux-google-plugin"
-version = "0.1.0"
-dependencies = [
- "serde_json",
-]
-
-[[package]]
 name = "flux-launcher"
 version = "0.1.0"
 dependencies = [

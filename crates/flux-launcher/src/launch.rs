@@ -66,6 +66,11 @@ pub fn open_recycle_bin_async() {
 }
 
 #[cfg(windows)]
+pub fn open_url(url: &str) -> bool {
+    shell_execute("open", url, None)
+}
+
+#[cfg(windows)]
 pub fn open_recycle_bin() -> bool {
     shell_execute("open", "shell:RecycleBinFolder", None)
 }
@@ -162,6 +167,11 @@ fn shell_execute(verb: &str, target: &str, arguments: Option<&str>) -> bool {
 
 #[cfg(not(windows))]
 pub fn open_path(_path: &str) -> bool {
+    false
+}
+
+#[cfg(not(windows))]
+pub fn open_url(_url: &str) -> bool {
     false
 }
 

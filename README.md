@@ -109,7 +109,7 @@ The repository contains a Rust fixture under `crates/flow-plugin-fixture` and a 
 
 The release artifact also includes the native Rust Obsidian plugin under `FluxPlugins\Obsidian`. Copy that directory to `%APPDATA%\FluxLauncher\Plugins\Obsidian` to enable automatic discovery. Flux reads vault paths from `%APPDATA%\obsidian\obsidian.json`, searches Markdown, Canvas, Excalidraw, image, JSON, and CSV files, opens results with `obsidian://` URIs, and supports note creation through `<keyword> create <name>`. Settings > Plugins controls the default `ob` keyword and enable state.
 
-The same artifact includes the native Rust Google Search plugin under `FluxPlugins\Google`. Copy it to `%APPDATA%\FluxLauncher\Plugins\Google`. Its default keyword is `g`, so `g space exploration` returns a Flow-compatible result that opens `https://www.google.com/search?q=space%20exploration` in the default browser. Settings > Plugins can disable the plugin or change the keyword. The implementation deliberately does not embed a browser engine or perform background autocomplete requests; it keeps the launcher native, private by default, and fast.
+Google Search is built directly into `flux-launcher.exe`; no second executable or plugin folder is required. Its default keyword is `g`, so `g space exploration` returns a result that opens `https://www.google.com/search?q=space%20exploration` in the default browser. Settings > Plugins can disable the built-in provider or change the keyword. The implementation does not embed a browser engine or perform background autocomplete requests; it keeps the launcher native, private by default, and fast.
 
 ## Architecture
 
@@ -121,7 +121,6 @@ The workspace separates portable behavior from Windows integration:
 | `crates/flux-launcher` | windui application, native Windows integrations, Everything worker, plugin host, tray, and launch actions |
 | `crates/flow-plugin-fixture` | Native executable Flow JSON-RPC fixture used by integration smoke tests |
 | `crates/obsidian-plugin` | Native Rust Obsidian vault/file search and note creation plugin |
-| `crates/google-plugin` | Native Rust Google web-search action plugin |
 | `vendor/windui` | Pinned local windui fork containing the Mica/DirectComposition seam, runtime window sizing, and Smooth Caret support |
 | `scripts/capture-mica.ps1` | Proactive Windows screenshot, input, plugin, Settings, memory, pointer, and optional forced-fallback smoke harness |
 | `scripts/monitor-preference-smoke.ps1` | Windows smoke for Primary, Cursor, and Foreground monitor placement modes |

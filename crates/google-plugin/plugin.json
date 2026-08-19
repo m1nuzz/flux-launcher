@@ -1,8 +1,0 @@
-{
-  "ID": "flux.google.builtin",
-  "Name": "Google Search",
-  "Description": "Search Google from Flux Launcher",
-  "Language": "Executable_V2",
-  "ExecuteFileName": "flux-google-plugin.exe",
-  "ActionKeywords": ["g"]
-}

@@ -28,13 +28,19 @@ pub struct PluginInvocation {
 }
 
 #[derive(Clone, Debug)]
+pub enum PluginAction {
+    Flow(PluginInvocation),
+    OpenUrl(String),
+}
+
+#[derive(Clone, Debug)]
 pub struct PluginQueryResponse {
     pub sequence: u64,
     pub query: String,
     pub results: Vec<SearchResult>,
     pub status: String,
     pub available: bool,
-    pub actions: HashMap<String, PluginInvocation>,
+    pub actions: HashMap<String, PluginAction>,
 }
 
 #[derive(Clone, Debug)]
@@ -117,22 +123,27 @@ impl FlowPluginWorker {
     }
 }
 
-pub fn execute_async(invocation: PluginInvocation) {
+pub fn execute_async(action: PluginAction) {
     thread::Builder::new()
         .name(String::from("flux-flow-action"))
-        .spawn(move || {
-            let request = serde_json::json!({
-                "jsonrpc": "2.0",
-                "id": 1_u64,
-                "method": invocation.method,
-                "params": invocation.parameters,
-            })
-            .to_string();
-            let _ = invoke_json_line(
-                &invocation.executable,
-                &invocation.working_directory,
-                &request,
-            );
+        .spawn(move || match action {
+            PluginAction::Flow(invocation) => {
+                let request = serde_json::json!({
+                    "jsonrpc": "2.0",
+                    "id": 1_u64,
+                    "method": invocation.method,
+                    "params": invocation.parameters,
+                })
+                .to_string();
+                let _ = invoke_json_line(
+                    &invocation.executable,
+                    &invocation.working_directory,
+                    &request,
+                );
+            }
+            PluginAction::OpenUrl(url) => {
+                let _ = crate::launch::open_url(&url);
+            }
         })
         .expect("failed to create Flow plugin action thread");
 }
@@ -140,29 +151,31 @@ pub fn execute_async(invocation: PluginInvocation) {
 fn query_plugins(plugins: &[PluginDescriptor], request: PluginRequest) -> PluginQueryResponse {
     let candidates = plugins
         .iter()
+        .filter(|plugin| !is_google_plugin(plugin))
         .filter_map(|plugin| {
             action_keyword_for_plugin(plugin, &request).map(|keyword| (plugin, keyword))
         })
         .collect::<Vec<_>>();
-    if candidates.is_empty() {
-        return PluginQueryResponse {
-            sequence: request.sequence,
-            query: request.query,
-            results: Vec::new(),
-            status: String::from("No native Flow plugins installed"),
-            available: false,
-            actions: HashMap::new(),
-        };
-    }
 
     let mut results = Vec::with_capacity(MAX_RESULTS);
     let mut actions = HashMap::new();
+    append_builtin_google_result(&request, &mut results, &mut actions);
+    if candidates.is_empty() && results.is_empty() {
+        return PluginQueryResponse {
+            sequence: request.sequence,
+            query: request.query,
+            results,
+            status: String::from("No native Flow plugins installed"),
+            available: false,
+            actions,
+        };
+    }
     let mut failures = 0_usize;
     for (plugin, action_keyword) in candidates {
         if results.len() >= MAX_RESULTS {
             break;
         }
-        let search = if is_obsidian_plugin(plugin) || is_google_plugin(plugin) {
+        let search = if is_obsidian_plugin(plugin) {
             request
                 .query
                 .strip_prefix(&action_keyword)
@@ -216,6 +229,63 @@ fn query_plugins(plugins: &[PluginDescriptor], request: PluginRequest) -> Plugin
     }
 }
 
+fn append_builtin_google_result(
+    request: &PluginRequest,
+    results: &mut Vec<SearchResult>,
+    actions: &mut HashMap<String, PluginAction>,
+) {
+    if !request.google_enabled || results.len() >= MAX_RESULTS {
+        return;
+    }
+    let keyword = request.google_keyword.trim();
+    let keyword = if keyword.is_empty() { "g" } else { keyword };
+    let Some(search) = search_for_keyword(&request.query, keyword) else {
+        return;
+    };
+    if search.is_empty() {
+        return;
+    }
+    let url = format!(
+        "https://www.google.com/search?q={}",
+        encode_uri_component(search)
+    );
+    let id = String::from("builtin:google-search");
+    results.push(SearchResult {
+        id: id.clone(),
+        title: format!("Search Google: {search}"),
+        subtitle: String::from("Open the Google search in the default browser"),
+        kind: flux_core::ResultKind::Placeholder,
+        source: flux_core::ResultSource::Plugin,
+        target: None,
+    });
+    actions.insert(id, PluginAction::OpenUrl(url));
+}
+
+fn search_for_keyword<'a>(query: &'a str, keyword: &str) -> Option<&'a str> {
+    if !has_keyword_boundary(query, keyword) {
+        return None;
+    }
+    Some(
+        query
+            .strip_prefix(keyword)
+            .unwrap_or_default()
+            .trim_start_matches(|character: char| character == ':' || character.is_whitespace())
+            .trim(),
+    )
+}
+
+fn encode_uri_component(value: &str) -> String {
+    let mut encoded = String::new();
+    for byte in value.as_bytes() {
+        if byte.is_ascii_alphanumeric() || matches!(*byte, b'-' | b'_' | b'.' | b'~') {
+            encoded.push(*byte as char);
+        } else {
+            encoded.push_str(&format!("%{byte:02X}"));
+        }
+    }
+    encoded
+}
+
 fn action_keyword_for_plugin(plugin: &PluginDescriptor, request: &PluginRequest) -> Option<String> {
     if is_obsidian_plugin(plugin) {
         if !request.obsidian_enabled {
@@ -264,7 +334,7 @@ fn append_plugin_results(
     plugin: &PluginDescriptor,
     response: Vec<flux_core::FlowResult>,
     results: &mut Vec<SearchResult>,
-    actions: &mut HashMap<String, PluginInvocation>,
+    actions: &mut HashMap<String, PluginAction>,
 ) {
     for (index, item) in response.into_iter().enumerate() {
         if results.len() >= MAX_RESULTS {
@@ -285,7 +355,10 @@ fn append_plugin_results(
             target: None,
         });
         if let Some(action) = item.action {
-            actions.insert(id, invocation_from_action(plugin, action));
+            actions.insert(
+                id,
+                PluginAction::Flow(invocation_from_action(plugin, action)),
+            );
         }
     }
 }
@@ -414,7 +487,7 @@ fn terminate_process(child: &mut Child) {
 
 #[cfg(test)]
 mod tests {
-    use super::has_keyword_boundary;
+    use super::*;
 
     #[test]
     fn google_keyword_requires_a_token_boundary() {
@@ -423,5 +496,44 @@ mod tests {
         assert!(has_keyword_boundary("g", "g"));
         assert!(!has_keyword_boundary("gaming", "g"));
         assert!(!has_keyword_boundary("", "g"));
+    }
+
+    #[test]
+    fn built_in_google_provider_creates_a_browser_action() {
+        let request = PluginRequest {
+            sequence: 7,
+            query: String::from("g space exploration"),
+            obsidian_enabled: true,
+            obsidian_keyword: String::from("ob"),
+            google_enabled: true,
+            google_keyword: String::from("g"),
+        };
+        let mut results = Vec::new();
+        let mut actions = HashMap::new();
+        append_builtin_google_result(&request, &mut results, &mut actions);
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].id, "builtin:google-search");
+        assert_eq!(results[0].title, "Search Google: space exploration");
+        assert!(matches!(
+            actions.get("builtin:google-search"),
+            Some(PluginAction::OpenUrl(url)) if url == "https://www.google.com/search?q=space%20exploration"
+        ));
+    }
+
+    #[test]
+    fn built_in_google_provider_skips_alias_without_query() {
+        let request = PluginRequest {
+            sequence: 8,
+            query: String::from("g"),
+            obsidian_enabled: true,
+            obsidian_keyword: String::from("ob"),
+            google_enabled: true,
+            google_keyword: String::from("g"),
+        };
+        let mut results = Vec::new();
+        let mut actions = HashMap::new();
+        append_builtin_google_result(&request, &mut results, &mut actions);
+        assert!(results.is_empty());
+        assert!(actions.is_empty());
     }
 }

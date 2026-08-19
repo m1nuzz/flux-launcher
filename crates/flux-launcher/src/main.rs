@@ -25,7 +25,7 @@ use flux_core::{
     MonitorPreference, PriorityEntry, ResultKind, ResultSource, SearchModel, SearchResult,
     Settings,
 };
-use plugins::{FlowPluginWorker, PluginInvocation, PluginQueryResponse};
+use plugins::{FlowPluginWorker, PluginAction, PluginQueryResponse};
 use windui::app::{CursorVisibilityHandle, WindowOpHandle, WindowPositionHandle, WindowSizeHandle};
 use windui::core::{ClickFn, ClipboardProvider, EventCtx, Widget};
 use windui::event::{Event, Key, KeyEvent, MouseButton, PointerKind};
@@ -230,7 +230,7 @@ enum ActionKind {
     CopyPath,
     CopyName,
     SetPriority,
-    RunPlugin(PluginInvocation),
+    RunPlugin(PluginAction),
 }
 
 #[derive(Clone, Debug)]
@@ -242,7 +242,7 @@ struct ActionItem {
 
 fn actions_for_result(
     result: &SearchResult,
-    plugin_actions: &HashMap<String, PluginInvocation>,
+    plugin_actions: &HashMap<String, PluginAction>,
 ) -> Vec<ActionItem> {
     let mut actions = Vec::with_capacity(4);
     if matches!(result.id.as_str(), "empty-recycle-bin" | "open-recycle-bin") {
@@ -1145,7 +1145,7 @@ fn result_row(
     selected_index: Signal<usize>,
     selection_touched: Signal<bool>,
     rows_refresh: Signal<Vec<SearchResult>>,
-    plugin_actions: Rc<RefCell<HashMap<String, PluginInvocation>>>,
+    plugin_actions: Rc<RefCell<HashMap<String, PluginAction>>>,
     query: Signal<String>,
     scroll_pending: Signal<bool>,
     selection_color: Signal<Color>,
@@ -1353,7 +1353,7 @@ fn main() {
     let mut model = SearchModel::new();
     let results = signal(model.results().to_vec());
     let provider_results = Rc::new(RefCell::new(ProviderResults::default()));
-    let plugin_actions = Rc::new(RefCell::new(HashMap::<String, PluginInvocation>::new()));
+    let plugin_actions = Rc::new(RefCell::new(HashMap::<String, PluginAction>::new()));
     let result_source = results;
     let selected_for_rows = selected_id;
     let selected_index_for_rows = selected_index;
