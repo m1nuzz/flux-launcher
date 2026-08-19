@@ -1,7 +1,7 @@
 # Flux Launcher
 
 <p align="center">
-  <img src="assets/logotype.jpg" alt="Flux Launcher logo" width="392">
+  <img src="assets/logotype.png" alt="Flux Launcher logo" width="392">
 </p>
 
 Flux Launcher is a lightweight Windows launcher written in Rust with **windui** as its only GUI framework. It combines a compact Spotlight-style search surface with Everything IPC, native Flow Launcher executable plugins, configurable global hotkeys, fullscreen-aware Game Mode, persistent query history, visible provider status, a system tray menu, and a windui-native Settings panel.
@@ -139,7 +139,7 @@ The workspace separates portable behavior from Windows integration:
 | `vendor/windui` | Pinned local windui fork containing the Mica/DirectComposition seam, runtime window sizing, and Smooth Caret support |
 | `scripts/capture-mica.ps1` | Proactive Windows screenshot, input, plugin, Settings, memory, pointer, and optional forced-fallback smoke harness |
 | `scripts/monitor-preference-smoke.ps1` | Windows smoke for Primary, Cursor, and Foreground monitor placement modes |
-| `assets/logotype.jpg` / `assets/ico.png` / `crates/flux-launcher/assets/google.png` | Repository branding, transparent tray icon, and bundled Google provider icon |
+| `assets/logotype.png` / `assets/ico.png` / `crates/flux-launcher/assets/google.png` | Repository branding, transparent tray icon, and bundled Google provider icon |
 
 The UI keeps result state bounded and uses background workers only for external providers. The compact empty state also reduces the rendered surface and memory pressure while the launcher is idle. Built-in Google and Obsidian providers run in-process; native community plugins use one self-spawned worker only when plugin packages are installed.
 
