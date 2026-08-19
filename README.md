@@ -152,6 +152,12 @@ Flux Launcher is distributed under the [MIT License](LICENSE).
 
 ## References
 
+| Reference | What it provides |
+| --- | --- |
+| [Flow Launcher](https://github.com/Flow-Launcher/Flow.Launcher) | Reference for keyboard-first Windows launcher UX, Everything integration, query history, hotkeys, and legacy plugin compatibility |
+| [windui](https://github.com/huanfeng/wind-ui-rust) | The native Rust GUI framework used by Flux Launcher |
+| [look](https://github.com/kunkka19xx/look) | Reference for the Smooth Caret interaction in the search field |
+
 [1]: https://github.com/Flow-Launcher/Flow.Launcher/issues/2940 "Flow Launcher memory usage discussion"
 [2]: https://github.com/Flow-Launcher/Flow.Launcher/blob/dev/README.md "Flow Launcher README"
 [3]: https://github.com/matiassingers/awesome-readme "Awesome README examples"
