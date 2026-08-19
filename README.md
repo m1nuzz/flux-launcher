@@ -20,25 +20,25 @@ If Flux Launcher is useful to you, you can support its continued development on 
 | --- | --- |
 | GUI | Rust + windui only; no WebView, browser engine, or secondary UI toolkit |
 | Window material | Windows 11 system Acrylic through DWM/DirectComposition; neutral dark uniform-alpha fallback when the system backdrop is unavailable |
-| Search | Built-in command palette, bounded 16-result pipeline with native wheel scrolling, always-on Everything IPC provider, and native Flow plugin provider |
+| Search | Built-in command palette, bounded 16-result pipeline with native wheel scrolling, Everything IPC provider when enabled, legacy Flow plugin provider, and native Rust community plugin host |
 | Ranking | Exact/prefix application matches and executable/shortcut results are ranked ahead of ordinary indexed files and folders |
 | Query history | Committed searches are persisted atomically, recalled with `Ctrl+H`, deduplicated case-insensitively, and capped at 32 entries |
 | Provider status | Compact status text reports search/loading/fallback state in the expanded action bar |
 | Keyboard UX | Up/Down/Home/End, Tab/Shift+Tab select results, Enter launches, Right opens action mode, Left/Escape returns, and actions support Open, Copy path, Copy name, and native plugin execution; mouse hover/click/wheel use the same selection model |
-| Query layout | Compact 72 px search strip when empty; expanded 286 px result surface after typing |
+| Query layout | Compact 72 px search strip when empty; expanded 382 px result surface after typing |
 | Smooth Caret | Optional ease-out visual caret transition with configurable duration; IME coordinates remain exact |
 | Global hotkey | Configurable modifier/key combination, default `Alt+Space` |
 | Game Mode | Fullscreen suppression enabled by default, manual toggle through `Ctrl+F12` and the tray |
-| Flow plugins | `Executable` and `Executable_V2` newline-delimited JSON-RPC plugins only; bundled native Rust Obsidian and Google Search plugins with configurable keywords |
+| Providers and plugins | Built-in Google and Obsidian providers, legacy `Executable`/`Executable_V2` newline-delimited JSON-RPC plugins, and native Rust community `cdylib` plugins |
 | Tray | Left-click show action and right-click menu for Show launcher, Settings, Game Mode, and Exit; uses the transparent `assets/ico.png` branding icon |
 | Settings | Hotkey editor, fullscreen protection, Game Mode, Smooth Caret, caret duration, monitor preference, Everything auto-enable/install status, Obsidian/Google plugin enable and keyword controls, and atomic JSON persistence |
 | License | MIT |
 
 ## Requirements
 
-Flux Launcher targets **Windows 11 x64** and is built for the `x86_64-pc-windows-msvc` target. Everything is optional: when the Everything service is not available, Flux keeps the built-in and plugin providers active and reports a graceful fallback state. Flow plugins must be native executable plugins; Python and C# plugin runtimes are intentionally outside the MVP scope.
+Flux Launcher targets **Windows 11 x64** and is built for the `x86_64-pc-windows-msvc` target. Everything is optional: when the Everything service is not available, Flux keeps the built-in and plugin providers active and reports a graceful fallback state. Legacy Flow plugins must be native executable plugins, while native community plugins use Rust `cdylib` libraries; Python and C# plugin runtimes are intentionally outside the supported scope.
 
-The repository CI uses Windows Server 2025 for automated launch, render, input, compositor-path, plugin, and screenshot smoke tests. A Server runner is useful for repeatable automation, but its desktop composition and wallpaper treatment are not a visual substitute for a physical Windows 11 desktop. The exact dark Acrylic material and wallpaper blending should therefore be validated on Windows 11 hardware. If DWM composition, system material support, or the session policy makes the requested backdrop unavailable, Flux creates a top-level layered window and applies a neutral charcoal uniform alpha surface. This fallback provides desktop translucency without claiming to provide blur; the real Acrylic path remains selected on supported local Windows 11 sessions.
+The repository CI uses GitHub-hosted Windows runners for automated launch, render, input, compositor-path, plugin, and screenshot smoke tests. A hosted runner is useful for repeatable automation, but its desktop composition and wallpaper treatment are not a visual substitute for a physical Windows 11 desktop. The exact dark Acrylic material and wallpaper blending should therefore be validated on Windows 11 hardware. If DWM composition, system material support, or the session policy makes the requested backdrop unavailable, Flux creates a top-level layered window and applies a neutral charcoal uniform alpha surface. This fallback provides desktop translucency without claiming to provide blur; the real Acrylic path remains selected on supported local Windows 11 sessions.
 
 ## Build
 
@@ -71,7 +71,7 @@ Settings are stored atomically in:
 %APPDATA%\FluxLauncher\settings.json
 ```
 
-The default activation combination is `Alt+Space`. The default policy suppresses activation while another application occupies the full monitor bounds and enables Game Mode protection. Smooth Caret is enabled by default for the launcher search field with a 95 ms transition. The launcher opens on the primary display by default; Settings can instead target the display containing the mouse cursor or the display containing the focused foreground window. Committed searches can be recalled with `Ctrl+H`; Settings includes a Clear history control. If Everything is installed, Flux can start it automatically for IPC search; if it is missing, Settings provides an English install prompt and the exact winget command.
+The default activation combination is `Alt+Space`. The default policy suppresses activation while another application occupies the full monitor bounds and enables Game Mode protection. Smooth Caret is enabled by default for the launcher search field with a 95 ms transition. The launcher opens on the display containing the mouse cursor by default; Settings can instead target the primary display or the display containing the focused foreground window. Committed searches can be recalled with `Ctrl+H`; Settings includes a Clear history control. If Everything is installed, Flux can start it automatically for IPC search; if it is missing, Settings provides an English install prompt and the exact winget command.
 
 The environment variable below opens the Settings panel directly and is intended for smoke testing:
 
@@ -117,7 +117,7 @@ Obsidian is built directly into `flux-launcher.exe`; no separate Obsidian execut
 
 ### Native Rust community plugins
 
-New community plugins use a versioned `plugin.toml` manifest and a native Rust `cdylib`. Flux does not ship a second host executable: the same `flux-launcher.exe` starts a headless shared worker when invoked as `flux-launcher.exe --plugin-host <plugin-root>`. The UI starts that mode only when `%APPDATA%\FluxLauncher\NativePlugins` contains an installed native plugin, then communicates over bounded newline-delimited JSON. The worker loads DLLs through a stable C ABI, validates API version and manifest metadata, limits request/response sizes, and returns declarative actions such as `OpenUrl`, `OpenPath`, or `CopyText`.
+New community plugins use a versioned `plugin.toml` manifest and a native Rust `cdylib`. Flux does not ship a second host executable: the same `flux-launcher.exe` starts a headless shared worker when invoked as `flux-launcher.exe --plugin-host <plugin-root>`. By default, the UI starts that mode only when `%APPDATA%\FluxLauncher\NativePlugins` contains an installed native plugin; `FLUX_NATIVE_PLUGIN_DIR` can override the root for development and smoke tests. The UI then communicates over bounded newline-delimited JSON. The worker loads DLLs through a stable C ABI, validates API version and manifest metadata, limits request/response sizes, and returns declarative actions such as `OpenUrl`, `OpenPath`, or `CopyText`.
 
 A community plugin package contains only plugin-owned files, for example:
 
@@ -151,15 +151,15 @@ The UI keeps result state bounded and uses background workers only for external 
 
 ## Smoke and memory evidence
 
-The latest successful Windows smoke run is available at [GitHub Actions run 31996301021](https://github.com/m1nuzz/flux-launcher/actions/runs/31996301021). It verifies the compact empty state before and after repeated hotkey show, typed-query expansion, native `ext:zip` syntax input, selectable Ctrl+H history, ranked results, keyboard action mode, the tray-only style, the Acrylic reattachment lifecycle path, stable result icons through repeated `Edge` Up/Down navigation, selected-row rendering without a redundant title marker, Settings expansion with measured 720×520 px dimensions, partial-match typography, a Settings page without a local opaque card surface, ChatGPT text rendering on the transparent composition path, the dedicated tray Settings lifecycle path, and Primary/Cursor/Foreground monitor placement smoke.
+The latest successful Windows smoke run is available at [GitHub Actions run 32301567507](https://github.com/m1nuzz/flux-launcher/actions/runs/32301567507). It verifies the compact empty state before and after repeated hotkey show, typed-query expansion, native `ext:zip` syntax input, selectable Ctrl+H history, ranked results, keyboard action mode, the tray-only style, the Acrylic reattachment lifecycle path, stable result icons through repeated `Edge` Up/Down navigation, selected-row rendering without a redundant title marker, Settings expansion with measured 720×520 px dimensions, partial-match typography, a Settings page without a local opaque card surface, ChatGPT text rendering on the transparent composition path, the dedicated tray Settings lifecycle path, and Primary/Cursor/Foreground monitor placement smoke.
 
 | State | Working set | Private bytes |
 | --- | ---: | ---: |
-| Idle, empty query | approximately 26.1 MiB | approximately 7.7 MiB |
-| Query active | approximately 43.2 MiB | approximately 22.5 MiB |
-| History panel | approximately 52.0 MiB | approximately 23.2 MiB |
+| Idle, empty query | approximately 33.75 MiB | approximately 8.72 MiB |
+| Query active | approximately 41.97 MiB | approximately 19.23 MiB |
+| History panel | approximately 57.69 MiB | approximately 24.30 MiB |
 
-These are point-in-time smoke measurements, not a formal performance guarantee. The query sample includes the expanded UI and a native plugin response. Memory usage can vary with Windows composition, display scale, fonts, GPU driver, plugin behavior, and Everything availability.
+These are point-in-time smoke measurements, not a formal performance guarantee. The query sample includes the expanded UI and a native Flow plugin response from the CI fixture. Memory usage can vary with Windows composition, display scale, fonts, GPU driver, plugin behavior, and Everything availability.
 
 ## Release
 
