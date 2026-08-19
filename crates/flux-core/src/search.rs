@@ -523,10 +523,7 @@ fn system_results(query: &str) -> Vec<SearchResult> {
                 || spec.id.contains(&normalized)
                 || spec.title.to_ascii_lowercase().contains(&normalized)
                 || spec.subtitle.to_ascii_lowercase().contains(&normalized)
-                || spec
-                    .aliases
-                    .iter()
-                    .any(|alias| alias.contains(&normalized))
+                || spec.aliases.iter().any(|alias| alias.contains(&normalized))
         })
         .take(MAX_RESULTS)
         .map(|spec| SearchResult {

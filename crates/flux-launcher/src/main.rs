@@ -3009,9 +3009,8 @@ fn main() {
 mod tests {
     use super::{
         actions_for_result, history_cursor_step, hover_position_changed, is_run_as_admin_key,
-        launcher_window_geometry,
-        merge_application_duplicates, preserve_everything_file_order, quoted_result_path,
-        COMPACT_WINDOW_HEIGHT, EXPANDED_WINDOW_HEIGHT, WINDOW_WIDTH,
+        launcher_window_geometry, merge_application_duplicates, preserve_everything_file_order,
+        quoted_result_path, COMPACT_WINDOW_HEIGHT, EXPANDED_WINDOW_HEIGHT, WINDOW_WIDTH,
     };
     use flux_core::{ResultKind, ResultSource, SearchResult};
     use windui::event::{Key, KeyEvent};
