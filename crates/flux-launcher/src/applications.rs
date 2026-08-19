@@ -278,12 +278,12 @@ unsafe fn property_store_arguments(
 ) -> Option<String> {
     use windows::core::Interface;
     use windows::Win32::Storage::EnhancedStorage::PKEY_Link_Arguments;
-    use windows::Win32::System::Com::StructuredStorage::{PropVariantClear, PROPVARIANT};
+    use windows::Win32::System::Com::StructuredStorage::PROPVARIANT;
     use windows::Win32::System::Variant::VT_LPWSTR;
     use windows::Win32::UI::Shell::PropertiesSystem::IPropertyStore;
 
     let store: IPropertyStore = link.cast().ok()?;
-    let mut value: PROPVARIANT = store.GetValue(&PKEY_Link_Arguments).ok()?;
+    let value: PROPVARIANT = store.GetValue(&PKEY_Link_Arguments).ok()?;
     let result = (|| {
         let header = unsafe { &value.Anonymous.Anonymous };
         if header.vt != VT_LPWSTR {
@@ -295,9 +295,6 @@ unsafe fn property_store_arguments(
         }
         unsafe { pointer.to_string().ok() }
     })();
-    unsafe {
-        PropVariantClear(&mut value).ok();
-    }
     result
 }
 
