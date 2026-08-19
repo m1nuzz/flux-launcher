@@ -201,17 +201,19 @@ fn normalize_windows_path(value: &str) -> String {
 
 #[cfg(windows)]
 fn resolve_shell_link_target(path: &str) -> Option<(String, String)> {
-    use windows::core::PCWSTR;
+    use windows::core::{GUID, Interface, PCWSTR};
     use windows::Win32::System::Com::{
         CoCreateInstance, CoInitializeEx, CoUninitialize, IPersistFile, CLSCTX_INPROC_SERVER,
         COINIT_APARTMENTTHREADED, STGM_READ,
     };
-    use windows::Win32::UI::Shell::{CLSID_ShellLink, IShellLinkW, SLGP_RAWPATH};
+    use windows::Win32::UI::Shell::{IShellLinkW, SLGP_RAWPATH};
 
+    const CLSID_SHELL_LINK: GUID =
+        GUID::from_u128(0x0002_1401_0000_0000_c000_0000_0000_0046);
     let initialized = unsafe { CoInitializeEx(None, COINIT_APARTMENTTHREADED).is_ok() };
     let result = (|| unsafe {
         let link: IShellLinkW =
-            CoCreateInstance(&CLSID_ShellLink, None, CLSCTX_INPROC_SERVER).ok()?;
+            CoCreateInstance(&CLSID_SHELL_LINK, None, CLSCTX_INPROC_SERVER).ok()?;
         let persist: IPersistFile = link.cast().ok()?;
         let wide_path = path
             .encode_utf16()
@@ -219,7 +221,7 @@ fn resolve_shell_link_target(path: &str) -> Option<(String, String)> {
             .collect::<Vec<_>>();
         persist.Load(PCWSTR(wide_path.as_ptr()), STGM_READ).ok()?;
         let mut target = [0_u16; 32_768];
-        link.GetPath(&mut target, std::ptr::null_mut(), SLGP_RAWPATH)
+        link.GetPath(&mut target, std::ptr::null_mut(), SLGP_RAWPATH.0)
             .ok()?;
         let mut arguments = [0_u16; 32_768];
         link.GetArguments(&mut arguments).ok()?;
