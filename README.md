@@ -144,7 +144,7 @@ Flux Launcher is actively developed. The current stable release is v0.1.50; the 
 
 ## Support
 
-If Flux Launcher is useful to you, support continued development on [Ko-fi](https://ko-fi.com/m1nuz). GitHub funding metadata is configured in [`.github/FUNDING.yml`](.github/FUNDING.yml).
+Support Flux Launcher on [Ko-fi](https://ko-fi.com/m1nuz).
 
 ## License
 
