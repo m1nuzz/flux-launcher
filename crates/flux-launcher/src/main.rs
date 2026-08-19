@@ -2366,6 +2366,8 @@ fn main() {
     let game_mode_status_for_apply = game_mode_status;
     let settings_visible_for_apply = settings_visible;
     let show_results_for_back = show_results;
+    let position_for_back = window_position.clone();
+    let settings_for_back_position = Arc::clone(&shared_settings);
     let size_for_back = window_size.clone();
     let size_for_apply = window_size.clone();
     let settings_for_clear_history = Arc::clone(&shared_settings);
@@ -2532,14 +2534,20 @@ fn main() {
                         .neutral()
                         .on_click(move |_| {
                             settings_visible.set(false);
-                            size_for_back.set(
-                                WINDOW_WIDTH,
-                                if show_results_for_back.get() {
-                                    EXPANDED_WINDOW_HEIGHT
-                                } else {
-                                    COMPACT_WINDOW_HEIGHT
-                                },
-                            );
+                            let height = if show_results_for_back.get() {
+                                EXPANDED_WINDOW_HEIGHT
+                            } else {
+                                COMPACT_WINDOW_HEIGHT
+                            };
+                            if let Ok(settings) = settings_for_back_position.read() {
+                                request_monitor_position(
+                                    &position_for_back,
+                                    settings.monitor_preference,
+                                    WINDOW_WIDTH,
+                                    height,
+                                );
+                            }
+                            size_for_back.set(WINDOW_WIDTH, height);
                         }),
                 ),
         )
