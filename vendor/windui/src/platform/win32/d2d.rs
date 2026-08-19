@@ -487,17 +487,24 @@ fn is_device_lost(hr: HRESULT) -> bool {
 
 impl WinRenderBackend for D2DBackend {
     unsafe fn on_show(&mut self, hwnd: HWND) {
-        // Force DWM to latch a fresh transparent frame for every activation.
-        // Recommitting the same visual and swapchain is not sufficient when the
-        // window was hidden without a client-size change since the last show.
         let mut rc = RECT::default();
         let _ = GetClientRect(hwnd, &mut rc);
         let width = (rc.right - rc.left).max(1) as u32;
         let height = (rc.bottom - rc.top).max(1) as u32;
 
-        // Release all references to the current backbuffer before ResizeBuffers,
-        // matching the existing resize path. The next visible paint will bind a
-        // fresh target and Present it through the already attached DComp visual.
+        // Do not discard a valid backbuffer merely because the HWND was hidden.
+        // The DComp visual keeps the swapchain content across SW_HIDE/SW_SHOW;
+        // an unconditional ResizeBuffers here creates an undefined alpha frame
+        // that DWM can display as a solid gray surface before the next repaint.
+        let mut desc = DXGI_SWAP_CHAIN_DESC1::default();
+        if self.swapchain.GetDesc1(&mut desc).is_ok()
+            && desc.Width == width
+            && desc.Height == height
+        {
+            return;
+        }
+
+        // A real client-size change still needs the existing resize discipline.
         self.context.SetTarget(None);
         self.target_bitmap = None;
         if let Err(error) = self.swapchain.ResizeBuffers(
@@ -515,12 +522,8 @@ impl WinRenderBackend for D2DBackend {
             return;
         }
         let _ = self.bind_target();
-
-        if let Some(composition) = self.composition.as_ref() {
-            let _ = composition.visual.SetContent(&self.swapchain);
-            let _ = composition.target.SetRoot(&composition.visual);
-            let _ = composition.device.Commit();
-        }
+        // Keep the existing DComp visual/content binding. The next visible
+        // WM_PAINT presents the resized swapchain before DWM samples it.
     }
 
     fn resize(&mut self, w: i32, h: i32) {

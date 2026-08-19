@@ -32,7 +32,7 @@ use windows::Win32::Graphics::Gdi::{
     BeginPaint, CreateBitmap, CreateDIBSection, DeleteObject, EndPaint, GetDC, GetDeviceCaps,
     InvalidateRect, ReleaseDC, ScreenToClient, SetDIBitsToDevice, UpdateWindow, BITMAPINFO,
     BITMAPINFOHEADER, BI_RGB, DEFAULT_CHARSET, DIB_RGB_COLORS, HGDIOBJ, LOGFONTW, PAINTSTRUCT,
-    VREFRESH,
+    ValidateRect, VREFRESH,
 };
 use windows::Win32::Media::{timeBeginPeriod, timeEndPeriod};
 use windows::Win32::System::LibraryLoader::{GetModuleHandleW, GetProcAddress};
@@ -390,6 +390,13 @@ impl WindowState {
 
     /// 渲染并呈现到窗口。后端报告失效（D2D 设备丢失且连续重建失败）时降级为软后端。
     unsafe fn paint(&mut self, hwnd: HWND) {
+        // Never Present a composition swapchain while its HWND is hidden. A
+        // hidden DComp Present can become the stale frame sampled on the next
+        // SW_SHOW and appear as a solid gray surface until the next edit.
+        if !IsWindowVisible(hwnd).as_bool() {
+            let _ = ValidateRect(Some(hwnd), None);
+            return;
+        }
         let bg = if self.transparent {
             Color::rgba(0, 0, 0, 0)
         } else {
@@ -1263,10 +1270,10 @@ unsafe extern "system" fn wnd_proc(
                 if state.in_size_move {
                     // 拖拽缩放中：异步重绘，避免每次 WM_SIZE 都同步等 vsync 拖累拖拽手感。
                     let _ = InvalidateRect(Some(hwnd), None, false);
-                } else {
-                    // 最大化/还原等一次性尺寸变化：ResizeBuffers 后同步出一帧，保证 DWM 动画
-                    // 无论何时采样后备缓冲都是新尺寸的正确内容，不会拉伸旧内容成变形左上角。
-                    // paint 内部会 ValidateRect 整个客户区，不会再触发多余 WM_PAINT。
+                } else if IsWindowVisible(hwnd).as_bool() {
+                    // Hidden geometry changes update the swapchain but must not
+                    // Present through a hidden DComp target. The next visible
+                    // show presents once at the settled client size.
                     state.paint(hwnd);
                 }
             }
@@ -1399,10 +1406,9 @@ unsafe extern "system" fn wnd_proc(
                 .and_then(|hs| hs.dispatch(wparam.0));
             // A hidden ToggleVisibility/Show must consume queued geometry before
             // ShowWindow so DComp/WM_SIZE see the compact client rect on the
-            // first visible frame. Do not resize a visible window just before
-            // hiding it; the post-hide drain below handles that request.
+            // first visible frame. Preserve the cursor request for show_and_activate.
             if !IsWindowVisible(hwnd).as_bool() {
-                apply_window_op(hwnd);
+                apply_window_geometry_requests(hwnd);
             }
             run_window_op(hwnd, op);
             // The hide callback queues the next compact geometry after SW_HIDE;
@@ -1688,6 +1694,26 @@ unsafe fn apply_window_op(hwnd: HWND) {
     apply_hotkey_ops(hwnd);
 }
 
+/// Apply only queued geometry. Unlike `apply_window_op`, this deliberately
+/// preserves cursor-visibility requests for the show transition.
+unsafe fn apply_window_geometry_requests(hwnd: HWND) {
+    let (size_request, position_request) = state_from(hwnd)
+        .map(|state| {
+            (
+                state.handler.take_window_size_request(),
+                state.handler.take_window_position_request(),
+            )
+        })
+        .unwrap_or((None, None));
+    let repositioned = position_request.is_some();
+    run_window_position_request(hwnd, position_request);
+    let resized = size_request.is_some();
+    run_window_size_request(hwnd, size_request);
+    if (resized || repositioned) && IsWindowVisible(hwnd).as_bool() {
+        let _ = InvalidateRect(Some(hwnd), None, false);
+    }
+}
+
 /// Applies a queued logical client-area size after all handler borrows are released.
 unsafe fn run_window_size_request(hwnd: HWND, request: Option<(i32, i32)>) {
     let Some((logical_w, logical_h)) = request else {
@@ -1772,6 +1798,9 @@ unsafe fn run_window_op(hwnd: HWND, op: Option<WindowOp>) {
             if let Some(state) = state_from(hwnd) {
                 state.handler.on_window_hide();
             }
+            // Apply the hide callback's compact geometry while the HWND is
+            // hidden, and never let WM_SIZE Present a hidden DComp surface.
+            apply_window_geometry_requests(hwnd);
         }
         Some(WindowOp::ToggleVisibility) => {
             if IsWindowVisible(hwnd).as_bool() {
@@ -1779,6 +1808,7 @@ unsafe fn run_window_op(hwnd: HWND, op: Option<WindowOp>) {
                 if let Some(state) = state_from(hwnd) {
                     state.handler.on_window_hide();
                 }
+                apply_window_geometry_requests(hwnd);
             } else {
                 show_and_activate(hwnd);
             }
@@ -1911,6 +1941,9 @@ pub(crate) fn show_and_activate(hwnd: HWND) {
         if let Some(state) = state_from(hwnd) {
             state.handler.on_window_show();
         }
+        // Drain geometry once while hidden, without consuming cursor requests.
+        // This settles compact dimensions before the first visible Present.
+        apply_window_geometry_requests(hwnd);
         #[cfg(feature = "d2d")]
         {
             let backdrop = state_from(hwnd).map(|state| state.backdrop);
@@ -1918,6 +1951,16 @@ pub(crate) fn show_and_activate(hwnd: HWND) {
                 apply_system_backdrop(hwnd, backdrop);
             }
         }
+        // Force DWM to recompute the custom client frame after reactivation.
+        let _ = SetWindowPos(
+            hwnd,
+            None,
+            0,
+            0,
+            0,
+            0,
+            SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE | SWP_FRAMECHANGED,
+        );
         // Prepare the first visible paint without drawing through a hidden HWND.
         // The D2D composition surface must be presented only after ShowWindow so
         // DWM latches its transparent premultiplied frame for this activation.
@@ -1941,9 +1984,15 @@ pub(crate) fn show_and_activate(hwnd: HWND) {
             }
         }
         let _ = SetForegroundWindow(hwnd);
+        // Present one settled visible frame before injecting focus/navigation.
+        // This prevents a late request from resizing the surface immediately
+        // after DWM samples the first transparent backbuffer.
+        let _ = InvalidateRect(Some(hwnd), None, false);
+        let _ = UpdateWindow(hwnd);
+        let _ = DwmFlush();
         // Apply the show request at the visibility transition itself. This is
-        // intentionally before the first nested paint so an activation cannot
-        // inherit the hidden cursor state from the previous query session.
+        // intentionally after the first visible frame so cursor state cannot
+        // alter the initial DComp sample.
         let cursor_visibility =
             state_from(hwnd).and_then(|state| state.handler.take_cursor_visibility_request());
         if cursor_visibility == Some(true) {
@@ -1958,12 +2007,8 @@ pub(crate) fn show_and_activate(hwnd: HWND) {
                 ctrl: false,
             });
             let _ = InvalidateRect(Some(hwnd), None, false);
+            let _ = UpdateWindow(hwnd);
         }
-        // Present the fresh post-show backbuffer before flushing DWM. Flushing
-        // earlier can make DWM sample the previous activation's composition
-        // frame, which is why empty Acrylic appears only after the next edit.
-        let _ = UpdateWindow(hwnd);
-        let _ = DwmFlush();
         // Nested activation/paint messages may have refreshed the class cursor;
         // reapply the logical cursor state after the complete show transition.
         apply_current_cursor(hwnd);
