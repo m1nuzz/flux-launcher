@@ -285,7 +285,7 @@ unsafe fn property_store_arguments(
     let store: IPropertyStore = link.cast().ok()?;
     let mut value: PROPVARIANT = store.GetValue(&PKEY_Link_Arguments).ok()?;
     let result = (|| {
-        let header = unsafe { value.Anonymous.Anonymous };
+        let header = unsafe { &value.Anonymous.Anonymous };
         if header.vt != VT_LPWSTR {
             return None;
         }
