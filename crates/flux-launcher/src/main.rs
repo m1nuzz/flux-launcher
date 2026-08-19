@@ -248,6 +248,19 @@ fn actions_for_result(
     if matches!(result.id.as_str(), "empty-recycle-bin" | "open-recycle-bin") {
         return actions;
     }
+    if result.id.starts_with("system:") {
+        actions.push(ActionItem {
+            id: format!("{}:open", result.id),
+            label: String::from("Open"),
+            kind: ActionKind::Open,
+        });
+        actions.push(ActionItem {
+            id: format!("{}:copy-name", result.id),
+            label: String::from("Copy name"),
+            kind: ActionKind::CopyName,
+        });
+        return actions;
+    }
     if result.target.is_some() {
         if matches!(result.kind, ResultKind::Application) {
             actions.push(ActionItem {
@@ -1119,6 +1132,8 @@ fn result_row(
     query_history: Rc<RefCell<Vec<String>>>,
     history_mode: Signal<bool>,
     recycle_bin_confirmation: Signal<bool>,
+    settings_visible: Signal<bool>,
+    window_size: WindowSizeHandle,
 ) -> Element {
     let id = result.id;
     let target = result.target;
@@ -1224,6 +1239,11 @@ fn result_row(
                 recycle_bin_confirmation.set(true);
                 return;
             }
+            if id == "flux-settings" {
+                settings_visible.set(true);
+                window_size.set(SETTINGS_WINDOW_WIDTH, SETTINGS_WINDOW_HEIGHT);
+                return;
+            }
             if id == "open-recycle-bin" {
                 launch::open_recycle_bin_async();
                 ctx.hide_window();
@@ -1321,6 +1341,8 @@ fn main() {
     let action_window_slot_for_rows = Rc::clone(&action_window_slot);
     let query_for_rows = query;
     let scroll_request_for_rows = signal(false);
+    let settings_visible_for_rows = settings_visible;
+    let size_for_rows = window_size.clone();
     let inline_completion = signal(String::new());
 
     let search_box = Element::text_input(query, "Search")
@@ -1390,6 +1412,8 @@ fn main() {
             Rc::clone(&history_for_rows),
             history_mode_for_rows,
             recycle_bin_confirmation,
+            settings_visible_for_rows,
+            size_for_rows.clone(),
         )
     })
     .width_match()
@@ -2221,6 +2245,9 @@ fn main() {
                 ) {
                     if result.id == "empty-recycle-bin" {
                         recycle_bin_confirmation_for_keys.set(true);
+                    } else if result.id == "flux-settings" {
+                        settings_visible_for_keys.set(true);
+                        size_for_keys.set(SETTINGS_WINDOW_WIDTH, SETTINGS_WINDOW_HEIGHT);
                     } else if result.id == "open-recycle-bin" {
                         launch::open_recycle_bin_async();
                         window_op_for_keys.hide_window();
@@ -2981,7 +3008,8 @@ fn main() {
 #[cfg(test)]
 mod tests {
     use super::{
-        history_cursor_step, hover_position_changed, is_run_as_admin_key, launcher_window_geometry,
+        actions_for_result, history_cursor_step, hover_position_changed, is_run_as_admin_key,
+        launcher_window_geometry,
         merge_application_duplicates, preserve_everything_file_order, quoted_result_path,
         COMPACT_WINDOW_HEIGHT, EXPANDED_WINDOW_HEIGHT, WINDOW_WIDTH,
     };
@@ -3052,6 +3080,22 @@ mod tests {
         assert_eq!(merged.len(), 1);
         assert_eq!(merged[0].title, "Google Chrome");
         assert!(merged[0].subtitle.contains("Start Menu"));
+    }
+
+    #[test]
+    fn system_results_only_offer_open_and_copy_name_actions() {
+        let result = SearchResult {
+            id: String::from("system:settings"),
+            title: String::from("Settings"),
+            subtitle: String::from("Windows Settings"),
+            kind: ResultKind::Command,
+            source: ResultSource::BuiltIn,
+            target: Some(String::from("ms-settings:")),
+        };
+        let actions = actions_for_result(&result, &std::collections::HashMap::new());
+        assert_eq!(actions.len(), 2);
+        assert!(matches!(actions[0].kind, super::ActionKind::Open));
+        assert!(matches!(actions[1].kind, super::ActionKind::CopyName));
     }
 
     #[test]
