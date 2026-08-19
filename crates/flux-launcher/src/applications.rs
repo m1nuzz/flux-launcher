@@ -276,6 +276,7 @@ fn resolve_shell_link_target(path: &str) -> Option<(String, String)> {
 unsafe fn property_store_arguments(
     link: &windows::Win32::UI::Shell::IShellLinkW,
 ) -> Option<String> {
+    use windows::core::Interface;
     use windows::Win32::Storage::EnhancedStorage::PKEY_Link_Arguments;
     use windows::Win32::System::Com::StructuredStorage::{PropVariantClear, PROPVARIANT};
     use windows::Win32::System::Variant::VT_LPWSTR;
