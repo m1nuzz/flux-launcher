@@ -30,9 +30,9 @@ use windows::Win32::Graphics::Dwm::{
 };
 use windows::Win32::Graphics::Gdi::{
     BeginPaint, CreateBitmap, CreateDIBSection, DeleteObject, EndPaint, GetDC, GetDeviceCaps,
-    InvalidateRect, ReleaseDC, ScreenToClient, SetDIBitsToDevice, UpdateWindow, BITMAPINFO,
-    BITMAPINFOHEADER, BI_RGB, DEFAULT_CHARSET, DIB_RGB_COLORS, HGDIOBJ, LOGFONTW, PAINTSTRUCT,
-    ValidateRect, VREFRESH,
+    InvalidateRect, ReleaseDC, ScreenToClient, SetDIBitsToDevice, UpdateWindow, ValidateRect,
+    BITMAPINFO, BITMAPINFOHEADER, BI_RGB, DEFAULT_CHARSET, DIB_RGB_COLORS, HGDIOBJ, LOGFONTW,
+    PAINTSTRUCT, VREFRESH,
 };
 use windows::Win32::Media::{timeBeginPeriod, timeEndPeriod};
 use windows::Win32::System::LibraryLoader::{GetModuleHandleW, GetProcAddress};
