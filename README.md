@@ -43,11 +43,7 @@ Flux is designed for users who want a fast, keyboard-first Windows launcher with
 
 ## Install
 
-Flux Launcher is portable. Download the latest Windows 11 x64 executable, place it in a folder of your choice, and run it:
-
-**[Download `flux-launcher.exe`](https://github.com/m1nuzz/flux-launcher/releases/latest/download/flux-launcher.exe)**
-
-The latest stable release is [Flux Launcher v0.1.50](https://github.com/m1nuzz/flux-launcher/releases/tag/v0.1.50). Flux does not require Everything, but Everything is recommended for indexed file and folder search. If it is not installed, Flux can offer the following command from Settings:
+Flux Launcher is portable. Download the [latest Windows 11 x64 build](https://github.com/m1nuzz/flux-launcher/releases/latest/download/flux-launcher.exe), place it in a folder of your choice, and run it. Flux does not require Everything, but Everything is recommended for indexed file and folder search. If it is not installed, Flux can offer the following command from Settings:
 
 ```powershell
 winget install -e --id voidtools.Everything
@@ -140,7 +136,7 @@ The Windows CI workflow additionally runs formatting, Clippy with warnings denie
 
 ## Project status
 
-Flux Launcher is actively developed. The current stable release is v0.1.50; the `main` branch may contain improvements that have not yet been packaged into a stable release. Bug reports and focused pull requests are welcome in the [issue tracker](https://github.com/m1nuzz/flux-launcher/issues).
+Flux Launcher is actively developed. The `main` branch may contain improvements that have not yet been packaged into a stable release. Download the [latest build](https://github.com/m1nuzz/flux-launcher/releases/latest/download/flux-launcher.exe), or follow development in the [issue tracker](https://github.com/m1nuzz/flux-launcher/issues).
 
 ## Support
 
