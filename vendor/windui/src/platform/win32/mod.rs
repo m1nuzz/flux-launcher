@@ -1397,11 +1397,13 @@ unsafe extern "system" fn wnd_proc(
             let op = state_from(hwnd)
                 .and_then(|s| s.hotkeys.as_mut())
                 .and_then(|hs| hs.dispatch(wparam.0));
-            // Hotkey callbacks queue size/position changes before returning the
-            // ToggleVisibility intent. Apply those requests before showing so
-            // DComp/WM_SIZE see the compact client rect on the first visible
-            // frame, not one message later after the first query edit.
-            apply_window_op(hwnd);
+            // A hidden ToggleVisibility/Show must consume queued geometry before
+            // ShowWindow so DComp/WM_SIZE see the compact client rect on the
+            // first visible frame. Do not resize a visible window just before
+            // hiding it; the post-hide drain below handles that request.
+            if !IsWindowVisible(hwnd).as_bool() {
+                apply_window_op(hwnd);
+            }
             run_window_op(hwnd, op);
             // The hide callback queues the next compact geometry after SW_HIDE;
             // drain it immediately while the HWND is still hidden. This keeps
