@@ -12,7 +12,7 @@
 use std::cell::{Cell, RefCell};
 use std::collections::HashMap;
 
-use windows::core::{Interface, HRESULT, PCWSTR, Result};
+use windows::core::{Interface, Result, HRESULT, PCWSTR};
 use windows::Win32::Foundation::{D2DERR_RECREATE_TARGET, HWND, RECT};
 
 use windows::Win32::Graphics::Direct2D::Common::{
