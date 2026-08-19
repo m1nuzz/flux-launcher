@@ -8,6 +8,12 @@ Flux Launcher is a lightweight Windows launcher written in Rust with **windui** 
 
 The primary interaction is intentionally minimal. With an empty query, Flux shows only a short dark translucent search strip. After at least one character is entered, the native popup expands and displays a bounded, ranked result list. The frameless Windows path uses a popup-style alpha-aware client surface, the Windows system backdrop API, and a DirectComposition-compatible path where supported; it does not retain the opaque native title-bar/client frame that caused the previous white rectangle.
 
+## Support Flux Launcher
+
+If Flux Launcher is useful to you, you can support its continued development on [Ko-fi](https://ko-fi.com/m1nuz).
+
+[![Support Flux Launcher on Ko-fi](https://img.shields.io/badge/Support%20on-Ko--fi-ff5e5b?logo=ko-fi&logoColor=white)](https://ko-fi.com/m1nuz)
+
 ## Features
 
 | Area | Implementation |
