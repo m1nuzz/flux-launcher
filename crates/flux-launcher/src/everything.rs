@@ -9,7 +9,9 @@ use std::thread;
 use std::time::Duration;
 
 use everything_ipc::wm::{EverythingClient, RequestFlags, Sort};
-use flux_core::SearchResult;
+use flux_core::{ResultKind, SearchResult};
+
+use crate::applications::canonical_application_id;
 use windui::prelude::Sender;
 
 const MAX_RESULTS: u32 = 16;
@@ -205,7 +207,13 @@ fn query_everything(
                     let title = item.get_string(RequestFlags::FileName)?;
                     let folder = item.get_string(RequestFlags::Path).unwrap_or_default();
                     let path = join_everything_path(&folder, &title);
-                    Some(SearchResult::file(path, title, folder))
+                    let mut result = SearchResult::file(path.clone(), title, folder);
+                    if result.kind == ResultKind::Application {
+                        if let Some(canonical_id) = canonical_application_id(&path) {
+                            result.id = canonical_id;
+                        }
+                    }
+                    Some(result)
                 })
                 .collect::<Vec<_>>();
             EverythingResponse {

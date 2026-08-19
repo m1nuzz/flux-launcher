@@ -86,7 +86,7 @@ impl ApplicationCatalog {
             collect_app_paths(&mut by_title);
         }
 
-        let mut entries = by_title.into_values().collect::<Vec<_>>();
+        let mut entries = merge_catalog_candidates(by_title.into_values().collect());
         entries.sort_by_key(|result| result.title.to_ascii_lowercase());
         entries.truncate(MAX_CATALOG_ENTRIES);
         Self { entries }
@@ -114,6 +114,129 @@ impl ApplicationCatalog {
 
 fn normalize(value: &str) -> String {
     value.trim().to_ascii_lowercase()
+}
+
+/// Returns the canonical identity for an application result.
+///
+/// Flow Launcher groups Win32 entries by the resolved executable target and
+/// shortcut arguments rather than by the `.lnk` source path. Flux keeps the
+/// source path in `target` for launch behavior, but uses this resolved identity
+/// to merge App Paths, Start Menu, Desktop, and Everything application hits.
+pub(crate) fn canonical_application_key(result: &SearchResult) -> Option<String> {
+    if result.kind != ResultKind::Application {
+        return None;
+    }
+    if let Some(identity) = result.id.strip_prefix("application:target:") {
+        if !identity.is_empty() {
+            return Some(identity.to_owned());
+        }
+    }
+    canonical_target_key(result.target.as_deref()?)
+}
+
+pub(crate) fn canonical_application_id(target: &str) -> Option<String> {
+    canonical_target_key(target).map(|identity| format!("application:target:{identity}"))
+}
+
+pub(crate) fn canonical_target_key(target: &str) -> Option<String> {
+    let target = target.trim();
+    if target.is_empty() {
+        return None;
+    }
+    if is_shortcut_path(target) {
+        if let Some((resolved, arguments)) = resolve_shell_link_target(target) {
+            let key = normalize_windows_path(&resolved);
+            let arguments = normalize(&arguments);
+            return Some(if arguments.is_empty() {
+                key
+            } else {
+                format!("{key}|args:{arguments}")
+            });
+        }
+    }
+    Some(normalize_windows_path(target))
+}
+
+fn merge_catalog_candidates(results: Vec<SearchResult>) -> Vec<SearchResult> {
+    let mut positions = HashMap::<String, usize>::new();
+    let mut merged = Vec::with_capacity(results.len());
+    for result in results {
+        let Some(identity) = canonical_application_key(&result) else {
+            merged.push(result);
+            continue;
+        };
+        let Some(existing_index) = positions.get(&identity).copied() else {
+            positions.insert(identity, merged.len());
+            merged.push(result);
+            continue;
+        };
+        if source_rank(&result) < source_rank(&merged[existing_index]) {
+            merged[existing_index] = result;
+        }
+    }
+    merged
+}
+
+fn source_rank(result: &SearchResult) -> u8 {
+    if result.subtitle.to_ascii_lowercase().contains("start menu") {
+        0
+    } else {
+        1
+    }
+}
+
+fn is_shortcut_path(value: &str) -> bool {
+    Path::new(value)
+        .extension()
+        .and_then(|extension| extension.to_str())
+        .is_some_and(|extension| extension.eq_ignore_ascii_case("lnk"))
+}
+
+fn normalize_windows_path(value: &str) -> String {
+    let trimmed = value.trim().trim_matches('"');
+    let normalized = trimmed.replace('/', "\\");
+    let normalized = normalized.trim_end_matches('\\');
+    normalize(normalized)
+}
+
+#[cfg(windows)]
+fn resolve_shell_link_target(path: &str) -> Option<(String, String)> {
+    use windows::core::PCWSTR;
+    use windows::Win32::System::Com::{
+        CoCreateInstance, CoInitializeEx, CoUninitialize, IPersistFile, CLSCTX_INPROC_SERVER,
+        COINIT_APARTMENTTHREADED, STGM_READ,
+    };
+    use windows::Win32::UI::Shell::{IShellLinkW, CLSID_ShellLink, SLGP_RAWPATH};
+
+    let initialized = unsafe { CoInitializeEx(None, COINIT_APARTMENTTHREADED).is_ok() };
+    let result = (|| unsafe {
+        let link: IShellLinkW = CoCreateInstance(&CLSID_ShellLink, None, CLSCTX_INPROC_SERVER).ok()?;
+        let persist: IPersistFile = link.cast().ok()?;
+        let wide_path = path.encode_utf16().chain(std::iter::once(0)).collect::<Vec<_>>();
+        persist.Load(PCWSTR(wide_path.as_ptr()), STGM_READ).ok()?;
+        let mut target = [0_u16; 32_768];
+        link.GetPath(&mut target, std::ptr::null_mut(), SLGP_RAWPATH)
+            .ok()?;
+        let mut arguments = [0_u16; 32_768];
+        link.GetArguments(&mut arguments).ok()?;
+        let target_end = target.iter().position(|value| *value == 0).unwrap_or(target.len());
+        let arguments_end = arguments
+            .iter()
+            .position(|value| *value == 0)
+            .unwrap_or(arguments.len());
+        let resolved = String::from_utf16_lossy(&target[..target_end]);
+        let arguments = String::from_utf16_lossy(&arguments[..arguments_end]);
+        (!resolved.trim().is_empty()).then_some((resolved, arguments))
+    })();
+    if initialized {
+        unsafe { CoUninitialize() };
+    }
+    result
+}
+
+#[cfg(not(windows))]
+fn resolve_shell_link_target(_path: &str) -> Option<(String, String)> {
+    None
 }
 
 fn extract_executable_target(value: &str) -> Option<String> {
@@ -235,8 +358,10 @@ fn application_result(path: PathBuf, source: &str) -> Option<SearchResult> {
         return None;
     }
     let target = path.to_string_lossy().into_owned();
+    let id = canonical_application_id(&target)
+        .unwrap_or_else(|| format!("application:source:{}", normalize(&target)));
     Some(SearchResult {
-        id: format!("application:{}", normalize(&target)),
+        id,
         title,
         subtitle: format!("Application • {source}"),
         kind: ResultKind::Application,
@@ -289,11 +414,8 @@ fn collect_app_paths(by_title: &mut HashMap<String, SearchResult>) {
             if let Some((title, target)) = read_app_path(app_paths, &key_name) {
                 let key = normalize(&title);
                 by_title.entry(key).or_insert_with(|| SearchResult {
-                    id: format!(
-                        "application:app-paths:{}:{}",
-                        normalize(&title),
-                        normalize(&target)
-                    ),
+                    id: canonical_application_id(&target)
+                        .unwrap_or_else(|| format!("application:source:{}", normalize(&target))),
                     title,
                     subtitle: String::from("Application • App Paths"),
                     kind: ResultKind::Application,
@@ -386,10 +508,18 @@ fn _keep_os_string_type_available(_: OsString) {}
 #[cfg(test)]
 mod tests {
     use super::{
-        expand_percent_variables, extract_executable_target, is_executable_target,
-        ApplicationCatalog,
+        canonical_application_id, canonical_target_key, expand_percent_variables,
+        extract_executable_target, is_executable_target, ApplicationCatalog,
     };
     use flux_core::{ResultKind, ResultSource, SearchResult};
+
+    #[test]
+    fn canonical_application_identity_normalizes_windows_target_paths() {
+        let first = canonical_application_id(r"C:\Program Files\Google\Chrome\chrome.exe");
+        let second = canonical_target_key(r"c:/Program Files/Google/Chrome/chrome.exe");
+        assert_eq!(first.as_deref(), Some("application:target:c:\\program files\\google\\chrome\\chrome.exe"));
+        assert_eq!(second.as_deref(), Some("c:\\program files\\google\\chrome\\chrome.exe"));
+    }
 
     #[test]
     fn app_path_parser_extracts_executable_before_arguments() {

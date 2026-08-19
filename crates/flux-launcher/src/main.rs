@@ -16,7 +16,9 @@ use std::rc::Rc;
 use std::sync::{Arc, Mutex, OnceLock, RwLock};
 use std::time::Duration;
 
-use applications::{ApplicationResponse, ApplicationWorker};
+use applications::{
+    canonical_application_id, canonical_application_key, ApplicationResponse, ApplicationWorker,
+};
 use everything::{EverythingResponse, EverythingWorker, InstallationState};
 use flux_core::{
     history_results, rank_results_with_priorities, should_suppress_activation, HotkeyConfig,
@@ -114,7 +116,7 @@ impl ProviderResults {
 
     fn merged(&self, query: &str, priorities: &[String]) -> Vec<SearchResult> {
         let mut seen = HashSet::new();
-        let mut merged = self
+        let collected = self
             .built_in
             .iter()
             .chain(&self.applications)
@@ -123,10 +125,44 @@ impl ProviderResults {
             .filter(|result| seen.insert(result.id.clone()))
             .cloned()
             .collect::<Vec<_>>();
+        let mut merged = merge_application_duplicates(collected);
         rank_results_with_priorities(query, &mut merged, priorities);
         preserve_everything_file_order(&mut merged, &self.everything);
         merged.truncate(MAX_VISIBLE_RESULTS);
         merged
+    }
+}
+
+fn merge_application_duplicates(results: Vec<SearchResult>) -> Vec<SearchResult> {
+    let mut positions = HashMap::<String, usize>::new();
+    let mut merged = Vec::with_capacity(results.len());
+
+    for result in results {
+        let Some(identity) = canonical_application_key(&result) else {
+            merged.push(result);
+            continue;
+        };
+        let Some(existing_index) = positions.get(&identity).copied() else {
+            positions.insert(identity, merged.len());
+            merged.push(result);
+            continue;
+        };
+
+        if application_source_rank(&result) < application_source_rank(&merged[existing_index]) {
+            merged[existing_index] = result;
+        }
+    }
+    merged
+}
+
+fn application_source_rank(result: &SearchResult) -> u8 {
+    let subtitle = result.subtitle.to_ascii_lowercase();
+    match result.source {
+        ResultSource::ApplicationCatalog if subtitle.contains("start menu") => 0,
+        ResultSource::ApplicationCatalog => 1,
+        ResultSource::Everything => 2,
+        ResultSource::Plugin => 3,
+        ResultSource::BuiltIn => 4,
     }
 }
 
@@ -174,7 +210,13 @@ fn refresh_merged_results(
     let priority_ids = priorities
         .get()
         .into_iter()
-        .map(|entry| entry.id)
+        .flat_map(|entry| {
+            let mut ids = vec![entry.id];
+            if let Some(canonical_id) = canonical_application_id(&entry.target) {
+                ids.push(canonical_id);
+            }
+            ids
+        })
         .collect::<Vec<_>>();
     let merged = providers.borrow().merged(&query.get(), &priority_ids);
     results.set(merged);
@@ -2865,8 +2907,9 @@ fn main() {
 #[cfg(test)]
 mod tests {
     use super::{
-        is_run_as_admin_key, launcher_window_geometry, preserve_everything_file_order,
-        quoted_result_path, COMPACT_WINDOW_HEIGHT, EXPANDED_WINDOW_HEIGHT, WINDOW_WIDTH,
+        is_run_as_admin_key, launcher_window_geometry, merge_application_duplicates,
+        preserve_everything_file_order, quoted_result_path, COMPACT_WINDOW_HEIGHT,
+        EXPANDED_WINDOW_HEIGHT, WINDOW_WIDTH,
     };
     use flux_core::{ResultKind, ResultSource, SearchResult};
     use windui::event::{Key, KeyEvent};
@@ -2901,6 +2944,36 @@ mod tests {
         assert_eq!(merged[0].id, application.id);
         assert_eq!(merged[1].id, newest_id);
         assert_eq!(merged[2].id, older_id);
+    }
+
+    #[test]
+    fn application_duplicates_merge_by_canonical_target_and_prefer_start_menu() {
+        let app_paths = SearchResult {
+            id: String::from("application:app-paths:chrome"),
+            title: String::from("chrome"),
+            subtitle: String::from("Application • App Paths"),
+            kind: ResultKind::Application,
+            source: ResultSource::ApplicationCatalog,
+            target: Some(String::from(r"C:\Program Files\Google\Chrome\Application\chrome.exe")),
+        };
+        let start_menu = SearchResult {
+            id: String::from("application:start-menu:google-chrome"),
+            title: String::from("Google Chrome"),
+            subtitle: String::from("Application • Start Menu"),
+            kind: ResultKind::Application,
+            source: ResultSource::ApplicationCatalog,
+            target: Some(String::from(r"C:/Program Files/Google/Chrome/Application/chrome.exe")),
+        };
+        let everything = SearchResult::file(
+            String::from(r"C:\Program Files\Google\Chrome\Application\chrome.exe"),
+            String::from("chrome.exe"),
+            String::from(r"C:\Program Files\Google\Chrome\Application"),
+        );
+        let merged = merge_application_duplicates(vec![app_paths, everything, start_menu]);
+
+        assert_eq!(merged.len(), 1);
+        assert_eq!(merged[0].title, "Google Chrome");
+        assert!(merged[0].subtitle.contains("Start Menu"));
     }
 
     #[test]
