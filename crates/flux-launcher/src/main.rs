@@ -52,6 +52,8 @@ const EVERYTHING_MIN_QUERY_LEN: usize = 1;
 const PLUGIN_MIN_QUERY_LEN: usize = 2;
 const MAX_VISIBLE_RESULTS: usize = 16;
 
+static GOOGLE_ICON_RGBA: OnceLock<Option<Vec<u8>>> = OnceLock::new();
+
 fn is_run_as_admin_key(event: &KeyEvent) -> bool {
     event.ctrl
         && matches!(
@@ -560,6 +562,40 @@ fn execute_result_action(result: &SearchResult, action: &ActionKind) -> bool {
             true
         }
     }
+}
+
+fn google_icon_rgba() -> Option<Vec<u8>> {
+    GOOGLE_ICON_RGBA
+        .get_or_init(|| {
+            const ICON_SIZE: usize = 32;
+            let decoder =
+                png::Decoder::new(std::io::Cursor::new(include_bytes!("../assets/google.png")));
+            let Ok(mut reader) = decoder.read_info() else {
+                return None;
+            };
+            let mut source = vec![0; reader.output_buffer_size()];
+            let Ok(info) = reader.next_frame(&mut source) else {
+                return None;
+            };
+            if info.color_type != png::ColorType::Rgba || info.bit_depth != png::BitDepth::Eight {
+                return None;
+            }
+
+            let source = &source[..info.buffer_size()];
+            let mut icon = vec![0_u8; ICON_SIZE * ICON_SIZE * 4];
+            for y in 0..ICON_SIZE {
+                let source_y = y * info.height as usize / ICON_SIZE;
+                for x in 0..ICON_SIZE {
+                    let source_x = x * info.width as usize / ICON_SIZE;
+                    let source_index = (source_y * info.width as usize + source_x) * 4;
+                    let target_index = (y * ICON_SIZE + x) * 4;
+                    icon[target_index..target_index + 4]
+                        .copy_from_slice(&source[source_index..source_index + 4]);
+                }
+            }
+            Some(icon)
+        })
+        .clone()
 }
 
 fn tray_icon() -> Vec<u8> {
@@ -1183,7 +1219,11 @@ fn result_row(
         _ if subtitle.contains("Application") => (String::from("◉"), LAUNCHER_FONT_FAMILY),
         _ => (String::from("▣"), LAUNCHER_FONT_FAMILY),
     };
-    let icon = target.as_deref().and_then(shell_icon_rgba);
+    let icon = if id == "builtin:google-search" {
+        google_icon_rgba()
+    } else {
+        target.as_deref().and_then(shell_icon_rgba)
+    };
     let icon_element = if let Some(icon) = icon.as_deref() {
         Element::image_rgba(32, 32, icon)
             .width(32)
@@ -3211,13 +3251,20 @@ fn main() {
 #[cfg(test)]
 mod tests {
     use super::{
-        actions_for_result, history_cursor_step, hover_position_changed, is_run_as_admin_key,
-        launcher_window_geometry, merge_application_duplicates, normalize_everything_query,
-        preserve_everything_file_order, quoted_result_path, COMPACT_WINDOW_HEIGHT,
-        EXPANDED_WINDOW_HEIGHT, WINDOW_WIDTH,
+        actions_for_result, google_icon_rgba, history_cursor_step, hover_position_changed,
+        is_run_as_admin_key, launcher_window_geometry, merge_application_duplicates,
+        normalize_everything_query, preserve_everything_file_order, quoted_result_path,
+        COMPACT_WINDOW_HEIGHT, EXPANDED_WINDOW_HEIGHT, WINDOW_WIDTH,
     };
     use flux_core::{ResultKind, ResultSource, SearchResult};
     use windui::event::{Key, KeyEvent};
+
+    #[test]
+    fn bundled_google_icon_decodes_to_32_pixel_rgba_bitmap() {
+        let icon = google_icon_rgba().expect("bundled Google icon should decode");
+        assert_eq!(icon.len(), 32 * 32 * 4);
+        assert!(icon.chunks_exact(4).any(|pixel| pixel[3] > 0));
+    }
 
     #[test]
     fn everything_file_order_is_preserved_after_app_first_ranking() {

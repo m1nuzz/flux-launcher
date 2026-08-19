@@ -123,7 +123,7 @@ A community plugin package contains only plugin-owned files, for example:
 
 The shared worker is isolated from the launcher UI. If a native DLL crashes or the worker exits, Flux discards native results and retries on a later query while the launcher remains usable. Because several native DLLs share one worker, a host crash can affect all native community plugins; legacy Flow executable plugins remain available when stronger per-plugin process isolation or non-Rust runtimes are required.
 
-Google Search is built directly into `flux-launcher.exe`; no second executable or plugin folder is required. Its default keyword is `g`, so `g space exploration` returns a result that opens `https://www.google.com/search?q=space%20exploration` in the default browser. Settings > Plugins can disable the built-in provider or change the keyword. The implementation does not embed a browser engine or perform background autocomplete requests; it keeps the launcher native, private by default, and fast.
+Google Search is built directly into `flux-launcher.exe`; no second executable or plugin folder is required. Its default keyword is `g`, so `g space exploration` returns a result that opens `https://www.google.com/search?q=space%20exploration` in the default browser. Settings > Plugins can disable the built-in provider or change the keyword. The result uses the bundled `crates/flux-launcher/assets/google.png` icon following Flow Launcher WebSearch's `Images\\google.png` convention [6]. The implementation does not embed a browser engine or perform background autocomplete requests; it keeps the launcher native, private by default, and fast.
 
 ## Architecture
 
@@ -139,7 +139,7 @@ The workspace separates portable behavior from Windows integration:
 | `vendor/windui` | Pinned local windui fork containing the Mica/DirectComposition seam, runtime window sizing, and Smooth Caret support |
 | `scripts/capture-mica.ps1` | Proactive Windows screenshot, input, plugin, Settings, memory, pointer, and optional forced-fallback smoke harness |
 | `scripts/monitor-preference-smoke.ps1` | Windows smoke for Primary, Cursor, and Foreground monitor placement modes |
-| `assets/logotype.jpg` / `assets/ico.png` | Repository branding artwork and transparent tray icon asset |
+| `assets/logotype.jpg` / `assets/ico.png` / `crates/flux-launcher/assets/google.png` | Repository branding, transparent tray icon, and bundled Google provider icon |
 
 The UI keeps result state bounded and uses background workers only for external providers. The compact empty state also reduces the rendered surface and memory pressure while the launcher is idle. Built-in Google and Obsidian providers run in-process; native community plugins use one self-spawned worker only when plugin packages are installed.
 
@@ -170,3 +170,4 @@ Flux Launcher is distributed under the MIT License. See [LICENSE](LICENSE).
 [3]: https://www.flowlauncher.com/docs/ "Flow Launcher documentation"
 [4]: https://learn.microsoft.com/en-us/windows/apps/windows-app-sdk/system-backdrop-controller "Windows system backdrop documentation"
 [5]: https://learn.microsoft.com/en-us/windows/win32/directcomp/directcomposition-portal "DirectComposition documentation"
+[6]: https://github.com/Flow-Launcher/Flow.Launcher/tree/dev/Plugins/Flow.Launcher.Plugin.WebSearch "Flow Launcher WebSearch plugin and Google icon asset"
