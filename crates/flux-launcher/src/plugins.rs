@@ -10,9 +10,11 @@ use std::sync::{
 use std::thread;
 use std::time::{Duration, Instant};
 
+use crate::builtin::{query_builtin_providers, BuiltinAction, BuiltinQuery};
 use flux_core::{
     query_request_line_with_keyword, FlowAction, FlowPluginManifest, FlowResponse, SearchResult,
 };
+use windui::core::ClipboardProvider;
 use windui::prelude::Sender;
 
 const MAX_RESULTS: usize = 16;
@@ -31,6 +33,8 @@ pub struct PluginInvocation {
 pub enum PluginAction {
     Flow(PluginInvocation),
     OpenUrl(String),
+    OpenPath(String),
+    CopyText(String),
 }
 
 #[derive(Clone, Debug)]
@@ -58,6 +62,17 @@ struct PluginDescriptor {
     manifest: FlowPluginManifest,
     directory: PathBuf,
     executable: PathBuf,
+}
+
+pub fn native_plugin_install_path() -> String {
+    if let Some(app_data) = std::env::var_os("APPDATA") {
+        return PathBuf::from(app_data)
+            .join("FluxLauncher")
+            .join("NativePlugins")
+            .display()
+            .to_string();
+    }
+    String::from("%APPDATA%\\FluxLauncher\\NativePlugins")
 }
 
 pub struct FlowPluginWorker {
@@ -144,6 +159,12 @@ pub fn execute_async(action: PluginAction) {
             PluginAction::OpenUrl(url) => {
                 let _ = crate::launch::open_url(&url);
             }
+            PluginAction::OpenPath(path) => {
+                let _ = crate::launch::open_path(&path);
+            }
+            PluginAction::CopyText(text) => {
+                windui::platform::Clipboard.set_text(&text);
+            }
         })
         .expect("failed to create Flow plugin action thread");
 }
@@ -151,7 +172,7 @@ pub fn execute_async(action: PluginAction) {
 fn query_plugins(plugins: &[PluginDescriptor], request: PluginRequest) -> PluginQueryResponse {
     let candidates = plugins
         .iter()
-        .filter(|plugin| !is_google_plugin(plugin))
+        .filter(|plugin| !is_builtin_plugin(plugin))
         .filter_map(|plugin| {
             action_keyword_for_plugin(plugin, &request).map(|keyword| (plugin, keyword))
         })
@@ -159,7 +180,7 @@ fn query_plugins(plugins: &[PluginDescriptor], request: PluginRequest) -> Plugin
 
     let mut results = Vec::with_capacity(MAX_RESULTS);
     let mut actions = HashMap::new();
-    append_builtin_google_result(&request, &mut results, &mut actions);
+    append_builtin_results(&request, &mut results, &mut actions);
     if candidates.is_empty() && results.is_empty() {
         return PluginQueryResponse {
             sequence: request.sequence,
@@ -175,21 +196,9 @@ fn query_plugins(plugins: &[PluginDescriptor], request: PluginRequest) -> Plugin
         if results.len() >= MAX_RESULTS {
             break;
         }
-        let search = if is_obsidian_plugin(plugin) {
-            request
-                .query
-                .strip_prefix(&action_keyword)
-                .map(|rest| {
-                    rest.trim_start_matches(|character: char| {
-                        character == ':' || character.is_whitespace()
-                    })
-                })
-                .unwrap_or(request.query.trim())
-        } else {
-            plugin
-                .manifest
-                .search_for_action_keyword(&request.query, &action_keyword)
-        };
+        let search = plugin
+            .manifest
+            .search_for_action_keyword(&request.query, &action_keyword);
         let request_line =
             match query_request_line_with_keyword(1, &request.query, search, &action_keyword) {
                 Ok(request_line) => request_line,
@@ -229,105 +238,49 @@ fn query_plugins(plugins: &[PluginDescriptor], request: PluginRequest) -> Plugin
     }
 }
 
-fn append_builtin_google_result(
+fn append_builtin_results(
     request: &PluginRequest,
     results: &mut Vec<SearchResult>,
     actions: &mut HashMap<String, PluginAction>,
 ) {
-    if !request.google_enabled || results.len() >= MAX_RESULTS {
-        return;
-    }
-    let keyword = request.google_keyword.trim();
-    let keyword = if keyword.is_empty() { "g" } else { keyword };
-    let Some(search) = search_for_keyword(&request.query, keyword) else {
-        return;
+    let builtin_request = BuiltinQuery {
+        query: request.query.clone(),
+        google_enabled: request.google_enabled,
+        google_keyword: request.google_keyword.clone(),
+        obsidian_enabled: request.obsidian_enabled,
+        obsidian_keyword: request.obsidian_keyword.clone(),
     };
-    if search.is_empty() {
-        return;
-    }
-    let url = format!(
-        "https://www.google.com/search?q={}",
-        encode_uri_component(search)
-    );
-    let id = String::from("builtin:google-search");
-    results.push(SearchResult {
-        id: id.clone(),
-        title: format!("Search Google: {search}"),
-        subtitle: String::from("Open the Google search in the default browser"),
-        kind: flux_core::ResultKind::Placeholder,
-        source: flux_core::ResultSource::Plugin,
-        target: None,
-    });
-    actions.insert(id, PluginAction::OpenUrl(url));
-}
-
-fn search_for_keyword<'a>(query: &'a str, keyword: &str) -> Option<&'a str> {
-    if !has_keyword_boundary(query, keyword) {
-        return None;
-    }
-    Some(
-        query
-            .strip_prefix(keyword)
-            .unwrap_or_default()
-            .trim_start_matches(|character: char| character == ':' || character.is_whitespace())
-            .trim(),
-    )
-}
-
-fn encode_uri_component(value: &str) -> String {
-    let mut encoded = String::new();
-    for byte in value.as_bytes() {
-        if byte.is_ascii_alphanumeric() || matches!(*byte, b'-' | b'_' | b'.' | b'~') {
-            encoded.push(*byte as char);
-        } else {
-            encoded.push_str(&format!("%{byte:02X}"));
+    for builtin in query_builtin_providers(&builtin_request) {
+        if results.len() >= MAX_RESULTS {
+            break;
         }
+        let id = builtin.result.id.clone();
+        if let Some(action) = builtin.action {
+            let action = match action {
+                BuiltinAction::OpenUrl(url) => PluginAction::OpenUrl(url),
+            };
+            actions.insert(id, action);
+        }
+        results.push(builtin.result);
     }
-    encoded
 }
 
 fn action_keyword_for_plugin(plugin: &PluginDescriptor, request: &PluginRequest) -> Option<String> {
-    if is_obsidian_plugin(plugin) {
-        if !request.obsidian_enabled {
-            return None;
-        }
-        let keyword = request.obsidian_keyword.trim();
-        let keyword = if keyword.is_empty() { "ob" } else { keyword };
-        return has_keyword_boundary(&request.query, keyword).then(|| keyword.to_owned());
-    }
-    if is_google_plugin(plugin) {
-        if !request.google_enabled {
-            return None;
-        }
-        let keyword = request.google_keyword.trim();
-        let keyword = if keyword.is_empty() { "g" } else { keyword };
-        return has_keyword_boundary(&request.query, keyword).then(|| keyword.to_owned());
-    }
     plugin
         .manifest
         .matching_action_keyword(&request.query)
         .map(str::to_owned)
 }
 
-fn is_obsidian_plugin(plugin: &PluginDescriptor) -> bool {
+fn is_builtin_plugin(plugin: &PluginDescriptor) -> bool {
     plugin
         .manifest
         .id
         .eq_ignore_ascii_case("flux.obsidian.builtin")
-}
-
-fn is_google_plugin(plugin: &PluginDescriptor) -> bool {
-    plugin
-        .manifest
-        .id
-        .eq_ignore_ascii_case("flux.google.builtin")
-}
-
-fn has_keyword_boundary(query: &str, keyword: &str) -> bool {
-    query == keyword
-        || query.strip_prefix(keyword).is_some_and(|rest| {
-            rest.starts_with(':') || rest.chars().next().is_some_and(char::is_whitespace)
-        })
+        || plugin
+            .manifest
+            .id
+            .eq_ignore_ascii_case("flux.google.builtin")
 }
 
 fn append_plugin_results(
@@ -485,55 +438,276 @@ fn terminate_process(child: &mut Child) {
     let _ = child.wait();
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
+#[derive(Clone, Debug)]
+pub struct NativePluginQueryResponse {
+    pub sequence: u64,
+    pub query: String,
+    pub results: Vec<SearchResult>,
+    pub status: String,
+    pub available: bool,
+    pub actions: HashMap<String, PluginAction>,
+}
 
-    #[test]
-    fn google_keyword_requires_a_token_boundary() {
-        assert!(has_keyword_boundary("g space exploration", "g"));
-        assert!(has_keyword_boundary("g:space exploration", "g"));
-        assert!(has_keyword_boundary("g", "g"));
-        assert!(!has_keyword_boundary("gaming", "g"));
-        assert!(!has_keyword_boundary("", "g"));
+#[derive(Clone, Debug)]
+struct NativePluginRequest {
+    sequence: u64,
+    query: String,
+}
+
+pub struct NativePluginWorker {
+    latest: Arc<Mutex<Option<NativePluginRequest>>>,
+    wake: SyncSender<()>,
+}
+
+impl NativePluginWorker {
+    pub fn spawn(output: Sender<NativePluginQueryResponse>) -> Self {
+        let latest = Arc::new(Mutex::new(None::<NativePluginRequest>));
+        let latest_for_worker = Arc::clone(&latest);
+        let (wake, receiver) = mpsc::sync_channel::<()>(1);
+
+        thread::Builder::new()
+            .name(String::from("flux-native-plugins"))
+            .spawn(move || {
+                let mut host = None::<NativePluginHost>;
+                while receiver.recv().is_ok() {
+                    let Some(request) = latest_for_worker
+                        .lock()
+                        .ok()
+                        .and_then(|mut slot| slot.take())
+                    else {
+                        continue;
+                    };
+                    if host.is_none() {
+                        host = NativePluginHost::start().ok();
+                    }
+                    let query_result = host
+                        .as_mut()
+                        .map(|active_host| active_host.query(request.sequence, &request.query));
+                    let response = match query_result {
+                        Some(Ok(response)) => response,
+                        Some(Err(error)) => {
+                            if let Some(active_host) = host.as_mut() {
+                                active_host.stop();
+                            }
+                            host = None;
+                            NativePluginQueryResponse {
+                                sequence: request.sequence,
+                                query: request.query,
+                                results: Vec::new(),
+                                status: format!("Native plugin host unavailable: {error}"),
+                                available: false,
+                                actions: HashMap::new(),
+                            }
+                        }
+                        None => NativePluginQueryResponse {
+                            sequence: request.sequence,
+                            query: request.query,
+                            results: Vec::new(),
+                            status: String::from("No native Rust plugin host installed"),
+                            available: false,
+                            actions: HashMap::new(),
+                        },
+                    };
+                    let _ = output.send(response);
+                }
+            })
+            .expect("failed to create native plugin worker thread");
+
+        Self { latest, wake }
     }
 
-    #[test]
-    fn built_in_google_provider_creates_a_browser_action() {
-        let request = PluginRequest {
-            sequence: 7,
-            query: String::from("g space exploration"),
-            obsidian_enabled: true,
-            obsidian_keyword: String::from("ob"),
-            google_enabled: true,
-            google_keyword: String::from("g"),
-        };
-        let mut results = Vec::new();
-        let mut actions = HashMap::new();
-        append_builtin_google_result(&request, &mut results, &mut actions);
-        assert_eq!(results.len(), 1);
-        assert_eq!(results[0].id, "builtin:google-search");
-        assert_eq!(results[0].title, "Search Google: space exploration");
-        assert!(matches!(
-            actions.get("builtin:google-search"),
-            Some(PluginAction::OpenUrl(url)) if url == "https://www.google.com/search?q=space%20exploration"
-        ));
+    pub fn request(&self, sequence: u64, query: String) {
+        if let Ok(mut latest) = self.latest.lock() {
+            *latest = Some(NativePluginRequest { sequence, query });
+            let _ = self.wake.try_send(());
+        }
+    }
+}
+
+struct NativePluginHost {
+    child: Child,
+    stdin: std::process::ChildStdin,
+    responses: mpsc::Receiver<Result<String, String>>,
+}
+
+impl NativePluginHost {
+    fn start() -> Result<Self, String> {
+        let executable = native_plugin_host_executable();
+        let root = native_plugin_root();
+        if !native_plugin_root_has_plugins(&root) {
+            return Err(String::from("native plugin directory is empty"));
+        }
+        let mut child = Command::new(&executable)
+            .arg("--plugin-host")
+            .arg(root)
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::null())
+            .spawn()
+            .map_err(|error| format!("{}: {error}", executable.display()))?;
+        let stdin = child
+            .stdin
+            .take()
+            .ok_or_else(|| String::from("native plugin host stdin unavailable"))?;
+        let stdout = child
+            .stdout
+            .take()
+            .ok_or_else(|| String::from("native plugin host stdout unavailable"))?;
+        let (sender, responses) = mpsc::channel();
+        thread::Builder::new()
+            .name(String::from("flux-native-plugin-reader"))
+            .spawn(move || {
+                let mut reader = BufReader::new(stdout);
+                loop {
+                    let mut line = String::new();
+                    match reader.read_line(&mut line) {
+                        Ok(0) => break,
+                        Ok(_) => {
+                            if sender.send(Ok(line.trim().to_owned())).is_err() {
+                                break;
+                            }
+                        }
+                        Err(error) => {
+                            let _ = sender.send(Err(error.to_string()));
+                            break;
+                        }
+                    }
+                }
+            })
+            .map_err(|error| format!("native plugin reader thread: {error}"))?;
+        Ok(Self {
+            child,
+            stdin,
+            responses,
+        })
     }
 
-    #[test]
-    fn built_in_google_provider_skips_alias_without_query() {
-        let request = PluginRequest {
-            sequence: 8,
-            query: String::from("g"),
-            obsidian_enabled: true,
-            obsidian_keyword: String::from("ob"),
-            google_enabled: true,
-            google_keyword: String::from("g"),
-        };
-        let mut results = Vec::new();
-        let mut actions = HashMap::new();
-        append_builtin_google_result(&request, &mut results, &mut actions);
-        assert!(results.is_empty());
-        assert!(actions.is_empty());
+    fn query(&mut self, sequence: u64, query: &str) -> Result<NativePluginQueryResponse, String> {
+        let request = serde_json::json!({
+            "jsonrpc": "2.0",
+            "id": sequence,
+            "method": "query",
+            "params": {
+                "query": query,
+                "action_keyword": "",
+                "locale": "en-US"
+            }
+        });
+        let line = serde_json::to_string(&request).map_err(|error| error.to_string())?;
+        self.stdin
+            .write_all(line.as_bytes())
+            .and_then(|_| self.stdin.write_all(b"\n"))
+            .and_then(|_| self.stdin.flush())
+            .map_err(|error| error.to_string())?;
+        let response = self
+            .responses
+            .recv_timeout(QUERY_TIMEOUT)
+            .map_err(|_| String::from("native plugin host query timed out"))??;
+        parse_native_response(sequence, query, &response)
     }
+
+    fn stop(&mut self) {
+        let _ = self.child.kill();
+        let _ = self.child.wait();
+    }
+}
+
+impl Drop for NativePluginHost {
+    fn drop(&mut self) {
+        self.stop();
+    }
+}
+
+fn native_plugin_root() -> PathBuf {
+    if let Some(root) = std::env::var_os("FLUX_NATIVE_PLUGIN_DIR") {
+        return PathBuf::from(root);
+    }
+    std::env::var_os("APPDATA")
+        .map(PathBuf::from)
+        .map(|path| path.join("FluxLauncher").join("NativePlugins"))
+        .unwrap_or_else(|| PathBuf::from("NativePlugins"))
+}
+
+fn native_plugin_root_has_plugins(root: &Path) -> bool {
+    fs::read_dir(root)
+        .ok()
+        .into_iter()
+        .flat_map(|entries| entries.flatten())
+        .any(|entry| entry.path().join("plugin.toml").is_file())
+}
+
+fn native_plugin_host_executable() -> PathBuf {
+    std::env::current_exe().unwrap_or_else(|_| {
+        PathBuf::from(if cfg!(windows) {
+            "flux-launcher.exe"
+        } else {
+            "flux-launcher"
+        })
+    })
+}
+
+#[derive(Debug, serde::Deserialize)]
+struct NativeHostResponse {
+    result: Option<NativeHostPayload>,
+    error: Option<NativeHostError>,
+}
+
+#[derive(Debug, serde::Deserialize)]
+struct NativeHostPayload {
+    results: Vec<flux_plugin_sdk::PluginResult>,
+    errors: Vec<String>,
+}
+
+#[derive(Debug, serde::Deserialize)]
+struct NativeHostError {
+    message: String,
+}
+
+fn parse_native_response(
+    sequence: u64,
+    query: &str,
+    line: &str,
+) -> Result<NativePluginQueryResponse, String> {
+    let response: NativeHostResponse = serde_json::from_str(line)
+        .map_err(|error| format!("invalid native host response: {error}"))?;
+    if let Some(error) = response.error {
+        return Err(error.message);
+    }
+    let payload = response
+        .result
+        .ok_or_else(|| String::from("native host response has no result"))?;
+    let mut actions = HashMap::new();
+    let mut results = Vec::with_capacity(payload.results.len());
+    for item in payload.results {
+        let id = format!("native:{sequence}:{}", item.id);
+        let action = item.action.map(|action| match action {
+            flux_plugin_sdk::PluginAction::OpenUrl { url } => PluginAction::OpenUrl(url),
+            flux_plugin_sdk::PluginAction::OpenPath { path } => PluginAction::OpenPath(path),
+            flux_plugin_sdk::PluginAction::CopyText { text } => PluginAction::CopyText(text),
+        });
+        if let Some(action) = action {
+            actions.insert(id.clone(), action);
+        }
+        results.push(SearchResult {
+            id,
+            title: item.title,
+            subtitle: item.subtitle,
+            kind: flux_core::ResultKind::Placeholder,
+            source: flux_core::ResultSource::Plugin,
+            target: None,
+        });
+    }
+    let status = if payload.errors.is_empty() {
+        format!("{} native plugin result(s)", results.len())
+    } else {
+        payload.errors.join("; ")
+    };
+    Ok(NativePluginQueryResponse {
+        sequence,
+        query: query.to_owned(),
+        results,
+        status,
+        available: true,
+        actions,
+    })
 }

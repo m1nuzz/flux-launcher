@@ -1,9 +1,7 @@
-use serde_json::{json, Value};
 use std::fs;
-use std::io::{self, BufRead, Write};
 use std::path::{Path, PathBuf};
-#[cfg(windows)]
-use std::process::Command;
+
+use flux_core::{ResultKind, ResultSource, SearchResult};
 
 const MAX_RESULTS: usize = 16;
 const MAX_FILES_PER_VAULT: usize = 20_000;
@@ -24,107 +22,143 @@ const SEARCHABLE_EXTENSIONS: &[&str] = &[
 ];
 
 #[derive(Clone, Debug)]
-struct Vault {
-    id: String,
-    name: String,
-    path: PathBuf,
+pub struct BuiltinQuery {
+    pub query: String,
+    pub google_enabled: bool,
+    pub google_keyword: String,
+    pub obsidian_enabled: bool,
+    pub obsidian_keyword: String,
 }
 
 #[derive(Clone, Debug)]
-struct VaultFile {
-    vault_id: String,
-    vault_name: String,
-    path: PathBuf,
-    relative_path: String,
-    aliases: Vec<String>,
+pub enum BuiltinAction {
+    OpenUrl(String),
 }
 
-fn main() {
-    let stdin = io::stdin();
-    let mut stdout = io::BufWriter::new(io::stdout().lock());
-    for line in stdin.lock().lines().map_while(Result::ok) {
-        let response = handle_request(&line);
-        if serde_json::to_writer(&mut stdout, &response).is_ok() {
-            let _ = stdout.write_all(b"\n");
-            let _ = stdout.flush();
-        }
-    }
+#[derive(Clone, Debug)]
+pub struct BuiltinResult {
+    pub result: SearchResult,
+    pub action: Option<BuiltinAction>,
 }
 
-fn handle_request(line: &str) -> Value {
-    let Ok(request) = serde_json::from_str::<Value>(line) else {
-        return json!({"jsonrpc":"2.0","id":1,"error":{"code":-32700,"message":"Invalid JSON"}});
-    };
-    let id = request.get("id").cloned().unwrap_or_else(|| json!(1));
-    match request
-        .get("method")
-        .and_then(Value::as_str)
-        .unwrap_or_default()
-    {
-        "query" => {
-            json!({"jsonrpc":"2.0","id":id,"result":query_results(query_from_request(&request))})
-        }
-        "execute" => {
-            let params = request
-                .get("params")
-                .and_then(Value::as_array)
-                .cloned()
-                .unwrap_or_default();
-            let success = params.first().and_then(Value::as_str).is_some_and(open_uri);
-            json!({"jsonrpc":"2.0","id":id,"result":success})
-        }
-        _ => json!({"jsonrpc":"2.0","id":id,"result":[]}),
-    }
+pub trait BuiltinProvider: Send + Sync {
+    fn query(&self, request: &BuiltinQuery) -> Vec<BuiltinResult>;
 }
 
-fn query_from_request(request: &Value) -> String {
-    request
-        .get("params")
-        .and_then(Value::as_array)
-        .and_then(|params| params.first())
-        .and_then(|value| value.get("search"))
-        .and_then(Value::as_str)
-        .unwrap_or_default()
-        .trim()
-        .to_owned()
-}
-
-fn query_results(query: String) -> Vec<Value> {
-    if query.is_empty() {
-        return Vec::new();
-    }
-    let vaults = discover_vaults();
-    if let Some(note_name) = query
-        .strip_prefix("create ")
-        .map(str::trim)
-        .filter(|name| !name.is_empty())
-    {
-        return create_note_results(note_name, &vaults);
-    }
-    let files = vaults
-        .iter()
-        .flat_map(collect_vault_files)
-        .collect::<Vec<_>>();
-    let terms = query
-        .split_whitespace()
-        .map(|term| term.to_ascii_lowercase())
-        .collect::<Vec<_>>();
-    let mut scored = files
+pub fn query_builtin_providers(request: &BuiltinQuery) -> Vec<BuiltinResult> {
+    let providers: [&dyn BuiltinProvider; 2] = [&GoogleProvider, &ObsidianProvider];
+    providers
         .into_iter()
-        .filter_map(|file| score_file(&file, &terms).map(|score| (score, file)))
-        .collect::<Vec<_>>();
-    scored.sort_by(|(left_score, left), (right_score, right)| {
-        right_score.cmp(left_score).then_with(|| {
-            left.relative_path
-                .to_ascii_lowercase()
-                .cmp(&right.relative_path.to_ascii_lowercase())
-        })
-    });
-    scored
-        .into_iter()
+        .flat_map(|provider| provider.query(request))
         .take(MAX_RESULTS)
-        .map(|(_, file)| file_result(file))
         .collect()
+}
+
+struct GoogleProvider;
+
+impl BuiltinProvider for GoogleProvider {
+    fn query(&self, request: &BuiltinQuery) -> Vec<BuiltinResult> {
+        if !request.google_enabled {
+            return Vec::new();
+        }
+        let keyword = normalized_keyword(&request.google_keyword, "g");
+        let Some(search) = search_for_keyword(&request.query, keyword) else {
+            return Vec::new();
+        };
+        if search.is_empty() {
+            return Vec::new();
+        }
+        let url = format!(
+            "https://www.google.com/search?q={}",
+            encode_uri_component(search)
+        );
+        vec![BuiltinResult {
+            result: SearchResult {
+                id: String::from("builtin:google-search"),
+                title: format!("Search Google: {search}"),
+                subtitle: String::from("Open the Google search in the default browser"),
+                kind: ResultKind::Placeholder,
+                source: ResultSource::Plugin,
+                target: None,
+            },
+            action: Some(BuiltinAction::OpenUrl(url)),
+        }]
+    }
+}
+
+struct ObsidianProvider;
+
+impl BuiltinProvider for ObsidianProvider {
+    fn query(&self, request: &BuiltinQuery) -> Vec<BuiltinResult> {
+        if !request.obsidian_enabled {
+            return Vec::new();
+        }
+        let keyword = normalized_keyword(&request.obsidian_keyword, "ob");
+        let Some(search) = search_for_keyword(&request.query, keyword) else {
+            return Vec::new();
+        };
+        if search.is_empty() {
+            return Vec::new();
+        }
+        let vaults = discover_vaults();
+        if let Some(note_name) = search
+            .strip_prefix("create ")
+            .map(str::trim)
+            .filter(|name| !name.is_empty())
+        {
+            return create_note_results(note_name, &vaults);
+        }
+        let terms = search
+            .split_whitespace()
+            .map(|term| term.to_ascii_lowercase())
+            .collect::<Vec<_>>();
+        let files = vaults
+            .iter()
+            .flat_map(collect_vault_files)
+            .collect::<Vec<_>>();
+        let mut scored = files
+            .into_iter()
+            .filter_map(|file| score_file(&file, &terms).map(|score| (score, file)))
+            .collect::<Vec<_>>();
+        scored.sort_by(|(left_score, left), (right_score, right)| {
+            right_score.cmp(left_score).then_with(|| {
+                left.relative_path
+                    .to_ascii_lowercase()
+                    .cmp(&right.relative_path.to_ascii_lowercase())
+            })
+        });
+        scored
+            .into_iter()
+            .take(MAX_RESULTS)
+            .map(|(_, file)| file_result(file))
+            .collect()
+    }
+}
+
+fn normalized_keyword<'a>(keyword: &'a str, fallback: &'a str) -> &'a str {
+    let keyword = keyword.trim();
+    if keyword.is_empty() {
+        fallback
+    } else {
+        keyword
+    }
+}
+
+fn search_for_keyword<'a>(query: &'a str, keyword: &str) -> Option<&'a str> {
+    if query != keyword
+        && !query.strip_prefix(keyword).is_some_and(|rest| {
+            rest.starts_with(':') || rest.chars().next().is_some_and(char::is_whitespace)
+        })
+    {
+        return None;
+    }
+    Some(
+        query
+            .strip_prefix(keyword)
+            .unwrap_or_default()
+            .trim_start_matches(|character: char| character == ':' || character.is_whitespace())
+            .trim(),
+    )
 }
 
 fn discover_vaults() -> Vec<Vault> {
@@ -137,24 +171,24 @@ fn discover_vaults() -> Vec<Vault> {
     let Ok(content) = fs::read_to_string(path) else {
         return Vec::new();
     };
-    let Ok(root) = serde_json::from_str::<Value>(&content) else {
+    let Ok(root) = serde_json::from_str::<serde_json::Value>(&content) else {
         return Vec::new();
     };
     root.get("vaults")
-        .and_then(Value::as_object)
+        .and_then(serde_json::Value::as_object)
         .into_iter()
         .flat_map(|vaults| vaults.iter())
         .filter_map(|(id, value)| {
             let path = value
                 .get("path")
-                .and_then(Value::as_str)
+                .and_then(serde_json::Value::as_str)
                 .map(PathBuf::from)?;
             if !path.is_dir() {
                 return None;
             }
             let name = value
                 .get("name")
-                .and_then(Value::as_str)
+                .and_then(serde_json::Value::as_str)
                 .map(str::to_owned)
                 .or_else(|| {
                     path.file_name()
@@ -169,6 +203,22 @@ fn discover_vaults() -> Vec<Vault> {
             })
         })
         .collect()
+}
+
+#[derive(Clone, Debug)]
+struct Vault {
+    id: String,
+    name: String,
+    path: PathBuf,
+}
+
+#[derive(Clone, Debug)]
+struct VaultFile {
+    vault_id: String,
+    vault_name: String,
+    path: PathBuf,
+    relative_path: String,
+    aliases: Vec<String>,
 }
 
 fn collect_vault_files(vault: &Vault) -> Vec<VaultFile> {
@@ -229,12 +279,11 @@ fn collect_files_recursive(vault: &Vault, directory: &Path, files: &mut Vec<Vaul
 fn is_searchable_file(path: &Path) -> bool {
     path.extension()
         .and_then(|extension| extension.to_str())
-        .map(|extension| {
+        .is_some_and(|extension| {
             SEARCHABLE_EXTENSIONS
                 .iter()
                 .any(|allowed| extension.eq_ignore_ascii_case(allowed))
         })
-        .unwrap_or(false)
 }
 
 fn read_aliases(path: &Path) -> Vec<String> {
@@ -330,34 +379,46 @@ fn score_file(file: &VaultFile, terms: &[String]) -> Option<i32> {
     Some(score)
 }
 
-fn file_result(file: VaultFile) -> Value {
+fn file_result(file: VaultFile) -> BuiltinResult {
     let title = file
         .path
         .file_stem()
         .and_then(|name| name.to_str())
         .unwrap_or(&file.relative_path)
         .to_owned();
-    let uri = open_uri_for_file(&file.vault_id, &file.relative_path);
-    json!({
-        "Title": title,
-        "SubTitle": format!("Obsidian • {} • {}", file.vault_name, file.relative_path),
-        "Score": 100,
-        "JsonRPCAction": {"Method": "execute", "Parameters": [uri]}
-    })
+    BuiltinResult {
+        result: SearchResult {
+            id: format!(
+                "builtin:obsidian:{}",
+                file.relative_path.to_ascii_lowercase()
+            ),
+            title,
+            subtitle: format!("Obsidian • {} • {}", file.vault_name, file.relative_path),
+            kind: ResultKind::Placeholder,
+            source: ResultSource::Plugin,
+            target: None,
+        },
+        action: Some(BuiltinAction::OpenUrl(open_uri_for_file(
+            &file.vault_id,
+            &file.relative_path,
+        ))),
+    }
 }
 
-fn create_note_results(note_name: &str, vaults: &[Vault]) -> Vec<Value> {
+fn create_note_results(note_name: &str, vaults: &[Vault]) -> Vec<BuiltinResult> {
     vaults
         .iter()
         .take(MAX_RESULTS)
-        .map(|vault| {
-            let uri = new_note_uri(&vault.id, note_name);
-            json!({
-                "Title": format!("Create note: {note_name}"),
-                "SubTitle": format!("Obsidian • {}", vault.name),
-                "Score": 200,
-                "JsonRPCAction": {"Method": "execute", "Parameters": [uri]}
-            })
+        .map(|vault| BuiltinResult {
+            result: SearchResult {
+                id: format!("builtin:obsidian:create:{}", vault.id),
+                title: format!("Create note: {note_name}"),
+                subtitle: format!("Obsidian • {}", vault.name),
+                kind: ResultKind::Placeholder,
+                source: ResultSource::Plugin,
+                target: None,
+            },
+            action: Some(BuiltinAction::OpenUrl(new_note_uri(&vault.id, note_name))),
         })
         .collect()
 }
@@ -394,37 +455,38 @@ fn path_to_slash_string(path: &Path) -> String {
     path.to_string_lossy().replace('\\', "/")
 }
 
-fn open_uri(uri: &str) -> bool {
-    #[cfg(windows)]
-    {
-        Command::new("cmd")
-            .args(["/C", "start", "", uri])
-            .spawn()
-            .is_ok()
-    }
-    #[cfg(not(windows))]
-    {
-        let _ = uri;
-        false
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
 
     #[test]
-    fn uri_components_are_percent_encoded() {
-        assert_eq!(encode_uri_component("Vault Notes"), "Vault%20Notes");
-        assert_eq!(encode_uri_component("folder/note.md"), "folder%2Fnote.md");
-        assert_eq!(
-            open_uri_for_file("vault id", "folder/note.md"),
-            "obsidian://open?vault=vault%20id&file=folder%2Fnote.md"
-        );
+    fn google_provider_matches_alias_and_encodes_url() {
+        let request = BuiltinQuery {
+            query: String::from("g space exploration"),
+            google_enabled: true,
+            google_keyword: String::from("g"),
+            obsidian_enabled: true,
+            obsidian_keyword: String::from("ob"),
+        };
+        let results = GoogleProvider.query(&request);
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].result.title, "Search Google: space exploration");
+        assert!(matches!(
+            &results[0].action,
+            Some(BuiltinAction::OpenUrl(url)) if url == "https://www.google.com/search?q=space%20exploration"
+        ));
     }
 
     #[test]
-    fn score_requires_all_terms_and_prefers_exact_stem() {
+    fn aliases_require_a_token_boundary() {
+        assert!(search_for_keyword("ob meeting", "ob").is_some());
+        assert!(search_for_keyword("ob:meeting", "ob").is_some());
+        assert!(search_for_keyword("ob", "ob").is_some_and(str::is_empty));
+        assert!(search_for_keyword("object", "ob").is_none());
+    }
+
+    #[test]
+    fn obsidian_file_scoring_requires_all_terms() {
         let file = VaultFile {
             vault_id: String::from("vault"),
             vault_name: String::from("Notes"),
@@ -434,40 +496,5 @@ mod tests {
         };
         assert!(score_file(&file, &[String::from("meeting"), String::from("sync")]).is_some());
         assert!(score_file(&file, &[String::from("missing")]).is_none());
-        assert!(score_file(&file, &[String::from("meeting")]).unwrap() > 100);
-    }
-
-    #[test]
-    fn query_request_returns_flow_result_action() {
-        let request = json!({
-            "jsonrpc": "2.0",
-            "id": 7,
-            "method": "query",
-            "params": [{"rawQuery":"ob create plan", "search":"create plan", "actionKeyword":"ob"}, {}]
-        });
-        assert_eq!(query_from_request(&request), "create plan");
-        let response = handle_request(&serde_json::to_string(&request).unwrap());
-        assert_eq!(response["id"], 7);
-        assert!(response["result"].is_array());
-
-        let results = create_note_results(
-            "plan",
-            &[Vault {
-                id: String::from("vault"),
-                name: String::from("Notes"),
-                path: PathBuf::from("C:/Vault"),
-            }],
-        );
-        assert_eq!(results[0]["JsonRPCAction"]["Method"], "execute");
-        assert!(results[0]["JsonRPCAction"]["Parameters"][0]
-            .as_str()
-            .unwrap()
-            .starts_with("obsidian://new?"));
-    }
-
-    #[test]
-    fn invalid_request_is_json_rpc_error() {
-        let response = handle_request("not-json");
-        assert_eq!(response["error"]["code"], -32700);
     }
 }

@@ -1,0 +1,12 @@
+[plugin]
+name = "Example Native"
+version = "0.1.0"
+api_version = 1
+entry_point = "flux_plugin_example.dll"
+description = "Example native Rust community plugin"
+action_keywords = ["ex"]
+
+[permissions]
+network = []
+filesystem = []
+shell = false

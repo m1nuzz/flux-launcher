@@ -105,9 +105,23 @@ A minimal manifest has the following shape:
 }
 ```
 
-The repository contains a Rust fixture under `crates/flow-plugin-fixture` and a CI smoke installation under `tests/fixtures/flow-native-plugin`. Native plugins should keep query handling bounded and return standard Flow Launcher JSON-RPC result objects.
+The repository contains a Rust fixture under `crates/flow-plugin-fixture` and a CI smoke installation under `tests/fixtures/flow-native-plugin`. Native Flow plugins should keep query handling bounded and return standard Flow Launcher JSON-RPC result objects.
 
-The release artifact also includes the native Rust Obsidian plugin under `FluxPlugins\Obsidian`. Copy that directory to `%APPDATA%\FluxLauncher\Plugins\Obsidian` to enable automatic discovery. Flux reads vault paths from `%APPDATA%\obsidian\obsidian.json`, searches Markdown, Canvas, Excalidraw, image, JSON, and CSV files, opens results with `obsidian://` URIs, and supports note creation through `<keyword> create <name>`. Settings > Plugins controls the default `ob` keyword and enable state.
+Obsidian is built directly into `flux-launcher.exe`; no separate Obsidian executable or plugin folder is required. Flux reads vault paths from `%APPDATA%\obsidian\obsidian.json`, searches Markdown, Canvas, Excalidraw, image, JSON, and CSV files, opens results with `obsidian://` URIs, and supports note creation through `<keyword> create <name>`. Settings > Plugins controls the default `ob` keyword and enable state.
+
+### Native Rust community plugins
+
+New community plugins use a versioned `plugin.toml` manifest and a native Rust `cdylib`. Flux does not ship a second host executable: the same `flux-launcher.exe` starts a headless shared worker when invoked as `flux-launcher.exe --plugin-host <plugin-root>`. The UI starts that mode only when `%APPDATA%\FluxLauncher\NativePlugins` contains an installed native plugin, then communicates over bounded newline-delimited JSON. The worker loads DLLs through a stable C ABI, validates API version and manifest metadata, limits request/response sizes, and returns declarative actions such as `OpenUrl`, `OpenPath`, or `CopyText`.
+
+A community plugin package contains only plugin-owned files, for example:
+
+```text
+%APPDATA%\FluxLauncher\NativePlugins\Example\
+├── plugin.toml
+└── flux_plugin_example.dll
+```
+
+The shared worker is isolated from the launcher UI. If a native DLL crashes or the worker exits, Flux discards native results and retries on a later query while the launcher remains usable. Because several native DLLs share one worker, a host crash can affect all native community plugins; legacy Flow executable plugins remain available when stronger per-plugin process isolation or non-Rust runtimes are required.
 
 Google Search is built directly into `flux-launcher.exe`; no second executable or plugin folder is required. Its default keyword is `g`, so `g space exploration` returns a result that opens `https://www.google.com/search?q=space%20exploration` in the default browser. Settings > Plugins can disable the built-in provider or change the keyword. The implementation does not embed a browser engine or perform background autocomplete requests; it keeps the launcher native, private by default, and fast.
 
@@ -118,15 +132,16 @@ The workspace separates portable behavior from Windows integration:
 | Crate or directory | Responsibility |
 | --- | --- |
 | `crates/flux-core` | Settings persistence, hotkey policy, Game Mode policy, search models, and Flow wire models with unit tests |
-| `crates/flux-launcher` | windui application, native Windows integrations, Everything worker, plugin host, tray, and launch actions |
-| `crates/flow-plugin-fixture` | Native executable Flow JSON-RPC fixture used by integration smoke tests |
-| `crates/obsidian-plugin` | Native Rust Obsidian vault/file search and note creation plugin |
+| `crates/flux-launcher` | windui application, native Windows integrations, built-in providers, self-spawned native plugin host, Everything worker, tray, and launch actions |
+| `crates/flux-plugin-sdk` | Stable C-ABI buffer ownership, manifest, permission, query, result, and declarative action types for native Rust plugins |
+| `crates/flux-plugin-example` | Example `cdylib` community plugin used by the self-spawned host smoke test |
+| `crates/flow-plugin-fixture` | Native executable Flow JSON-RPC fixture used by compatibility smoke tests |
 | `vendor/windui` | Pinned local windui fork containing the Mica/DirectComposition seam, runtime window sizing, and Smooth Caret support |
 | `scripts/capture-mica.ps1` | Proactive Windows screenshot, input, plugin, Settings, memory, pointer, and optional forced-fallback smoke harness |
 | `scripts/monitor-preference-smoke.ps1` | Windows smoke for Primary, Cursor, and Foreground monitor placement modes |
 | `assets/logotype.jpg` / `assets/ico.png` | Repository branding artwork and transparent tray icon asset |
 
-The UI keeps result state bounded and uses background workers only for external providers. The compact empty state also reduces the rendered surface and memory pressure while the launcher is idle.
+The UI keeps result state bounded and uses background workers only for external providers. The compact empty state also reduces the rendered surface and memory pressure while the launcher is idle. Built-in Google and Obsidian providers run in-process; native community plugins use one self-spawned worker only when plugin packages are installed.
 
 ## Smoke and memory evidence
 

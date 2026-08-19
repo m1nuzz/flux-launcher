@@ -2,12 +2,14 @@
 
 mod accent;
 mod applications;
+mod builtin;
 mod everything;
 mod fullscreen;
 mod hotkeys;
 mod keyboard_layout;
 mod launch;
 mod monitor;
+mod native_host;
 mod plugins;
 
 use std::cell::{Cell, RefCell};
@@ -25,7 +27,10 @@ use flux_core::{
     MonitorPreference, PriorityEntry, ResultKind, ResultSource, SearchModel, SearchResult,
     Settings,
 };
-use plugins::{FlowPluginWorker, PluginAction, PluginQueryResponse};
+use plugins::{
+    native_plugin_install_path, FlowPluginWorker, NativePluginQueryResponse, NativePluginWorker,
+    PluginAction, PluginQueryResponse,
+};
 use windui::app::{CursorVisibilityHandle, WindowOpHandle, WindowPositionHandle, WindowSizeHandle};
 use windui::core::{ClickFn, ClipboardProvider, EventCtx, Widget};
 use windui::event::{Event, Key, KeyEvent, MouseButton, PointerKind};
@@ -103,6 +108,7 @@ struct ProviderResults {
     applications: Vec<SearchResult>,
     everything: Vec<SearchResult>,
     plugins: Vec<SearchResult>,
+    native_plugins: Vec<SearchResult>,
 }
 
 impl ProviderResults {
@@ -112,6 +118,7 @@ impl ProviderResults {
         self.applications.clear();
         self.everything.clear();
         self.plugins.clear();
+        self.native_plugins.clear();
     }
 
     fn merged(&self, query: &str, priorities: &[String]) -> Vec<SearchResult> {
@@ -122,6 +129,7 @@ impl ProviderResults {
             .chain(&self.applications)
             .chain(&self.everything)
             .chain(&self.plugins)
+            .chain(&self.native_plugins)
             .filter(|result| seen.insert(result.id.clone()))
             .cloned()
             .collect::<Vec<_>>();
@@ -240,6 +248,15 @@ struct ActionItem {
     kind: ActionKind,
 }
 
+fn plugin_action_label(action: &PluginAction) -> &'static str {
+    match action {
+        PluginAction::Flow(_) => "Run plugin action",
+        PluginAction::OpenUrl(_) => "Open web result",
+        PluginAction::OpenPath(_) => "Open path",
+        PluginAction::CopyText(_) => "Copy text",
+    }
+}
+
 fn actions_for_result(
     result: &SearchResult,
     plugin_actions: &HashMap<String, PluginAction>,
@@ -295,7 +312,7 @@ fn actions_for_result(
     if let Some(invocation) = plugin_actions.get(&result.id).cloned() {
         actions.push(ActionItem {
             id: format!("{}:plugin", result.id),
-            label: String::from("Run plugin action"),
+            label: String::from(plugin_action_label(&invocation)),
             kind: ActionKind::RunPlugin(invocation),
         });
     }
@@ -1285,6 +1302,18 @@ fn result_row(
 }
 
 fn main() {
+    let mut args = std::env::args_os();
+    let _executable = args.next();
+    if args.next().as_deref() == Some(std::ffi::OsStr::new("--plugin-host")) {
+        let root = args
+            .next()
+            .map(std::path::PathBuf::from)
+            .or_else(|| std::env::var_os("FLUX_NATIVE_PLUGIN_DIR").map(std::path::PathBuf::from))
+            .unwrap_or_else(|| std::path::PathBuf::from("NativePlugins"));
+        native_host::run(root);
+        return;
+    }
+
     let settings = Settings::load_or_default();
     let activation_hotkey = hotkeys::activation_hotkey(&settings.activation_hotkey);
     let shared_settings = Arc::new(RwLock::new(settings.clone()));
@@ -1831,6 +1860,62 @@ fn main() {
         status_for_plugins.set(response.status);
     });
     let plugin_worker = FlowPluginWorker::spawn(plugin_sender);
+
+    let query_for_native_plugins = query;
+    let results_for_native_plugins = results;
+    let inline_completion_for_native_plugins = inline_completion;
+    let status_for_native_plugins = status;
+    let selected_id_for_native_plugins = selected_id;
+    let selected_index_for_native_plugins = selected_index;
+    let selection_touched_for_native_plugins = selection_touched;
+    let sequence_for_native_plugins = current_sequence;
+    let providers_for_native_plugins = Rc::clone(&provider_results);
+    let priorities_for_native_plugins = priorities;
+    let actions_for_native_plugins = Rc::clone(&plugin_actions);
+    let native_sender = app.channel::<NativePluginQueryResponse>(move |_, response| {
+        if response.sequence != sequence_for_native_plugins.get()
+            || response.query != query_for_native_plugins.get()
+        {
+            return;
+        }
+        let mut providers = providers_for_native_plugins.borrow_mut();
+        if providers.sequence != response.sequence {
+            return;
+        }
+        let has_native_results = !response.results.is_empty();
+        providers.native_plugins = response.results;
+        if response.available {
+            actions_for_native_plugins
+                .borrow_mut()
+                .extend(response.actions);
+            if has_native_results {
+                status_for_native_plugins.set(response.status.clone());
+            }
+        }
+        let merged = providers.merged(
+            &query_for_native_plugins.get(),
+            &priorities_for_native_plugins
+                .get()
+                .iter()
+                .map(|entry| entry.id.clone())
+                .collect::<Vec<_>>(),
+        );
+        if !selection_touched_for_native_plugins.get() {
+            selected_index_for_native_plugins.set(0);
+            selected_id_for_native_plugins.set(
+                merged
+                    .first()
+                    .map(|result| result.id.clone())
+                    .unwrap_or_default(),
+            );
+        }
+        inline_completion_for_native_plugins.set(inline_completion_suffix(
+            &query_for_native_plugins.get(),
+            &merged,
+        ));
+        results_for_native_plugins.set(merged);
+    });
+    let native_plugin_worker = NativePluginWorker::spawn(native_sender);
 
     let settings_for_activation = Arc::clone(&shared_settings);
     let position_for_activation = window_position.clone();
@@ -2872,6 +2957,20 @@ fn main() {
                         .spacing(12)
                         .child(Element::label("Native plugins").font_size(17.0).fg(Color::WHITE))
                         .child(
+                            Element::label("Built-in providers run inside Flux. Community Rust DLL plugins run in one isolated shared worker spawned from this same flux-launcher.exe.")
+                                .font_size(11.0)
+                                .fg(Color::rgba(235, 241, 255, 180))
+                                .max_lines(3)
+                                .truncate(Truncate::End),
+                        )
+                        .child(
+                            Element::label(format!("Community plugin folder: {}", native_plugin_install_path()))
+                                .font_size(10.0)
+                                .fg(Color::rgba(235, 241, 255, 150))
+                                .max_lines(2)
+                                .truncate(Truncate::End),
+                        )
+                        .child(
                             Element::label("Configure built-in native Rust plugins without Python or C# runtimes.")
                                 .font_size(11.0)
                                 .fg(Color::rgba(235, 241, 255, 180))
@@ -3044,6 +3143,7 @@ fn main() {
                         google_enabled_for_interval.get(),
                         google_alias_for_interval.get(),
                     );
+                    native_plugin_worker.request(sequence, next_query.clone());
                 }
             }
             last_query = next_query;

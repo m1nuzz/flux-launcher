@@ -31,11 +31,29 @@ jobs:
       - name: Build release binaries
         shell: pwsh
         run: |
-          cargo build --release --target x86_64-pc-windows-msvc -p flux-launcher -p flow-plugin-fixture -p flux-obsidian-plugin
+          cargo build --release --target x86_64-pc-windows-msvc -p flux-launcher -p flow-plugin-fixture -p flux-plugin-example
           $pluginRoot = Join-Path $env:APPDATA "FluxLauncher\Plugins\NativeFlowFixture"
           New-Item -ItemType Directory -Force -Path $pluginRoot | Out-Null
           Copy-Item ./tests/fixtures/flow-native-plugin/plugin.json (Join-Path $pluginRoot "plugin.json") -Force
           Copy-Item ./target/x86_64-pc-windows-msvc/release/flow-plugin-fixture.exe (Join-Path $pluginRoot "fixture-plugin.exe") -Force
+
+      - name: Smoke self-spawned native plugin host
+        shell: pwsh
+        run: |
+          $nativeRoot = Join-Path $env:RUNNER_TEMP "flux-native-plugins"
+          $nativePlugin = Join-Path $nativeRoot "example"
+          New-Item -ItemType Directory -Force -Path $nativePlugin | Out-Null
+          Copy-Item ./crates/flux-plugin-example/plugin.toml (Join-Path $nativePlugin "plugin.toml") -Force
+          Copy-Item ./target/x86_64-pc-windows-msvc/release/flux_plugin_example.dll (Join-Path $nativePlugin "flux_plugin_example.dll") -Force
+          $requests = Join-Path $env:RUNNER_TEMP "flux-native-plugin-requests.jsonl"
+          @'
+          {"jsonrpc":"2.0","id":1,"method":"query","params":{"query":"ex hello","action_keyword":"ex","locale":"en-US"}}
+          {"jsonrpc":"2.0","id":2,"method":"execute","plugin":"Example Native","params":{"action":{"type":"copy_text","text":"hello"}}}
+          '@ | Set-Content -Path $requests -Encoding utf8
+          $responses = Get-Content $requests | & ./target/x86_64-pc-windows-msvc/release/flux-launcher.exe --plugin-host $nativeRoot
+          $responses | Tee-Object -FilePath (Join-Path $env:RUNNER_TEMP "flux-native-plugin-responses.jsonl")
+          if (-not ($responses -match 'Example: hello')) { throw "Native host query smoke failed" }
+          if (-not ($responses -match '"success":true')) { throw "Native host execute smoke failed" }
 
       - name: Enable DWM effects and collect preflight diagnostics
         shell: pwsh
@@ -58,9 +76,6 @@ jobs:
           New-Item -ItemType Directory -Force -Path ./artifacts/windows-ui-release/package | Out-Null
           Copy-Item ./target/x86_64-pc-windows-msvc/release/flux-launcher.exe ./artifacts/windows-ui-release/package/FluxLauncher-Windows11-x64.exe
           Copy-Item ./target/x86_64-pc-windows-msvc/release/flow-plugin-fixture.exe ./artifacts/windows-ui-release/package/flow-plugin-fixture.exe
-          New-Item -ItemType Directory -Force -Path ./artifacts/windows-ui-release/package/FluxPlugins/Obsidian | Out-Null
-          Copy-Item ./crates/obsidian-plugin/plugin.json ./artifacts/windows-ui-release/package/FluxPlugins/Obsidian/plugin.json
-          Copy-Item ./target/x86_64-pc-windows-msvc/release/flux-obsidian-plugin.exe ./artifacts/windows-ui-release/package/FluxPlugins/Obsidian/flux-obsidian-plugin.exe
           Get-ChildItem ./artifacts/windows-ui-release/package -File -Recurse | Get-FileHash -Algorithm SHA256 | Format-Table -AutoSize
 
       - name: Publish UI release and screenshots
@@ -78,8 +93,6 @@ jobs:
           files: |
             ./artifacts/windows-ui-release/package/FluxLauncher-Windows11-x64.exe
             ./artifacts/windows-ui-release/package/flow-plugin-fixture.exe
-            ./artifacts/windows-ui-release/package/FluxPlugins/Obsidian/plugin.json
-            ./artifacts/windows-ui-release/package/FluxPlugins/Obsidian/flux-obsidian-plugin.exe
             ./artifacts/windows-ui-release/mica-desktop.png
             ./artifacts/windows-ui-release/keyboard-selection.png
             ./artifacts/windows-ui-release/actions-panel.png
