@@ -229,11 +229,11 @@ fn resolve_shell_link_target(path: &str) -> Option<(String, String)> {
     use windows::core::{Interface, GUID, PCWSTR};
     use windows::Win32::Foundation::HWND;
     use windows::Win32::Storage::EnhancedStorage::PKEY_Link_Arguments;
+    use windows::Win32::System::Com::StructuredStorage::PROPVARIANT;
     use windows::Win32::System::Com::{
         CoCreateInstance, CoInitializeEx, CoUninitialize, IPersistFile, CLSCTX_INPROC_SERVER,
         COINIT_APARTMENTTHREADED, STGM_READ,
     };
-    use windows::Win32::System::Com::StructuredStorage::PROPVARIANT;
     use windows::Win32::System::Variant::VT_LPWSTR;
     use windows::Win32::UI::Shell::PropertiesSystem::IPropertyStore;
     use windows::Win32::UI::Shell::{IShellLinkW, SLGP_RAWPATH};
