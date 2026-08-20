@@ -2,7 +2,7 @@ name: Submit stable release to WinGet
 
 on:
   release:
-    types: [published]
+    types: [published, edited]
   workflow_dispatch:
     inputs:
       release_tag:
@@ -15,7 +15,7 @@ permissions:
 
 jobs:
   submit:
-    if: github.event_name == 'workflow_dispatch' || (github.event_name == 'release' && github.event.release.prerelease == false)
+    if: github.event_name == 'workflow_dispatch' || (github.event_name == 'release' && github.event.release.prerelease == false && (github.event.action == 'published' || (github.event.action == 'edited' && github.event.changes.prerelease.from == true)))
     runs-on: windows-latest
     steps:
       - name: Require WinGet submission token

@@ -17,7 +17,7 @@ Before opening a pull request, validate the directory with `winget validate --ma
 
 ## Automatic stable-release submission
 
-The `Submit stable release to WinGet` workflow listens for GitHub `release.published` events. It runs only when the release has `prerelease: false`; beta releases are rejected and never submitted. The workflow can also be started manually with a stable release tag for recovery or the first submission.
+The `Submit stable release to WinGet` workflow listens for GitHub `release.published` and `release.edited` events. It runs for a newly published stable release, or when an existing release is promoted from `prerelease: true` to `prerelease: false`. Beta releases remain ignored. The workflow can also be started manually with a stable release tag for recovery or the first submission.
 
 The workflow downloads `FluxLauncher-Setup.exe` from the selected stable release, calculates the SHA256 instead of trusting release metadata, generates the three manifests, upgrades the Windows runner's App Installer when necessary, runs `winget validate`, pushes a versioned branch to `m1nuzz/winget-pkgs`, and opens or reuses an official pull request in `microsoft/winget-pkgs`. It exits without creating a duplicate when an official PR for the same branch already exists.
 
