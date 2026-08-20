@@ -1,6 +1,6 @@
 use std::fs::File;
 use std::io::{self, Read, Write};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
@@ -123,8 +123,8 @@ pub fn launch_installer(update: &StableUpdate) -> Result<PathBuf, String> {
     let mut hasher = Sha256::new();
     copy_and_hash(&mut reader, &mut file, &mut hasher)
         .map_err(|error| format!("Could not save update file: {error}"))?;
-    file.flush()
-        .map_err(|error| format!("Could not flush update file: {error}"))?;
+    close_download_file(file)
+        .map_err(|error| format!("Could not finalize update file: {error}"))?;
 
     if let Some(expected) = &update.installer_sha256 {
         let actual = format_digest(&hasher.finalize());
@@ -136,17 +136,69 @@ pub fn launch_installer(update: &StableUpdate) -> Result<PathBuf, String> {
         }
     }
 
-    Command::new(&installer_path)
+    spawn_installer_handoff(&installer_path)
+        .map_err(|error| format!("Could not start update installer: {error}"))?;
+    Ok(installer_path)
+}
+
+fn close_download_file(mut file: File) -> io::Result<()> {
+    file.flush()?;
+    file.sync_all()?;
+    drop(file);
+    Ok(())
+}
+
+#[cfg(windows)]
+fn spawn_installer_handoff(installer_path: &Path) -> io::Result<()> {
+    use std::os::windows::process::CommandExt;
+
+    let current_exe = std::env::current_exe()?;
+    let parent_pid = std::process::id();
+    let installer = powershell_literal(installer_path);
+    let application = powershell_literal(&current_exe);
+    let script = format!(
+        "$parent = Get-Process -Id {parent_pid} -ErrorAction SilentlyContinue; \
+         if ($parent) {{ $parent.WaitForExit() }}; \
+         $setup = Start-Process -FilePath {installer} \
+         -ArgumentList @('/VERYSILENT','/SUPPRESSMSGBOXES','/NORESTART','/NOCANCEL','/CLOSEAPPLICATIONS','/RESTARTAPPLICATIONS') \
+         -Wait -PassThru; \
+         if ($setup.ExitCode -eq 0) {{ Start-Process -FilePath {application} }}; \
+         Remove-Item -LiteralPath {installer} -Force -ErrorAction SilentlyContinue",
+    );
+
+    Command::new("powershell.exe")
         .args([
-            "/SILENT",
+            "-NoLogo",
+            "-NoProfile",
+            "-NonInteractive",
+            "-WindowStyle",
+            "Hidden",
+            "-Command",
+            &script,
+        ])
+        .creation_flags(0x0800_0000)
+        .spawn()
+        .map(|_| ())
+}
+
+#[cfg(not(windows))]
+fn spawn_installer_handoff(installer_path: &Path) -> io::Result<()> {
+    Command::new(installer_path)
+        .args([
+            "/VERYSILENT",
             "/SUPPRESSMSGBOXES",
             "/NORESTART",
+            "/NOCANCEL",
             "/CLOSEAPPLICATIONS",
             "/RESTARTAPPLICATIONS",
         ])
         .spawn()
-        .map_err(|error| format!("Could not start update installer: {error}"))?;
-    Ok(installer_path)
+        .map(|_| ())
+}
+
+#[cfg(windows)]
+fn powershell_literal(path: &Path) -> String {
+    format!("'{}'", path.to_string_lossy().replace('\'', "''"))
 }
 
 fn parse_stable_version(tag_name: &str) -> Result<Version, String> {
@@ -199,6 +251,22 @@ mod tests {
         format!(
             r#"{{"tag_name":"{tag_name}","html_url":"https://github.com/m1nuzz/flux-launcher/releases/tag/{tag_name}","draft":false,"prerelease":{prerelease},"assets":[{{"name":"FluxLauncher-Setup.exe","browser_download_url":"https://example.test/FluxLauncher-Setup.exe","digest":"sha256:abc"}}]}}"#
         )
+    }
+
+    #[test]
+    fn finalized_download_releases_file_for_rename_and_delete() {
+        let source = std::env::temp_dir().join(format!(
+            "flux-updater-test-{}-source.exe",
+            std::process::id()
+        ));
+        let renamed = std::env::temp_dir().join(format!(
+            "flux-updater-test-{}-renamed.exe",
+            std::process::id()
+        ));
+        let file = File::create(&source).unwrap();
+        close_download_file(file).unwrap();
+        std::fs::rename(&source, &renamed).unwrap();
+        std::fs::remove_file(&renamed).unwrap();
     }
 
     #[test]

@@ -1845,7 +1845,7 @@ fn main() {
                     match updater::launch_installer(&update) {
                         Ok(_) => {
                             ctx.toast_ok(format!("Installing {message}"));
-                            std::process::exit(0);
+                            ctx.quit();
                         }
                         Err(error) => {
                             update_status_for_channel
@@ -3075,13 +3075,14 @@ fn main() {
                                             .on_click(move |ctx| {
                                                 if let Some(update) = update_available_for_install.get() {
                                                     match updater::launch_installer(&update) {
-                                                        Ok(_) => {
-                                                            ctx.toast_ok(format!(
-                                                                "Installing stable {}",
-                                                                update.version
-                                                            ));
-                                                            std::process::exit(0);
-                                                        }
+                                                                                                                 Ok(_) => {
+                                                             ctx.toast_ok(format!(
+                                                                 "Installing stable {}",
+                                                                 update.version
+                                                             ));
+                                                             ctx.quit();
+                                                         }
+
                                                         Err(error) => {
                                                             update_status_for_install.set(format!(
                                                                 "Update install failed: {error}"

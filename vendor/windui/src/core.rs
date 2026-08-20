@@ -1498,6 +1498,14 @@ impl EventCtx<'_> {
         self.out.window_op = Some(WindowOp::Hide);
     }
 
+    /// Quit the application and destroy the native window, bypassing hide-on-close.
+    ///
+    /// This is intended for application-controlled handoffs such as an updater that
+    /// must wait for the current process to exit before replacing its executable.
+    pub fn quit(&mut self) {
+        self.out.window_op = Some(WindowOp::Quit);
+    }
+
     /// 弹出轻提示（中性信息）。居中浮层 + 淡入淡出 + 定时自动消失，由宿主接管。
     /// **脱离布局树**——不绑定任何节点，任意控件回调内 `ctx.toast("…")` 即可。
     pub fn toast(&mut self, text: impl Into<String>) {

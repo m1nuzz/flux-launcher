@@ -1923,6 +1923,9 @@ unsafe fn run_window_op(hwnd: HWND, op: Option<WindowOp>) {
                 show_and_activate(hwnd);
             }
         }
+        Some(WindowOp::Quit) => {
+            let _ = DestroyWindow(hwnd);
+        }
         None => {}
     }
 }

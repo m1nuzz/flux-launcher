@@ -24,6 +24,8 @@ pub enum WindowOp {
     Hide,
     /// Toggle the actual native window visibility without relying on app-side state.
     ToggleVisibility,
+    /// Quit the application and destroy the native window, bypassing hide-on-close.
+    Quit,
 }
 
 /// 全局热键的修饰键组合。

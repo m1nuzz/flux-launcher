@@ -937,6 +937,9 @@ impl ContentView {
                             self.ivars().borrow_mut().handler.on_window_activated();
                         }
                     }
+                    WindowOp::Quit => {
+                        win.close();
+                    }
                 }
             }
         }
