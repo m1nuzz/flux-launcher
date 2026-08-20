@@ -94,6 +94,21 @@ jobs:
             -Executable ./target/x86_64-pc-windows-msvc/release/flux-launcher.exe `
             -OutputDirectory ./artifacts/windows-ui-release
 
+      - name: Sign stable launcher binaries before packaging
+        if: inputs.release_channel == 'stable'
+        shell: pwsh
+        env:
+          WINDOWS_SIGNING_CERTIFICATE_BASE64: ${{ secrets.WINDOWS_SIGNING_CERTIFICATE_BASE64 }}
+          WINDOWS_SIGNING_CERTIFICATE_PASSWORD: ${{ secrets.WINDOWS_SIGNING_CERTIFICATE_PASSWORD }}
+          WINDOWS_TIMESTAMP_URL: ${{ vars.WINDOWS_TIMESTAMP_URL }}
+        run: |
+          ./scripts/sign-windows-release.ps1 `
+            -Files @(
+              "./target/x86_64-pc-windows-msvc/release/flux-launcher.exe",
+              "./target/x86_64-pc-windows-msvc/release/flow-plugin-fixture.exe"
+            ) `
+            -RequireSigning
+
       - name: Prepare installer and portable release files
         shell: pwsh
         run: |
@@ -103,6 +118,33 @@ jobs:
             -OutputDirectory ./artifacts/windows-ui-release/package
           Copy-Item ./target/x86_64-pc-windows-msvc/release/flow-plugin-fixture.exe ./artifacts/windows-ui-release/package/flow-plugin-fixture.exe
           Get-ChildItem ./artifacts/windows-ui-release/package -File -Recurse | Get-FileHash -Algorithm SHA256 | Format-Table -AutoSize
+
+      - name: Sign stable release artifacts
+        if: inputs.release_channel == 'stable'
+        shell: pwsh
+        env:
+          WINDOWS_SIGNING_CERTIFICATE_BASE64: ${{ secrets.WINDOWS_SIGNING_CERTIFICATE_BASE64 }}
+          WINDOWS_SIGNING_CERTIFICATE_PASSWORD: ${{ secrets.WINDOWS_SIGNING_CERTIFICATE_PASSWORD }}
+          WINDOWS_TIMESTAMP_URL: ${{ vars.WINDOWS_TIMESTAMP_URL }}
+        run: |
+          ./scripts/sign-windows-release.ps1 `
+            -ArtifactDirectory ./artifacts/windows-ui-release/package `
+            -RequireSigning
+
+      - name: Generate stable WinGet manifest bundle
+        if: inputs.release_channel == 'stable'
+        shell: pwsh
+        run: |
+          $version = "${{ inputs.release_tag }}".TrimStart("v")
+          $installerHash = (Get-FileHash ./artifacts/windows-ui-release/package/FluxLauncher-Setup.exe -Algorithm SHA256).Hash
+          ./scripts/generate-winget-manifest.ps1 `
+            -Version $version `
+            -InstallerSha256 $installerHash `
+            -OutputRoot ./artifacts/windows-ui-release/winget/manifests
+          Compress-Archive `
+            -Path ./artifacts/windows-ui-release/winget/manifests `
+            -DestinationPath ./artifacts/windows-ui-release/package/FluxLauncher-WinGet-Manifests.zip `
+            -Force
 
       - name: Smoke installer and uninstall
         shell: pwsh
@@ -137,3 +179,11 @@ jobs:
             ./artifacts/windows-ui-release/settings-panel.png
             ./artifacts/windows-ui-release/dwm-preflight.json
             ./artifacts/windows-ui-release/launcher.stderr.log
+
+      - name: Publish stable WinGet manifest bundle
+        if: inputs.release_channel == 'stable'
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ inputs.release_tag }}
+          files: ./artifacts/windows-ui-release/package/FluxLauncher-WinGet-Manifests.zip
+          fail_on_unmatched_files: true

@@ -1,0 +1,58 @@
+name: WinGet manifest validation
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "packaging/winget/manifests/**"
+      - "scripts/generate-winget-manifest.ps1"
+      - ".github/workflows/winget-manifest.yml"
+  pull_request:
+    paths:
+      - "packaging/winget/manifests/**"
+      - "scripts/generate-winget-manifest.ps1"
+      - ".github/workflows/winget-manifest.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    runs-on: windows-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Show WinGet version
+        shell: pwsh
+        run: winget --info
+
+      - name: Validate manifest set
+        shell: pwsh
+        run: |
+          $packageRoot = Resolve-Path "packaging/winget/manifests/m/M1nuzz/FluxLauncher"
+          $manifestRoots = @(Get-ChildItem $packageRoot -Directory)
+          if ($manifestRoots.Count -eq 0) {
+            throw "No versioned WinGet manifest directories were found."
+          }
+          foreach ($manifestRoot in $manifestRoots) {
+            $manifestFiles = @(Get-ChildItem $manifestRoot.FullName -Filter "*.yaml" -File)
+            if ($manifestFiles.Count -ne 3) {
+              throw "Expected exactly three manifest files in $($manifestRoot.FullName), found $($manifestFiles.Count)."
+            }
+            winget validate --manifest $manifestRoot.FullName
+          }
+
+      - name: Verify official installer hash
+        shell: pwsh
+        run: |
+          $url = "https://github.com/m1nuzz/flux-launcher/releases/download/v0.1.54/FluxLauncher-Setup.exe"
+          $expected = "44E5A300C38B50EA8768C4536C8B2B88E26B5B433958C6DB1B9EF63DB8826D59"
+          $path = Join-Path $env:RUNNER_TEMP "FluxLauncher-Setup.exe"
+          Invoke-WebRequest -Uri $url -OutFile $path
+          $actual = (Get-FileHash $path -Algorithm SHA256).Hash
+          if ($actual -ne $expected) {
+            throw "Stable installer hash mismatch: expected $expected, got $actual."
+          }
+          Write-Host "Stable installer hash verified: $actual"

@@ -146,7 +146,13 @@ The Windows CI workflow additionally runs formatting, Clippy with warnings denie
 
 ## Release channels
 
-Automatic Windows release jobs publish **beta/prerelease builds by default**. Beta builds are intended for testing and are ignored by Flux's stable updater. After manual validation, the maintainer can promote a selected beta tag to the stable/latest channel with the `Promote stable release` workflow. The stable updater consumes only published GitHub releases with `prerelease: false` and `draft: false`, then verifies the installer asset before launching it.
+Automatic Windows release jobs publish **beta/prerelease builds by default**. Beta builds are intended for testing and are ignored by Flux's stable updater. For a SmartScreen-aware stable release, the maintainer should run the `Windows UI release` workflow with `release_channel=stable` after configuring the signing secrets; that path signs the binaries, builds the installer, and generates the WinGet manifest bundle. The legacy `Promote stable release` workflow only changes GitHub release metadata and must not be used for an unsigned build intended for WinGet. The stable updater consumes only published GitHub releases with `prerelease: false` and `draft: false`, then verifies the installer asset before launching it.
+
+## WinGet and SmartScreen
+
+Flux includes a schema 1.12 multi-file WinGet manifest seed under [`packaging/winget/manifests`](packaging/winget/manifests) and a generator at [`scripts/generate-winget-manifest.ps1`](scripts/generate-winget-manifest.ps1). The Community Repository requires a separate pull request to [`microsoft/winget-pkgs`](https://github.com/microsoft/winget-pkgs); adding files to this repository prepares the submission but does not publish Flux to WinGet automatically. The manifest targets a stable, version-specific GitHub release asset rather than a beta or mutable `latest` URL.
+
+The release workflow signs stable Windows artifacts only when the encrypted `WINDOWS_SIGNING_CERTIFICATE_BASE64` and `WINDOWS_SIGNING_CERTIFICATE_PASSWORD` secrets are configured. Beta builds remain usable without signing because they are testing artifacts. Authenticode signing provides a verified publisher identity and helps reputation accumulate across releases, but Microsoft SmartScreen can still show an initial warning for a new file until its hash or publisher reputation has sufficient clean download history. See [`packaging/winget/README.md`](packaging/winget/README.md) for the validation and release-signing procedure.
 
 ## Project status
 

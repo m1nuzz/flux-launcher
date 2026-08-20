@@ -1,10 +1,10 @@
-name: Promote stable release
+name: Promote stable release (legacy)
 
 on:
   workflow_dispatch:
     inputs:
       release_tag:
-        description: "Existing beta release tag to promote, for example v0.1.52-beta.1"
+        description: "Existing signed release tag to promote; prefer Windows UI release with release_channel=stable"
         required: true
         type: string
 
@@ -15,6 +15,19 @@ jobs:
   promote:
     runs-on: ubuntu-latest
     steps:
+      - name: Require stable packaging marker
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ inputs.release_tag }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          assets="$(gh release view "$RELEASE_TAG" --repo "${GITHUB_REPOSITORY}" --json assets --jq '.assets[].name')"
+          if ! grep -Fxq "FluxLauncher-WinGet-Manifests.zip" <<<"$assets"; then
+            echo "The release has no stable WinGet manifest bundle. Run Windows UI release with release_channel=stable and signing secrets first." >&2
+            exit 1
+          fi
+
       - name: Promote release to stable/latest
         env:
           GH_TOKEN: ${{ github.token }}
