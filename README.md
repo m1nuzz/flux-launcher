@@ -167,9 +167,11 @@ Flux Launcher is distributed under the [MIT License](LICENSE).
 | [Flow Launcher](https://github.com/Flow-Launcher/Flow.Launcher) | Reference for keyboard-first Windows launcher UX, Everything integration, query history, hotkeys, and legacy plugin compatibility |
 | [windui](https://github.com/huanfeng/wind-ui-rust) | The native Rust GUI framework used by Flux Launcher |
 | [look](https://github.com/kunkka19xx/look) | Reference for the Smooth Caret interaction in the search field |
+| [Windows Acrylic material](https://learn.microsoft.com/en-us/windows/apps/design/style/acrylic) | Reference for the Windows 11 Acrylic/DWM backdrop used by Flux Launcher; Flux uses Acrylic rather than Mica |
 
 [1]: https://github.com/Flow-Launcher/Flow.Launcher/issues/2940 "Flow Launcher memory usage discussion"
 [2]: https://github.com/Flow-Launcher/Flow.Launcher/blob/dev/README.md "Flow Launcher README"
 [3]: https://github.com/matiassingers/awesome-readme "Awesome README examples"
 [4]: https://github.com/banesullivan/README "README writing guidance"
 [5]: https://www.voidtools.com/support/everything/ipc/ "Everything IPC documentation"
+[6]: https://learn.microsoft.com/en-us/windows/apps/design/style/acrylic "Windows Acrylic material"
