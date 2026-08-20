@@ -40,7 +40,7 @@ use windui::prelude::*;
 use windui::render::{Canvas, Paint};
 
 const CURRENT_VERSION: &str = env!("CARGO_PKG_VERSION");
-const WINDOW_WIDTH: i32 = 760;
+const WINDOW_WIDTH: i32 = 420;
 const SETTINGS_WINDOW_WIDTH: i32 = 720;
 const COMPACT_WINDOW_HEIGHT: i32 = 72;
 // Keep the result palette compact like the reference while exposing a six-row
@@ -1552,16 +1552,11 @@ fn main() {
     // Keep the result body transparent so the window remains one continuous
     // Acrylic surface. Only individual result rows draw controls.
     .padding(6);
-    let result_list = Element::row()
+    let result_list = Element::scroll()
         .width_match()
-        .child(
-            Element::scroll()
-                .weight(1.0)
-                .height(RESULT_VIEWPORT_HEIGHT)
-                .child(result_list_body)
-                .visible_when(move || show_results.get() && !action_mode.get()),
-        )
-        .child(Element::col().width(12));
+        .height(RESULT_VIEWPORT_HEIGHT)
+        .child(result_list_body)
+        .visible_when(move || show_results.get() && !action_mode.get());
 
     let everything_prompt_for_close = everything_prompt_visible;
     let everything_prompt_for_decline = everything_prompt_visible;
