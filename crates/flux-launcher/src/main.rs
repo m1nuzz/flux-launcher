@@ -1550,8 +1550,10 @@ fn main() {
     })
     .width_match()
     // Keep the result body transparent so the window remains one continuous
-    // Acrylic surface. Only individual result rows draw controls.
-    .padding(6);
+    // Acrylic surface. Only individual result rows draw controls. The extra
+    // right inset is local to the scroll content: it keeps the thumb clear of
+    // row cards without changing the launcher window width.
+    .padding_edges(6, 6, 18, 6);
     let result_list = Element::scroll()
         .width_match()
         .height(RESULT_VIEWPORT_HEIGHT)

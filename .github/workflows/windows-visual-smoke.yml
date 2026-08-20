@@ -118,6 +118,7 @@ jobs:
           $captureParams = @{
             Executable = "./target/x86_64-pc-windows-msvc/release/flux-launcher.exe"
             OutputDirectory = "./artifacts/mica-smoke"
+            ScrollbarGapSmoke = $true
           }
           if ("${{ inputs.force_translucent_fallback }}" -eq "true") {
             $captureParams.ForceTranslucentFallback = $true

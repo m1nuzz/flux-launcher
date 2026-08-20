@@ -3117,6 +3117,11 @@ impl Element {
         self.padding = Insets::symmetric(h, v);
         self
     }
+    /// Set independent padding for each edge without changing the parent layout width.
+    pub fn padding_edges(mut self, left: i32, top: i32, right: i32, bottom: i32) -> Self {
+        self.padding = Insets::new(left, top, right, bottom);
+        self
+    }
     pub fn margin(mut self, m: i32) -> Self {
         self.margin = Insets::all(m);
         self
