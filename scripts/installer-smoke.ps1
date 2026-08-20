@@ -150,33 +150,49 @@ $defaultInstallRoot = Join-Path $workRoot "installed-default"
 $disabledInstallRoot = Join-Path $workRoot "installed-disabled"
 $defaultLogPath = Join-Path $workRoot "installer-default.log"
 $disabledLogPath = Join-Path $workRoot "installer-disabled.log"
+$originalStartupCommand = Get-StartupCommand
 
-Assert-NoStartupEntry
+try {
+    # Earlier UI capture steps may launch Flux and leave a Run entry behind. Isolate this
+    # installer test and restore the runner's original value in the finally block.
+    Remove-ItemProperty -Path $runKey -Name $runValueName -ErrorAction SilentlyContinue
+    Assert-NoStartupEntry
 
-# The normal installer path must keep startup enabled by default and expose a selectable task.
-Invoke-SilentInstall -InstallRoot $defaultInstallRoot -LogPath $defaultLogPath
-$defaultInstalledExe = Get-InstalledExecutable -InstallRoot $defaultInstallRoot
-Assert-InstalledHash -InstalledExe $defaultInstalledExe
-$defaultStartupCommand = Get-StartupCommand
-if ($defaultStartupCommand -notmatch [regex]::Escape($defaultInstalledExe)) {
-    throw "Default installation did not create a startup value targeting the installed executable: $defaultStartupCommand"
+    # The normal installer path must keep startup enabled by default and expose a selectable task.
+    Invoke-SilentInstall -InstallRoot $defaultInstallRoot -LogPath $defaultLogPath
+    $defaultInstalledExe = Get-InstalledExecutable -InstallRoot $defaultInstallRoot
+    Assert-InstalledHash -InstalledExe $defaultInstalledExe
+    $defaultStartupCommand = Get-StartupCommand
+    if ($defaultStartupCommand -notmatch [regex]::Escape($defaultInstalledExe)) {
+        throw "Default installation did not create a startup value targeting the installed executable: $defaultStartupCommand"
+    }
+    if ($defaultStartupCommand -notmatch "--startup") {
+        throw "Default startup registry value does not use hidden startup mode: $defaultStartupCommand"
+    }
+    Assert-StartupLaunchIsHidden -InstalledExe $defaultInstalledExe
+    Invoke-SilentUninstall -InstallRoot $defaultInstallRoot
+    Assert-NoStartupEntry
+
+    # /TASKS=!startup models the user clearing the default-checked installer checkbox.
+    Invoke-SilentInstall `
+        -InstallRoot $disabledInstallRoot `
+        -LogPath $disabledLogPath `
+        -AdditionalArguments @("/TASKS=!startup")
+    $disabledInstalledExe = Get-InstalledExecutable -InstallRoot $disabledInstallRoot
+    Assert-InstalledHash -InstalledExe $disabledInstalledExe
+    Assert-NoStartupEntry
+    Invoke-SilentUninstall -InstallRoot $disabledInstallRoot
+    Assert-NoStartupEntry
+
+    Write-Host "Installer smoke passed: default startup enabled, startup opt-out, hidden --startup mode, hash validation, and uninstall cleanup."
 }
-if ($defaultStartupCommand -notmatch "--startup") {
-    throw "Default startup registry value does not use hidden startup mode: $defaultStartupCommand"
+finally {
+    if ($null -eq $originalStartupCommand -or $originalStartupCommand -eq "") {
+        Remove-ItemProperty -Path $runKey -Name $runValueName -ErrorAction SilentlyContinue
+    }
+    else {
+        New-Item -ItemType Directory -Force -Path (Split-Path $runKey) | Out-Null
+        New-Item -Path $runKey -Force | Out-Null
+        New-ItemProperty -Path $runKey -Name $runValueName -Value $originalStartupCommand -PropertyType String -Force | Out-Null
+    }
 }
-Assert-StartupLaunchIsHidden -InstalledExe $defaultInstalledExe
-Invoke-SilentUninstall -InstallRoot $defaultInstallRoot
-Assert-NoStartupEntry
-
-# /TASKS=!startup models the user clearing the default-checked installer checkbox.
-Invoke-SilentInstall `
-    -InstallRoot $disabledInstallRoot `
-    -LogPath $disabledLogPath `
-    -AdditionalArguments @("/TASKS=!startup")
-$disabledInstalledExe = Get-InstalledExecutable -InstallRoot $disabledInstallRoot
-Assert-InstalledHash -InstalledExe $disabledInstalledExe
-Assert-NoStartupEntry
-Invoke-SilentUninstall -InstallRoot $disabledInstallRoot
-Assert-NoStartupEntry
-
-Write-Host "Installer smoke passed: default startup enabled, startup opt-out, hidden --startup mode, hash validation, and uninstall cleanup."
