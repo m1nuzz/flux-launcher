@@ -28,8 +28,15 @@ jobs:
         shell: pwsh
         run: |
           winget upgrade --id Microsoft.AppInstaller --exact --accept-package-agreements --accept-source-agreements --disable-interactivity
-          if ($LASTEXITCODE -ne 0) {
-            throw "Unable to update App Installer / WinGet to a schema 1.12-capable client."
+          $upgradeExitCode = $LASTEXITCODE
+          Start-Sleep -Seconds 3
+          $versionText = (winget --version).Trim().TrimStart("v")
+          $version = [version]$versionText
+          if ($version -lt [version]"1.12.0") {
+            throw "WinGet $versionText is too old for schema 1.12 after App Installer upgrade (exit code $upgradeExitCode)."
+          }
+          if ($upgradeExitCode -ne 0) {
+            Write-Host "App Installer reported exit code $upgradeExitCode after completing the upgrade; continuing with WinGet $versionText."
           }
 
       - name: Show WinGet version
