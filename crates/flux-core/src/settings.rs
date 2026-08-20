@@ -8,9 +8,20 @@ const MIN_CARET_DURATION_MS: u16 = 60;
 const MAX_CARET_DURATION_MS: u16 = 160;
 const MAX_QUERY_HISTORY: usize = 32;
 const MAX_PRIORITY_ENTRIES: usize = 64;
+const DEFAULT_UPDATE_INTERVAL_HOURS: u32 = 24;
+const MIN_UPDATE_INTERVAL_HOURS: u32 = 1;
+const MAX_UPDATE_INTERVAL_HOURS: u32 = 168;
+
+fn default_update_interval_hours() -> u32 {
+    DEFAULT_UPDATE_INTERVAL_HOURS
+}
 
 fn enabled_by_default() -> bool {
     true
+}
+
+fn disabled_by_default() -> bool {
+    false
 }
 
 fn default_caret_duration() -> u16 {
@@ -92,6 +103,14 @@ pub struct Settings {
     #[serde(default = "enabled_by_default")]
     pub auto_enable_everything: bool,
     #[serde(default = "enabled_by_default")]
+    pub update_checks_enabled: bool,
+    #[serde(default = "default_update_interval_hours")]
+    pub update_interval_hours: u32,
+    #[serde(default = "disabled_by_default")]
+    pub auto_install_updates: bool,
+    #[serde(default)]
+    pub last_update_check_unix: u64,
+    #[serde(default = "enabled_by_default")]
     pub obsidian_enabled: bool,
     #[serde(default = "default_obsidian_alias")]
     pub obsidian_alias: String,
@@ -122,6 +141,10 @@ impl Default for Settings {
             clear_query_on_activation: true,
             start_with_windows: true,
             auto_enable_everything: true,
+            update_checks_enabled: true,
+            update_interval_hours: DEFAULT_UPDATE_INTERVAL_HOURS,
+            auto_install_updates: false,
+            last_update_check_unix: 0,
             obsidian_enabled: true,
             obsidian_alias: default_obsidian_alias(),
             google_enabled: true,
@@ -139,6 +162,9 @@ impl Settings {
         self.smooth_caret_duration_ms = self
             .smooth_caret_duration_ms
             .clamp(MIN_CARET_DURATION_MS, MAX_CARET_DURATION_MS);
+        self.update_interval_hours = self
+            .update_interval_hours
+            .clamp(MIN_UPDATE_INTERVAL_HOURS, MAX_UPDATE_INTERVAL_HOURS);
         if self.activation_hotkey.key.trim().is_empty() {
             self.activation_hotkey = HotkeyConfig::default();
         }
@@ -312,6 +338,13 @@ mod tests {
         assert!(settings.clear_query_on_activation);
         assert!(settings.start_with_windows);
         assert!(settings.auto_enable_everything);
+        assert!(settings.update_checks_enabled);
+        assert_eq!(
+            settings.update_interval_hours,
+            DEFAULT_UPDATE_INTERVAL_HOURS
+        );
+        assert!(!settings.auto_install_updates);
+        assert_eq!(settings.last_update_check_unix, 0);
         assert!(settings.obsidian_enabled);
         assert_eq!(settings.obsidian_alias, "ob");
         assert!(settings.google_enabled);
@@ -340,6 +373,10 @@ mod tests {
             clear_query_on_activation: false,
             start_with_windows: false,
             auto_enable_everything: false,
+            update_checks_enabled: false,
+            update_interval_hours: 6,
+            auto_install_updates: true,
+            last_update_check_unix: 1_700_000_000,
             obsidian_enabled: false,
             obsidian_alias: String::from("notes"),
             google_enabled: false,
@@ -428,6 +465,12 @@ mod tests {
         fs::write(&path, r#"{"activation_hotkey":{"key":"Space"}}"#).unwrap();
         let settings = Settings::load_from(&path).unwrap();
         assert!(settings.start_with_windows);
+        assert!(settings.update_checks_enabled);
+        assert_eq!(
+            settings.update_interval_hours,
+            DEFAULT_UPDATE_INTERVAL_HOURS
+        );
+        assert!(!settings.auto_install_updates);
         assert!(settings.obsidian_enabled);
         assert_eq!(settings.obsidian_alias, "ob");
         assert!(settings.google_enabled);

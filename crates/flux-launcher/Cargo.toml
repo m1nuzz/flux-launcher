@@ -17,6 +17,9 @@ windui = { path = "../../vendor/windui", default-features = false, features = ["
 png = "0.17"
 libloading = "0.8"
 toml = "0.8"
+semver = "1"
+sha2 = "0.10"
+ureq = { version = "2.12", default-features = false, features = ["tls"] }
 
 [target.'cfg(windows)'.dependencies]
 everything-ipc = "0.1.4"

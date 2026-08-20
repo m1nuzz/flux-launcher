@@ -12,6 +12,7 @@ mod monitor;
 mod native_host;
 mod plugins;
 mod startup;
+mod updater;
 
 use std::cell::{Cell, RefCell};
 use std::collections::{HashMap, HashSet};
@@ -38,7 +39,8 @@ use windui::event::{Event, Key, KeyEvent, MouseButton, PointerKind};
 use windui::prelude::*;
 use windui::render::{Canvas, Paint};
 
-const WINDOW_WIDTH: i32 = 420;
+const CURRENT_VERSION: &str = env!("CARGO_PKG_VERSION");
+const WINDOW_WIDTH: i32 = 760;
 const SETTINGS_WINDOW_WIDTH: i32 = 720;
 const COMPACT_WINDOW_HEIGHT: i32 = 72;
 // Keep the result palette compact like the reference while exposing a six-row
@@ -1076,6 +1078,27 @@ fn save_settings(settings: &Settings) -> bool {
     settings.save().is_ok()
 }
 
+fn request_update_check(
+    sender: Sender<updater::UpdateCheckResponse>,
+    in_flight: &Cell<bool>,
+) -> bool {
+    if in_flight.replace(true) {
+        return false;
+    }
+    spawn_update_check(sender);
+    true
+}
+
+fn spawn_update_check(sender: Sender<updater::UpdateCheckResponse>) {
+    let _ = std::thread::Builder::new()
+        .name(String::from("flux-update-check"))
+        .spawn(move || {
+            let checked_at = updater::unix_now();
+            let result = updater::check_stable(CURRENT_VERSION);
+            let _ = sender.send(updater::UpdateCheckResponse { checked_at, result });
+        });
+}
+
 fn save_settings_async(settings: &Arc<RwLock<Settings>>) {
     let settings = Arc::clone(settings);
     let _ = std::thread::Builder::new()
@@ -1378,6 +1401,8 @@ fn main() {
     let action_items = signal(Vec::<ActionItem>::new());
     let action_window_slot = Rc::new(RefCell::new(None::<WindowSizeHandle>));
     let status = signal(String::from("Ready"));
+    let update_status = signal(String::from("Stable updates are checked automatically"));
+    let update_available = signal(None::<updater::StableUpdate>);
     let current_sequence = signal(0_u64);
     let game_mode = signal(settings.game_mode);
     let game_mode_status = signal(game_mode_label(settings.game_mode));
@@ -1402,6 +1427,9 @@ fn main() {
     let clear_query_on_activation = signal(settings.clear_query_on_activation);
     let start_with_windows = signal(settings.start_with_windows);
     let auto_enable_everything = signal(settings.auto_enable_everything);
+    let update_checks_enabled = signal(settings.update_checks_enabled);
+    let update_interval_hours = signal(settings.update_interval_hours.to_string());
+    let auto_install_updates = signal(settings.auto_install_updates);
     let obsidian_enabled = signal(settings.obsidian_enabled);
     let obsidian_alias = signal(settings.obsidian_alias.clone());
     let google_enabled = signal(settings.google_enabled);
@@ -1718,6 +1746,63 @@ fn main() {
     let window_position = app.window_position_handle();
     let window_op: WindowOpHandle = app.window_op_handle();
     let cursor_visibility: CursorVisibilityHandle = app.cursor_visibility_handle();
+    let update_status_for_channel = update_status;
+    let update_available_for_channel = update_available;
+    let settings_for_update_channel = Arc::clone(&shared_settings);
+    let update_check_in_flight = Rc::new(Cell::new(false));
+    let update_check_in_flight_for_channel = Rc::clone(&update_check_in_flight);
+    let update_sender = app.channel::<updater::UpdateCheckResponse>(move |ctx, response| {
+        update_check_in_flight_for_channel.set(false);
+        if let Ok(mut settings) = settings_for_update_channel.write() {
+            settings.last_update_check_unix = response.checked_at;
+            let _ = save_settings(&settings);
+        }
+        match response.result {
+            Ok(Some(update)) => {
+                let message = format!("Stable {} is available", update.version);
+                update_status_for_channel.set(message.clone());
+                update_available_for_channel.set(Some(update.clone()));
+                let auto_install = settings_for_update_channel
+                    .read()
+                    .map(|settings| settings.auto_install_updates)
+                    .unwrap_or(false);
+                if auto_install {
+                    match updater::launch_installer(&update) {
+                        Ok(_) => {
+                            ctx.toast_ok(format!("Installing {message}"));
+                            std::process::exit(0);
+                        }
+                        Err(error) => {
+                            update_status_for_channel
+                                .set(format!("{message}; install failed: {error}"));
+                            ctx.toast_ok(format!("Update install failed: {error}"));
+                        }
+                    }
+                } else {
+                    ctx.toast_ok(message);
+                }
+            }
+            Ok(None) => {
+                update_available_for_channel.set(None);
+                update_status_for_channel.set(format!("Flux {CURRENT_VERSION} is up to date"));
+            }
+            Err(error) => {
+                update_status_for_channel.set(format!("Stable update check failed: {error}"));
+            }
+        }
+    });
+    if settings.update_checks_enabled
+        && updater::should_check(
+            updater::unix_now(),
+            settings.last_update_check_unix,
+            settings.update_interval_hours,
+        )
+    {
+        request_update_check(update_sender.clone(), &update_check_in_flight);
+    }
+    let settings_for_update_interval = Arc::clone(&shared_settings);
+    let update_sender_for_interval = update_sender.clone();
+    let update_check_in_flight_for_interval = Rc::clone(&update_check_in_flight);
     *action_window_slot.borrow_mut() = Some(window_size.clone());
     let size_for_interval = window_size.clone();
     let size_for_visibility = window_size.clone();
@@ -2535,6 +2620,16 @@ fn main() {
     let history_for_clear = Rc::clone(&query_history);
     let history_cursor_for_clear = history_cursor;
     let start_with_windows_for_apply = start_with_windows;
+    let update_checks_enabled_for_apply = update_checks_enabled;
+    let update_interval_hours_for_apply = update_interval_hours;
+    let auto_install_updates_for_apply = auto_install_updates;
+    let update_status_for_apply = update_status;
+    let update_available_for_install = update_available;
+    let update_status_for_install = update_status;
+    let update_sender_for_apply = update_sender.clone();
+    let update_sender_for_check_now = update_sender_for_apply.clone();
+    let update_check_in_flight_for_apply = Rc::clone(&update_check_in_flight);
+    let update_check_in_flight_for_check_now = Rc::clone(&update_check_in_flight);
     let auto_enable_everything_for_apply = auto_enable_everything;
     let obsidian_enabled_for_apply = obsidian_enabled;
     let obsidian_alias_for_apply = obsidian_alias;
@@ -2836,7 +2931,81 @@ fn main() {
                     .child(
                         Element::col()
                             .width_match()
-                            .spacing(6)
+                            .spacing(8)
+                            .child(Element::field(
+                                "Updates",
+                                Element::checkbox(
+                                    "Check stable GitHub releases automatically",
+                                    update_checks_enabled,
+                                ),
+                            ))
+                            .child(
+                                Element::row()
+                                    .width_match()
+                                    .spacing(8)
+                                    .child(
+                                        Element::text_input(update_interval_hours, "24")
+                                            .width_match(),
+                                    )
+                                    .child(Element::label("hours between checks").font_size(11.0)),
+                            )
+                            .child(Element::field(
+                                "Update action",
+                                Element::checkbox(
+                                    "Install stable updates automatically",
+                                    auto_install_updates,
+                                ),
+                            ))
+                            .child(
+                                Element::row()
+                                    .width_match()
+                                    .spacing(8)
+                                    .child(
+                                        Element::label_signal(update_status)
+                                            .font_size(11.0)
+                                            .fg(Color::rgba(235, 241, 255, 190))
+                                            .max_lines(2)
+                                            .truncate(Truncate::End)
+                                            .width_match(),
+                                    )
+                                    .child(Element::button("Check now").on_click(move |ctx| {
+                                        update_status_for_apply.set(String::from(
+                                            "Checking stable GitHub releases...",
+                                        ));
+                                        request_update_check(
+                                            update_sender_for_check_now.clone(),
+                                            &update_check_in_flight_for_check_now,
+                                        );
+                                        ctx.toast_ok("Checking stable updates");
+                                    }))
+                                    .child(
+                                        Element::button("Install now")
+                                            .visible_when(move || {
+                                                update_available_for_install.get().is_some()
+                                            })
+                                            .on_click(move |ctx| {
+                                                if let Some(update) = update_available_for_install.get() {
+                                                    match updater::launch_installer(&update) {
+                                                        Ok(_) => {
+                                                            ctx.toast_ok(format!(
+                                                                "Installing stable {}",
+                                                                update.version
+                                                            ));
+                                                            std::process::exit(0);
+                                                        }
+                                                        Err(error) => {
+                                                            update_status_for_install.set(format!(
+                                                                "Update install failed: {error}"
+                                                            ));
+                                                            ctx.toast_ok(format!(
+                                                                "Update install failed: {error}"
+                                                            ));
+                                                        }
+                                                    }
+                                                }
+                                            }),
+                                    ),
+                            )
                             .child(Element::field(
                                 "Everything",
                                 Element::checkbox(
@@ -2938,6 +3107,16 @@ fn main() {
                                 settings.custom_selection_color = custom_color;
                                 settings.clear_query_on_activation = clear_query_on_activation.get();
                                 settings.start_with_windows = start_with_windows_for_apply.get();
+                                settings.update_checks_enabled = update_checks_enabled_for_apply.get();
+                                settings.update_interval_hours = update_interval_hours_for_apply
+                                    .get()
+                                    .trim()
+                                    .parse::<u32>()
+                                    .unwrap_or(24)
+                                    .clamp(1, 168);
+                                settings.auto_install_updates = auto_install_updates_for_apply.get();
+                                update_interval_hours_for_apply
+                                    .set(settings.update_interval_hours.to_string());
                                 settings.auto_enable_everything = auto_enable_everything_for_apply.get();
                                 settings.obsidian_enabled = obsidian_enabled_for_apply.get();
                                 settings.obsidian_alias = obsidian_alias_for_apply.get();
@@ -2979,6 +3158,20 @@ fn main() {
                                 let _ = save_settings(&settings);
                                 if let Err(error) = startup::set_enabled(settings.start_with_windows) {
                                     ctx.toast_ok(format!("Startup setting failed: {error}"));
+                                }
+                                if settings.update_checks_enabled
+                                    && updater::should_check(
+                                        updater::unix_now(),
+                                        settings.last_update_check_unix,
+                                        settings.update_interval_hours,
+                                    )
+                                {
+                                    update_status_for_apply
+                                        .set(String::from("Checking stable GitHub releases..."));
+                                    request_update_check(
+                                        update_sender_for_apply.clone(),
+                                        &update_check_in_flight_for_apply,
+                                    );
                                 }
                             }
                             settings_visible_for_apply.set(false);
@@ -3127,6 +3320,20 @@ fn main() {
         .theme(launcher_theme())
         .content(content)
         .on_interval(SEARCH_INTERVAL, move |ctx| {
+            if let Ok(settings) = settings_for_update_interval.read() {
+                if settings.update_checks_enabled
+                    && updater::should_check(
+                        updater::unix_now(),
+                        settings.last_update_check_unix,
+                        settings.update_interval_hours,
+                    )
+                {
+                    request_update_check(
+                        update_sender_for_interval.clone(),
+                        &update_check_in_flight_for_interval,
+                    );
+                }
+            }
             if tray_settings_smoke_pending_for_interval.replace(false) {
                 // Exercise the same lifecycle order as the tray Settings item,
                 // without relying on brittle screen-coordinate tray automation.

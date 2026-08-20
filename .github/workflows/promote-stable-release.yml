@@ -1,0 +1,26 @@
+name: Promote stable release
+
+on:
+  workflow_dispatch:
+    inputs:
+      release_tag:
+        description: "Existing beta release tag to promote, for example v0.1.52-beta.1"
+        required: true
+        type: string
+
+permissions:
+  contents: write
+
+jobs:
+  promote:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Promote release to stable/latest
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ inputs.release_tag }}
+        run: |
+          gh release edit "$RELEASE_TAG" \
+            --repo "${GITHUB_REPOSITORY}" \
+            --prerelease=false \
+            --latest

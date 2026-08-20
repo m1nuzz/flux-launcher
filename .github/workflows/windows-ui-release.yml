@@ -12,6 +12,14 @@ on:
         required: false
         default: windows-latest
         type: string
+      release_channel:
+        description: "Publish channel; beta is the safe default"
+        required: false
+        default: beta
+        type: choice
+        options:
+          - beta
+          - stable
 
 permissions:
   contents: write
@@ -96,10 +104,13 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ inputs.release_tag }}
-          name: Flux Launcher ${{ inputs.release_tag }}
+          name: Flux Launcher ${{ inputs.release_tag }} (${{ inputs.release_channel }})
+          prerelease: ${{ inputs.release_channel == 'beta' }}
+          make_latest: ${{ inputs.release_channel == 'stable' }}
           generate_release_notes: true
           body: |
-            Flux Launcher Windows 11 x64 UI release.
+            Flux Launcher Windows 11 x64 ${{ inputs.release_channel }} release.
+            Beta releases are for testing and are ignored by the stable updater.
 
             This workflow captures the compact transparent launcher, repeated activation, query expansion, keyboard navigation, action mode, Settings, native Flow fixture, and current provider smoke evidence.
 

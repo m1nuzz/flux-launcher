@@ -59,7 +59,7 @@ Flux does not require Everything, but Everything is recommended for indexed file
 winget install -e --id voidtools.Everything
 ```
 
-Flux stores user settings in `%APPDATA%\FluxLauncher\settings.json`. The default activation hotkey is `Alt+Space`, the default monitor is the display containing the mouse cursor, and fullscreen hotkey suppression is enabled by default.
+Flux stores user settings in `%APPDATA%\FluxLauncher\settings.json`. The default activation hotkey is `Alt+Space`, the default monitor is the display containing the mouse cursor, and fullscreen hotkey suppression is enabled by default. Stable update checks are enabled by default, run once every 24 hours, and immediately catch up after a missed interval. Flux checks GitHub stable releases only and ignores beta/prerelease releases. In `Settings > General > Updates`, you can change the interval and choose between asking before installation or installing stable updates automatically.
 
 ## Usage
 
@@ -143,6 +143,10 @@ cargo test -p flux-core -p flux-plugin-sdk
 ```
 
 The Windows CI workflow additionally runs formatting, Clippy with warnings denied, workspace tests, and the release build. The Windows visual smoke workflow checks launch/hide cycles, Acrylic lifecycle behavior, keyboard selection, Settings, Everything syntax, history, native Flow compatibility, and monitor placement.
+
+## Release channels
+
+Automatic Windows release jobs publish **beta/prerelease builds by default**. Beta builds are intended for testing and are ignored by Flux's stable updater. After manual validation, the maintainer can promote a selected beta tag to the stable/latest channel with the `Promote stable release` workflow. The stable updater consumes only published GitHub releases with `prerelease: false` and `draft: false`, then verifies the installer asset before launching it.
 
 ## Project status
 
