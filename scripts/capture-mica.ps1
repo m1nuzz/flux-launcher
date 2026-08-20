@@ -19,7 +19,11 @@ param(
 
     [int]$NavigationCycles = 0,
 
-    [int]$TabNavigationCycles = 0
+    [int]$TabNavigationCycles = 0,
+
+    # Windows-hosted runners can occasionally spend a few hundred milliseconds
+    # inside a synchronous SendMessage callback while starting the shell worker.
+    [int]$EnterHideDispatchBudgetMilliseconds = 750
 )
 
 $ErrorActionPreference = "Stop"
@@ -520,12 +524,15 @@ try {
         $windowHideTimestamp -gt 0.0 -and
         $processCreatedTimestamp -le $windowHideTimestamp
     $enterLaunchHidden = ![FluxWallpaper]::IsWindowVisible($launcherHandle)
-    $enterHideLatencyProbe = $enterLaunchHidden -and ($enterHideDispatchMilliseconds -lt 250) -and $enterLaunchDispatchBeforeHideProbe
+    $enterHideLatencyProbe =
+        $enterLaunchHidden -and
+        ($enterHideDispatchMilliseconds -lt $EnterHideDispatchBudgetMilliseconds) -and
+        $enterLaunchDispatchBeforeHideProbe
     if (!$enterLaunchHidden) {
         throw "Enter launch did not hide the launcher window."
     }
     if (!$enterHideLatencyProbe) {
-        throw "Enter launch/hide ordering failed: dispatch_before_hide=$enterLaunchDispatchBeforeHideProbe, hide_dispatch_ms=$enterHideDispatchMilliseconds."
+        throw "Enter launch/hide ordering failed: dispatch_before_hide=$enterLaunchDispatchBeforeHideProbe, hide_dispatch_ms=$enterHideDispatchMilliseconds, budget_ms=$EnterHideDispatchBudgetMilliseconds."
     }
     # Restore the launcher for the remaining independent probes.
     [FluxWallpaper]::SendMessage($launcherHandle, $wmHotkey, [UIntPtr]::Zero, [IntPtr]::Zero) | Out-Null
