@@ -1,5 +1,5 @@
 #ifndef AppVersion
-#define AppVersion "0.1.62"
+#define AppVersion "0.1.64"
 #endif
 #ifndef BuildDir
 #define BuildDir "target\x86_64-pc-windows-msvc\release"
@@ -61,6 +61,11 @@ Root: HKCU; Subkey: "Software\Microsoft\Windows\CurrentVersion\Run"; ValueType: 
 
 [Run]
 Filename: "{app}\{#AppExeName}"; Description: "Launch Flux Launcher now"; Flags: nowait postinstall skipifsilent
+
+[UninstallDelete]
+Type: filesandordirs; Name: "{app}"
+Type: filesandordirs; Name: "{group}"
+Type: filesandordirs; Name: "{userappdata}\FluxLauncher"
 
 [Code]
 function StartupCommand(Param: String): String;

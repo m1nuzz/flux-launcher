@@ -1099,6 +1099,132 @@ fn spawn_update_check(sender: Sender<updater::UpdateCheckResponse>) {
         });
 }
 
+#[derive(Clone, Debug)]
+enum UpdateInstallResponse {
+    Progress {
+        version: String,
+        progress: updater::DownloadProgress,
+    },
+    Started {
+        version: String,
+    },
+    Failed {
+        version: String,
+        error: String,
+    },
+}
+
+fn request_update_install(
+    update: updater::StableUpdate,
+    sender: Sender<UpdateInstallResponse>,
+    in_flight: &Cell<bool>,
+) -> bool {
+    if in_flight.replace(true) {
+        return false;
+    }
+    spawn_update_install(update, sender);
+    true
+}
+
+fn spawn_update_install(update: updater::StableUpdate, sender: Sender<UpdateInstallResponse>) {
+    let _ = std::thread::Builder::new()
+        .name(String::from("flux-update-install"))
+        .spawn(move || {
+            let version = update.version.to_string();
+            trace_update_event(&format!("update-install-start\\t{version}"));
+            let installer_path =
+                std::env::temp_dir().join(format!("FluxLauncher-update-{}.exe", update.version));
+            let version_for_progress = version.clone();
+            let progress_sender = sender.clone();
+            let download =
+                updater::download_installer_to_path(&update, &installer_path, move |progress| {
+                    trace_update_event(&format!(
+                        "update-progress\t{}\t{}\t{:?}",
+                        version_for_progress, progress.received_bytes, progress.total_bytes
+                    ));
+                    let _ = progress_sender.send(UpdateInstallResponse::Progress {
+                        version: version_for_progress.clone(),
+                        progress,
+                    });
+                });
+            match download {
+                Ok(_) => match updater::handoff_installer(&installer_path) {
+                    Ok(()) => {
+                        trace_update_event(&format!("update-installer-started\\t{version}"));
+                        let _ = sender.send(UpdateInstallResponse::Started { version });
+                    }
+                    Err(error) => {
+                        trace_update_event(&format!("update-failed\\t{version}\\t{error}"));
+                        let _ = std::fs::remove_file(&installer_path);
+                        let _ = sender.send(UpdateInstallResponse::Failed { version, error });
+                    }
+                },
+                Err(error) => {
+                    trace_update_event(&format!("update-failed\\t{version}\\t{error}"));
+                    let _ = sender.send(UpdateInstallResponse::Failed { version, error });
+                }
+            }
+        });
+}
+
+fn format_bytes(bytes: u64) -> String {
+    const KIB: u64 = 1024;
+    const MIB: u64 = KIB * 1024;
+    if bytes >= MIB {
+        format!("{:.1} MiB", bytes as f64 / MIB as f64)
+    } else if bytes >= KIB {
+        format!("{:.0} KiB", bytes as f64 / KIB as f64)
+    } else {
+        format!("{bytes} B")
+    }
+}
+
+fn trace_update_event(event: &str) {
+    let Some(path) = std::env::var_os("FLUX_UPDATE_TRACE_FILE") else {
+        return;
+    };
+    if let Ok(mut file) = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(path)
+    {
+        use std::io::Write as _;
+        let _ = writeln!(file, "{event}");
+    }
+}
+
+fn update_check_due(settings: &Settings) -> bool {
+    let forced = std::env::var("FLUX_FORCE_UPDATE_CHECK")
+        .map(|value| value == "1")
+        .unwrap_or(false);
+    forced
+        || updater::should_check(
+            updater::unix_now(),
+            settings.last_update_check_unix,
+            settings.update_interval_hours,
+        )
+}
+
+fn format_update_progress(version: &str, progress: &updater::DownloadProgress) -> String {
+    match progress.total_bytes.filter(|total| *total > 0) {
+        Some(total) => {
+            let received = progress.received_bytes.min(total);
+            let percent = received.saturating_mul(100) / total;
+            let remaining = total.saturating_sub(received);
+            format!(
+                "Downloading stable {version}: {percent}% — {} / {} ({} remaining)",
+                format_bytes(received),
+                format_bytes(total),
+                format_bytes(remaining)
+            )
+        }
+        None => format!(
+            "Downloading stable {version}: {} received",
+            format_bytes(progress.received_bytes)
+        ),
+    }
+}
+
 fn save_settings_async(settings: &Arc<RwLock<Settings>>) {
     let settings = Arc::clone(settings);
     let _ = std::thread::Builder::new()
@@ -1403,6 +1529,8 @@ fn main() {
     let status = signal(String::from("Ready"));
     let update_status = signal(String::from("Stable updates are checked automatically"));
     let update_available = signal(None::<updater::StableUpdate>);
+    let update_install_progress = signal(None::<(String, updater::DownloadProgress)>);
+    let update_installing = signal(false);
     let current_sequence = signal(0_u64);
     let game_mode = signal(settings.game_mode);
     let game_mode_status = signal(game_mode_label(settings.game_mode));
@@ -1825,9 +1953,39 @@ fn main() {
     let cursor_visibility: CursorVisibilityHandle = app.cursor_visibility_handle();
     let update_status_for_channel = update_status;
     let update_available_for_channel = update_available;
+    let update_install_progress_for_channel = update_install_progress;
+    let update_installing_for_channel = update_installing;
+    let update_install_in_flight = Rc::new(Cell::new(false));
+    let update_install_in_flight_for_channel = Rc::clone(&update_install_in_flight);
+    let update_install_sender =
+        app.channel::<UpdateInstallResponse>(move |ctx, response| match response {
+            UpdateInstallResponse::Progress { version, progress } => {
+                update_install_progress_for_channel.set(Some((version.clone(), progress.clone())));
+                update_status_for_channel.set(format_update_progress(&version, &progress));
+            }
+            UpdateInstallResponse::Started { version } => {
+                update_install_in_flight_for_channel.set(false);
+                update_installing_for_channel.set(false);
+                update_install_progress_for_channel.set(None);
+                update_status_for_channel.set(format!(
+                    "Installing stable {version}; Flux Launcher is restarting"
+                ));
+                ctx.toast_ok(format!("Installing stable {version}"));
+                ctx.quit();
+            }
+            UpdateInstallResponse::Failed { version, error } => {
+                update_install_in_flight_for_channel.set(false);
+                update_installing_for_channel.set(false);
+                update_install_progress_for_channel.set(None);
+                update_status_for_channel.set(format!("Stable {version} update failed: {error}"));
+                ctx.toast_ok(format!("Update install failed: {error}"));
+            }
+        });
+    let update_install_sender_for_channel = update_install_sender.clone();
     let settings_for_update_channel = Arc::clone(&shared_settings);
     let update_check_in_flight = Rc::new(Cell::new(false));
     let update_check_in_flight_for_channel = Rc::clone(&update_check_in_flight);
+    let update_install_in_flight_for_check_channel = Rc::clone(&update_install_in_flight);
     let update_sender = app.channel::<updater::UpdateCheckResponse>(move |ctx, response| {
         update_check_in_flight_for_channel.set(false);
         if let Ok(mut settings) = settings_for_update_channel.write() {
@@ -1844,16 +2002,19 @@ fn main() {
                     .map(|settings| settings.auto_install_updates)
                     .unwrap_or(false);
                 if auto_install {
-                    match updater::launch_installer(&update) {
-                        Ok(_) => {
-                            ctx.toast_ok(format!("Installing {message}"));
-                            ctx.quit();
-                        }
-                        Err(error) => {
-                            update_status_for_channel
-                                .set(format!("{message}; install failed: {error}"));
-                            ctx.toast_ok(format!("Update install failed: {error}"));
-                        }
+                    update_installing_for_channel.set(true);
+                    update_status_for_channel.set(format!(
+                        "Preparing stable {} for installation...",
+                        update.version
+                    ));
+                    if !request_update_install(
+                        update,
+                        update_install_sender_for_channel.clone(),
+                        &update_install_in_flight_for_check_channel,
+                    ) {
+                        update_installing_for_channel.set(false);
+                        update_status_for_channel
+                            .set(String::from("An update is already being installed"));
                     }
                 } else {
                     ctx.toast_ok(message);
@@ -1871,14 +2032,7 @@ fn main() {
     let update_checks_allowed = std::env::var("FLUX_DISABLE_UPDATE_CHECKS")
         .map(|value| value != "1")
         .unwrap_or(true);
-    if update_checks_allowed
-        && settings.update_checks_enabled
-        && updater::should_check(
-            updater::unix_now(),
-            settings.last_update_check_unix,
-            settings.update_interval_hours,
-        )
-    {
+    if update_checks_allowed && settings.update_checks_enabled && update_check_due(&settings) {
         request_update_check(update_sender.clone(), &update_check_in_flight);
     }
     let settings_for_update_interval = Arc::clone(&shared_settings);
@@ -2717,6 +2871,10 @@ fn main() {
     let update_status_for_apply = update_status;
     let update_available_for_install = update_available;
     let update_status_for_install = update_status;
+    let update_installing_for_ui = update_installing;
+    let update_install_progress_for_ui = update_install_progress;
+    let update_install_sender_for_ui = update_install_sender.clone();
+    let update_install_in_flight_for_ui = Rc::clone(&update_install_in_flight);
     let update_sender_for_apply = update_sender.clone();
     let update_sender_for_check_now = update_sender_for_apply.clone();
     let update_check_in_flight_for_apply = Rc::clone(&update_check_in_flight);
@@ -3073,26 +3231,29 @@ fn main() {
                                         Element::button("Install now")
                                             .visible_when(move || {
                                                 update_available_for_install.get().is_some()
+                                                    && !update_installing_for_ui.get()
                                             })
                                             .on_click(move |ctx| {
+                                                if update_installing_for_ui.get() {
+                                                    return;
+                                                }
                                                 if let Some(update) = update_available_for_install.get() {
-                                                    match updater::launch_installer(&update) {
-                                                                                                                 Ok(_) => {
-                                                             ctx.toast_ok(format!(
-                                                                 "Installing stable {}",
-                                                                 update.version
-                                                             ));
-                                                             ctx.quit();
-                                                         }
-
-                                                        Err(error) => {
-                                                            update_status_for_install.set(format!(
-                                                                "Update install failed: {error}"
-                                                            ));
-                                                            ctx.toast_ok(format!(
-                                                                "Update install failed: {error}"
-                                                            ));
-                                                        }
+                                                    update_installing_for_ui.set(true);
+                                                    update_install_progress_for_ui.set(None);
+                                                    update_status_for_install.set(format!(
+                                                        "Preparing stable {} for download...",
+                                                        update.version
+                                                    ));
+                                                    if !request_update_install(
+                                                        update,
+                                                        update_install_sender_for_ui.clone(),
+                                                        &update_install_in_flight_for_ui,
+                                                    ) {
+                                                        update_installing_for_ui.set(false);
+                                                        update_status_for_install.set(String::from(
+                                                            "An update is already being installed",
+                                                        ));
+                                                        ctx.toast_ok("An update is already being installed");
                                                     }
                                                 }
                                             }),
@@ -3251,12 +3412,7 @@ fn main() {
                                 if let Err(error) = startup::set_enabled(settings.start_with_windows) {
                                     ctx.toast_ok(format!("Startup setting failed: {error}"));
                                 }
-                                if settings.update_checks_enabled
-                                    && updater::should_check(
-                                        updater::unix_now(),
-                                        settings.last_update_check_unix,
-                                        settings.update_interval_hours,
-                                    )
+                                if settings.update_checks_enabled && update_check_due(&settings)
                                 {
                                     update_status_for_apply
                                         .set(String::from("Checking stable GitHub releases..."));
@@ -3418,11 +3574,7 @@ fn main() {
                     .unwrap_or(true);
                 if update_checks_allowed
                     && settings.update_checks_enabled
-                    && updater::should_check(
-                        updater::unix_now(),
-                        settings.last_update_check_unix,
-                        settings.update_interval_hours,
-                    )
+                    && update_check_due(&settings)
                 {
                     request_update_check(
                         update_sender_for_interval.clone(),
@@ -3578,13 +3730,26 @@ fn main() {
 #[cfg(test)]
 mod tests {
     use super::{
-        actions_for_result, google_icon_rgba, history_cursor_step, hover_position_changed,
-        is_run_as_admin_key, launcher_window_geometry, merge_application_duplicates,
-        normalize_everything_query, preserve_everything_file_order, quoted_result_path,
-        COMPACT_WINDOW_HEIGHT, EXPANDED_WINDOW_HEIGHT, WINDOW_WIDTH,
+        actions_for_result, format_bytes, format_update_progress, google_icon_rgba,
+        history_cursor_step, hover_position_changed, is_run_as_admin_key, launcher_window_geometry,
+        merge_application_duplicates, normalize_everything_query, preserve_everything_file_order,
+        quoted_result_path, COMPACT_WINDOW_HEIGHT, EXPANDED_WINDOW_HEIGHT, WINDOW_WIDTH,
     };
     use flux_core::{ResultKind, ResultSource, SearchResult};
     use windui::event::{Key, KeyEvent};
+
+    #[test]
+    fn update_progress_text_exposes_percent_bytes_and_remaining_work() {
+        let progress = super::updater::DownloadProgress {
+            received_bytes: 512,
+            total_bytes: Some(1024),
+        };
+        assert_eq!(format_bytes(1024), "1 KiB");
+        assert_eq!(
+            format_update_progress("0.1.64", &progress),
+            "Downloading stable 0.1.64: 50% — 512 B / 1 KiB (512 B remaining)"
+        );
+    }
 
     #[test]
     fn bundled_google_icon_decodes_to_32_pixel_rgba_bitmap() {

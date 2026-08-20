@@ -32,6 +32,10 @@ jobs:
         shell: pwsh
         run: cargo build --release --target x86_64-pc-windows-msvc -p flux-launcher -p flow-plugin-fixture
 
+      - name: Run Windows updater and settings regression tests
+        shell: pwsh
+        run: cargo test -p flux-launcher -p flux-core --target x86_64-pc-windows-msvc --all-targets
+
       - name: Build installer and portable package
         shell: pwsh
         run: ./scripts/build-installer.ps1 -AppVersion "${{ inputs.app_version }}"
@@ -43,6 +47,14 @@ jobs:
             -Installer ./artifacts/FluxLauncher-Windows11-x64/FluxLauncher-Setup.exe `
             -ExpectedExe ./target/x86_64-pc-windows-msvc/release/flux-launcher.exe `
             -WorkDirectory ./artifacts/installer-smoke
+
+      - name: Smoke self-update progress, responsiveness, handoff, and restart
+        shell: pwsh
+        run: |
+          ./scripts/update-smoke.ps1 `
+            -Executable ./target/x86_64-pc-windows-msvc/release/flux-launcher.exe `
+            -Installer ./artifacts/FluxLauncher-Windows11-x64/FluxLauncher-Setup.exe `
+            -WorkDirectory ./artifacts/update-smoke
 
       - name: Upload release artifact
         uses: actions/upload-artifact@v4

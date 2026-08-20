@@ -93,6 +93,10 @@ function Assert-InstallerConfiguration {
         'Name: "startup"; Description: "Start Flux Launcher automatically with Windows"; GroupDescription: "Windows startup:"',
         '[Run]',
         'Filename: "{app}\{#AppExeName}"; Description: "Launch Flux Launcher now"; Flags: nowait postinstall skipifsilent',
+        '[UninstallDelete]',
+        'Type: filesandordirs; Name: "{app}"',
+        'Type: filesandordirs; Name: "{group}"',
+        'Type: filesandordirs; Name: "{userappdata}\FluxLauncher"',
         'IconFilename: "{app}\flux-launcher.ico"; IconIndex: 0'
     )
     foreach ($directive in $requiredDirectives) {
@@ -135,12 +139,34 @@ function Assert-StartMenuShortcutIcon {
         throw "Start Menu shortcut does not reference flux-launcher.ico: $($link.IconLocation)"
     }
     Write-Host "Start Menu shortcut smoke passed: target and Flux Launcher icon are correct."
+    return $shortcut.FullName
+}
+
+function Wait-PathGone {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$Path,
+        [Parameter(Mandatory = $true)]
+        [string]$Description
+    )
+
+    for ($attempt = 0; $attempt -lt 30; $attempt++) {
+        if (-not (Test-Path $Path)) {
+            return
+        }
+        Start-Sleep -Milliseconds 250
+    }
+    throw "$Description still exists after uninstall: $Path"
 }
 
 function Invoke-SilentUninstall {
     param(
         [Parameter(Mandatory = $true)]
-        [string]$InstallRoot
+        [string]$InstallRoot,
+        [Parameter(Mandatory = $true)]
+        [string]$ShortcutPath,
+        [Parameter(Mandatory = $true)]
+        [string]$UserDataRoot
     )
 
     $uninstaller = Get-ChildItem -Path $InstallRoot -Filter "unins*.exe" -File | Select-Object -First 1
@@ -157,9 +183,9 @@ function Invoke-SilentUninstall {
     if ($exitCode -ne 0) {
         throw "Uninstaller exited with code $exitCode"
     }
-    if (Test-Path (Join-Path $InstallRoot "flux-launcher.exe")) {
-        throw "Installed executable still exists after uninstall: $InstallRoot"
-    }
+    Wait-PathGone -Path $InstallRoot -Description "Install directory"
+    Wait-PathGone -Path $ShortcutPath -Description "Start Menu shortcut"
+    Wait-PathGone -Path $UserDataRoot -Description "Flux Launcher user data"
 }
 
 function Assert-StartupLaunchIsHidden {
@@ -194,6 +220,7 @@ $installerPath = (Resolve-Path $Installer).Path
 $expectedExePath = (Resolve-Path $ExpectedExe).Path
 $defaultInstallRoot = Join-Path $workRoot "installed-default"
 $disabledInstallRoot = Join-Path $workRoot "installed-disabled"
+$userDataRoot = Join-Path $env:APPDATA "FluxLauncher"
 $defaultLogPath = Join-Path $workRoot "installer-default.log"
 $disabledLogPath = Join-Path $workRoot "installer-disabled.log"
 $originalStartupCommand = Get-StartupCommand
@@ -210,7 +237,9 @@ try {
     Invoke-SilentInstall -InstallRoot $defaultInstallRoot -LogPath $defaultLogPath
     $defaultInstalledExe = Get-InstalledExecutable -InstallRoot $defaultInstallRoot
     Assert-InstalledHash -InstalledExe $defaultInstalledExe
-    Assert-StartMenuShortcutIcon -InstalledExe $defaultInstalledExe
+    $defaultShortcutPath = Assert-StartMenuShortcutIcon -InstalledExe $defaultInstalledExe
+    New-Item -ItemType Directory -Force -Path $userDataRoot | Out-Null
+    Set-Content -Path (Join-Path $userDataRoot "settings.json") -Value '{"smoke":true}' -NoNewline
     $defaultStartupCommand = Get-StartupCommand
     if ($defaultStartupCommand -notmatch [regex]::Escape($defaultInstalledExe)) {
         throw "Default installation did not create a startup value targeting the installed executable: $defaultStartupCommand"
@@ -219,7 +248,10 @@ try {
         throw "Default startup registry value does not use hidden startup mode: $defaultStartupCommand"
     }
     Assert-StartupLaunchIsHidden -InstalledExe $defaultInstalledExe
-    Invoke-SilentUninstall -InstallRoot $defaultInstallRoot
+    Invoke-SilentUninstall `
+        -InstallRoot $defaultInstallRoot `
+        -ShortcutPath $defaultShortcutPath `
+        -UserDataRoot $userDataRoot
     Assert-NoStartupEntry
 
     # /TASKS=!startup models the user clearing the default-checked installer checkbox.
@@ -229,11 +261,15 @@ try {
         -AdditionalArguments @("/TASKS=!startup")
     $disabledInstalledExe = Get-InstalledExecutable -InstallRoot $disabledInstallRoot
     Assert-InstalledHash -InstalledExe $disabledInstalledExe
+    $disabledShortcutPath = Assert-StartMenuShortcutIcon -InstalledExe $disabledInstalledExe
     Assert-NoStartupEntry
-    Invoke-SilentUninstall -InstallRoot $disabledInstallRoot
+    Invoke-SilentUninstall `
+        -InstallRoot $disabledInstallRoot `
+        -ShortcutPath $disabledShortcutPath `
+        -UserDataRoot $userDataRoot
     Assert-NoStartupEntry
 
-    Write-Host "Installer smoke passed: default startup enabled, startup opt-out, hidden --startup mode, hash validation, and uninstall cleanup."
+    Write-Host "Installer smoke passed: default startup enabled, startup opt-out, hidden --startup mode, hash validation, full install-root cleanup, Start Menu cleanup, user-data cleanup, and uninstall cleanup."
 }
 finally {
     if ($null -eq $originalStartupCommand -or $originalStartupCommand -eq "") {

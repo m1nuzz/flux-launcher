@@ -1,6 +1,6 @@
 use std::fs::File;
 use std::io::{self, Read, Write};
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::process::Command;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
@@ -26,6 +26,12 @@ pub struct StableUpdate {
 pub struct UpdateCheckResponse {
     pub checked_at: u64,
     pub result: Result<Option<StableUpdate>, String>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct DownloadProgress {
+    pub received_bytes: u64,
+    pub total_bytes: Option<u64>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -79,10 +85,12 @@ pub fn stable_update(current_version: &str, payload: &str) -> Result<Option<Stab
 }
 
 pub fn check_stable(current_version: &str) -> Result<Option<StableUpdate>, String> {
+    let release_url = std::env::var("FLUX_UPDATE_API_URL")
+        .unwrap_or_else(|_| GITHUB_LATEST_RELEASE_URL.to_owned());
     let response = ureq::AgentBuilder::new()
         .timeout(CHECK_TIMEOUT)
         .build()
-        .get(GITHUB_LATEST_RELEASE_URL)
+        .get(&release_url)
         .set("Accept", "application/vnd.github+json")
         .set("User-Agent", USER_AGENT)
         .call()
@@ -107,38 +115,65 @@ pub fn unix_now() -> u64 {
         .as_secs()
 }
 
-pub fn launch_installer(update: &StableUpdate) -> Result<PathBuf, String> {
-    let installer_path =
-        std::env::temp_dir().join(format!("FluxLauncher-update-{}.exe", update.version));
-    let response = ureq::AgentBuilder::new()
-        .timeout(Duration::from_secs(60))
-        .build()
-        .get(&update.installer_url)
-        .set("User-Agent", USER_AGENT)
-        .call()
-        .map_err(|error| format!("Update download failed: {error}"))?;
-    let mut reader = response.into_reader();
-    let mut file = File::create(&installer_path)
-        .map_err(|error| format!("Could not create update file: {error}"))?;
-    let mut hasher = Sha256::new();
-    copy_and_hash(&mut reader, &mut file, &mut hasher)
+pub fn download_installer_to_path<F>(
+    update: &StableUpdate,
+    installer_path: &Path,
+    mut on_progress: F,
+) -> Result<u64, String>
+where
+    F: FnMut(DownloadProgress),
+{
+    let result = (|| {
+        let response = ureq::AgentBuilder::new()
+            .timeout(Duration::from_secs(60))
+            .build()
+            .get(&update.installer_url)
+            .set("User-Agent", USER_AGENT)
+            .call()
+            .map_err(|error| format!("Update download failed: {error}"))?;
+        let total_bytes = response
+            .header("Content-Length")
+            .and_then(|value| value.parse::<u64>().ok());
+        on_progress(DownloadProgress {
+            received_bytes: 0,
+            total_bytes,
+        });
+
+        let mut reader = response.into_reader();
+        let mut file = File::create(installer_path)
+            .map_err(|error| format!("Could not create update file: {error}"))?;
+        let mut hasher = Sha256::new();
+        let received_bytes = copy_and_hash_with_progress(
+            &mut reader,
+            &mut file,
+            &mut hasher,
+            total_bytes,
+            &mut on_progress,
+        )
         .map_err(|error| format!("Could not save update file: {error}"))?;
-    close_download_file(file)
-        .map_err(|error| format!("Could not finalize update file: {error}"))?;
+        close_download_file(file)
+            .map_err(|error| format!("Could not finalize update file: {error}"))?;
 
-    if let Some(expected) = &update.installer_sha256 {
-        let actual = format_digest(&hasher.finalize());
-        if !actual.eq_ignore_ascii_case(expected) {
-            let _ = std::fs::remove_file(&installer_path);
-            return Err(format!(
-                "Update checksum mismatch: expected {expected}, received {actual}"
-            ));
+        if let Some(expected) = &update.installer_sha256 {
+            let actual = format_digest(&hasher.finalize());
+            if !actual.eq_ignore_ascii_case(expected) {
+                return Err(format!(
+                    "Update checksum mismatch: expected {expected}, received {actual}"
+                ));
+            }
         }
-    }
+        Ok(received_bytes)
+    })();
 
-    spawn_installer_handoff(&installer_path)
-        .map_err(|error| format!("Could not start update installer: {error}"))?;
-    Ok(installer_path)
+    if result.is_err() {
+        let _ = std::fs::remove_file(installer_path);
+    }
+    result
+}
+
+pub fn handoff_installer(installer_path: &Path) -> Result<(), String> {
+    spawn_installer_handoff(installer_path)
+        .map_err(|error| format!("Could not start update installer: {error}"))
 }
 
 fn close_download_file(mut file: File) -> io::Result<()> {
@@ -159,9 +194,9 @@ fn spawn_installer_handoff(installer_path: &Path) -> io::Result<()> {
     let script = format!(
         "$parent = Get-Process -Id {parent_pid} -ErrorAction SilentlyContinue; \
          if ($parent) {{ $parent.WaitForExit() }}; \
-         $setup = Start-Process -FilePath {installer} \
-         -ArgumentList @('/VERYSILENT','/SUPPRESSMSGBOXES','/NORESTART','/NOCANCEL','/CLOSEAPPLICATIONS','/RESTARTAPPLICATIONS') \
-         -Wait -PassThru; \
+         $arguments = @('/VERYSILENT','/SUPPRESSMSGBOXES','/NORESTART','/NOCANCEL','/CLOSEAPPLICATIONS','/RESTARTAPPLICATIONS'); \
+         if ($env:FLUX_UPDATE_INSTALL_DIR) {{ $arguments += '/DIR=' + $env:FLUX_UPDATE_INSTALL_DIR }}; \
+         $setup = Start-Process -FilePath {installer} -ArgumentList $arguments -Wait -PassThru; \
          if ($setup.ExitCode -eq 0) {{ Start-Process -FilePath {application} }}; \
          Remove-Item -LiteralPath {installer} -Force -ErrorAction SilentlyContinue",
     );
@@ -224,13 +259,15 @@ fn format_digest(digest: &[u8]) -> String {
     digest.iter().map(|byte| format!("{byte:02x}")).collect()
 }
 
-fn copy_and_hash<R: Read, W: Write>(
+fn copy_and_hash_with_progress<R: Read, W: Write, F: FnMut(DownloadProgress)>(
     reader: &mut R,
     writer: &mut W,
     hasher: &mut Sha256,
+    total_bytes: Option<u64>,
+    on_progress: &mut F,
 ) -> io::Result<u64> {
     let mut buffer = [0_u8; 64 * 1024];
-    let mut total = 0_u64;
+    let mut received_bytes = 0_u64;
     loop {
         let count = reader.read(&mut buffer)?;
         if count == 0 {
@@ -238,9 +275,13 @@ fn copy_and_hash<R: Read, W: Write>(
         }
         writer.write_all(&buffer[..count])?;
         hasher.update(&buffer[..count]);
-        total = total.saturating_add(count as u64);
+        received_bytes = received_bytes.saturating_add(count as u64);
+        on_progress(DownloadProgress {
+            received_bytes,
+            total_bytes,
+        });
     }
-    Ok(total)
+    Ok(received_bytes)
 }
 
 #[cfg(test)]
@@ -300,5 +341,106 @@ mod tests {
         assert!(!should_check(100 + 23 * 60 * 60, 100, 24));
         assert!(should_check(100 + 24 * 60 * 60, 100, 24));
         assert!(should_check(50, 100, 24));
+    }
+
+    fn serve_payload(payload: Vec<u8>) -> (String, std::thread::JoinHandle<()>) {
+        use std::io::{Read as _, Write as _};
+        use std::net::TcpListener;
+        use std::time::Duration;
+
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let address = listener.local_addr().unwrap();
+        let handle = std::thread::spawn(move || {
+            let (mut stream, _) = listener.accept().unwrap();
+            let mut request = [0_u8; 2048];
+            let _ = stream.read(&mut request);
+            write!(
+                stream,
+                "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+                payload.len()
+            )
+            .unwrap();
+            for chunk in payload.chunks(7) {
+                stream.write_all(chunk).unwrap();
+                stream.flush().unwrap();
+                std::thread::sleep(Duration::from_millis(2));
+            }
+        });
+        (format!("http://{address}/FluxLauncher-Setup.exe"), handle)
+    }
+
+    fn test_update(installer_url: String, checksum: String) -> StableUpdate {
+        StableUpdate {
+            version: Version::new(0, 1, 64),
+            tag_name: String::from("v0.1.64"),
+            release_url: String::from("https://example.test/releases/v0.1.64"),
+            installer_url,
+            installer_sha256: Some(checksum),
+        }
+    }
+
+    #[test]
+    fn download_reports_monotonic_progress_and_verifies_checksum() {
+        use sha2::{Digest as _, Sha256};
+        use std::sync::{Arc, Mutex};
+
+        let payload = b"Flux Launcher update payload with several chunks".repeat(8);
+        let expected = format_digest(&Sha256::digest(&payload));
+        let (url, server) = serve_payload(payload.clone());
+        let path = std::env::temp_dir().join(format!(
+            "flux-updater-progress-{}-{}.exe",
+            std::process::id(),
+            payload.len()
+        ));
+        let progress = Arc::new(Mutex::new(Vec::new()));
+        let progress_for_callback = Arc::clone(&progress);
+
+        let received =
+            download_installer_to_path(&test_update(url, expected), &path, move |event| {
+                progress_for_callback.lock().unwrap().push(event)
+            })
+            .unwrap();
+        server.join().unwrap();
+
+        assert_eq!(received, payload.len() as u64);
+        assert_eq!(std::fs::read(&path).unwrap(), payload);
+        let events = progress.lock().unwrap();
+        assert!(
+            events.len() >= 2,
+            "download must report more than one progress event"
+        );
+        assert!(events.windows(2).all(|pair| {
+            pair[0].received_bytes <= pair[1].received_bytes
+                && pair[1].total_bytes == Some(payload.len() as u64)
+        }));
+        assert_eq!(events.last().unwrap().received_bytes, payload.len() as u64);
+        std::fs::remove_file(path).unwrap();
+    }
+
+    #[test]
+    fn checksum_failure_removes_partial_update_file() {
+        let payload = b"bad checksum payload".repeat(16);
+        let (url, server) = serve_payload(payload);
+        let path = std::env::temp_dir().join(format!(
+            "flux-updater-checksum-{}-{}.exe",
+            std::process::id(),
+            unix_now()
+        ));
+
+        let result = download_installer_to_path(
+            &test_update(
+                url,
+                String::from("0000000000000000000000000000000000000000000000000000000000000000"),
+            ),
+            &path,
+            |_| {},
+        );
+        server.join().unwrap();
+
+        assert!(result.is_err());
+        assert!(
+            !path.exists(),
+            "checksum failure must remove the staged installer"
+        );
     }
 }

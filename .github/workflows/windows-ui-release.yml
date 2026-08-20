@@ -77,6 +77,10 @@ jobs:
           if ($responses -notmatch 'Example: hello') { throw "Native host query smoke failed" }
           if ($responses -notmatch '"success":true') { throw "Native host execute smoke failed" }
 
+      - name: Run Windows updater and settings regression tests
+        shell: pwsh
+        run: cargo test -p flux-launcher -p flux-core --target x86_64-pc-windows-msvc --all-targets
+
       - name: Enable DWM effects and collect preflight diagnostics
         shell: pwsh
         run: ./scripts/enable-dwm-smoke.ps1 -OutputDirectory ./artifacts/windows-ui-release
@@ -153,6 +157,14 @@ jobs:
             -Installer ./artifacts/windows-ui-release/package/FluxLauncher-Setup.exe `
             -ExpectedExe ./target/x86_64-pc-windows-msvc/release/flux-launcher.exe `
             -WorkDirectory ./artifacts/windows-ui-release/installer-smoke
+
+      - name: Smoke self-update progress, responsiveness, handoff, and restart
+        shell: pwsh
+        run: |
+          ./scripts/update-smoke.ps1 `
+            -Executable ./target/x86_64-pc-windows-msvc/release/flux-launcher.exe `
+            -Installer ./artifacts/windows-ui-release/package/FluxLauncher-Setup.exe `
+            -WorkDirectory ./artifacts/windows-ui-release/update-smoke
 
       - name: Publish UI release and screenshots
         uses: softprops/action-gh-release@v2
