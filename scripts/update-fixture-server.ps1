@@ -39,7 +39,15 @@ try {
         } else {
             $context.Response.ContentType = 'application/octet-stream'
         }
-        $context.Response.OutputStream.Write($bytes, 0, $bytes.Length)
+        if ($path.EndsWith('.json')) {
+            $context.Response.OutputStream.Write($bytes, 0, $bytes.Length)
+        } else {
+            foreach ($chunk in [System.Linq.Enumerable]::Chunk($bytes, 64KB)) {
+                $context.Response.OutputStream.Write($chunk, 0, $chunk.Length)
+                $context.Response.OutputStream.Flush()
+                Start-Sleep -Milliseconds 100
+            }
+        }
         $context.Response.Close()
     }
 }
