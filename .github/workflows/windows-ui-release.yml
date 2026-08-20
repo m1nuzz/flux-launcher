@@ -116,7 +116,7 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ inputs.release_tag }}
-          name: Flux Launcher ${{ inputs.release_tag }} (${{ inputs.release_channel }})
+          name: Flux Launcher ${{ inputs.release_tag }}
           prerelease: ${{ inputs.release_channel == 'beta' }}
           make_latest: ${{ inputs.release_channel == 'stable' }}
           generate_release_notes: true
