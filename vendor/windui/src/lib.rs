@@ -5,6 +5,8 @@
 
 // 图形绘制 API 以标量坐标传参（x,y,w,h,radius,width,paint）是有意设计，放宽该 lint。
 #![allow(clippy::too_many_arguments)]
+#![allow(unknown_lints)]
+#![allow(clippy::chunks_exact_to_as_chunks)]
 
 pub mod anim;
 pub mod app;
