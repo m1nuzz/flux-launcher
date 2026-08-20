@@ -24,9 +24,23 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
+      - name: Update App Installer / WinGet
+        shell: pwsh
+        run: |
+          winget upgrade --id Microsoft.AppInstaller --exact --accept-package-agreements --accept-source-agreements --disable-interactivity
+          if ($LASTEXITCODE -ne 0) {
+            throw "Unable to update App Installer / WinGet to a schema 1.12-capable client."
+          }
+
       - name: Show WinGet version
         shell: pwsh
-        run: winget --info
+        run: |
+          winget --info
+          $versionText = (winget --version).Trim().TrimStart("v")
+          $version = [version]$versionText
+          if ($version -lt [version]"1.12.0") {
+            throw "WinGet $versionText is too old for the required schema 1.12 validation."
+          }
 
       - name: Validate manifest set
         shell: pwsh
