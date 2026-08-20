@@ -1,8 +1,8 @@
 #ifndef AppVersion
-#define AppVersion "0.1.61"
+#define AppVersion "0.1.62"
 #endif
 #ifndef BuildDir
-#define BuildDir "target\\x86_64-pc-windows-msvc\\release"
+#define BuildDir "target\x86_64-pc-windows-msvc\release"
 #endif
 
 #define AppName "Flux Launcher"
@@ -35,7 +35,7 @@ Compression=lzma2
 SolidCompression=yes
 WizardStyle=modern
 SetupIconFile=flux-launcher.ico
-UninstallDisplayIcon={app}\{#AppExeName}
+UninstallDisplayIcon={app}\flux-launcher.ico
 VersionInfoVersion={#AppVersion}
 VersionInfoDescription={#AppDescription}
 VersionInfoProductName={#AppName}
@@ -50,13 +50,17 @@ Name: "english"; MessagesFile: "compiler:Default.isl"
 Name: "startup"; Description: "Start Flux Launcher automatically with Windows"; GroupDescription: "Windows startup:"
 
 [Files]
+Source: "flux-launcher.ico"; DestDir: "{app}"; Flags: ignoreversion
 Source: "{#BuildDir}\{#AppExeName}"; DestDir: "{app}"; Flags: ignoreversion
 
 [Icons]
-Name: "{group}\\Flux Launcher"; Filename: "{app}\\{#AppExeName}"
+Name: "{group}\Flux Launcher"; Filename: "{app}\{#AppExeName}"; IconFilename: "{app}\flux-launcher.ico"; IconIndex: 0
 
 [Registry]
 Root: HKCU; Subkey: "Software\Microsoft\Windows\CurrentVersion\Run"; ValueType: string; ValueName: "Flux Launcher"; ValueData: "{code:StartupCommand}"; Flags: uninsdeletevalue; Tasks: startup
+
+[Run]
+Filename: "{app}\{#AppExeName}"; Description: "Launch Flux Launcher now"; Flags: nowait postinstall skipifsilent
 
 [Code]
 function StartupCommand(Param: String): String;

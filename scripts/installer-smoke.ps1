@@ -78,6 +78,30 @@ function Get-InstalledExecutable {
     return $installedExe
 }
 
+function Assert-InstallerConfiguration {
+    $installerScriptPath = Join-Path $PSScriptRoot "..\packaging\installer\FluxLauncher.iss"
+    $iconPath = Join-Path $PSScriptRoot "..\packaging\installer\flux-launcher.ico"
+    if (-not (Test-Path $installerScriptPath)) {
+        throw "Installer script was not found at $installerScriptPath"
+    }
+    if (-not (Test-Path $iconPath)) {
+        throw "Flux Launcher icon resource was not found at $iconPath"
+    }
+    $installerScript = Get-Content -Path $installerScriptPath -Raw
+    $requiredDirectives = @(
+        '[Tasks]',
+        'Name: "startup"; Description: "Start Flux Launcher automatically with Windows"; GroupDescription: "Windows startup:"',
+        '[Run]',
+        'Filename: "{app}\{#AppExeName}"; Description: "Launch Flux Launcher now"; Flags: nowait postinstall skipifsilent',
+        'IconFilename: "{app}\flux-launcher.ico"; IconIndex: 0'
+    )
+    foreach ($directive in $requiredDirectives) {
+        if (-not $installerScript.Contains($directive)) {
+            throw "Installer directive is missing: $directive"
+        }
+    }
+}
+
 function Assert-InstalledHash {
     param(
         [Parameter(Mandatory = $true)]
@@ -89,6 +113,28 @@ function Assert-InstalledHash {
     if ($installedHash -ne $expectedHash) {
         throw "Installed executable hash mismatch: expected $expectedHash, got $installedHash"
     }
+}
+
+function Assert-StartMenuShortcutIcon {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$InstalledExe
+    )
+
+    $startMenuRoot = Join-Path $env:APPDATA "Microsoft\Windows\Start Menu\Programs"
+    $shortcut = Get-ChildItem -Path $startMenuRoot -Filter "Flux Launcher.lnk" -File -Recurse -ErrorAction SilentlyContinue | Select-Object -First 1
+    if ($null -eq $shortcut) {
+        throw "Flux Launcher Start Menu shortcut was not created"
+    }
+    $shell = New-Object -ComObject WScript.Shell
+    $link = $shell.CreateShortcut($shortcut.FullName)
+    if ($link.TargetPath -ne $InstalledExe) {
+        throw "Start Menu shortcut target mismatch: expected $InstalledExe, got $($link.TargetPath)"
+    }
+    if ($link.IconLocation -notmatch "flux-launcher\.ico") {
+        throw "Start Menu shortcut does not reference flux-launcher.ico: $($link.IconLocation)"
+    }
+    Write-Host "Start Menu shortcut smoke passed: target and Flux Launcher icon are correct."
 }
 
 function Invoke-SilentUninstall {
@@ -152,6 +198,8 @@ $defaultLogPath = Join-Path $workRoot "installer-default.log"
 $disabledLogPath = Join-Path $workRoot "installer-disabled.log"
 $originalStartupCommand = Get-StartupCommand
 
+Assert-InstallerConfiguration
+
 try {
     # Earlier UI capture steps may launch Flux and leave a Run entry behind. Isolate this
     # installer test and restore the runner's original value in the finally block.
@@ -162,6 +210,7 @@ try {
     Invoke-SilentInstall -InstallRoot $defaultInstallRoot -LogPath $defaultLogPath
     $defaultInstalledExe = Get-InstalledExecutable -InstallRoot $defaultInstallRoot
     Assert-InstalledHash -InstalledExe $defaultInstalledExe
+    Assert-StartMenuShortcutIcon -InstalledExe $defaultInstalledExe
     $defaultStartupCommand = Get-StartupCommand
     if ($defaultStartupCommand -notmatch [regex]::Escape($defaultInstalledExe)) {
         throw "Default installation did not create a startup value targeting the installed executable: $defaultStartupCommand"
