@@ -1,5 +1,5 @@
 #ifndef AppVersion
-#define AppVersion "0.1.51"
+#define AppVersion "0.1.61"
 #endif
 #ifndef BuildDir
 #define BuildDir "target\\x86_64-pc-windows-msvc\\release"
@@ -47,7 +47,7 @@ OutputDir=..\..\artifacts\installer
 Name: "english"; MessagesFile: "compiler:Default.isl"
 
 [Tasks]
-Name: "startup"; Description: "Start Flux Launcher automatically with Windows"; GroupDescription: "Windows startup:"; Flags: exclusive
+Name: "startup"; Description: "Start Flux Launcher automatically with Windows"; GroupDescription: "Windows startup:"
 
 [Files]
 Source: "{#BuildDir}\{#AppExeName}"; DestDir: "{app}"; Flags: ignoreversion

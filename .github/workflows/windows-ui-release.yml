@@ -146,7 +146,7 @@ jobs:
             -DestinationPath ./artifacts/windows-ui-release/package/FluxLauncher-WinGet-Manifests.zip `
             -Force
 
-      - name: Smoke installer and uninstall
+      - name: Smoke installer, startup opt-out, tray launch, and uninstall
         shell: pwsh
         run: |
           ./scripts/installer-smoke.ps1 `

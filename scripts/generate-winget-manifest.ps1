@@ -100,7 +100,7 @@ Installers:
       SilentWithProgress: /SILENT /SUPPRESSMSGBOXES /NORESTART /SP-
     UpgradeBehavior: install
     AppsAndFeaturesEntries:
-      - DisplayName: Flux Launcher
+      - DisplayName: Flux Launcher $Version
         Publisher: m1nuzz
         DisplayVersion: $Version
         InstallerType: inno
