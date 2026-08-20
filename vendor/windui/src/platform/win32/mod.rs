@@ -66,8 +66,8 @@ use windows::Win32::UI::WindowsAndMessaging::{
     CreateIconIndirect, CreateWindowExW, DefWindowProcW, DestroyIcon, DestroyWindow,
     DispatchMessageW, GetClientRect, GetCursorPos, GetMessageExtraInfo, GetMessageTime,
     GetMessageW, GetSystemMetrics, GetWindowLongPtrW, GetWindowRect, IsIconic, IsWindowVisible,
-    IsZoomed, LoadCursorW, LoadIconW, MsgWaitForMultipleObjectsEx, PeekMessageW, PostMessageW,
-    PostQuitMessage, RegisterClassExW, SetCursor, SetCursorPos, SetForegroundWindow,
+    IsZoomed, KillTimer, LoadCursorW, LoadIconW, MsgWaitForMultipleObjectsEx, PeekMessageW,
+    PostMessageW, PostQuitMessage, RegisterClassExW, SetCursor, SetCursorPos, SetForegroundWindow,
     SetLayeredWindowAttributes, SetTimer, SetWindowLongPtrW, SetWindowPos, ShowWindow,
     SystemParametersInfoW, TranslateMessage, CREATESTRUCTW, CW_USEDEFAULT, GWLP_USERDATA, HICON,
     HTBOTTOM, HTBOTTOMLEFT, HTBOTTOMRIGHT, HTCAPTION, HTCLIENT, HTLEFT, HTRIGHT, HTTOP, HTTOPLEFT,
@@ -1094,14 +1094,6 @@ unsafe fn run_windowed(
         crate::single_instance::install_listener(&si.app_id, hwnd.0 as isize, si.on_second);
     }
 
-    // 注册周期定时器（on_interval）：timer id 从 1 起，靠 WM_TIMER 派发。
-    if let Some(s) = state_from(hwnd) {
-        for (i, d) in s.handler.intervals().iter().enumerate() {
-            let ms = (d.as_millis() as u32).max(1);
-            let _ = SetTimer(Some(hwnd), i + 1, ms, None);
-        }
-    }
-
     // 无边框窗口：标记状态，扩展 DWM 边框保留窗口投影，并触发非客户区重算
     // （SWP_FRAMECHANGED → WM_NCCALCSIZE 让客户区铺满整窗）。
     if cfg.frameless {
@@ -1168,6 +1160,7 @@ unsafe fn run_windowed(
         let _ = ShowWindow(hwnd, SW_SHOW);
         let _ = InvalidateRect(Some(hwnd), None, false);
         let _ = UpdateWindow(hwnd);
+        set_interval_timers(hwnd, true);
     }
 
     run_message_loop(hwnd);
@@ -1207,6 +1200,21 @@ impl Drop for TimerResolution {
     }
 }
 
+unsafe fn set_interval_timers(hwnd: HWND, enabled: bool) {
+    let intervals = state_from(hwnd)
+        .map(|state| state.handler.intervals())
+        .unwrap_or_default();
+    for (index, duration) in intervals.into_iter().enumerate() {
+        let timer_id = index + 1;
+        if enabled {
+            let milliseconds = duration.as_millis().clamp(1, u32::MAX as u128) as u32;
+            let _ = SetTimer(Some(hwnd), timer_id, milliseconds, None);
+        } else {
+            let _ = KillTimer(Some(hwnd), timer_id);
+        }
+    }
+}
+
 unsafe fn run_message_loop(hwnd: HWND) {
     // 动画帧间隔按显示器刷新率取整（默认 60fps 上限，刷新率 <60 时回退到实际值）。
     // 注：仅起始采样一次；跨刷新率不同的显示器移动后不更新（单窗口小工具可接受）。
@@ -1216,7 +1224,8 @@ unsafe fn run_message_loop(hwnd: HWND) {
     // 仅动画期间持有（提升定时器分辨率），空闲时 None 由 Drop 归还，省电。
     let mut hires: Option<TimerResolution> = None;
     loop {
-        let animating = !IsIconic(hwnd).as_bool()
+        let animating = IsWindowVisible(hwnd).as_bool()
+            && !IsIconic(hwnd).as_bool()
             && state_from(hwnd)
                 .map(|s| s.handler.wants_animation())
                 .unwrap_or(false);
@@ -1470,6 +1479,9 @@ unsafe extern "system" fn wnd_proc(
         }
         // 周期定时器回调：timer id = interval 索引 + 1。
         WM_TIMER => {
+            if !IsWindowVisible(hwnd).as_bool() {
+                return LRESULT(0);
+            }
             let id = wparam.0;
             let need = state_from(hwnd)
                 .map(|s| s.handler.on_interval_fired(id.saturating_sub(1)))
@@ -1890,6 +1902,7 @@ unsafe fn run_window_op(hwnd: HWND, op: Option<WindowOp>) {
         }
         Some(WindowOp::Show) => show_and_activate(hwnd),
         Some(WindowOp::Hide) => {
+            set_interval_timers(hwnd, false);
             let _ = ShowWindow(hwnd, SW_HIDE);
             if let Some(state) = state_from(hwnd) {
                 state.handler.on_window_hide();
@@ -1900,6 +1913,7 @@ unsafe fn run_window_op(hwnd: HWND, op: Option<WindowOp>) {
         }
         Some(WindowOp::ToggleVisibility) => {
             if IsWindowVisible(hwnd).as_bool() {
+                set_interval_timers(hwnd, false);
                 let _ = ShowWindow(hwnd, SW_HIDE);
                 if let Some(state) = state_from(hwnd) {
                     state.handler.on_window_hide();
@@ -2078,6 +2092,7 @@ pub(crate) fn show_and_activate(hwnd: HWND) {
         } else {
             let _ = ShowWindow(hwnd, SW_SHOW);
         }
+        set_interval_timers(hwnd, true);
         trace_show_event(hwnd, "show.after_show_window", "phase=after_show_window");
         // Reapply DWM attributes and recommit the DirectComposition visual only
         // after the HWND is visible. This makes the following UpdateWindow the

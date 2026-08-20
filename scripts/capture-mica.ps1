@@ -15,6 +15,7 @@ param(
     [switch]$QueryClearOnReopenSmoke,
     [switch]$CtrlRSmoke,
     [switch]$CtrlCSmoke,
+    [switch]$IdlePerformanceSmoke,
     [string]$NavigationQuery = "wab",
 
     [int]$NavigationCycles = 0,
@@ -124,6 +125,11 @@ function Get-MemorySnapshot([int]$ProcessId) {
         PrivateBytes = [int64]$sample.PrivateMemorySize64
         VirtualBytes = [int64]$sample.VirtualMemorySize64
     }
+}
+
+function Get-CpuTimeMilliseconds([int]$ProcessId) {
+    $sample = Get-Process -Id $ProcessId
+    return $sample.TotalProcessorTime.TotalMilliseconds
 }
 
 function Save-Screenshot([string]$FileName) {
@@ -317,6 +323,23 @@ try {
     [FluxWallpaper]::SendMessage($launcherHandle, $wmHotkey, [UIntPtr]::Zero, [IntPtr]::Zero) | Out-Null
     Start-Sleep -Milliseconds 450
     $hiddenAfterFirstHotkey = ![FluxWallpaper]::IsWindowVisible($launcherHandle)
+    if ($IdlePerformanceSmoke) {
+        if (!$hiddenAfterFirstHotkey) {
+            throw "Idle performance probe could not hide the launcher."
+        }
+        # Let queued hide work and startup activity settle before sampling.
+        Start-Sleep -Milliseconds 1500
+        $idleCpuBefore = Get-CpuTimeMilliseconds $process.Id
+        Start-Sleep -Seconds 3
+        $idleCpuAfter = Get-CpuTimeMilliseconds $process.Id
+        $idleCpuDelta = [Math]::Round($idleCpuAfter - $idleCpuBefore, 2)
+        Write-Host "Hidden idle CPU time over 3s: $idleCpuDelta ms"
+        # 150 ms over 3 seconds is a 5% single-process CPU ceiling. This catches
+        # timer/render busy loops while allowing normal Windows background noise.
+        if ($idleCpuDelta -gt 150) {
+            throw "Hidden idle CPU budget exceeded: ${idleCpuDelta} ms over 3 seconds."
+        }
+    }
     [FluxWallpaper]::SendMessage($launcherHandle, $wmHotkey, [UIntPtr]::Zero, [IntPtr]::Zero) | Out-Null
     Start-Sleep -Milliseconds 600
     $visibleAfterSecondHotkey = [FluxWallpaper]::IsWindowVisible($launcherHandle)

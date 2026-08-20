@@ -1151,10 +1151,11 @@ impl UiHost {
     /// 焦点来源按 `Pointer` 记：这些回调不在键盘导航中，不该点亮焦点环。
     /// 完事置 `needs_relayout`——回调可以经 `ctx.tree_mut()` 改结构，交给 render 里的
     /// 结构签名去判本帧走局部还是整窗（与键盘路径同款保守）。
-    fn apply_app_effects(&mut self, res: DispatchResult) {
-        let (_, damage, _) = self.apply_dispatch_effects(res, FocusSource::Pointer, None);
+    fn apply_app_effects(&mut self, res: DispatchResult) -> bool {
+        let (repaint, damage, _) = self.apply_dispatch_effects(res, FocusSource::Pointer, None);
         self.apply_damage(damage);
         self.damage.needs_relayout = true;
+        repaint
     }
 
     /// 落地**已决定**的关闭（`EventCtx::force_close`）：`hide_on_close` 时转为隐藏，
@@ -1752,8 +1753,7 @@ impl AppHandler for UiHost {
             return false;
         };
         let res = self.tree.run_detached(root, |ctx| cb(ctx));
-        self.apply_app_effects(res);
-        true
+        self.apply_app_effects(res)
     }
 
     fn on_drop_files(&mut self, pos: Point, paths: Vec<std::path::PathBuf>) -> bool {
@@ -2056,6 +2056,18 @@ mod tests {
 
     /// 定时器回调的副作用同样到达宿主：toast 上屏、`request_close` 变成宿主的关窗意图
     /// （平台在帧路径轮询 `wants_close`）。
+    #[test]
+    fn no_op_interval_does_not_request_repaint() {
+        let app = App::new("t", 100, 100)
+            .on_interval(Duration::from_millis(40), |_ctx| {})
+            .content(Element::col());
+        let mut host = app.into_handler_for_test();
+        assert!(
+            !host.on_interval_fired(0),
+            "an unchanged idle interval must not invalidate the window"
+        );
+    }
+
     #[test]
     fn interval_callback_gets_ctx_and_its_requests_reach_the_host() {
         let seen_id: Rc<RefCell<Option<NodeId>>> = Rc::new(RefCell::new(None));

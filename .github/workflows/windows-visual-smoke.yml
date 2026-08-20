@@ -158,6 +158,7 @@ jobs:
           if ("${{ inputs.tray_settings_smoke }}" -eq "true") {
             $captureParams.TraySettingsSmoke = $true
           }
+          $captureParams.IdlePerformanceSmoke = $true
           & ./scripts/capture-mica.ps1 @captureParams
 
       - name: Upload launcher binary
