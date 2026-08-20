@@ -1791,7 +1791,11 @@ fn main() {
             }
         }
     });
-    if settings.update_checks_enabled
+    let update_checks_allowed = std::env::var("FLUX_DISABLE_UPDATE_CHECKS")
+        .map(|value| value != "1")
+        .unwrap_or(true);
+    if update_checks_allowed
+        && settings.update_checks_enabled
         && updater::should_check(
             updater::unix_now(),
             settings.last_update_check_unix,
@@ -3321,7 +3325,11 @@ fn main() {
         .content(content)
         .on_interval(SEARCH_INTERVAL, move |ctx| {
             if let Ok(settings) = settings_for_update_interval.read() {
-                if settings.update_checks_enabled
+                let update_checks_allowed = std::env::var("FLUX_DISABLE_UPDATE_CHECKS")
+                    .map(|value| value != "1")
+                    .unwrap_or(true);
+                if update_checks_allowed
+                    && settings.update_checks_enabled
                     && updater::should_check(
                         updater::unix_now(),
                         settings.last_update_check_unix,
