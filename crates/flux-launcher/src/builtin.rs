@@ -110,7 +110,7 @@ impl BuiltinProvider for ObsidianProvider {
         }
         let terms = search
             .split_whitespace()
-            .map(|term| term.to_ascii_lowercase())
+            .map(str::to_owned)
             .collect::<Vec<_>>();
         let files = vaults
             .iter()
@@ -122,9 +122,8 @@ impl BuiltinProvider for ObsidianProvider {
             .collect::<Vec<_>>();
         scored.sort_by(|(left_score, left), (right_score, right)| {
             right_score.cmp(left_score).then_with(|| {
-                left.relative_path
-                    .to_ascii_lowercase()
-                    .cmp(&right.relative_path.to_ascii_lowercase())
+                normalize_search_text(&left.relative_path)
+                    .cmp(&normalize_search_text(&right.relative_path))
             })
         });
         scored
@@ -340,18 +339,26 @@ fn parse_alias_list(value: &str) -> Vec<String> {
         .collect()
 }
 
+fn normalize_search_text(value: &str) -> String {
+    value.to_lowercase()
+}
+
 fn score_file(file: &VaultFile, terms: &[String]) -> Option<i32> {
     let stem = file
         .path
         .file_stem()
         .and_then(|name| name.to_str())
-        .unwrap_or_default()
-        .to_ascii_lowercase();
-    let relative = file.relative_path.to_ascii_lowercase();
+        .map(normalize_search_text)
+        .unwrap_or_default();
+    let relative = normalize_search_text(&file.relative_path);
     let aliases = file
         .aliases
         .iter()
-        .map(|alias| alias.to_ascii_lowercase())
+        .map(|alias| normalize_search_text(alias))
+        .collect::<Vec<_>>();
+    let terms = terms
+        .iter()
+        .map(|term| normalize_search_text(term))
         .collect::<Vec<_>>();
     if !terms.iter().all(|term| {
         stem.contains(term)
@@ -366,13 +373,13 @@ fn score_file(file: &VaultFile, terms: &[String]) -> Option<i32> {
     for term in terms {
         if stem == *term {
             score += 1_000;
-        } else if stem.starts_with(term) {
+        } else if stem.starts_with(&term) {
             score += 700;
-        } else if joined_aliases.contains(term) {
+        } else if joined_aliases.contains(&term) {
             score += 550;
-        } else if relative.contains(term) {
+        } else if relative.contains(&term) {
             score += 350;
-        } else if haystack.contains(term) {
+        } else if haystack.contains(&term) {
             score += 200;
         }
     }
@@ -496,5 +503,18 @@ mod tests {
         };
         assert!(score_file(&file, &[String::from("meeting"), String::from("sync")]).is_some());
         assert!(score_file(&file, &[String::from("missing")]).is_none());
+    }
+
+    #[test]
+    fn obsidian_file_scoring_is_unicode_case_insensitive() {
+        let file = VaultFile {
+            vault_id: String::from("vault"),
+            vault_name: String::from("Заметки"),
+            path: PathBuf::from("C:/Vault/Контент-машина.md"),
+            relative_path: String::from("Контент-машина.md"),
+            aliases: Vec::new(),
+        };
+        assert!(score_file(&file, &[String::from("контент-машина")]).is_some());
+        assert!(score_file(&file, &[String::from("КОНТЕНТ-МАШИНА")]).is_some());
     }
 }
