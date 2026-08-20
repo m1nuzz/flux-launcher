@@ -191,8 +191,9 @@ finally {
         Remove-ItemProperty -Path $runKey -Name $runValueName -ErrorAction SilentlyContinue
     }
     else {
-        New-Item -ItemType Directory -Force -Path (Split-Path $runKey) | Out-Null
-        New-Item -Path $runKey -Force | Out-Null
+        if (-not (Test-Path $runKey)) {
+            New-Item -Path $runKey -Force | Out-Null
+        }
         New-ItemProperty -Path $runKey -Name $runValueName -Value $originalStartupCommand -PropertyType String -Force | Out-Null
     }
 }
