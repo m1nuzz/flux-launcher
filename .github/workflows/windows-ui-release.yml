@@ -87,6 +87,8 @@ jobs:
           # Force the GPU path when the runner supports it; Flux still checks
           # SM_REMOTESESSION and DwmIsCompositionEnabled before using transparency.
           WINDUI_D2D: "1"
+          # Keep first-run onboarding out of deterministic desktop capture.
+          FLUX_DISABLE_EVERYTHING_PROMPT: "1"
         run: |
           ./scripts/capture-mica.ps1 `
             -Executable ./target/x86_64-pc-windows-msvc/release/flux-launcher.exe `
