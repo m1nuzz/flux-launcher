@@ -1446,6 +1446,7 @@ fn main() {
     let monitor_preference = signal(monitor_preference_index(initial_monitor_preference));
     let initial_everything_state = everything::installation_state();
     let everything_installed = signal(initial_everything_state.is_installed());
+    let everything_prompt_visible = signal(false);
     let everything_status = signal(if everything_installed.get() {
         String::from("Everything detected; Flux will enable IPC automatically")
     } else {
@@ -1551,11 +1552,89 @@ fn main() {
     // Keep the result body transparent so the window remains one continuous
     // Acrylic surface. Only individual result rows draw controls.
     .padding(6);
-    let result_list = Element::scroll()
+    let result_list = Element::row()
         .width_match()
-        .height(RESULT_VIEWPORT_HEIGHT)
-        .child(result_list_body)
-        .visible_when(move || show_results.get() && !action_mode.get());
+        .child(
+            Element::scroll()
+                .weight(1.0)
+                .height(RESULT_VIEWPORT_HEIGHT)
+                .child(result_list_body)
+                .visible_when(move || show_results.get() && !action_mode.get()),
+        )
+        .child(Element::col().width(12));
+
+    let everything_prompt_for_close = everything_prompt_visible;
+    let everything_prompt_for_decline = everything_prompt_visible;
+    let everything_prompt_for_install = everything_prompt_visible;
+    let everything_status_for_prompt = everything_status;
+    let settings_for_everything_prompt_close = Arc::clone(&shared_settings);
+    let settings_for_everything_prompt_decline = Arc::clone(&shared_settings);
+    let settings_for_everything_prompt_install = Arc::clone(&shared_settings);
+    let everything_install_prompt = Element::dialog_panel(
+        everything_prompt_visible,
+        "Install Everything",
+        400,
+        move |_| {
+            everything_prompt_for_close.set(false);
+            if let Ok(mut settings) = settings_for_everything_prompt_close.write() {
+                settings.everything_install_prompt_seen = true;
+                let _ = save_settings(&settings);
+            }
+        },
+        Element::col()
+            .spacing(10)
+            .child(
+                Element::label(
+                    "Everything is not installed. Install it now for fast indexed file and folder search?",
+                )
+                .font_size(13.0)
+                .fg(Color::rgba(245, 248, 255, 245)),
+            )
+            .child(
+                Element::label("Flux will run the official winget command: winget install -e --id voidtools.Everything")
+                    .font_size(11.0)
+                    .fg(Color::rgba(235, 241, 255, 180))
+                    .max_lines(2)
+                    .truncate(Truncate::End),
+            ),
+        Element::row()
+            .width_match()
+            .spacing(8)
+            .child(Element::flex_spacer())
+            .child(
+                Element::button("Not now")
+                    .neutral()
+                    .outline_soft()
+                    .on_click(move |_| {
+                        everything_prompt_for_decline.set(false);
+                        if let Ok(mut settings) = settings_for_everything_prompt_decline.write() {
+                            settings.everything_install_prompt_seen = true;
+                            let _ = save_settings(&settings);
+                        }
+                    }),
+            )
+            .child(
+                Element::button("Install Everything").on_click(move |ctx| {
+                    everything_prompt_for_install.set(false);
+                    if let Ok(mut settings) = settings_for_everything_prompt_install.write() {
+                        settings.everything_install_prompt_seen = true;
+                        let _ = save_settings(&settings);
+                    }
+                    match everything::launch_winget_install() {
+                        Ok(()) => {
+                            everything_status_for_prompt.set(String::from(
+                                "Everything installation started with winget.",
+                            ));
+                            ctx.toast_ok("Everything installation started");
+                        }
+                        Err(error) => {
+                            everything_status_for_prompt.set(error.clone());
+                            ctx.toast_ok(error);
+                        }
+                    }
+                }),
+            ),
+    );
 
     let confirmation_for_close = recycle_bin_confirmation;
     let confirmation_for_cancel = recycle_bin_confirmation;
@@ -1695,7 +1774,8 @@ fn main() {
         .child(result_list)
         .child(action_bar)
         .child(action_list)
-        .child(recycle_bin_dialog);
+        .child(recycle_bin_dialog)
+        .child(everything_install_prompt);
     let launcher_surface = Element::stack()
         .fill()
         .bg(Color::rgba(0, 0, 0, 0))
@@ -1946,6 +2026,16 @@ fn main() {
         everything_status.set(String::from(
             "Everything auto-enable is disabled in Flux settings",
         ));
+    }
+    if settings.auto_enable_everything
+        && !everything_installed.get()
+        && !settings.everything_install_prompt_seen
+        && std::env::var("FLUX_DISABLE_EVERYTHING_PROMPT")
+            .ok()
+            .as_deref()
+            != Some("1")
+    {
+        everything_prompt_visible.set(true);
     }
 
     let query_for_plugins = query;
@@ -2972,7 +3062,7 @@ fn main() {
                                             .truncate(Truncate::End)
                                             .width_match(),
                                     )
-                                    .child(Element::button("Check now").on_click(move |ctx| {
+                                    .child(Element::button("Check for updates").on_click(move |ctx| {
                                         update_status_for_apply.set(String::from(
                                             "Checking stable GitHub releases...",
                                         ));

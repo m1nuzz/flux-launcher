@@ -102,6 +102,8 @@ pub struct Settings {
     pub start_with_windows: bool,
     #[serde(default = "enabled_by_default")]
     pub auto_enable_everything: bool,
+    #[serde(default)]
+    pub everything_install_prompt_seen: bool,
     #[serde(default = "enabled_by_default")]
     pub update_checks_enabled: bool,
     #[serde(default = "default_update_interval_hours")]
@@ -141,6 +143,7 @@ impl Default for Settings {
             clear_query_on_activation: true,
             start_with_windows: true,
             auto_enable_everything: true,
+            everything_install_prompt_seen: false,
             update_checks_enabled: true,
             update_interval_hours: DEFAULT_UPDATE_INTERVAL_HOURS,
             auto_install_updates: false,
@@ -338,6 +341,7 @@ mod tests {
         assert!(settings.clear_query_on_activation);
         assert!(settings.start_with_windows);
         assert!(settings.auto_enable_everything);
+        assert!(!settings.everything_install_prompt_seen);
         assert!(settings.update_checks_enabled);
         assert_eq!(
             settings.update_interval_hours,
@@ -373,6 +377,7 @@ mod tests {
             clear_query_on_activation: false,
             start_with_windows: false,
             auto_enable_everything: false,
+            everything_install_prompt_seen: true,
             update_checks_enabled: false,
             update_interval_hours: 6,
             auto_install_updates: true,
@@ -465,6 +470,7 @@ mod tests {
         fs::write(&path, r#"{"activation_hotkey":{"key":"Space"}}"#).unwrap();
         let settings = Settings::load_from(&path).unwrap();
         assert!(settings.start_with_windows);
+        assert!(!settings.everything_install_prompt_seen);
         assert!(settings.update_checks_enabled);
         assert_eq!(
             settings.update_interval_hours,

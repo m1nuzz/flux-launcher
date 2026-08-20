@@ -113,6 +113,7 @@ jobs:
         env:
           WINDUI_D2D: "1"
           FLUX_DISABLE_UPDATE_CHECKS: "1"
+          FLUX_DISABLE_EVERYTHING_PROMPT: "1"
         run: |
           $captureParams = @{
             Executable = "./target/x86_64-pc-windows-msvc/release/flux-launcher.exe"
