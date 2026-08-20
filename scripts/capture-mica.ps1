@@ -132,6 +132,28 @@ function Get-CpuTimeMilliseconds([int]$ProcessId) {
     return $sample.TotalProcessorTime.TotalMilliseconds
 }
 
+function Get-LauncherWindowHandle([System.Diagnostics.Process]$Process) {
+    for ($attempt = 0; $attempt -lt 60; $attempt++) {
+        try {
+            $Process.Refresh()
+            $handle = $Process.MainWindowHandle
+            if ($handle -eq [IntPtr]::Zero) {
+                $handle = [FluxWallpaper]::FindWindowByProcessId([uint32]$Process.Id)
+            }
+            if ($handle -ne [IntPtr]::Zero) {
+                return $handle
+            }
+        }
+        catch {
+            if ($attempt -eq 59) {
+                throw
+            }
+        }
+        Start-Sleep -Milliseconds 250
+    }
+    return [IntPtr]::Zero
+}
+
 function Save-Screenshot([string]$FileName) {
     $bounds = [System.Windows.Forms.SystemInformation]::VirtualScreen
     $bitmap = New-Object System.Drawing.Bitmap $bounds.Width, $bounds.Height
@@ -304,12 +326,8 @@ try {
     # while the query is empty. Capture this before any query edit, so a later
     # repaint cannot hide a failure where the DirectComposition surface attaches
     # only after typing.
-    $process.Refresh()
-    $launcherHandle = $process.MainWindowHandle
-    if ($launcherHandle -eq [IntPtr]::Zero) {
-        $launcherHandle = [FluxWallpaper]::FindWindowByProcessId([uint32]$process.Id)
-    }
-    if ($launcherHandle -eq [IntPtr]::Zero) { throw "Flux launcher has no main window handle." }
+    $launcherHandle = Get-LauncherWindowHandle $process
+    if ($launcherHandle -eq [IntPtr]::Zero) { throw "Flux launcher has no main window handle after waiting for startup." }
     if (![FluxWallpaper]::IsWindowVisible($launcherHandle)) { throw "Launcher is not visible before hotkey regression probe." }
     $exStyle = [FluxWallpaper]::GetWindowLongPtr($launcherHandle, -20).ToInt64()
     $trayOnlyWindow = (($exStyle -band 0x00000080) -ne 0) -and (($exStyle -band 0x00040000) -eq 0)
