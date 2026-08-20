@@ -62,10 +62,20 @@ jobs:
           {"jsonrpc":"2.0","id":1,"method":"query","params":{"query":"ex hello","action_keyword":"ex","locale":"en-US"}}
           {"jsonrpc":"2.0","id":2,"method":"execute","plugin":"Example Native","params":{"action":{"type":"copy_text","text":"hello"}}}
           '@ | Set-Content -Path $requests -Encoding utf8
-          $responses = Get-Content $requests | & ./target/x86_64-pc-windows-msvc/release/flux-launcher.exe --plugin-host $nativeRoot
-          $responses | Tee-Object -FilePath (Join-Path $env:RUNNER_TEMP "flux-native-plugin-responses.jsonl")
-          if (-not ($responses -match 'Example: hello')) { throw "Native host query smoke failed" }
-          if (-not ($responses -match '"success":true')) { throw "Native host execute smoke failed" }
+          $responsePath = Join-Path $env:RUNNER_TEMP "flux-native-plugin-responses.jsonl"
+          $process = Start-Process `
+            -FilePath "./target/x86_64-pc-windows-msvc/release/flux-launcher.exe" `
+            -ArgumentList @("--plugin-host", $nativeRoot) `
+            -RedirectStandardInput $requests `
+            -RedirectStandardOutput $responsePath `
+            -NoNewWindow `
+            -Wait `
+            -PassThru
+          if ($process.ExitCode -ne 0) { throw "Native plugin host exited with code $($process.ExitCode)" }
+          $responses = Get-Content $responsePath -Raw
+          Write-Host $responses
+          if ($responses -notmatch 'Example: hello') { throw "Native host query smoke failed" }
+          if ($responses -notmatch '"success":true') { throw "Native host execute smoke failed" }
 
       - name: Enable DWM effects and collect preflight diagnostics
         shell: pwsh
