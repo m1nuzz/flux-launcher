@@ -52,7 +52,7 @@ jobs:
       - name: Validate manifest set
         shell: pwsh
         run: |
-          $packageRoot = Resolve-Path "packaging/winget/manifests/m/M1nuzz/FluxLauncher"
+          $packageRoot = Resolve-Path "packaging/winget/manifests/m/m1nuzz/FluxLauncher"
           $manifestRoots = @(Get-ChildItem $packageRoot -Directory)
           if ($manifestRoots.Count -eq 0) {
             throw "No versioned WinGet manifest directories were found."

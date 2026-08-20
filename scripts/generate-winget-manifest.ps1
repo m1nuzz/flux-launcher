@@ -16,10 +16,10 @@ if ([string]::IsNullOrWhiteSpace($ReleaseTag)) {
     $ReleaseTag = "v$Version"
 }
 
-$packageIdentifier = "M1nuzz.FluxLauncher"
-$publisher = "M1nuzz"
+$packageIdentifier = "m1nuzz.FluxLauncher"
+$publisher = "m1nuzz"
 $packageName = "FluxLauncher"
-$packageDirectory = Join-Path $repoRoot (Join-Path $OutputRoot (Join-Path "m/M1nuzz/FluxLauncher" $Version))
+$packageDirectory = Join-Path $repoRoot (Join-Path $OutputRoot (Join-Path "m/m1nuzz/FluxLauncher" $Version))
 $installerUrl = "https://github.com/m1nuzz/flux-launcher/releases/download/$ReleaseTag/FluxLauncher-Setup.exe"
 $releaseUrl = "https://github.com/m1nuzz/flux-launcher/releases/tag/$ReleaseTag"
 $schemaBase = "https://aka.ms/winget-manifest"
