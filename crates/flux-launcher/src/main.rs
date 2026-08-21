@@ -882,6 +882,31 @@ fn alt_key_is_down() -> bool {
 }
 
 #[cfg(windows)]
+fn launcher_is_foreground() -> bool {
+    use windows::Win32::System::Threading::GetCurrentProcessId;
+    use windows::Win32::UI::WindowsAndMessaging::{GetForegroundWindow, GetWindowThreadProcessId};
+
+    unsafe {
+        let foreground = GetForegroundWindow();
+        if foreground.is_invalid() {
+            return false;
+        }
+        let mut process_id = 0_u32;
+        GetWindowThreadProcessId(foreground, Some(&mut process_id));
+        process_id == GetCurrentProcessId()
+    }
+}
+
+#[cfg(not(windows))]
+fn launcher_is_foreground() -> bool {
+    false
+}
+
+fn should_show_launcher(is_foreground: bool) -> bool {
+    !is_foreground
+}
+
+#[cfg(windows)]
 static SHELL_ICON_CACHE: OnceLock<Mutex<HashMap<String, Option<Vec<u8>>>>> = OnceLock::new();
 static SETTINGS_SAVE_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
 static SHELL_ICON_REFRESH_PENDING: AtomicBool = AtomicBool::new(false);
@@ -2457,7 +2482,11 @@ fn main() {
                 height,
             );
             cursor_visibility_for_activation.show();
-            ctx.toggle_window();
+            if should_show_launcher(launcher_is_foreground()) {
+                ctx.show_window();
+            } else {
+                ctx.hide_window();
+            }
         }
     });
 
@@ -3849,8 +3878,8 @@ mod tests {
         actions_for_result, format_bytes, format_update_progress, google_icon_rgba,
         history_cursor_step, hover_position_changed, is_run_as_admin_key, launcher_window_geometry,
         merge_application_duplicates, normalize_everything_query, preserve_everything_file_order,
-        quoted_result_path, should_claim_single_instance, ProviderResults, COMPACT_WINDOW_HEIGHT,
-        EXPANDED_WINDOW_HEIGHT, WINDOW_WIDTH,
+        quoted_result_path, should_claim_single_instance, should_show_launcher, ProviderResults,
+        COMPACT_WINDOW_HEIGHT, EXPANDED_WINDOW_HEIGHT, WINDOW_WIDTH,
     };
     use flux_core::{ResultKind, ResultSource, SearchResult};
     use windui::event::{Key, KeyEvent};
@@ -4051,6 +4080,12 @@ mod tests {
         assert_eq!(normalize_everything_query("ext:zip"), "ext:zip");
         assert_eq!(normalize_everything_query("settings"), "settings");
         assert_eq!(normalize_everything_query("."), ".");
+    }
+
+    #[test]
+    fn activation_shows_when_flux_is_not_foreground() {
+        assert!(should_show_launcher(false));
+        assert!(!should_show_launcher(true));
     }
 
     #[test]

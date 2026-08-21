@@ -14,6 +14,7 @@ param(
     [switch]$ScrollbarGapSmoke,
     [switch]$QueryClearOnReopenSmoke,
     [switch]$QueryResponsivenessSmoke,
+    [switch]$FocusToggleSmoke,
     [switch]$CtrlRSmoke,
     [switch]$CtrlCSmoke,
     [switch]$IdlePerformanceSmoke,
@@ -368,8 +369,37 @@ try {
     if (!$hiddenAfterFirstHotkey -or !$visibleAfterSecondHotkey) {
         throw "Alt+Space visibility regression: hidden=$hiddenAfterFirstHotkey visible=$visibleAfterSecondHotkey"
     }
+    $focusToggleProbe = $false
+    $focusToggleVisibleAfterReopen = $false
+    $focusToggleForegroundAfterReopen = $false
+    if ($FocusToggleSmoke) {
+        $probeProcess.Refresh()
+        $focusProbeHandle = $probeProcess.MainWindowHandle
+        if ($focusProbeHandle -eq [IntPtr]::Zero) {
+            $focusProbeHandle = [FluxWallpaper]::FindWindowByProcessId([uint32]$probeProcess.Id)
+        }
+        if ($focusProbeHandle -eq [IntPtr]::Zero) {
+            throw "Foreground handoff smoke could not find the deterministic probe window."
+        }
+        [FluxWallpaper]::SetForegroundWindow($focusProbeHandle) | Out-Null
+        Start-Sleep -Milliseconds 350
+        if ([FluxWallpaper]::GetForegroundWindow() -eq $launcherHandle) {
+            throw "Foreground handoff smoke could not activate the covering window."
+        }
+        if (![FluxWallpaper]::IsWindowVisible($launcherHandle)) {
+            throw "Foreground handoff smoke expected the launcher HWND to remain visible behind another window."
+        }
+        [FluxWallpaper]::SendMessage($launcherHandle, $wmHotkey, [UIntPtr]::Zero, [IntPtr]::Zero) | Out-Null
+        Start-Sleep -Milliseconds 600
+        $focusToggleVisibleAfterReopen = [FluxWallpaper]::IsWindowVisible($launcherHandle)
+        $focusToggleForegroundAfterReopen = [FluxWallpaper]::GetForegroundWindow() -eq $launcherHandle
+        $focusToggleProbe = $focusToggleVisibleAfterReopen -and $focusToggleForegroundAfterReopen
+        if (!$focusToggleProbe) {
+            throw "Foreground handoff smoke failed: one bind after another window was activated did not show and activate Flux."
+        }
+        [FluxWallpaper]::SetForegroundWindow($launcherHandle) | Out-Null
+    }
     Save-Screenshot "mica-repeat-show-empty.png"
-
     $launcherRect = New-Object FluxWallpaper+RECT
     if (![FluxWallpaper]::GetWindowRect($launcherHandle, [ref]$launcherRect)) {
         throw "Unable to locate launcher rectangle before typing the navigation query."
@@ -845,6 +875,9 @@ try {
         QueryResponsivenessProbe = (!$QueryResponsivenessSmoke) -or $queryResponsivenessProbe
         QueryResponsivenessMaxMilliseconds = $queryResponsivenessMaxMilliseconds
         QueryResponsivenessSamples = @($queryResponsivenessSamples)
+        FocusToggleProbe = (!$FocusToggleSmoke) -or $focusToggleProbe
+        FocusToggleVisibleAfterReopen = $focusToggleVisibleAfterReopen
+        FocusToggleForegroundAfterReopen = $focusToggleForegroundAfterReopen
         HistoryPanelProbe = $true
         HistoryUpProbe = $true
         HistoryAltUpProbe = $true

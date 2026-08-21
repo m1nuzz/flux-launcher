@@ -160,6 +160,7 @@ jobs:
             $captureParams.TraySettingsSmoke = $true
           }
           $captureParams.IdlePerformanceSmoke = $true
+          $captureParams.FocusToggleSmoke = $true
           & ./scripts/capture-mica.ps1 @captureParams
 
       - name: Upload launcher binary

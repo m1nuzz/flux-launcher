@@ -101,7 +101,8 @@ jobs:
           ./scripts/capture-mica.ps1 `
             -Executable ./target/x86_64-pc-windows-msvc/release/flux-launcher.exe `
             -OutputDirectory ./artifacts/windows-ui-release `
-            -QueryResponsivenessSmoke
+            -QueryResponsivenessSmoke `
+            -FocusToggleSmoke
 
       - name: Sign stable launcher binaries before packaging
         if: inputs.release_channel == 'stable'
