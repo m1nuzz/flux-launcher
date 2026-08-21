@@ -799,7 +799,12 @@ try {
         Start-Sleep -Seconds 2
     }
     if (![FluxWallpaper]::IsWindowVisible($launcherHandle)) {
-        throw "Enter launch smoke could not restore a visible launcher HWND before selection."
+        $visibilityTrace = if (Test-Path $launchTracePath) {
+            ((Get-Content $launchTracePath | Select-Object -Last 24) -join ' | ')
+        } else {
+            "<missing-trace-file>"
+        }
+        throw "Enter launch smoke could not restore a visible launcher HWND before selection. trace=$visibilityTrace"
     }
     if ([FluxWallpaper]::GetForegroundWindow() -ne $launcherHandle) {
         throw "Enter launch smoke could not restore Flux as the foreground window before selection."
