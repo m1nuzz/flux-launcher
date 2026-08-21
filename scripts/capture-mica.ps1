@@ -765,22 +765,15 @@ try {
     [FluxWallpaper]::keybd_event(0x41, 0, 0, [UIntPtr]::Zero)
     [FluxWallpaper]::keybd_event(0x41, 0, 2, [UIntPtr]::Zero)
     [FluxWallpaper]::keybd_event(0x11, 0, 2, [UIntPtr]::Zero)
-    foreach ($character in $navigationProbeQuery.ToUpperInvariant().ToCharArray()) {
-        $virtualKey = [byte][char]$character
-        [FluxWallpaper]::keybd_event($virtualKey, 0, 0, [UIntPtr]::Zero)
-        [FluxWallpaper]::keybd_event($virtualKey, 0, 2, [UIntPtr]::Zero)
-        [FluxWallpaper]::SetForegroundWindow($launcherHandle) | Out-Null
+    $wmChar = 0x0102
+    foreach ($character in $navigationProbeQuery.ToCharArray()) {
+        [FluxWallpaper]::SendMessage(
+            $launcherHandle,
+            $wmChar,
+            [UIntPtr]::new([int][char]$character),
+            [IntPtr]::Zero
+        ) | Out-Null
         Start-Sleep -Milliseconds 35
-    }
-    # Keep foreground ownership while the final query drives the compact-to-expanded
-    # resize. This models normal typing and avoids a CI helper stealing focus during
-    # the exact DWM transition under test.
-    for ($foregroundTick = 0; $foregroundTick -lt 40; $foregroundTick++) {
-        if (![FluxWallpaper]::IsWindowVisible($launcherHandle)) {
-            break
-        }
-        [FluxWallpaper]::SetForegroundWindow($launcherHandle) | Out-Null
-        Start-Sleep -Milliseconds 50
     }
     $foregroundDeadline = (Get-Date).AddSeconds(2)
     while ((Get-Date) -lt $foregroundDeadline -and [FluxWallpaper]::GetForegroundWindow() -ne $launcherHandle) {
