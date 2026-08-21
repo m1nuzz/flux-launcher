@@ -395,8 +395,8 @@ try {
         if ([FluxWallpaper]::GetForegroundWindow() -eq $launcherHandle) {
             throw "Foreground handoff smoke could not activate the covering window."
         }
-        if (![FluxWallpaper]::IsWindowVisible($launcherHandle)) {
-            throw "Foreground handoff smoke expected the launcher HWND to remain visible behind another window."
+        if ([FluxWallpaper]::IsWindowVisible($launcherHandle)) {
+            throw "Foreground handoff smoke expected the launcher HWND to hide after another window became foreground."
         }
         # Use the real configured default Alt+Space key sequence here. Unlike
         # SendMessage(WM_HOTKEY), this grants the launcher the same foreground
