@@ -86,7 +86,7 @@ public static class FluxWallpaper {
         EnumWindows((hWnd, lParam) => {
             uint processId;
             GetWindowThreadProcessId(hWnd, out processId);
-            if (processId == targetProcessId && IsWindowVisible(hWnd)) {
+            if (processId == targetProcessId) {
                 found = hWnd;
                 return false;
             }
@@ -338,6 +338,15 @@ try {
     # only after typing.
     $launcherHandle = Get-LauncherWindowHandle $process
     if ($launcherHandle -eq [IntPtr]::Zero) { throw "Flux launcher has no main window handle after waiting for startup." }
+    if (![FluxWallpaper]::IsWindowVisible($launcherHandle)) {
+        # With hide-on-deactivate enabled, the runner can take focus before the
+        # first sample. Restore the window through the real global activation bind.
+        [FluxWallpaper]::keybd_event(0x12, 0, 0, [UIntPtr]::Zero)
+        [FluxWallpaper]::keybd_event(0x20, 0, 0, [UIntPtr]::Zero)
+        [FluxWallpaper]::keybd_event(0x20, 0, 2, [UIntPtr]::Zero)
+        [FluxWallpaper]::keybd_event(0x12, 0, 2, [UIntPtr]::Zero)
+        Start-Sleep -Milliseconds 800
+    }
     if (![FluxWallpaper]::IsWindowVisible($launcherHandle)) { throw "Launcher is not visible before hotkey regression probe." }
     $exStyle = [FluxWallpaper]::GetWindowLongPtr($launcherHandle, -20).ToInt64()
     $trayOnlyWindow = (($exStyle -band 0x00000080) -ne 0) -and (($exStyle -band 0x00040000) -eq 0)
