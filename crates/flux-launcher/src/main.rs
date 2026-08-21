@@ -2611,6 +2611,10 @@ fn main() {
             }
             return true;
         }
+        launch::trace_launch_event(&format!(
+            "key-event\\t{:?}\\tpressed={}",
+            event.key, event.pressed
+        ));
         if !event.pressed || settings_visible_for_keys.get() {
             return false;
         }
