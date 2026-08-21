@@ -16,7 +16,7 @@ use windows::Win32::System::DataExchange::COPYDATASTRUCT;
 use windows::Win32::System::LibraryLoader::GetModuleHandleW;
 use windows::Win32::System::Threading::CreateMutexW;
 use windows::Win32::UI::WindowsAndMessaging::{
-    AllowSetForegroundWindow, BringWindowToTop, CreateWindowExW, DefWindowProcW, FindWindowW,
+    AllowSetForegroundWindow, BringWindowToTop, CreateWindowExW, DefWindowProcW, FindWindowExW,
     GetWindowThreadProcessId, IsIconic, RegisterClassExW, SendMessageTimeoutW, SetForegroundWindow,
     ShowWindow, HWND_MESSAGE, SMTO_ABORTIFHUNG, SW_RESTORE, WINDOW_EX_STYLE, WINDOW_STYLE,
     WM_COPYDATA, WNDCLASSEXW,
@@ -67,7 +67,12 @@ pub(crate) fn acquire(app_id: &str) -> bool {
 pub(crate) fn forward(app_id: &str, argv: &[String]) -> bool {
     let cls = wide(&class_name(app_id));
     unsafe {
-        let Ok(hwnd) = FindWindowW(PCWSTR(cls.as_ptr()), PCWSTR::null()) else {
+        let Ok(hwnd) = FindWindowExW(
+            Some(HWND_MESSAGE),
+            None,
+            PCWSTR(cls.as_ptr()),
+            PCWSTR::null(),
+        ) else {
             return false;
         };
         if hwnd.is_invalid() {
