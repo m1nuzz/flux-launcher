@@ -546,7 +546,10 @@ try {
         $shell.SendKeys("{BACKSPACE}")
         Start-Sleep -Milliseconds 350
     }
-    $enterHideQuery = "recyclebin"
+    # Use a deterministic built-in Windows target for the launch/hide ordering probe;
+    # Recycle Bin commands are covered separately and the first one intentionally
+    # opens a confirmation mode instead of dispatching a shell launch.
+    $enterHideQuery = "wifi"
     $navigationProbeQuery = if ($NavigationCycles -gt 0 -and $NavigationQuery.Trim().Length -gt 0) {
         $NavigationQuery.Trim()
     } else {
@@ -713,9 +716,8 @@ try {
             Save-Screenshot ("navigation-cycle-{0:D2}-down.png" -f $cycle)
         }
     }
-    # The recycle-bin query returns two commands; restore the launcher first if a
-    # previous outside-click probe left it hidden, then select the second command
-    # directly on the launcher HWND.
+    # Restore the launcher first if a previous outside-click probe left it hidden,
+    # then select the deterministic Windows target directly on the launcher HWND.
     $wmKeyDown = 0x0100
     if (![FluxWallpaper]::IsWindowVisible($launcherHandle)) {
         [FluxWallpaper]::keybd_event(0x12, 0, 0, [UIntPtr]::Zero)
