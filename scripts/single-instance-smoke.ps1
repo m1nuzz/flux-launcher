@@ -117,7 +117,9 @@ try {
     }
 
     $second = Start-Process -FilePath $Executable -PassThru
-    if (!$second.WaitForExit(5000)) {
+    # The second instance may spend up to the listener retry window plus the
+    # bounded WM_COPYDATA timeout before it can exit cleanly.
+    if (!$second.WaitForExit(10000)) {
         throw "Second Flux launch did not exit after handing off to the first instance."
     }
     if ($second.ExitCode -ne 0) {
