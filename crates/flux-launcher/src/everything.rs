@@ -1,7 +1,10 @@
 use std::path::PathBuf;
 #[cfg(windows)]
 use std::process::Command;
+#[cfg(windows)]
+use std::sync::OnceLock;
 use std::sync::{
+    atomic::{AtomicBool, Ordering},
     mpsc::{self, SyncSender},
     Arc, Mutex,
 };
@@ -47,6 +50,40 @@ pub fn winget_install_args() -> [&'static str; 4] {
     ["install", "-e", "--id", WINGET_PACKAGE_ID]
 }
 
+#[cfg(windows)]
+fn everything_start_lock() -> &'static Mutex<()> {
+    static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+    LOCK.get_or_init(|| Mutex::new(()))
+}
+
+#[cfg(windows)]
+fn everything_start_requested() -> &'static AtomicBool {
+    static REQUESTED: AtomicBool = AtomicBool::new(false);
+    &REQUESTED
+}
+
+fn should_start_everything(ipc_available: bool, process_running: bool) -> bool {
+    !ipc_available && !process_running
+}
+
+#[cfg(windows)]
+fn everything_process_running() -> bool {
+    let Ok(output) = Command::new("tasklist")
+        .args(["/FI", "IMAGENAME eq Everything.exe", "/FO", "CSV", "/NH"])
+        .output()
+    else {
+        return false;
+    };
+
+    if !output.status.success() {
+        return false;
+    }
+
+    String::from_utf8_lossy(&output.stdout)
+        .lines()
+        .any(|line| line.trim_start().starts_with("\"Everything.exe\""))
+}
+
 pub fn start_background_if_installed() -> Result<InstallationState, String> {
     let state = installation_state();
     let InstallationState::Installed(path) = &state else {
@@ -55,10 +92,26 @@ pub fn start_background_if_installed() -> Result<InstallationState, String> {
 
     #[cfg(windows)]
     {
-        Command::new(path)
-            .args(startup_args())
-            .spawn()
-            .map_err(|error| format!("Unable to start Everything in the background: {error}"))?;
+        let _guard = everything_start_lock()
+            .lock()
+            .map_err(|_| String::from("Everything startup lock is poisoned"))?;
+        let ipc_available = EverythingClient::new().is_ok();
+        let process_running = everything_process_running();
+        if !should_start_everything(ipc_available, process_running) {
+            everything_start_requested().store(false, Ordering::Release);
+            return Ok(state);
+        }
+        if everything_start_requested().load(Ordering::Acquire) {
+            return Ok(state);
+        }
+
+        everything_start_requested().store(true, Ordering::Release);
+        if let Err(error) = Command::new(path).args(startup_args()).spawn() {
+            everything_start_requested().store(false, Ordering::Release);
+            return Err(format!(
+                "Unable to start Everything in the background: {error}"
+            ));
+        }
     }
     Ok(state)
 }
@@ -249,7 +302,10 @@ fn join_everything_path(folder: &str, filename: &str) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::{join_everything_path, startup_args, winget_install_args, WINGET_PACKAGE_ID};
+    use super::{
+        join_everything_path, should_start_everything, startup_args, winget_install_args,
+        WINGET_PACKAGE_ID,
+    };
 
     #[test]
     fn startup_uses_official_background_option() {
@@ -262,6 +318,21 @@ mod tests {
             winget_install_args(),
             ["install", "-e", "--id", WINGET_PACKAGE_ID]
         );
+    }
+
+    #[test]
+    fn does_not_start_when_everything_ipc_is_already_available() {
+        assert!(!should_start_everything(true, false));
+    }
+
+    #[test]
+    fn does_not_start_when_everything_process_is_already_running() {
+        assert!(!should_start_everything(false, true));
+    }
+
+    #[test]
+    fn starts_only_when_ipc_and_process_are_both_absent() {
+        assert!(should_start_everything(false, false));
     }
 
     #[test]

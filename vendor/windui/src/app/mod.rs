@@ -246,6 +246,12 @@ pub struct WindowOpHandle {
 }
 
 impl WindowOpHandle {
+    /// Request that the native window be shown and brought to the foreground after the current callback.
+    pub fn show_window(&self) {
+        *self.queue.borrow_mut() = Some(WindowOp::Show);
+        crate::anim::request_repaint();
+    }
+
     /// Request that the native window be hidden after the current callback.
     pub fn hide_window(&self) {
         *self.queue.borrow_mut() = Some(WindowOp::Hide);
@@ -1982,6 +1988,15 @@ mod tests {
     }
 
     /// 默认（未开 hide_on_close）：关闭请求获准 → 真关，不留窗口操作。
+    #[test]
+    fn window_op_handle_can_request_show() {
+        let mut app = App::new("t", 100, 100);
+        let handle = app.window_op_handle();
+        handle.show_window();
+        let mut app = app.content(Element::col()).into_handler_for_test();
+        assert_eq!(app.take_window_op(), Some(WindowOp::Show));
+    }
+
     #[test]
     fn close_request_closes_by_default() {
         let app = App::new("t", 100, 100).content(Element::col());

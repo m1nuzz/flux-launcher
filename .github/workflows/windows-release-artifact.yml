@@ -36,6 +36,10 @@ jobs:
         shell: pwsh
         run: cargo test -p flux-launcher -p flux-core --target x86_64-pc-windows-msvc --all-targets
 
+      - name: Smoke single-instance and Everything process guard
+        shell: pwsh
+        run: ./scripts/single-instance-smoke.ps1 -Executable ./target/x86_64-pc-windows-msvc/release/flux-launcher.exe -WorkDirectory ./artifacts/single-instance-smoke
+
       - name: Build installer and portable package
         shell: pwsh
         run: ./scripts/build-installer.ps1 -AppVersion "${{ inputs.app_version }}"

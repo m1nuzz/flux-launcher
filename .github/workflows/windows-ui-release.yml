@@ -81,6 +81,10 @@ jobs:
         shell: pwsh
         run: cargo test -p flux-launcher -p flux-core --target x86_64-pc-windows-msvc --all-targets
 
+      - name: Smoke single-instance and Everything process guard
+        shell: pwsh
+        run: ./scripts/single-instance-smoke.ps1 -Executable ./target/x86_64-pc-windows-msvc/release/flux-launcher.exe -WorkDirectory ./artifacts/windows-ui-release/single-instance-smoke
+
       - name: Enable DWM effects and collect preflight diagnostics
         shell: pwsh
         run: ./scripts/enable-dwm-smoke.ps1 -OutputDirectory ./artifacts/windows-ui-release

@@ -40,6 +40,7 @@ use windui::prelude::*;
 use windui::render::{Canvas, Paint};
 
 const CURRENT_VERSION: &str = env!("CARGO_PKG_VERSION");
+const SINGLE_INSTANCE_ID: &str = "m1nuzz.flux-launcher";
 const WINDOW_WIDTH: i32 = 420;
 const SETTINGS_WINDOW_WIDTH: i32 = 720;
 const COMPACT_WINDOW_HEIGHT: i32 = 72;
@@ -56,6 +57,10 @@ const PLUGIN_MIN_QUERY_LEN: usize = 2;
 const MAX_VISIBLE_RESULTS: usize = 16;
 
 static GOOGLE_ICON_RGBA: OnceLock<Option<Vec<u8>>> = OnceLock::new();
+
+fn should_claim_single_instance(mode: Option<&std::ffi::OsStr>) -> bool {
+    mode != Some(std::ffi::OsStr::new("--plugin-host"))
+}
 
 fn is_run_as_admin_key(event: &KeyEvent) -> bool {
     event.ctrl
@@ -1502,6 +1507,14 @@ fn main() {
             .or_else(|| std::env::var_os("FLUX_NATIVE_PLUGIN_DIR").map(std::path::PathBuf::from))
             .unwrap_or_else(|| std::path::PathBuf::from("NativePlugins"));
         native_host::run(root);
+        return;
+    }
+    if should_claim_single_instance(mode.as_deref())
+        && matches!(
+            windui::claim_instance(SINGLE_INSTANCE_ID),
+            windui::InstanceRole::Handoff
+        )
+    {
         return;
     }
     let startup_launch = mode.as_deref() == Some(std::ffi::OsStr::new("--startup"));
@@ -3549,11 +3562,22 @@ fn main() {
         .child(launcher_page)
         .child(settings_page);
 
-    let app = if startup_launch {
+    let mut app = if startup_launch {
         app.start_hidden()
     } else {
         app
     };
+    let second_instance_sender = app.channel::<()>(|ctx, ()| {
+        ctx.show_window();
+    });
+    let second_instance_sender_for_callback = second_instance_sender.clone();
+    let second_instance_window_op = window_op.clone();
+    app = app.single_instance(SINGLE_INSTANCE_ID, move |_| {
+        // The native windui listener activates the window; queue Show as well so a
+        // tray-hidden startup is made visible before the channel callback is drained.
+        second_instance_window_op.show_window();
+        let _ = second_instance_sender_for_callback.send(());
+    });
     app.tray(tray)
         .hide_on_close()
         // The Win32 backend keeps this transparent on local Acrylic-capable
@@ -3733,10 +3757,26 @@ mod tests {
         actions_for_result, format_bytes, format_update_progress, google_icon_rgba,
         history_cursor_step, hover_position_changed, is_run_as_admin_key, launcher_window_geometry,
         merge_application_duplicates, normalize_everything_query, preserve_everything_file_order,
-        quoted_result_path, COMPACT_WINDOW_HEIGHT, EXPANDED_WINDOW_HEIGHT, WINDOW_WIDTH,
+        quoted_result_path, should_claim_single_instance, COMPACT_WINDOW_HEIGHT,
+        EXPANDED_WINDOW_HEIGHT, WINDOW_WIDTH,
     };
     use flux_core::{ResultKind, ResultSource, SearchResult};
     use windui::event::{Key, KeyEvent};
+
+    #[test]
+    fn plugin_host_mode_bypasses_main_single_instance_guard() {
+        assert!(!should_claim_single_instance(Some(std::ffi::OsStr::new(
+            "--plugin-host"
+        ))));
+    }
+
+    #[test]
+    fn normal_and_startup_modes_use_main_single_instance_guard() {
+        assert!(should_claim_single_instance(None));
+        assert!(should_claim_single_instance(Some(std::ffi::OsStr::new(
+            "--startup"
+        ))));
+    }
 
     #[test]
     fn update_progress_text_exposes_percent_bytes_and_remaining_work() {
