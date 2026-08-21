@@ -3831,18 +3831,24 @@ fn main() {
             sequence_for_interval.set(sequence);
             model.set_query(&next_query);
             {
+                let built_in_results = model.results().to_vec();
                 let everything_expected = auto_enable_everything_for_interval.get()
                     && next_query.trim().len() >= EVERYTHING_MIN_QUERY_LEN;
                 let mut providers = providers_for_interval.borrow_mut();
-                providers.reset(sequence, model.results().to_vec(), everything_expected);
+                providers.reset(sequence, built_in_results.clone(), everything_expected);
                 selection_touched_for_interval.set(false);
                 selected_index.set(0);
-                selected_id.set(String::new());
+                selected_id.set(
+                    built_in_results
+                        .first()
+                        .map(|result| result.id.clone())
+                        .unwrap_or_default(),
+                );
                 inline_completion_for_interval.set(String::new());
-                // Clear the previous query atomically. The new provider snapshot
-                // is committed once the application and Everything responses have
-                // both arrived, avoiding a visible apps-only intermediate list.
-                results_for_interval.set(Vec::new());
+                // Built-in/system commands are synchronous and must be actionable
+                // immediately. External providers still replace this snapshot once
+                // their responses arrive for the same query sequence.
+                results_for_interval.set(built_in_results);
             }
             request_scroll(scroll_request_for_interval);
             action_mode.set(false);
