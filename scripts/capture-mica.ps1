@@ -777,7 +777,8 @@ try {
         ($enterHideDispatchMilliseconds -lt $EnterHideDispatchBudgetMilliseconds) -and
         $enterLaunchDispatchBeforeHideProbe
     if (!$enterLaunchHidden) {
-        throw "Enter launch did not hide the launcher window."
+        $tracePreview = ($enterTraceLines -join ' | ')
+        throw "Enter launch did not hide the launcher window. trace=$tracePreview."
     }
     if (!$enterHideLatencyProbe) {
         $tracePreview = ($enterTraceLines -join ' | ')
