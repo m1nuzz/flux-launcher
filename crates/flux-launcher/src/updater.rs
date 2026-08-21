@@ -197,12 +197,16 @@ fn spawn_installer_handoff(installer_path: &Path, relaunch_mode: RelaunchMode) -
     let parent_pid = std::process::id();
     let installer = powershell_literal(installer_path);
     let application = powershell_literal(&current_exe);
-    let relaunch = relaunch_command(&application, relaunch_mode);
+    let relaunch = relaunch_command(relaunch_mode);
     let script = format!(
         "$parent = Get-Process -Id {parent_pid} -ErrorAction SilentlyContinue; \
          if ($parent) {{ $parent.WaitForExit() }}; \
+         $relaunchApplication = {application}; \
          $arguments = @('/VERYSILENT','/SUPPRESSMSGBOXES','/NORESTART','/NOCANCEL','/CLOSEAPPLICATIONS'); \
-         if ($env:FLUX_UPDATE_INSTALL_DIR) {{ $arguments += '/DIR=' + $env:FLUX_UPDATE_INSTALL_DIR }}; \
+         if ($env:FLUX_UPDATE_INSTALL_DIR) {{ \
+             $arguments += '/DIR=' + $env:FLUX_UPDATE_INSTALL_DIR; \
+             $relaunchApplication = Join-Path $env:FLUX_UPDATE_INSTALL_DIR (Split-Path -Leaf $relaunchApplication) \
+         }}; \
          $setup = Start-Process -FilePath {installer} -ArgumentList $arguments -Wait -PassThru; \
          if ($setup.ExitCode -eq 0) {{ {relaunch} }}; \
          Remove-Item -LiteralPath {installer} -Force -ErrorAction SilentlyContinue",
@@ -243,12 +247,12 @@ fn powershell_literal(path: &Path) -> String {
     format!("'{}'", path.to_string_lossy().replace('\'', "''"))
 }
 
-fn relaunch_command(application: &str, relaunch_mode: RelaunchMode) -> String {
+fn relaunch_command(relaunch_mode: RelaunchMode) -> &'static str {
     match relaunch_mode {
         RelaunchMode::Hidden => {
-            format!("Start-Process -FilePath {application} -ArgumentList @('--startup')")
+            "Start-Process -FilePath $relaunchApplication -ArgumentList @('--startup')"
         }
-        RelaunchMode::Visible => format!("Start-Process -FilePath {application}"),
+        RelaunchMode::Visible => "Start-Process -FilePath $relaunchApplication",
     }
 }
 
@@ -312,12 +316,14 @@ mod tests {
 
     #[test]
     fn relaunch_command_keeps_automatic_updates_hidden() {
-        let hidden = relaunch_command("'flux-launcher.exe'", RelaunchMode::Hidden);
-        let visible = relaunch_command("'flux-launcher.exe'", RelaunchMode::Visible);
+        let hidden = relaunch_command(RelaunchMode::Hidden);
+        let visible = relaunch_command(RelaunchMode::Visible);
         assert!(hidden.contains("--startup"));
         assert!(!visible.contains("--startup"));
         assert!(hidden.contains("Start-Process"));
+        assert!(hidden.contains("$relaunchApplication"));
         assert!(visible.contains("Start-Process"));
+        assert!(visible.contains("$relaunchApplication"));
     }
 
     #[test]
