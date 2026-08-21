@@ -231,7 +231,7 @@ mod tests {
     #[test]
     fn clean_shell_target_removes_outer_quotes_and_whitespace() {
         assert_eq!(
-            clean_shell_target(r#"  \"C:\\Users\\m1nus\\Music Pack\"  "#),
+            clean_shell_target(r#"  "C:\Users\m1nus\Music Pack"  "#),
             std::path::PathBuf::from(r"C:\Users\m1nus\Music Pack")
         );
     }
@@ -241,7 +241,7 @@ mod tests {
         let path =
             std::env::temp_dir().join(format!("flux-folder-launch-test-{}", std::process::id()));
         std::fs::create_dir_all(&path).unwrap();
-        assert!(clean_shell_target(&format!(r#"\"{}\""#, path.display())).is_dir());
+        assert!(clean_shell_target(&format!(r#""{}""#, path.display())).is_dir());
         std::fs::remove_dir_all(path).unwrap();
     }
 }
