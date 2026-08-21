@@ -674,13 +674,17 @@ try {
     [FluxWallpaper]::SetFocus($launcherHandle) | Out-Null
     $shell.AppActivate($process.Id) | Out-Null
     Start-Sleep -Milliseconds 150
-    # Use real keyboard events after SetFocus so Windows performs the same
-    # TranslateMessage/WM_CHAR path as normal user typing.
-    foreach ($character in $navigationProbeQuery.ToUpperInvariant().ToCharArray()) {
-        $virtualKey = [byte][char]$character
-        [FluxWallpaper]::keybd_event($virtualKey, 0, 0, [UIntPtr]::Zero)
-        [FluxWallpaper]::keybd_event($virtualKey, 0, 2, [UIntPtr]::Zero)
-        Start-Sleep -Milliseconds 35
+    # Dispatch characters to the launcher window after the framework restores
+    # its focused TextInput. This exercises windui's native WM_CHAR path without
+    # depending on the runner's foreground keyboard arbitration.
+    $wmChar = 0x0102
+    foreach ($character in $navigationProbeQuery.ToCharArray()) {
+        [FluxWallpaper]::SendMessage(
+            $launcherHandle,
+            $wmChar,
+            [UIntPtr]::new([int][char]$character),
+            [IntPtr]::Zero
+        ) | Out-Null
     }
     Start-Sleep -Seconds 2
 
