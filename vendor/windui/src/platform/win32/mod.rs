@@ -329,6 +329,10 @@ struct WindowState {
     /// 据此在 WM_SIZE 里分流：拖拽中走异步重绘（免 vsync 节流拖累手感），
     /// 非拖拽的最大化/还原走同步重绘（避免 DWM 动画采样到旧尺寸缓冲被拉伸变形）。
     in_size_move: bool,
+    /// SetWindowPos may synchronously emit WM_ACTIVATE(WA_INACTIVE) on some DWM
+    /// configurations. While this guard is set, that internal transition must
+    /// not be interpreted as the user activating another application.
+    suppress_deactivation_hide: bool,
 }
 
 /// 触摸拖动判定状态。区分"点击"（按下抬起未越阈值）与"滑动滚动"（越阈值后拖动）。
@@ -415,6 +419,7 @@ impl WindowState {
             min_w: 0,
             min_h: 0,
             in_size_move: false,
+            suppress_deactivation_hide: false,
         }
     }
 
@@ -1308,7 +1313,9 @@ unsafe extern "system" fn wnd_proc(
             let should_hide = became_inactive
                 && IsWindowVisible(hwnd).as_bool()
                 && state_from(hwnd)
-                    .map(|state| state.handler.hide_on_deactivate())
+                    .map(|state| {
+                        state.handler.hide_on_deactivate() && !state.suppress_deactivation_hide
+                    })
                     .unwrap_or(false);
 
             let res = DefWindowProcW(hwnd, msg, wparam, lparam);
@@ -1865,6 +1872,9 @@ unsafe fn run_window_size_request(hwnd: HWND, request: Option<(i32, i32)>) {
     // activation transition on some DWM/remote-desktop combinations. Preserve
     // user focus across that transition, but never steal focus from another app.
     let was_foreground = GetForegroundWindow() == hwnd;
+    if let Some(state) = state_from(hwnd) {
+        state.suppress_deactivation_hide = true;
+    }
     let _ = SetWindowPos(
         hwnd,
         None,
@@ -1874,6 +1884,9 @@ unsafe fn run_window_size_request(hwnd: HWND, request: Option<(i32, i32)>) {
         height,
         SWP_NOZORDER | SWP_NOACTIVATE | SWP_NOMOVE,
     );
+    if let Some(state) = state_from(hwnd) {
+        state.suppress_deactivation_hide = false;
+    }
     if was_foreground && IsWindowVisible(hwnd).as_bool() && GetForegroundWindow() != hwnd {
         let _ = SetForegroundWindow(hwnd);
     }
