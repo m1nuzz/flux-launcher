@@ -875,7 +875,10 @@ try {
     [FluxWallpaper]::SendMessage($launcherHandle, $wmKeyDown, [UIntPtr]::new(0x0D), [IntPtr]::Zero) | Out-Null
     $launchProbeTimer.Stop()
     $launchProbeHideDispatchMilliseconds = [Math]::Round($launchProbeTimer.Elapsed.TotalMilliseconds, 2)
-    Start-Sleep -Milliseconds 1500
+    # ShellExecuteEx may create the child after the launcher hide callback on a
+    # busy CI runner; wait beyond that asynchronous worker boundary before reading
+    # the opt-in lifecycle trace.
+    Start-Sleep -Milliseconds 2500
     $launchProbeTraceLines = if (Test-Path $launchTracePath) {
         @(Get-Content $launchTracePath | Select-Object -Skip $launchProbeTraceBeforeCount)
     } else {
