@@ -92,6 +92,9 @@ New-Item -ItemType Directory -Path (Join-Path $appData "FluxLauncher") -Force | 
 $env:APPDATA = $appData
 $env:FLUX_DISABLE_UPDATE_CHECKS = "1"
 $env:FLUX_DISABLE_EVERYTHING_PROMPT = "1"
+# Keep this process-count smoke independent from GPU/DWM availability; the
+# dedicated visual workflow exercises the D2D path separately with WINDUI_D2D=1.
+$env:WINDUI_D2D = "0"
 
 $settingsPath = Join-Path $appData "FluxLauncher\settings.json"
 @'

@@ -1026,8 +1026,12 @@ unsafe fn run_windowed(
     // 会让基于它做的验证失去意义。
     #[cfg(feature = "d2d")]
     {
-        let env_force = std::env::var("WINDUI_D2D").is_ok_and(|v| v != "0" && !v.is_empty());
-        let want = cfg.renderer.wants_gpu() || env_force;
+        let env_value = std::env::var("WINDUI_D2D").ok();
+        let env_force = env_value
+            .as_deref()
+            .is_some_and(|value| value != "0" && !value.is_empty());
+        let env_disable = env_value.as_deref() == Some("0");
+        let want = !env_disable && (cfg.renderer.wants_gpu() || env_force);
         if want {
             let mut rc = RECT::default();
             let _ = GetClientRect(hwnd, &mut rc);
