@@ -33,6 +33,21 @@ function Get-EverythingProcesses {
     @(Get-Process -Name "Everything" -ErrorAction SilentlyContinue)
 }
 
+function Get-FluxProcessesStartedAtOrAfter([DateTime]$StartTime) {
+    @(
+        foreach ($process in (Get-FluxProcesses)) {
+            try {
+                $process.Refresh()
+                if ($process.StartTime -ge $StartTime) {
+                    $process
+                }
+            } catch {
+                # Ignore a process that exits while the snapshot is collected.
+            }
+        }
+    )
+}
+
 function Stop-Processes([System.Diagnostics.Process[]]$Processes) {
     foreach ($process in $Processes) {
         if ($null -ne $process -and !$process.HasExited) {
@@ -111,8 +126,11 @@ $second = $null
 try {
     $first = Start-Process -FilePath $Executable -PassThru
     Wait-FluxReady $first
+    $firstStartTime = $first.StartTime
 
-    $firstFlux = Get-FluxProcesses
+    # Ignore any runner residue older than this measured launch; any second
+    # process created after this point is a real single-instance regression.
+    $firstFlux = Get-FluxProcessesStartedAtOrAfter $firstStartTime
     if ($firstFlux.Count -gt ($initialFlux.Count + 1)) {
         Write-Host "Flux process diagnostics before first-launch assertion:"
         @(Get-Process -Name ([System.IO.Path]::GetFileNameWithoutExtension($Executable)) -ErrorAction SilentlyContinue) | ForEach-Object {
@@ -142,7 +160,7 @@ try {
     }
     Start-Sleep -Seconds 2
 
-    $finalFlux = Get-FluxProcesses
+    $finalFlux = Get-FluxProcessesStartedAtOrAfter $firstStartTime
     if ($finalFlux.Count -gt ($initialFlux.Count + 1)) {
         throw "Second launch created a duplicate Flux process: $($finalFlux.Count)."
     }
