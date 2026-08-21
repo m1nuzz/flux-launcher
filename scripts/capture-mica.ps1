@@ -591,6 +591,20 @@ try {
     # repeatedly toggling Alt+Space after a query has expanded the window.
     $repeatedHotkeyYPositions = @()
     for ($cycle = 1; $cycle -le 3; $cycle++) {
+        if (![FluxWallpaper]::IsWindowVisible($launcherHandle)) {
+            # A previous outside click can legitimately leave the launcher hidden;
+            # restore it through the real bind before testing the next hide toggle.
+            [FluxWallpaper]::keybd_event(0x12, 0, 0, [UIntPtr]::Zero)
+            [FluxWallpaper]::keybd_event(0x20, 0, 0, [UIntPtr]::Zero)
+            [FluxWallpaper]::keybd_event(0x20, 0, 2, [UIntPtr]::Zero)
+            [FluxWallpaper]::keybd_event(0x12, 0, 2, [UIntPtr]::Zero)
+            Start-Sleep -Milliseconds 800
+        }
+        [FluxWallpaper]::SetForegroundWindow($launcherHandle) | Out-Null
+        Start-Sleep -Milliseconds 250
+        if (![FluxWallpaper]::IsWindowVisible($launcherHandle) -or [FluxWallpaper]::GetForegroundWindow() -ne $launcherHandle) {
+            throw "Repeated Alt+Space cycle $cycle could not establish a visible foreground launcher before hide."
+        }
         [FluxWallpaper]::SendMessage($launcherHandle, $wmHotkey, [UIntPtr]::Zero, [IntPtr]::Zero) | Out-Null
         Start-Sleep -Milliseconds 450
         if ([FluxWallpaper]::IsWindowVisible($launcherHandle)) {
