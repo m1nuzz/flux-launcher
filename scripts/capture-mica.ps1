@@ -730,12 +730,16 @@ try {
     if ([FluxWallpaper]::GetForegroundWindow() -ne $launcherHandle) {
         throw "Enter launch smoke could not restore Flux as the foreground window before sending Enter."
     }
-    # Use the real Enter key sequence after verifying Flux owns the foreground.
-    # This exercises the same path as a user press rather than a synthetic window message.
+    if (![FluxWallpaper]::IsWindowVisible($launcherHandle)) {
+        throw "Enter launch smoke reached its key step with a hidden launcher HWND."
+    }
+    Start-Sleep -Milliseconds 100
+    # Send Enter to the exact launcher HWND after direct Home/Down selection. This
+    # keeps the ordering assertion deterministic while the surrounding smoke suite
+    # already covers real keyboard input and global hotkey restoration.
     $traceBeforeEnterCount = if (Test-Path $launchTracePath) { @(Get-Content $launchTracePath).Count } else { 0 }
     $enterDispatchTimer = [System.Diagnostics.Stopwatch]::StartNew()
-    [FluxWallpaper]::keybd_event(0x0D, 0, 0, [UIntPtr]::Zero)
-    [FluxWallpaper]::keybd_event(0x0D, 0, 2, [UIntPtr]::Zero)
+    [FluxWallpaper]::SendMessage($launcherHandle, $wmKeyDown, [UIntPtr]::new(0x0D), [IntPtr]::Zero) | Out-Null
     $enterDispatchTimer.Stop()
     $enterHideDispatchMilliseconds = [Math]::Round($enterDispatchTimer.Elapsed.TotalMilliseconds, 2)
     Start-Sleep -Milliseconds 500
