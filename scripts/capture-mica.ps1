@@ -15,6 +15,7 @@ param(
     [switch]$QueryClearOnReopenSmoke,
     [switch]$QueryResponsivenessSmoke,
     [switch]$FocusToggleSmoke,
+    [switch]$FolderLaunchSmoke,
     [switch]$CtrlRSmoke,
     [switch]$CtrlCSmoke,
     [switch]$IdlePerformanceSmoke,
@@ -279,6 +280,9 @@ Start-Sleep -Seconds 2
 # application-catalog path as a real Windows installation.
 $wabFixtureRoot = Join-Path $env:APPDATA "Microsoft\Windows\Start Menu\Programs\Flux Smoke WAB"
 New-Item -ItemType Directory -Force -Path $wabFixtureRoot | Out-Null
+$folderFixtureRoot = Join-Path $env:TEMP ("FluxFolderSmoke_{0}" -f $PID)
+New-Item -ItemType Directory -Force -Path $folderFixtureRoot | Out-Null
+$folderFixtureName = Split-Path -Leaf $folderFixtureRoot
 $wabFixtureNames = @(
     "WAB Primary Application.lnk",
     "WAB Secondary Application.lnk",
@@ -706,6 +710,39 @@ try {
     if (![FluxWallpaper]::IsWindowVisible($launcherHandle)) {
         throw "Unable to restore launcher after process creation smoke."
     }
+
+    $folderLaunchProbe = $false
+    if ($FolderLaunchSmoke) {
+        # Everything returns folders as ordinary File results. The query must still
+        # open the selected directory directly in Explorer rather than using a file association.
+        [FluxWallpaper]::SetForegroundWindow($launcherHandle) | Out-Null
+        $shell.SendKeys("^a")
+        $shell.SendKeys("folder:$folderFixtureName")
+        Start-Sleep -Seconds 2
+        $shell.SendKeys("{HOME}")
+        Start-Sleep -Milliseconds 250
+        [FluxWallpaper]::SetForegroundWindow($launcherHandle) | Out-Null
+        $folderTraceBeforeCount = if (Test-Path $launchTracePath) { @(Get-Content $launchTracePath).Count } else { 0 }
+        [FluxWallpaper]::SendMessage($launcherHandle, $wmKeyDown, [UIntPtr]::new(0x0D), [IntPtr]::Zero) | Out-Null
+        Start-Sleep -Milliseconds 900
+        $folderTraceLines = if (Test-Path $launchTracePath) {
+            @(Get-Content $launchTracePath | Select-Object -Skip $folderTraceBeforeCount)
+        } else {
+            @()
+        }
+        $folderDispatch = $folderTraceLines | Where-Object { $_ -match "`tdirectory-launch-dispatch$" } | Select-Object -First 1
+        $folderShellFailure = $folderTraceLines | Where-Object { $_ -match "`tshell-execute-failed$" } | Select-Object -First 1
+        $folderLaunchHidden = ![FluxWallpaper]::IsWindowVisible($launcherHandle)
+        $folderLaunchProbe = [bool]$folderDispatch -and !$folderShellFailure -and $folderLaunchHidden
+        if (!$folderLaunchProbe) {
+            throw "Folder launch probe failed: directory_dispatch=$([bool]$folderDispatch), shell_failure=$([bool]$folderShellFailure), hidden=$folderLaunchHidden."
+        }
+        [FluxWallpaper]::SendMessage($launcherHandle, $wmHotkey, [UIntPtr]::Zero, [IntPtr]::Zero) | Out-Null
+        Start-Sleep -Milliseconds 650
+        if (![FluxWallpaper]::IsWindowVisible($launcherHandle)) {
+            throw "Unable to restore launcher after folder launch smoke."
+        }
+    }
     if ($CtrlCSmoke) {
         $shell.SendKeys("^a")
         $shell.SendKeys("wab")
@@ -882,6 +919,7 @@ try {
         QueryResponsivenessMaxMilliseconds = $queryResponsivenessMaxMilliseconds
         QueryResponsivenessSamples = @($queryResponsivenessSamples)
         FocusToggleProbe = (!$FocusToggleSmoke) -or $focusToggleProbe
+        FolderLaunchProbe = (!$FolderLaunchSmoke) -or $folderLaunchProbe
         FocusToggleVisibleAfterReopen = $focusToggleVisibleAfterReopen
         FocusToggleForegroundAfterReopen = $focusToggleForegroundAfterReopen
         HistoryPanelProbe = $true
@@ -939,6 +977,9 @@ finally {
     }
     if (Test-Path $wabFixtureRoot) {
         Remove-Item -Recurse -Force $wabFixtureRoot
+    }
+    if (Test-Path $folderFixtureRoot) {
+        Remove-Item -Recurse -Force $folderFixtureRoot
     }
     Remove-Item Env:FLUX_LAUNCH_TRACE_FILE -ErrorAction SilentlyContinue
 }

@@ -1,3 +1,5 @@
+use std::path::PathBuf;
+
 #[cfg(windows)]
 use std::{
     fs::OpenOptions,
@@ -50,7 +52,13 @@ pub fn open_path_async(path: &str) {
         .name(String::from("flux-shell-launch"))
         .spawn(move || {
             trace_launch_event("shell-worker-start");
-            let _ = open_path(&path);
+            let target = clean_shell_target(&path);
+            if target.is_dir() {
+                trace_launch_event("directory-launch-dispatch");
+                let _ = open_directory(target);
+            } else {
+                let _ = open_path(&path);
+            }
         });
 }
 
@@ -63,6 +71,13 @@ pub fn open_recycle_bin_async() {
             trace_launch_event("shell-worker-start");
             let _ = open_recycle_bin();
         });
+}
+
+#[cfg(windows)]
+pub fn open_directory(path: PathBuf) -> bool {
+    let path = path.to_string_lossy().replace('"', "");
+    let arguments = format!("/e,\"{path}\"");
+    shell_execute("open", "explorer.exe", Some(&arguments))
 }
 
 #[cfg(windows)]
@@ -170,6 +185,20 @@ pub fn open_path(_path: &str) -> bool {
     false
 }
 
+fn clean_shell_target(path: &str) -> PathBuf {
+    let trimmed = path.trim();
+    let unquoted = trimmed
+        .strip_prefix('"')
+        .and_then(|value| value.strip_suffix('"'))
+        .unwrap_or(trimmed);
+    PathBuf::from(unquoted)
+}
+
+#[cfg(not(windows))]
+pub fn open_directory(_path: PathBuf) -> bool {
+    false
+}
+
 #[cfg(not(windows))]
 pub fn open_url(_url: &str) -> bool {
     false
@@ -193,4 +222,26 @@ pub fn run_as_admin(_path: &str) -> bool {
 #[cfg(not(windows))]
 pub fn open_file_location(_path: &str) -> bool {
     false
+}
+
+#[cfg(test)]
+mod tests {
+    use super::clean_shell_target;
+
+    #[test]
+    fn clean_shell_target_removes_outer_quotes_and_whitespace() {
+        assert_eq!(
+            clean_shell_target(r#"  \"C:\\Users\\m1nus\\Music Pack\"  "#),
+            std::path::PathBuf::from(r"C:\Users\m1nus\Music Pack")
+        );
+    }
+
+    #[test]
+    fn existing_directory_target_is_classified_as_directory() {
+        let path =
+            std::env::temp_dir().join(format!("flux-folder-launch-test-{}", std::process::id()));
+        std::fs::create_dir_all(&path).unwrap();
+        assert!(clean_shell_target(&format!(r#"\"{}\""#, path.display())).is_dir());
+        std::fs::remove_dir_all(path).unwrap();
+    }
 }
