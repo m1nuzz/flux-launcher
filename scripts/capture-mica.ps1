@@ -769,9 +769,19 @@ try {
         $virtualKey = [byte][char]$character
         [FluxWallpaper]::keybd_event($virtualKey, 0, 0, [UIntPtr]::Zero)
         [FluxWallpaper]::keybd_event($virtualKey, 0, 2, [UIntPtr]::Zero)
+        [FluxWallpaper]::SetForegroundWindow($launcherHandle) | Out-Null
         Start-Sleep -Milliseconds 35
     }
-    Start-Sleep -Seconds 2
+    # Keep foreground ownership while the final query drives the compact-to-expanded
+    # resize. This models normal typing and avoids a CI helper stealing focus during
+    # the exact DWM transition under test.
+    for ($foregroundTick = 0; $foregroundTick -lt 40; $foregroundTick++) {
+        if (![FluxWallpaper]::IsWindowVisible($launcherHandle)) {
+            break
+        }
+        [FluxWallpaper]::SetForegroundWindow($launcherHandle) | Out-Null
+        Start-Sleep -Milliseconds 50
+    }
     $foregroundDeadline = (Get-Date).AddSeconds(2)
     while ((Get-Date) -lt $foregroundDeadline -and [FluxWallpaper]::GetForegroundWindow() -ne $launcherHandle) {
         Start-Sleep -Milliseconds 50
