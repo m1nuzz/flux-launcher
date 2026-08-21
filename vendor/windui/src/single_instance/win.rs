@@ -67,23 +67,23 @@ pub(crate) fn acquire(app_id: &str) -> bool {
 /// 调用方据此回退为正常启动,避免二次实例被一个僵死的首实例永久挡在门外。
 pub(crate) fn forward(app_id: &str, argv: &[String]) -> bool {
     let cls = wide(&class_name(app_id));
-    let hwnd = (0..40).find_map(|_| unsafe {
-        let Ok(hwnd) = FindWindowExW(
-            Some(HWND_MESSAGE),
-            None,
-            PCWSTR(cls.as_ptr()),
-            PCWSTR::null(),
-        ) else {
-            std::thread::sleep(Duration::from_millis(50));
-            return None;
+    let mut hwnd = None;
+    for _ in 0..40 {
+        let candidate = unsafe {
+            FindWindowExW(
+                Some(HWND_MESSAGE),
+                None,
+                PCWSTR(cls.as_ptr()),
+                PCWSTR::null(),
+            )
+            .ok()
         };
-        if hwnd.is_invalid() {
-            std::thread::sleep(Duration::from_millis(50));
-            None
-        } else {
-            Some(hwnd)
+        if let Some(candidate) = candidate.filter(|candidate| !candidate.is_invalid()) {
+            hwnd = Some(candidate);
+            break;
         }
-    });
+        std::thread::sleep(Duration::from_millis(50));
+    }
     let Some(hwnd) = hwnd else {
         return false;
     };

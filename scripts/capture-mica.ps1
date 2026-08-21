@@ -720,6 +720,14 @@ try {
     Start-Sleep -Milliseconds 350
     Save-Screenshot "keyboard-selection.png"
     [FluxWallpaper]::SetForegroundWindow($launcherHandle) | Out-Null
+    $foregroundDeadline = (Get-Date).AddSeconds(2)
+    while ((Get-Date) -lt $foregroundDeadline -and [FluxWallpaper]::GetForegroundWindow() -ne $launcherHandle) {
+        Start-Sleep -Milliseconds 50
+        [FluxWallpaper]::SetForegroundWindow($launcherHandle) | Out-Null
+    }
+    if ([FluxWallpaper]::GetForegroundWindow() -ne $launcherHandle) {
+        throw "Enter launch smoke could not restore Flux as the foreground window before sending Enter."
+    }
     # Send Enter to the exact launcher HWND so this probe cannot be intercepted
     # by the desktop shell or a different foreground process.
     $wmKeyDown = 0x0100
