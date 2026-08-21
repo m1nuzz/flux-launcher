@@ -1310,16 +1310,21 @@ unsafe extern "system" fn wnd_proc(
                 && state_from(hwnd)
                     .map(|state| state.handler.hide_on_deactivate())
                     .unwrap_or(false);
+
+            let res = DefWindowProcW(hwnd, msg, wparam, lparam);
+
             if should_hide {
-                set_interval_timers(hwnd, false);
-                let _ = ShowWindow(hwnd, SW_HIDE);
+                // Two-phase execution (Iron Rule 6): release state borrow before
+                // calling ShowWindow, which synchronously dispatches WM_SHOWWINDOW.
                 if let Some(state) = state_from(hwnd) {
                     state.handler.on_window_deactivated();
                     state.handler.on_window_hide();
                 }
+                set_interval_timers(hwnd, false);
+                let _ = ShowWindow(hwnd, SW_HIDE);
                 apply_window_geometry_requests(hwnd);
             }
-            DefWindowProcW(hwnd, msg, wparam, lparam)
+            res
         }
         WM_PAINT => {
             trace_show_event(hwnd, "wm_paint.enter", "phase=begin");

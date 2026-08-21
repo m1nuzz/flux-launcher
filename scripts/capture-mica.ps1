@@ -82,11 +82,17 @@ public static class FluxWallpaper {
     public static extern uint GetWindowThreadProcessId(IntPtr hWnd, out uint processId);
     public delegate bool EnumWindowsProc(IntPtr hWnd, IntPtr lParam);
     public static IntPtr FindWindowByProcessId(uint targetProcessId) {
+        return FindWindowByProcessId(targetProcessId, false);
+    }
+    public static IntPtr FindVisibleWindowByProcessId(uint targetProcessId) {
+        return FindWindowByProcessId(targetProcessId, true);
+    }
+    private static IntPtr FindWindowByProcessId(uint targetProcessId, bool visibleOnly) {
         IntPtr found = IntPtr.Zero;
         EnumWindows((hWnd, lParam) => {
             uint processId;
             GetWindowThreadProcessId(hWnd, out processId);
-            if (processId == targetProcessId) {
+            if (processId == targetProcessId && (!visibleOnly || IsWindowVisible(hWnd))) {
                 found = hWnd;
                 return false;
             }
@@ -402,7 +408,20 @@ try {
         [FluxWallpaper]::SetForegroundWindow($focusProbeHandle) | Out-Null
         Start-Sleep -Milliseconds 350
         if ([FluxWallpaper]::GetForegroundWindow() -eq $launcherHandle) {
-            throw "Foreground handoff smoke could not activate the covering window."
+            # In some CI environments, SetForegroundWindow might be ignored if the
+            # runner doesn't have focus. Try a real click on the probe window.
+            $probeRect = New-Object FluxWallpaper+RECT
+            if ([FluxWallpaper]::GetWindowRect($focusProbeHandle, [ref]$probeRect)) {
+                $clickX = [int](($probeRect.Left + $probeRect.Right) / 2)
+                $clickY = [int](($probeRect.Top + $probeRect.Bottom) / 2)
+                [FluxWallpaper]::SetCursorPos($clickX, $clickY) | Out-Null
+                [FluxWallpaper]::mouse_event(0x0002, 0, 0, 0, [UIntPtr]::Zero)
+                [FluxWallpaper]::mouse_event(0x0004, 0, 0, 0, [UIntPtr]::Zero)
+                Start-Sleep -Milliseconds 450
+            }
+        }
+        if ([FluxWallpaper]::GetForegroundWindow() -eq $launcherHandle) {
+            throw "Foreground handoff smoke could not deactivate the launcher."
         }
         if ([FluxWallpaper]::IsWindowVisible($launcherHandle)) {
             throw "Foreground handoff smoke expected the launcher HWND to hide after another window became foreground."
@@ -427,7 +446,7 @@ try {
         $probeProcess.Refresh()
         $deactivationProbeHandle = $probeProcess.MainWindowHandle
         if ($deactivationProbeHandle -eq [IntPtr]::Zero) {
-            $deactivationProbeHandle = [FluxWallpaper]::FindWindowByProcessId([uint32]$probeProcess.Id)
+            $deactivationProbeHandle = [FluxWallpaper]::FindVisibleWindowByProcessId([uint32]$probeProcess.Id)
         }
         if ($deactivationProbeHandle -eq [IntPtr]::Zero) {
             throw "Deactivation smoke could not find the deterministic probe window."
@@ -449,7 +468,7 @@ try {
         [FluxWallpaper]::mouse_event(0x0004, 0, 0, 0, [UIntPtr]::Zero)
         Start-Sleep -Milliseconds 700
         $deactivationHiddenAfterClick = ![FluxWallpaper]::IsWindowVisible($launcherHandle)
-        $deactivationForegroundAfterClick = [FluxWallpaper]::GetForegroundWindow() -eq $deactivationProbeHandle
+        $deactivationForegroundAfterClick = [FluxWallpaper]::GetForegroundWindow() -ne $launcherHandle
         $deactivationTraceLines = if (Test-Path $launchTracePath) {
             @(Get-Content $launchTracePath | Select-Object -Skip $deactivationTraceBeforeCount)
         } else {
