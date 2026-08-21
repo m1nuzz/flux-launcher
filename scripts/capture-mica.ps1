@@ -781,10 +781,7 @@ try {
         # A CI compositor can briefly activate another helper while the query
         # expands the window. Reopen through the real bind, then rebuild the
         # query through the focused windui input before selecting a result.
-        [FluxWallpaper]::keybd_event(0x12, 0, 0, [UIntPtr]::Zero)
-        [FluxWallpaper]::keybd_event(0x20, 0, 0, [UIntPtr]::Zero)
-        [FluxWallpaper]::keybd_event(0x20, 0, 2, [UIntPtr]::Zero)
-        [FluxWallpaper]::keybd_event(0x12, 0, 2, [UIntPtr]::Zero)
+        [FluxWallpaper]::SendMessage($launcherHandle, $wmHotkey, [UIntPtr]::Zero, [IntPtr]::Zero) | Out-Null
         Start-Sleep -Milliseconds 800
         [FluxWallpaper]::SetForegroundWindow($launcherHandle) | Out-Null
         $wmChar = 0x0102
