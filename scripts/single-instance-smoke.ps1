@@ -95,6 +95,16 @@ try {
 
     $firstFlux = Get-FluxProcesses
     if ($firstFlux.Count -gt ($initialFlux.Count + 1)) {
+        Write-Host "Flux process diagnostics before first-launch assertion:"
+        @(Get-Process -Name ([System.IO.Path]::GetFileNameWithoutExtension($Executable)) -ErrorAction SilentlyContinue) | ForEach-Object {
+            $_.Refresh()
+            $commandLine = "<unavailable>"
+            try {
+                $commandLine = (Get-CimInstance Win32_Process -Filter "ProcessId = $($_.Id)" -ErrorAction Stop).CommandLine
+            } catch {
+            }
+            Write-Host "Id=$($_.Id) MainWindowHandle=$($_.MainWindowHandle) MainWindowTitle=[$($_.MainWindowTitle)] CommandLine=[$commandLine]"
+        }
         throw "First launch created more than one Flux process: $($firstFlux.Count)."
     }
     $everythingAfterFirst = Get-EverythingProcesses
