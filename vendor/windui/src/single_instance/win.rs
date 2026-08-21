@@ -6,6 +6,7 @@
 //!   解码 argv → 调 on_second + 激活主窗口。on_second 与主 hwnd 存于 UI 线程局部。
 
 use std::cell::RefCell;
+use std::time::Duration;
 
 use windows::core::PCWSTR;
 use windows::Win32::Foundation::{
@@ -66,18 +67,27 @@ pub(crate) fn acquire(app_id: &str) -> bool {
 /// 调用方据此回退为正常启动,避免二次实例被一个僵死的首实例永久挡在门外。
 pub(crate) fn forward(app_id: &str, argv: &[String]) -> bool {
     let cls = wide(&class_name(app_id));
-    unsafe {
+    let hwnd = (0..40).find_map(|_| unsafe {
         let Ok(hwnd) = FindWindowExW(
             Some(HWND_MESSAGE),
             None,
             PCWSTR(cls.as_ptr()),
             PCWSTR::null(),
         ) else {
-            return false;
+            std::thread::sleep(Duration::from_millis(50));
+            return None;
         };
         if hwnd.is_invalid() {
-            return false;
+            std::thread::sleep(Duration::from_millis(50));
+            None
+        } else {
+            Some(hwnd)
         }
+    });
+    let Some(hwnd) = hwnd else {
+        return false;
+    };
+    unsafe {
         // 把本进程持有的前台激活权授予首实例：二次实例通常由前台进程（用户点击 →
         // ShellExecute）启动而持权，首实例仅收到 WM_COPYDATA 并**不**获得权限——
         // 不显式授权则其 SetForegroundWindow 被系统拒绝，窗口只在任务栏闪烁不到前台。
