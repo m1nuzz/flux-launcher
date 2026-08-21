@@ -658,9 +658,19 @@ try {
         throw "Repeated Alt+Space moved the launcher vertically: $($repeatedHotkeyYPositions -join ', ')"
     }
 
-    # The first re-show clears the query by design. Restore a non-empty query
-    # before testing normal Enter execution and hide-after-launch behavior.
+    # The first re-show clears the query by design. Re-focus the search input
+    # after the repeated hotkey cycle before restoring a non-empty query; a
+    # foreground HWND alone does not guarantee that the custom text input owns focus.
     [FluxWallpaper]::SetForegroundWindow($launcherHandle) | Out-Null
+    $shell.AppActivate($process.Id) | Out-Null
+    Start-Sleep -Milliseconds 200
+    [FluxWallpaper]::SetCursorPos($searchX, $searchY) | Out-Null
+    [FluxWallpaper]::mouse_event(0x0002, 0, 0, 0, [UIntPtr]::Zero)
+    [FluxWallpaper]::mouse_event(0x0004, 0, 0, 0, [UIntPtr]::Zero)
+    Start-Sleep -Milliseconds 200
+    [FluxWallpaper]::SetForegroundWindow($launcherHandle) | Out-Null
+    $shell.AppActivate($process.Id) | Out-Null
+    Start-Sleep -Milliseconds 150
     $shell.SendKeys("^a")
     $shell.SendKeys($navigationProbeQuery)
     Start-Sleep -Seconds 2
