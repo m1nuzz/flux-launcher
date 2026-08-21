@@ -807,7 +807,12 @@ try {
         $enterLaunchDispatchBeforeHideProbe
     if (!$enterLaunchHidden) {
         $tracePreview = ($enterTraceLines -join ' | ')
-        throw "Enter launch did not hide the launcher window. trace=$tracePreview."
+        $fullTracePreview = if (Test-Path $launchTracePath) {
+            ((Get-Content $launchTracePath | Select-Object -Last 24) -join ' | ')
+        } else {
+            "<missing-trace-file>"
+        }
+        throw "Enter launch did not hide the launcher window. trace=$tracePreview full_trace_tail=$fullTracePreview."
     }
     if (!$enterHideLatencyProbe) {
         $tracePreview = ($enterTraceLines -join ' | ')
