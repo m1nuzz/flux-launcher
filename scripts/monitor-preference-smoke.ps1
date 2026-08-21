@@ -27,10 +27,31 @@ public static class FluxMonitorSmoke {
 '@
 
 $virtual = [System.Windows.Forms.SystemInformation]::VirtualScreen
+$processName = [System.IO.Path]::GetFileNameWithoutExtension($Executable)
+
+function Stop-FluxProcessesAndWait {
+    $existing = @(Get-Process -Name $processName -ErrorAction SilentlyContinue)
+    foreach ($item in $existing) {
+        if (!$item.HasExited) {
+            Stop-Process -Id $item.Id -Force -ErrorAction SilentlyContinue
+        }
+    }
+    $deadline = (Get-Date).AddSeconds(10)
+    while ((Get-Date) -lt $deadline) {
+        if (@(Get-Process -Name $processName -ErrorAction SilentlyContinue).Count -eq 0) {
+            return
+        }
+        Start-Sleep -Milliseconds 250
+    }
+    throw "A previous Flux process remained alive before monitor preference smoke."
+}
+
+Stop-FluxProcessesAndWait
 $modes = @("primary", "cursor", "foreground")
 $results = @()
 
 foreach ($mode in $modes) {
+    Stop-FluxProcessesAndWait
     $env:FLUX_SMOKE_MONITOR_PREFERENCE = $mode
     $stdout = Join-Path $OutputDirectory "monitor-$mode.stdout.log"
     $stderr = Join-Path $OutputDirectory "monitor-$mode.stderr.log"
@@ -69,8 +90,14 @@ foreach ($mode in $modes) {
     }
     finally {
         if (!$process.HasExited) {
-            Stop-Process -Id $process.Id -Force
+            Stop-Process -Id $process.Id -Force -ErrorAction SilentlyContinue
         }
+        try {
+            Wait-Process -Id $process.Id -Timeout 10 -ErrorAction SilentlyContinue
+        } catch {
+            # The process may already have exited after single-instance handoff.
+        }
+        Stop-FluxProcessesAndWait
         Remove-Item Env:FLUX_SMOKE_MONITOR_PREFERENCE -ErrorAction SilentlyContinue
     }
 }
