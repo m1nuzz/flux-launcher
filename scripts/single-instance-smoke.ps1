@@ -10,7 +10,20 @@ $ErrorActionPreference = "Stop"
 
 function Get-FluxProcesses {
     $name = [System.IO.Path]::GetFileNameWithoutExtension($Executable)
-    @(Get-Process -Name $name -ErrorAction SilentlyContinue)
+    $processes = @(Get-Process -Name $name -ErrorAction SilentlyContinue)
+    @(
+        foreach ($process in $processes) {
+            $commandLine = $null
+            try {
+                $commandLine = (Get-CimInstance Win32_Process -Filter "ProcessId = $($process.Id)" -ErrorAction Stop).CommandLine
+            } catch {
+                $commandLine = $null
+            }
+            if ($commandLine -notmatch "--plugin-host") {
+                $process
+            }
+        }
+    )
 }
 
 function Get-EverythingProcesses {
