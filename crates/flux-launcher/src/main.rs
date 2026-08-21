@@ -2908,6 +2908,7 @@ fn main() {
                 true
             }
             Key::Enter => {
+                launch::trace_launch_event("enter-key");
                 if history_mode_for_keys.get() {
                     if let Some(result) = selected_result(
                         &current_results,
@@ -2929,6 +2930,7 @@ fn main() {
                     &selected_id_for_keys.get(),
                     selected_index_for_keys.get(),
                 ) {
+                    launch::trace_launch_event(&format!("enter-result\\t{}", result.id));
                     if result.id == "empty-recycle-bin" {
                         recycle_bin_confirmation_for_keys.set(true);
                     } else if result.id == "flux-settings" {
