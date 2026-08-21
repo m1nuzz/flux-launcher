@@ -671,20 +671,21 @@ try {
     [FluxWallpaper]::mouse_event(0x0004, 0, 0, 0, [UIntPtr]::Zero)
     Start-Sleep -Milliseconds 200
     [FluxWallpaper]::SetForegroundWindow($launcherHandle) | Out-Null
-    [FluxWallpaper]::SetFocus($launcherHandle) | Out-Null
-    $shell.AppActivate($process.Id) | Out-Null
-    Start-Sleep -Milliseconds 150
-    # Dispatch characters to the launcher window after the framework restores
-    # its focused TextInput. This exercises windui's native WM_CHAR path without
-    # depending on the runner's foreground keyboard arbitration.
-    $wmChar = 0x0102
-    foreach ($character in $navigationProbeQuery.ToCharArray()) {
-        [FluxWallpaper]::SendMessage(
-            $launcherHandle,
-            $wmChar,
-            [UIntPtr]::new([int][char]$character),
-            [IntPtr]::Zero
-        ) | Out-Null
+    $inputForegroundDeadline = (Get-Date).AddSeconds(2)
+    while ((Get-Date) -lt $inputForegroundDeadline -and [FluxWallpaper]::GetForegroundWindow() -ne $launcherHandle) {
+        Start-Sleep -Milliseconds 50
+        [FluxWallpaper]::SetForegroundWindow($launcherHandle) | Out-Null
+    }
+    if ([FluxWallpaper]::GetForegroundWindow() -ne $launcherHandle) {
+        throw "Navigation query could not establish Flux as the foreground window before typing."
+    }
+    # Use real keyboard events after the framework restores its focused TextInput.
+    # This exercises the same path as a user typing after the global hotkey.
+    foreach ($character in $navigationProbeQuery.ToUpperInvariant().ToCharArray()) {
+        $virtualKey = [byte][char]$character
+        [FluxWallpaper]::keybd_event($virtualKey, 0, 0, [UIntPtr]::Zero)
+        [FluxWallpaper]::keybd_event($virtualKey, 0, 2, [UIntPtr]::Zero)
+        Start-Sleep -Milliseconds 35
     }
     Start-Sleep -Seconds 2
 
