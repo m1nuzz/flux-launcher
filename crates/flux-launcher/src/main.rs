@@ -3761,6 +3761,7 @@ fn main() {
     });
     app.tray(tray)
         .hide_on_close()
+        .hide_on_deactivate()
         // The Win32 backend keeps this transparent on local Acrylic-capable
         // sessions and uses this dark color only for an honest RDP fallback.
         .bg(Color::rgba(32, 33, 35, 255))
@@ -3891,6 +3892,9 @@ fn main() {
                     keyboard_layout::switch_to_english();
                 }
             }
+        })
+        .on_window_deactivated(|| {
+            launch::trace_launch_event("window-deactivated");
         })
         .on_window_hide({
             let settings = Arc::clone(&shared_settings);

@@ -296,7 +296,10 @@ pub struct App {
     /// Optional callbacks around native window visibility transitions.
     show_handler: Option<VisibilityHandler>,
     activated_handler: Option<VisibilityHandler>,
+    deactivated_handler: Option<VisibilityHandler>,
     hide_handler: Option<VisibilityHandler>,
+    /// Hide the native window whenever another top-level window becomes foreground.
+    hide_on_deactivate: bool,
     /// 关闭请求转为隐藏窗口。与 `close_handler` 同属核心层的关闭决策链输入，
     /// 平台层对此无感知，故不放 `WindowConfig`。
     hide_on_close: bool,
@@ -354,7 +357,9 @@ impl App {
             key_handler: None,
             show_handler: None,
             activated_handler: None,
+            deactivated_handler: None,
             hide_handler: None,
+            hide_on_deactivate: false,
             hide_on_close: false,
             bg_explicit: false,
             hotkey_ops: Rc::new(RefCell::new(Vec::new())),
@@ -676,6 +681,16 @@ impl App {
         self
     }
 
+    /// Hide the native window as soon as it loses foreground activation.
+    ///
+    /// This is intended for launcher/search surfaces that should never remain
+    /// visible behind another application. The process, tray icon, and global
+    /// hotkeys continue running while the window is hidden.
+    pub fn hide_on_deactivate(mut self) -> Self {
+        self.hide_on_deactivate = true;
+        self
+    }
+
     /// 配置系统托盘图标（图标 + 提示 + 左键/双击 + 原生右键菜单）。
     /// 窗口创建后安装，窗口销毁时自动清理。截屏模式下忽略。
     pub fn tray(mut self, tray: platform::Tray) -> Self {
@@ -850,6 +865,11 @@ impl App {
         self.activated_handler = Some(Box::new(f));
         self
     }
+    /// Run a callback when the native window loses foreground activation.
+    pub fn on_window_deactivated(mut self, f: impl FnMut() + 'static) -> Self {
+        self.deactivated_handler = Some(Box::new(f));
+        self
+    }
     /// Run a callback immediately before the native window is hidden.
     pub fn on_window_hide(mut self, f: impl FnMut() + 'static) -> Self {
         self.hide_handler = Some(Box::new(f));
@@ -890,7 +910,9 @@ impl App {
                 self.key_handler,
                 self.show_handler,
                 self.activated_handler,
+                self.deactivated_handler,
                 self.hide_handler,
+                self.hide_on_deactivate,
                 self.hide_on_close,
             ))
         } else {
@@ -923,7 +945,9 @@ impl App {
             self.key_handler,
             self.show_handler,
             self.activated_handler,
+            self.deactivated_handler,
             self.hide_handler,
+            self.hide_on_deactivate,
             self.hide_on_close,
         )
     }
@@ -1077,7 +1101,10 @@ struct UiHost {
     /// Optional callbacks around native window visibility transitions.
     show_handler: Option<VisibilityHandler>,
     activated_handler: Option<VisibilityHandler>,
+    deactivated_handler: Option<VisibilityHandler>,
     hide_handler: Option<VisibilityHandler>,
+    /// Hide the native window when another top-level window becomes foreground.
+    hide_on_deactivate: bool,
     /// 关闭请求转为隐藏窗口（常驻托盘类应用）。
     hide_on_close: bool,
     /// 正在跑关闭决策链（防 `on_close_request` 回调内再请求关闭导致的自我递归）。
@@ -1199,7 +1226,9 @@ impl UiHost {
         key_handler: Option<KeyHandler>,
         show_handler: Option<VisibilityHandler>,
         activated_handler: Option<VisibilityHandler>,
+        deactivated_handler: Option<VisibilityHandler>,
         hide_handler: Option<VisibilityHandler>,
+        hide_on_deactivate: bool,
         hide_on_close: bool,
     ) -> Self {
         // 尽早注入，使首个事件（首帧渲染前）也能读到正确主题。
@@ -1245,7 +1274,9 @@ impl UiHost {
             key_handler,
             show_handler,
             activated_handler,
+            deactivated_handler,
             hide_handler,
+            hide_on_deactivate,
             hide_on_close,
             resolving_close: false,
         }
@@ -1723,6 +1754,14 @@ impl AppHandler for UiHost {
             handler();
         }
     }
+    fn on_window_deactivated(&mut self) {
+        if let Some(handler) = self.deactivated_handler.as_mut() {
+            handler();
+        }
+    }
+    fn hide_on_deactivate(&self) -> bool {
+        self.hide_on_deactivate
+    }
     fn on_window_hide(&mut self) {
         if let Some(handler) = self.hide_handler.as_mut() {
             handler();
@@ -1985,6 +2024,24 @@ mod tests {
             host.take_dialog_request().is_none(),
             "队列已取空，不应重复交付"
         );
+    }
+
+    #[test]
+    fn hide_on_deactivate_policy_forwards_and_callback_runs() {
+        use crate::platform::AppHandler;
+        use std::cell::Cell as StdCell;
+
+        let deactivated = Rc::new(StdCell::new(false));
+        let deactivated_for_callback = deactivated.clone();
+        let mut host = App::new("t", 100, 100)
+            .hide_on_deactivate()
+            .on_window_deactivated(move || deactivated_for_callback.set(true))
+            .content(Element::col())
+            .into_handler_for_test();
+
+        assert!(host.hide_on_deactivate());
+        host.on_window_deactivated();
+        assert!(deactivated.get());
     }
 
     /// 默认（未开 hide_on_close）：关闭请求获准 → 真关，不留窗口操作。

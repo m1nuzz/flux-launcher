@@ -15,6 +15,7 @@ param(
     [switch]$QueryClearOnReopenSmoke,
     [switch]$QueryResponsivenessSmoke,
     [switch]$FocusToggleSmoke,
+    [switch]$DeactivationClickSmoke,
     [switch]$FolderLaunchSmoke,
     [switch]$CtrlRSmoke,
     [switch]$CtrlCSmoke,
@@ -376,6 +377,10 @@ try {
     $focusToggleProbe = $false
     $focusToggleVisibleAfterReopen = $false
     $focusToggleForegroundAfterReopen = $false
+    $deactivationClickProbe = $false
+    $deactivationHiddenAfterClick = $false
+    $deactivationForegroundAfterClick = $false
+    $deactivationCpuDelta = 0.0
     if ($FocusToggleSmoke) {
         $probeProcess.Refresh()
         $focusProbeHandle = $probeProcess.MainWindowHandle
@@ -409,6 +414,69 @@ try {
         }
         [FluxWallpaper]::SetForegroundWindow($launcherHandle) | Out-Null
     }
+    if ($DeactivationClickSmoke) {
+        $probeProcess.Refresh()
+        $deactivationProbeHandle = $probeProcess.MainWindowHandle
+        if ($deactivationProbeHandle -eq [IntPtr]::Zero) {
+            $deactivationProbeHandle = [FluxWallpaper]::FindWindowByProcessId([uint32]$probeProcess.Id)
+        }
+        if ($deactivationProbeHandle -eq [IntPtr]::Zero) {
+            throw "Deactivation smoke could not find the deterministic probe window."
+        }
+        $probeRect = New-Object FluxWallpaper+RECT
+        if (![FluxWallpaper]::GetWindowRect($deactivationProbeHandle, [ref]$probeRect)) {
+            throw "Deactivation smoke could not read the probe window rectangle."
+        }
+        $deactivationTraceBeforeCount = if (Test-Path $launchTracePath) { @(Get-Content $launchTracePath).Count } else { 0 }
+        [FluxWallpaper]::SetForegroundWindow($launcherHandle) | Out-Null
+        Start-Sleep -Milliseconds 250
+        if (![FluxWallpaper]::IsWindowVisible($launcherHandle)) {
+            throw "Deactivation smoke expected Flux to be visible before the outside click."
+        }
+        $clickX = [int](($probeRect.Left + $probeRect.Right) / 2)
+        $clickY = [int](($probeRect.Top + $probeRect.Bottom) / 2)
+        [FluxWallpaper]::SetCursorPos($clickX, $clickY) | Out-Null
+        [FluxWallpaper]::mouse_event(0x0002, 0, 0, 0, [UIntPtr]::Zero)
+        [FluxWallpaper]::mouse_event(0x0004, 0, 0, 0, [UIntPtr]::Zero)
+        Start-Sleep -Milliseconds 700
+        $deactivationHiddenAfterClick = ![FluxWallpaper]::IsWindowVisible($launcherHandle)
+        $deactivationForegroundAfterClick = [FluxWallpaper]::GetForegroundWindow() -eq $deactivationProbeHandle
+        $deactivationTraceLines = if (Test-Path $launchTracePath) {
+            @(Get-Content $launchTracePath | Select-Object -Skip $deactivationTraceBeforeCount)
+        } else {
+            @()
+        }
+        $deactivationEvent = $deactivationTraceLines | Where-Object { $_ -match "`twindow-deactivated$" } | Select-Object -First 1
+        $deactivationClickProbe =
+            $deactivationHiddenAfterClick -and
+            $deactivationForegroundAfterClick -and
+            [bool]$deactivationEvent
+        if (!$deactivationClickProbe) {
+            throw "Deactivation smoke failed: hidden=$deactivationHiddenAfterClick foreground_probe=$deactivationForegroundAfterClick callback=$([bool]$deactivationEvent)."
+        }
+        if ($IdlePerformanceSmoke) {
+            Start-Sleep -Milliseconds 1200
+            $deactivationCpuBefore = Get-CpuTimeMilliseconds $process.Id
+            Start-Sleep -Seconds 3
+            $deactivationCpuAfter = Get-CpuTimeMilliseconds $process.Id
+            $deactivationCpuDelta = [Math]::Round($deactivationCpuAfter - $deactivationCpuBefore, 2)
+            Write-Host "Click-hidden idle CPU time over 3s: $deactivationCpuDelta ms"
+            if ($deactivationCpuDelta -gt 150) {
+                throw "Click-hidden idle CPU budget exceeded: ${deactivationCpuDelta} ms over 3 seconds."
+            }
+        }
+        # Restore through the real global Alt+Space sequence, proving that the hidden
+        # process remains resident and the user can immediately reopen the launcher.
+        [FluxWallpaper]::keybd_event(0x12, 0, 0, [UIntPtr]::Zero)
+        [FluxWallpaper]::keybd_event(0x20, 0, 0, [UIntPtr]::Zero)
+        [FluxWallpaper]::keybd_event(0x20, 0, 2, [UIntPtr]::Zero)
+        [FluxWallpaper]::keybd_event(0x12, 0, 2, [UIntPtr]::Zero)
+        Start-Sleep -Milliseconds 900
+        if (![FluxWallpaper]::IsWindowVisible($launcherHandle) -or [FluxWallpaper]::GetForegroundWindow() -ne $launcherHandle) {
+            throw "Deactivation smoke could not restore Flux with one real Alt+Space bind."
+        }
+    }
+
     Save-Screenshot "mica-repeat-show-empty.png"
     $launcherRect = New-Object FluxWallpaper+RECT
     if (![FluxWallpaper]::GetWindowRect($launcherHandle, [ref]$launcherRect)) {
@@ -926,9 +994,13 @@ try {
         QueryResponsivenessMaxMilliseconds = $queryResponsivenessMaxMilliseconds
         QueryResponsivenessSamples = @($queryResponsivenessSamples)
         FocusToggleProbe = (!$FocusToggleSmoke) -or $focusToggleProbe
+        DeactivationClickProbe = (!$DeactivationClickSmoke) -or $deactivationClickProbe
         FolderLaunchProbe = (!$FolderLaunchSmoke) -or $folderLaunchProbe
         FocusToggleVisibleAfterReopen = $focusToggleVisibleAfterReopen
         FocusToggleForegroundAfterReopen = $focusToggleForegroundAfterReopen
+        DeactivationHiddenAfterClick = $deactivationHiddenAfterClick
+        DeactivationForegroundAfterClick = $deactivationForegroundAfterClick
+        DeactivationCpuMilliseconds = $deactivationCpuDelta
         HistoryPanelProbe = $true
         HistoryUpProbe = $true
         HistoryAltUpProbe = $true

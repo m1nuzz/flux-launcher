@@ -103,6 +103,7 @@ jobs:
             -OutputDirectory ./artifacts/windows-ui-release `
             -QueryResponsivenessSmoke `
             -FocusToggleSmoke `
+            -DeactivationClickSmoke `
             -FolderLaunchSmoke
 
       - name: Sign stable launcher binaries before packaging

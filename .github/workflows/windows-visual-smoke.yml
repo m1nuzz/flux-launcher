@@ -161,6 +161,7 @@ jobs:
           }
           $captureParams.IdlePerformanceSmoke = $true
           $captureParams.FocusToggleSmoke = $true
+          $captureParams.DeactivationClickSmoke = $true
           $captureParams.FolderLaunchSmoke = $true
           & ./scripts/capture-mica.ps1 @captureParams
 
