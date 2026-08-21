@@ -728,12 +728,12 @@ try {
     if ([FluxWallpaper]::GetForegroundWindow() -ne $launcherHandle) {
         throw "Enter launch smoke could not restore Flux as the foreground window before sending Enter."
     }
-    # Send Enter to the exact launcher HWND so this probe cannot be intercepted
-    # by the desktop shell or a different foreground process.
-    $wmKeyDown = 0x0100
+    # Use the real Enter key sequence after verifying Flux owns the foreground.
+    # This exercises the same path as a user press rather than a synthetic window message.
     $traceBeforeEnterCount = if (Test-Path $launchTracePath) { @(Get-Content $launchTracePath).Count } else { 0 }
     $enterDispatchTimer = [System.Diagnostics.Stopwatch]::StartNew()
-    [FluxWallpaper]::SendMessage($launcherHandle, $wmKeyDown, [UIntPtr]::new(0x0D), [IntPtr]::Zero) | Out-Null
+    [FluxWallpaper]::keybd_event(0x0D, 0, 0, [UIntPtr]::Zero)
+    [FluxWallpaper]::keybd_event(0x0D, 0, 2, [UIntPtr]::Zero)
     $enterDispatchTimer.Stop()
     $enterHideDispatchMilliseconds = [Math]::Round($enterDispatchTimer.Elapsed.TotalMilliseconds, 2)
     Start-Sleep -Milliseconds 500
@@ -765,7 +765,8 @@ try {
         throw "Enter launch did not hide the launcher window."
     }
     if (!$enterHideLatencyProbe) {
-        throw "Enter launch/hide ordering failed: dispatch_before_hide=$enterLaunchDispatchBeforeHideProbe, hide_dispatch_ms=$enterHideDispatchMilliseconds, budget_ms=$EnterHideDispatchBudgetMilliseconds."
+        $tracePreview = ($enterTraceLines -join ' | ')
+        throw "Enter launch/hide ordering failed: dispatch_before_hide=$enterLaunchDispatchBeforeHideProbe, hide_dispatch_ms=$enterHideDispatchMilliseconds, budget_ms=$EnterHideDispatchBudgetMilliseconds, trace=$tracePreview."
     }
     # Restore the launcher for the remaining independent probes.
     [FluxWallpaper]::SendMessage($launcherHandle, $wmHotkey, [UIntPtr]::Zero, [IntPtr]::Zero) | Out-Null
