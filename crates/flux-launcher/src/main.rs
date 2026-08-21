@@ -146,7 +146,10 @@ impl ProviderResults {
     }
 
     fn core_ready(&self) -> bool {
-        self.applications_ready && self.everything_ready
+        // Built-in/system results must be actionable without waiting for the
+        // asynchronous Everything response. When a query has no built-in result,
+        // retain the atomic application+Everything snapshot behavior.
+        self.applications_ready && (self.everything_ready || !self.built_in.is_empty())
     }
 
     fn merged(&self, query: &str, priorities: &[String]) -> Vec<SearchResult> {
@@ -4216,6 +4219,26 @@ mod tests {
         providers.reset(8, Vec::new(), false);
         providers.applications_ready = true;
         assert!(providers.core_ready());
+    }
+
+    #[test]
+    fn builtin_snapshot_does_not_wait_for_everything() {
+        let mut providers = ProviderResults::default();
+        providers.reset(
+            9,
+            vec![SearchResult {
+                id: String::from("system:wifi"),
+                title: String::from("Wi-Fi"),
+                subtitle: String::from("Windows Settings"),
+                kind: ResultKind::Command,
+                source: ResultSource::BuiltIn,
+                target: Some(String::from("ms-settings:network-wifi")),
+            }],
+            true,
+        );
+        providers.applications_ready = true;
+        assert!(providers.core_ready());
+        assert!(!providers.everything_ready);
     }
 
     #[test]
