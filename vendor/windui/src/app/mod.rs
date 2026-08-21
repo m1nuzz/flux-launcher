@@ -300,6 +300,8 @@ pub struct App {
     hide_handler: Option<VisibilityHandler>,
     /// Hide the native window whenever another top-level window becomes foreground.
     hide_on_deactivate: bool,
+    /// Focus the first visible focusable control after every native window show.
+    focus_first_control_on_show: bool,
     /// 关闭请求转为隐藏窗口。与 `close_handler` 同属核心层的关闭决策链输入，
     /// 平台层对此无感知，故不放 `WindowConfig`。
     hide_on_close: bool,
@@ -360,6 +362,7 @@ impl App {
             deactivated_handler: None,
             hide_handler: None,
             hide_on_deactivate: false,
+            focus_first_control_on_show: false,
             hide_on_close: false,
             bg_explicit: false,
             hotkey_ops: Rc::new(RefCell::new(Vec::new())),
@@ -691,6 +694,15 @@ impl App {
         self
     }
 
+    /// Focus the first visible focusable control whenever the native window is shown.
+    ///
+    /// This is useful for launcher/search surfaces: hiding a window does not imply that
+    /// the platform will restore the framework's logical focus node when it is shown again.
+    pub fn focus_first_control_on_show(mut self) -> Self {
+        self.focus_first_control_on_show = true;
+        self
+    }
+
     /// 配置系统托盘图标（图标 + 提示 + 左键/双击 + 原生右键菜单）。
     /// 窗口创建后安装，窗口销毁时自动清理。截屏模式下忽略。
     pub fn tray(mut self, tray: platform::Tray) -> Self {
@@ -913,6 +925,7 @@ impl App {
                 self.deactivated_handler,
                 self.hide_handler,
                 self.hide_on_deactivate,
+                self.focus_first_control_on_show,
                 self.hide_on_close,
             ))
         } else {
@@ -948,6 +961,7 @@ impl App {
             self.deactivated_handler,
             self.hide_handler,
             self.hide_on_deactivate,
+            self.focus_first_control_on_show,
             self.hide_on_close,
         )
     }
@@ -1105,6 +1119,8 @@ struct UiHost {
     hide_handler: Option<VisibilityHandler>,
     /// Hide the native window when another top-level window becomes foreground.
     hide_on_deactivate: bool,
+    /// Focus the first visible focusable control after every native window show.
+    focus_first_control_on_show: bool,
     /// 关闭请求转为隐藏窗口（常驻托盘类应用）。
     hide_on_close: bool,
     /// 正在跑关闭决策链（防 `on_close_request` 回调内再请求关闭导致的自我递归）。
@@ -1229,6 +1245,7 @@ impl UiHost {
         deactivated_handler: Option<VisibilityHandler>,
         hide_handler: Option<VisibilityHandler>,
         hide_on_deactivate: bool,
+        focus_first_control_on_show: bool,
         hide_on_close: bool,
     ) -> Self {
         // 尽早注入，使首个事件（首帧渲染前）也能读到正确主题。
@@ -1277,6 +1294,7 @@ impl UiHost {
             deactivated_handler,
             hide_handler,
             hide_on_deactivate,
+            focus_first_control_on_show,
             hide_on_close,
             resolving_close: false,
         }
@@ -1747,6 +1765,15 @@ impl AppHandler for UiHost {
     fn on_window_show(&mut self) {
         if let Some(handler) = self.show_handler.as_mut() {
             handler();
+        }
+        if self.focus_first_control_on_show {
+            self.refresh_focus();
+            let target = self.focus.order.first().copied();
+            let old = self.focus.current;
+            self.tree.set_focused(target, old);
+            self.focus.current = target;
+            self.focus.visible = false;
+            self.tree.focus_ring_visible = false;
         }
     }
     fn on_window_activated(&mut self) {

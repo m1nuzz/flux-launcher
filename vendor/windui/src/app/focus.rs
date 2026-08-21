@@ -296,6 +296,26 @@ mod tests {
     /// 焦点环只跟随键盘：同一个对话框，鼠标点开不显示、键盘打开显示。
     /// 判据是「用户最近一次交互用的什么」，而不是「焦点这次是不是框架挪的」。
     #[test]
+    fn show_focus_policy_selects_first_visible_control() {
+        use crate::platform::AppHandler;
+        use crate::signal::signal;
+        use crate::ui::Element;
+
+        let query = signal(String::new());
+        let app = App::new("t", 300, 120)
+            .focus_first_control_on_show()
+            .content(Element::col().child(Element::text_input(query, "Search")));
+        let mut handler = app.into_handler_for_test();
+        handler.on_window_show();
+
+        assert_eq!(
+            handler.focus.current,
+            handler.focus.order.first().copied(),
+            "show policy should focus the first visible control"
+        );
+    }
+
+    #[test]
     fn focus_ring_follows_keyboard_not_mouse() {
         use crate::event::{MouseButton, PointerEvent, PointerKind};
         use crate::geometry::Point;
