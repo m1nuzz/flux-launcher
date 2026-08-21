@@ -4,7 +4,9 @@ param(
     [Parameter(Mandatory = $true)]
     [string]$Installer,
     [Parameter(Mandatory = $true)]
-    [string]$WorkDirectory
+    [string]$WorkDirectory,
+    [Parameter(Mandatory = $true)]
+    [string]$CurrentVersion
 )
 
 $ErrorActionPreference = "Stop"
@@ -66,6 +68,13 @@ function Get-TraceLines {
     return @(Get-Content -Path $tracePath)
 }
 
+function Get-ReleaseTags {
+    $normalized = $CurrentVersion.Trim().TrimStart('v')
+    $parsed = [version]::Parse($normalized)
+    $latest = "{0}.{1}.{2}" -f $parsed.Major, $parsed.Minor, ($parsed.Build + 1)
+    return @("v$latest", "v$normalized")
+}
+
 function Stop-ExistingFluxProcesses {
     $existing = @(Get-Process -Name "flux-launcher" -ErrorAction SilentlyContinue)
     foreach ($process in $existing) {
@@ -116,10 +125,13 @@ Copy-Item -LiteralPath $Installer -Destination $fixtureInstaller -Force
 $installerHash = (Get-FileHash -Algorithm SHA256 -Path $fixtureInstaller).Hash.ToLowerInvariant()
 $port = 18963
 $prefix = "http://127.0.0.1:$port/"
+$releaseTags = Get-ReleaseTags
+$syntheticLatestTag = $releaseTags[0]
+$currentStableTag = $releaseTags[1]
 
 Write-JsonFile -Path $firstReleasePath -Value @{
-    tag_name = "v0.1.70"
-    html_url = "https://example.test/releases/tag/v0.1.70"
+    tag_name = $syntheticLatestTag
+    html_url = "https://example.test/releases/tag/$syntheticLatestTag"
     draft = $false
     prerelease = $false
     assets = @(@{
@@ -129,8 +141,8 @@ Write-JsonFile -Path $firstReleasePath -Value @{
     })
 }
 Write-JsonFile -Path $stableReleasePath -Value @{
-    tag_name = "v0.1.69"
-    html_url = "https://example.test/releases/tag/v0.1.69"
+    tag_name = $currentStableTag
+    html_url = "https://example.test/releases/tag/$currentStableTag"
     draft = $false
     prerelease = $false
     assets = @()

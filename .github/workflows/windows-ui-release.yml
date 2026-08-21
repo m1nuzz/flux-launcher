@@ -154,7 +154,8 @@ jobs:
           ./scripts/update-smoke.ps1 `
             -Executable ./target/x86_64-pc-windows-msvc/release/flux-launcher.exe `
             -Installer ./artifacts/windows-ui-release/package/FluxLauncher-Setup.exe `
-            -WorkDirectory ./artifacts/windows-ui-release/update-smoke
+            -WorkDirectory ./artifacts/windows-ui-release/update-smoke `
+            -CurrentVersion "${{ inputs.release_tag }}"
 
       - name: Publish user-facing UI release
         uses: softprops/action-gh-release@v2
