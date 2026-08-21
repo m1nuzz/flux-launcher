@@ -15,7 +15,11 @@ function Get-FluxProcesses {
         foreach ($process in $processes) {
             try {
                 $process.Refresh()
-                if ($process.MainWindowHandle -ne [IntPtr]::Zero) {
+                $commandLine = (Get-CimInstance Win32_Process -Filter "ProcessId = $($process.Id)" -ErrorAction Stop).CommandLine
+                if ($commandLine -notmatch '--plugin-host' -and
+                    $commandLine -notmatch '--folder-launch-smoke') {
+                    # Count hidden tray/search processes too. Hide-on-deactivation intentionally
+                    # makes MainWindowHandle zero after focus moves to another application.
                     $process
                 }
             } catch {
