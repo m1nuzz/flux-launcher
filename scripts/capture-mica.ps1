@@ -743,6 +743,12 @@ try {
     Start-Sleep -Milliseconds 350
     Save-Screenshot "keyboard-selection.png"
     Start-Sleep -Milliseconds 100
+    # Clear modifier state left by the preceding Alt+Space cycles before testing
+    # plain Enter; otherwise Flux correctly interprets the key as Alt+Enter.
+    [FluxWallpaper]::keybd_event(0x12, 0, 2, [UIntPtr]::Zero)
+    [FluxWallpaper]::keybd_event(0x11, 0, 2, [UIntPtr]::Zero)
+    [FluxWallpaper]::keybd_event(0x10, 0, 2, [UIntPtr]::Zero)
+    Start-Sleep -Milliseconds 50
     # Send Enter to the exact launcher HWND after direct Home/Down selection. This
     # keeps the ordering assertion deterministic while the surrounding smoke suite
     # already covers real keyboard input and global hotkey restoration.
