@@ -906,6 +906,14 @@ fn should_show_launcher(is_foreground: bool) -> bool {
     !is_foreground
 }
 
+fn relaunch_mode_for_auto_install(is_foreground: bool) -> updater::RelaunchMode {
+    if is_foreground {
+        updater::RelaunchMode::Visible
+    } else {
+        updater::RelaunchMode::Hidden
+    }
+}
+
 #[cfg(windows)]
 static SHELL_ICON_CACHE: OnceLock<Mutex<HashMap<String, Option<Vec<u8>>>>> = OnceLock::new();
 static SETTINGS_SAVE_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
@@ -1259,15 +1267,20 @@ fn request_update_install(
     update: updater::StableUpdate,
     sender: Sender<UpdateInstallResponse>,
     in_flight: &Cell<bool>,
+    relaunch_mode: updater::RelaunchMode,
 ) -> bool {
     if in_flight.replace(true) {
         return false;
     }
-    spawn_update_install(update, sender);
+    spawn_update_install(update, sender, relaunch_mode);
     true
 }
 
-fn spawn_update_install(update: updater::StableUpdate, sender: Sender<UpdateInstallResponse>) {
+fn spawn_update_install(
+    update: updater::StableUpdate,
+    sender: Sender<UpdateInstallResponse>,
+    relaunch_mode: updater::RelaunchMode,
+) {
     let _ = std::thread::Builder::new()
         .name(String::from("flux-update-install"))
         .spawn(move || {
@@ -1289,7 +1302,7 @@ fn spawn_update_install(update: updater::StableUpdate, sender: Sender<UpdateInst
                     });
                 });
             match download {
-                Ok(_) => match updater::handoff_installer(&installer_path) {
+                Ok(_) => match updater::handoff_installer(&installer_path, relaunch_mode) {
                     Ok(()) => {
                         trace_update_event(&format!("update-installer-started\\t{version}"));
                         let _ = sender.send(UpdateInstallResponse::Started { version });
@@ -2150,6 +2163,7 @@ fn main() {
                     .map(|settings| settings.auto_install_updates)
                     .unwrap_or(false);
                 if auto_install {
+                    let relaunch_mode = relaunch_mode_for_auto_install(launcher_is_foreground());
                     update_installing_for_channel.set(true);
                     update_status_for_channel.set(format!(
                         "Preparing stable {} for installation...",
@@ -2159,6 +2173,7 @@ fn main() {
                         update,
                         update_install_sender_for_channel.clone(),
                         &update_install_in_flight_for_check_channel,
+                        relaunch_mode,
                     ) {
                         update_installing_for_channel.set(false);
                         update_status_for_channel
@@ -3384,6 +3399,7 @@ fn main() {
                                                         update,
                                                         update_install_sender_for_ui.clone(),
                                                         &update_install_in_flight_for_ui,
+                                                        updater::RelaunchMode::Visible,
                                                     ) {
                                                         update_installing_for_ui.set(false);
                                                         update_status_for_install.set(String::from(
@@ -3878,8 +3894,9 @@ mod tests {
         actions_for_result, format_bytes, format_update_progress, google_icon_rgba,
         history_cursor_step, hover_position_changed, is_run_as_admin_key, launcher_window_geometry,
         merge_application_duplicates, normalize_everything_query, preserve_everything_file_order,
-        quoted_result_path, should_claim_single_instance, should_show_launcher, ProviderResults,
-        COMPACT_WINDOW_HEIGHT, EXPANDED_WINDOW_HEIGHT, WINDOW_WIDTH,
+        quoted_result_path, relaunch_mode_for_auto_install, should_claim_single_instance,
+        should_show_launcher, ProviderResults, COMPACT_WINDOW_HEIGHT, EXPANDED_WINDOW_HEIGHT,
+        WINDOW_WIDTH,
     };
     use flux_core::{ResultKind, ResultSource, SearchResult};
     use windui::event::{Key, KeyEvent};
@@ -4086,6 +4103,18 @@ mod tests {
     fn activation_shows_when_flux_is_not_foreground() {
         assert!(should_show_launcher(false));
         assert!(!should_show_launcher(true));
+    }
+
+    #[test]
+    fn automatic_update_preserves_hidden_or_visible_launcher_state() {
+        assert_eq!(
+            relaunch_mode_for_auto_install(false),
+            super::updater::RelaunchMode::Hidden
+        );
+        assert_eq!(
+            relaunch_mode_for_auto_install(true),
+            super::updater::RelaunchMode::Visible
+        );
     }
 
     #[test]

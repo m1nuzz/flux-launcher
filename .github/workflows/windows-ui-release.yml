@@ -114,8 +114,7 @@ jobs:
         run: |
           ./scripts/sign-windows-release.ps1 `
             -Files @(
-              "./target/x86_64-pc-windows-msvc/release/flux-launcher.exe",
-              "./target/x86_64-pc-windows-msvc/release/flow-plugin-fixture.exe"
+              "./target/x86_64-pc-windows-msvc/release/flux-launcher.exe"
             ) `
             -RequireSigning
 
@@ -126,7 +125,6 @@ jobs:
           ./scripts/build-installer.ps1 `
             -AppVersion $version `
             -OutputDirectory ./artifacts/windows-ui-release/package
-          Copy-Item ./target/x86_64-pc-windows-msvc/release/flow-plugin-fixture.exe ./artifacts/windows-ui-release/package/flow-plugin-fixture.exe
           Get-ChildItem ./artifacts/windows-ui-release/package -File -Recurse | Get-FileHash -Algorithm SHA256 | Format-Table -AutoSize
 
       - name: Sign stable release artifacts
@@ -140,21 +138,6 @@ jobs:
           ./scripts/sign-windows-release.ps1 `
             -ArtifactDirectory ./artifacts/windows-ui-release/package `
             -RequireSigning
-
-      - name: Generate stable WinGet manifest bundle
-        if: inputs.release_channel == 'stable'
-        shell: pwsh
-        run: |
-          $version = "${{ inputs.release_tag }}".TrimStart("v")
-          $installerHash = (Get-FileHash ./artifacts/windows-ui-release/package/FluxLauncher-Setup.exe -Algorithm SHA256).Hash
-          ./scripts/generate-winget-manifest.ps1 `
-            -Version $version `
-            -InstallerSha256 $installerHash `
-            -OutputRoot ./artifacts/windows-ui-release/winget/manifests
-          Compress-Archive `
-            -Path ./artifacts/windows-ui-release/winget/manifests `
-            -DestinationPath ./artifacts/windows-ui-release/package/FluxLauncher-WinGet-Manifests.zip `
-            -Force
 
       - name: Smoke installer, startup opt-out, tray launch, and uninstall
         shell: pwsh
@@ -172,36 +155,20 @@ jobs:
             -Installer ./artifacts/windows-ui-release/package/FluxLauncher-Setup.exe `
             -WorkDirectory ./artifacts/windows-ui-release/update-smoke
 
-      - name: Publish UI release and screenshots
+      - name: Publish user-facing UI release
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ inputs.release_tag }}
           name: Flux Launcher ${{ inputs.release_tag }}
           prerelease: ${{ inputs.release_channel == 'beta' }}
           make_latest: ${{ inputs.release_channel == 'stable' }}
-          generate_release_notes: true
+          generate_release_notes: false
           body: |
             Flux Launcher Windows 11 x64 ${{ inputs.release_channel }} release.
-            Beta releases are for testing and are ignored by the stable updater.
 
-            This workflow captures the compact transparent launcher, repeated activation, query expansion, keyboard navigation, action mode, Settings, native Flow fixture, and current provider smoke evidence. It also measures rapid `.png`, `.zip`, and `ext:zip` keystroke dispatch and fails if a key blocks beyond the configured responsiveness budget.
+            This release contains only the user-facing installer and portable executable. CI screenshots, DWM diagnostics, smoke logs, and test fixtures remain workflow artifacts rather than public downloads.
 
-            The workflow records DWM preflight diagnostics. GitHub standard runners may not expose live DWM Acrylic because of remote desktop composition; validate final material appearance on a physical Windows 11 desktop or a configured GPU/larger runner.
+            Beta releases are for testing and are ignored by the stable updater. Stable releases are the versions intended for WinGet and normal automatic updates.
           files: |
             ./artifacts/windows-ui-release/package/FluxLauncher-Setup.exe
             ./artifacts/windows-ui-release/package/FluxLauncher-Portable.exe
-            ./artifacts/windows-ui-release/package/flow-plugin-fixture.exe
-            ./artifacts/windows-ui-release/mica-desktop.png
-            ./artifacts/windows-ui-release/keyboard-selection.png
-            ./artifacts/windows-ui-release/actions-panel.png
-            ./artifacts/windows-ui-release/settings-panel.png
-            ./artifacts/windows-ui-release/dwm-preflight.json
-            ./artifacts/windows-ui-release/launcher.stderr.log
-
-      - name: Publish stable WinGet manifest bundle
-        if: inputs.release_channel == 'stable'
-        uses: softprops/action-gh-release@v2
-        with:
-          tag_name: ${{ inputs.release_tag }}
-          files: ./artifacts/windows-ui-release/package/FluxLauncher-WinGet-Manifests.zip
-          fail_on_unmatched_files: true

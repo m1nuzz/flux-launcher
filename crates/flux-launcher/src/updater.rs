@@ -28,6 +28,12 @@ pub struct UpdateCheckResponse {
     pub result: Result<Option<StableUpdate>, String>,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum RelaunchMode {
+    Hidden,
+    Visible,
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct DownloadProgress {
     pub received_bytes: u64,
@@ -171,8 +177,8 @@ where
     result
 }
 
-pub fn handoff_installer(installer_path: &Path) -> Result<(), String> {
-    spawn_installer_handoff(installer_path)
+pub fn handoff_installer(installer_path: &Path, relaunch_mode: RelaunchMode) -> Result<(), String> {
+    spawn_installer_handoff(installer_path, relaunch_mode)
         .map_err(|error| format!("Could not start update installer: {error}"))
 }
 
@@ -184,20 +190,21 @@ fn close_download_file(mut file: File) -> io::Result<()> {
 }
 
 #[cfg(windows)]
-fn spawn_installer_handoff(installer_path: &Path) -> io::Result<()> {
+fn spawn_installer_handoff(installer_path: &Path, relaunch_mode: RelaunchMode) -> io::Result<()> {
     use std::os::windows::process::CommandExt;
 
     let current_exe = std::env::current_exe()?;
     let parent_pid = std::process::id();
     let installer = powershell_literal(installer_path);
     let application = powershell_literal(&current_exe);
+    let relaunch = relaunch_command(&application, relaunch_mode);
     let script = format!(
         "$parent = Get-Process -Id {parent_pid} -ErrorAction SilentlyContinue; \
          if ($parent) {{ $parent.WaitForExit() }}; \
-         $arguments = @('/VERYSILENT','/SUPPRESSMSGBOXES','/NORESTART','/NOCANCEL','/CLOSEAPPLICATIONS','/RESTARTAPPLICATIONS'); \
+         $arguments = @('/VERYSILENT','/SUPPRESSMSGBOXES','/NORESTART','/NOCANCEL','/CLOSEAPPLICATIONS'); \
          if ($env:FLUX_UPDATE_INSTALL_DIR) {{ $arguments += '/DIR=' + $env:FLUX_UPDATE_INSTALL_DIR }}; \
          $setup = Start-Process -FilePath {installer} -ArgumentList $arguments -Wait -PassThru; \
-         if ($setup.ExitCode -eq 0) {{ Start-Process -FilePath {application} }}; \
+         if ($setup.ExitCode -eq 0) {{ {relaunch} }}; \
          Remove-Item -LiteralPath {installer} -Force -ErrorAction SilentlyContinue",
     );
 
@@ -217,7 +224,7 @@ fn spawn_installer_handoff(installer_path: &Path) -> io::Result<()> {
 }
 
 #[cfg(not(windows))]
-fn spawn_installer_handoff(installer_path: &Path) -> io::Result<()> {
+fn spawn_installer_handoff(installer_path: &Path, _relaunch_mode: RelaunchMode) -> io::Result<()> {
     Command::new(installer_path)
         .args([
             "/VERYSILENT",
@@ -234,6 +241,15 @@ fn spawn_installer_handoff(installer_path: &Path) -> io::Result<()> {
 #[cfg(windows)]
 fn powershell_literal(path: &Path) -> String {
     format!("'{}'", path.to_string_lossy().replace('\'', "''"))
+}
+
+fn relaunch_command(application: &str, relaunch_mode: RelaunchMode) -> String {
+    match relaunch_mode {
+        RelaunchMode::Hidden => {
+            format!("Start-Process -FilePath {application} -ArgumentList @('--startup')")
+        }
+        RelaunchMode::Visible => format!("Start-Process -FilePath {application}"),
+    }
 }
 
 fn parse_stable_version(tag_name: &str) -> Result<Version, String> {
@@ -292,6 +308,16 @@ mod tests {
         format!(
             r#"{{"tag_name":"{tag_name}","html_url":"https://github.com/m1nuzz/flux-launcher/releases/tag/{tag_name}","draft":false,"prerelease":{prerelease},"assets":[{{"name":"FluxLauncher-Setup.exe","browser_download_url":"https://example.test/FluxLauncher-Setup.exe","digest":"sha256:abc"}}]}}"#
         )
+    }
+
+    #[test]
+    fn relaunch_command_keeps_automatic_updates_hidden() {
+        let hidden = relaunch_command("'flux-launcher.exe'", RelaunchMode::Hidden);
+        let visible = relaunch_command("'flux-launcher.exe'", RelaunchMode::Visible);
+        assert!(hidden.contains("--startup"));
+        assert!(!visible.contains("--startup"));
+        assert!(hidden.contains("Start-Process"));
+        assert!(visible.contains("Start-Process"));
     }
 
     #[test]

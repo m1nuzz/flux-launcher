@@ -98,6 +98,18 @@ function Assert-LauncherResponsive {
     }
 }
 
+function Get-UpdatedLauncherProcesses {
+    $expectedPath = [System.IO.Path]::GetFullPath((Join-Path $installRoot "flux-launcher.exe"))
+    return @(Get-Process -Name "flux-launcher" -ErrorAction SilentlyContinue | Where-Object {
+        try {
+            $_.Path -eq $expectedPath
+        }
+        catch {
+            $false
+        }
+    })
+}
+
 New-Item -ItemType Directory -Force -Path $fixtureRoot, $appDataRoot | Out-Null
 Stop-ExistingFluxProcesses
 Copy-Item -LiteralPath $Installer -Destination $fixtureInstaller -Force
@@ -170,8 +182,22 @@ try {
     Wait-Until -Description "the updated install root" -Condition {
         Test-Path (Join-Path $installRoot "flux-launcher.exe")
     }
-    Wait-Until -Description "the update launcher restart" -Condition {
-        @(Get-Process -Name "flux-launcher" -ErrorAction SilentlyContinue).Count -ge 1
+    Wait-Until -Description "the updated launcher restart hidden in the tray" -Condition {
+        $updated = @(Get-UpdatedLauncherProcesses)
+        if ($updated.Count -lt 1) {
+            return $false
+        }
+        $updated[0].Refresh()
+        $updated[0].MainWindowHandle -eq [IntPtr]::Zero
+    }
+
+    $updatedProcesses = @(Get-UpdatedLauncherProcesses)
+    if ($updatedProcesses.Count -ne 1) {
+        throw "Expected exactly one updated Flux process, found $($updatedProcesses.Count)"
+    }
+    $updatedProcesses[0].Refresh()
+    if ($updatedProcesses[0].MainWindowHandle -ne [IntPtr]::Zero) {
+        throw "Automatic update relaunched a visible Search window instead of staying hidden in the tray"
     }
 
     $traceLines = Get-TraceLines
@@ -205,7 +231,7 @@ try {
     if (-not (Test-Path $transitionPath)) {
         throw "Fixture server did not receive the release check"
     }
-    Write-Host "Update smoke passed: real HTTP download, SHA256 verification, monotonic byte progress, non-hung UI, installer handoff, and restart were verified."
+    Write-Host "Update smoke passed: real HTTP download, SHA256 verification, monotonic byte progress, non-hung UI, installer handoff, hidden tray-only automatic restart, and single updated process were verified."
 }
 catch {
     Write-Host "Update smoke trace before failure:"
