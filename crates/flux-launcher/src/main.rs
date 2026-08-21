@@ -756,15 +756,45 @@ fn selection_palette(custom_selection_color: Signal<String>) -> Element {
 }
 
 fn display_title(title: &str) -> String {
-    const MAX_TITLE_CHARS: usize = 20;
+    const MAX_TITLE_CHARS: usize = 26;
     let chars: Vec<char> = title.chars().collect();
     if chars.len() <= MAX_TITLE_CHARS {
         return title.to_owned();
     }
-    chars
-        .into_iter()
-        .take(MAX_TITLE_CHARS.saturating_sub(1))
-        .chain(std::iter::once('…'))
+
+    let extension_start = title
+        .char_indices()
+        .rev()
+        .find_map(|(index, character)| (character == '.' && index > 0).then_some(index));
+    let (stem, extension) = extension_start
+        .map(|index| title.split_at(index))
+        .unwrap_or((title, ""));
+    let extension_chars: Vec<char> = extension.chars().collect();
+    let available_stem_chars = MAX_TITLE_CHARS
+        .saturating_sub(extension_chars.len())
+        .saturating_sub(1);
+    if available_stem_chars < 2 {
+        return chars
+            .into_iter()
+            .take(MAX_TITLE_CHARS.saturating_sub(1))
+            .chain(std::iter::once('…'))
+            .collect();
+    }
+
+    let stem_chars: Vec<char> = stem.chars().collect();
+    let prefix_len = available_stem_chars.div_ceil(2);
+    let suffix_len = available_stem_chars / 2;
+    stem_chars
+        .iter()
+        .take(prefix_len)
+        .chain(std::iter::once(&'…'))
+        .chain(
+            stem_chars
+                .iter()
+                .skip(stem_chars.len().saturating_sub(suffix_len)),
+        )
+        .copied()
+        .chain(extension_chars)
         .collect()
 }
 
@@ -3903,7 +3933,7 @@ fn main() {
 #[cfg(test)]
 mod tests {
     use super::{
-        actions_for_result, format_bytes, format_update_progress, google_icon_rgba,
+        actions_for_result, display_title, format_bytes, format_update_progress, google_icon_rgba,
         history_cursor_step, hover_position_changed, is_run_as_admin_key, launcher_window_geometry,
         merge_application_duplicates, normalize_everything_query, preserve_everything_file_order,
         quoted_result_path, relaunch_mode_for_auto_install, should_claim_single_instance,
@@ -4116,6 +4146,27 @@ mod tests {
         assert_eq!(normalize_everything_query("ext:zip"), "ext:zip");
         assert_eq!(normalize_everything_query("settings"), "settings");
         assert_eq!(normalize_everything_query("."), ".");
+    }
+
+    #[test]
+    fn display_title_keeps_extension_and_filename_ending_visible() {
+        let first = display_title("finishлицензии_0019.veg");
+        let second = display_title("finishлицензии_0019_Untitled Timeline.veg");
+        assert_eq!(first, "finishлицензии_0019.veg");
+        assert!(first.ends_with(".veg"));
+        assert!(second.ends_with(".veg"));
+        assert!(second.contains("Timeline"));
+        assert_ne!(first, second);
+    }
+
+    #[test]
+    fn display_title_uses_middle_ellipsis_for_long_names() {
+        let displayed = display_title("finishлицензии_0019_Untitled Timeline.veg");
+        assert!(displayed.contains('…'));
+        assert!(displayed.ends_with(".veg"));
+        assert!(displayed.starts_with("finish"));
+        assert!(displayed.contains("Timeline"));
+        assert!(displayed.chars().count() <= 26);
     }
 
     #[test]
