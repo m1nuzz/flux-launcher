@@ -280,9 +280,9 @@ Start-Sleep -Seconds 2
 # application-catalog path as a real Windows installation.
 $wabFixtureRoot = Join-Path $env:APPDATA "Microsoft\Windows\Start Menu\Programs\Flux Smoke WAB"
 New-Item -ItemType Directory -Force -Path $wabFixtureRoot | Out-Null
-$folderFixtureRoot = Join-Path $env:TEMP ("FluxFolderSmoke_{0}" -f $PID)
+$folderFixtureName = "FluxFolderSmoke_{0}" -f $PID
+$folderFixtureRoot = Join-Path $wabFixtureRoot $folderFixtureName
 New-Item -ItemType Directory -Force -Path $folderFixtureRoot | Out-Null
-$folderFixtureName = Split-Path -Leaf $folderFixtureRoot
 $wabFixtureNames = @(
     "WAB Primary Application.lnk",
     "WAB Secondary Application.lnk",
