@@ -751,6 +751,27 @@ try {
         Start-Sleep -Milliseconds 800
     }
     [FluxWallpaper]::SetForegroundWindow($launcherHandle) | Out-Null
+    $enterQueryForegroundDeadline = (Get-Date).AddSeconds(2)
+    while ((Get-Date) -lt $enterQueryForegroundDeadline -and [FluxWallpaper]::GetForegroundWindow() -ne $launcherHandle) {
+        Start-Sleep -Milliseconds 50
+        [FluxWallpaper]::SetForegroundWindow($launcherHandle) | Out-Null
+    }
+    if (![FluxWallpaper]::IsWindowVisible($launcherHandle) -or [FluxWallpaper]::GetForegroundWindow() -ne $launcherHandle) {
+        throw "Enter launch smoke could not establish a visible foreground launcher before query setup."
+    }
+    # Every preceding smoke may legitimately hide and re-show Flux, which clears
+    # the query. Rebuild the deterministic query immediately before selection.
+    [FluxWallpaper]::keybd_event(0x11, 0, 0, [UIntPtr]::Zero)
+    [FluxWallpaper]::keybd_event(0x41, 0, 0, [UIntPtr]::Zero)
+    [FluxWallpaper]::keybd_event(0x41, 0, 2, [UIntPtr]::Zero)
+    [FluxWallpaper]::keybd_event(0x11, 0, 2, [UIntPtr]::Zero)
+    foreach ($character in $navigationProbeQuery.ToUpperInvariant().ToCharArray()) {
+        $virtualKey = [byte][char]$character
+        [FluxWallpaper]::keybd_event($virtualKey, 0, 0, [UIntPtr]::Zero)
+        [FluxWallpaper]::keybd_event($virtualKey, 0, 2, [UIntPtr]::Zero)
+        Start-Sleep -Milliseconds 35
+    }
+    Start-Sleep -Seconds 2
     $foregroundDeadline = (Get-Date).AddSeconds(2)
     while ((Get-Date) -lt $foregroundDeadline -and [FluxWallpaper]::GetForegroundWindow() -ne $launcherHandle) {
         Start-Sleep -Milliseconds 50
