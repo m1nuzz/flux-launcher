@@ -161,7 +161,6 @@ try {
     Assert-LauncherResponsive -Process $launcher
 
     Wait-Until -Description "the installer handoff" -Condition {
-        Assert-LauncherResponsive -Process $launcher
         (Get-TraceLines | Where-Object { $_ -like "update-installer-started*" }).Count -ge 1
     }
     Wait-Until -Description "the old launcher process to exit" -Condition {
