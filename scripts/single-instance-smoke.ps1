@@ -89,6 +89,21 @@ $settingsPath = Join-Path $appData "FluxLauncher\settings.json"
 }
 '@ | Set-Content -LiteralPath $settingsPath -Encoding utf8
 
+# A just-terminated runner process can become visible to CIM a moment after the
+# first stale snapshot. Sweep once more before measuring the first launch.
+Start-Sleep -Milliseconds 1000
+$lateStaleFlux = Get-FluxProcesses
+if ($lateStaleFlux.Count -gt 0) {
+    Write-Host "Stopping $($lateStaleFlux.Count) late-discovered stale Flux process(es)."
+    Stop-Processes $lateStaleFlux
+    $lateDeadline = (Get-Date).AddSeconds(10)
+    while ((Get-Date) -lt $lateDeadline -and (Get-FluxProcesses).Count -gt 0) {
+        Start-Sleep -Milliseconds 250
+    }
+    if ((Get-FluxProcesses).Count -ne 0) {
+        throw "A late-discovered stale Flux process remained alive before single-instance smoke"
+    }
+}
 $initialFlux = Get-FluxProcesses
 $initialEverything = Get-EverythingProcesses
 $first = $null
