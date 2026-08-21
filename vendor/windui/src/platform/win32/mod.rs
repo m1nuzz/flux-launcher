@@ -18,7 +18,7 @@ use std::io::Write;
 use std::mem::size_of;
 use std::path::PathBuf;
 use std::sync::OnceLock;
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 use tiny_skia::Pixmap;
 
@@ -333,6 +333,8 @@ struct WindowState {
     /// configurations. While this guard is set, that internal transition must
     /// not be interpreted as the user activating another application.
     suppress_deactivation_hide: bool,
+    /// Grace period for an asynchronous WA_INACTIVE emitted after SetWindowPos.
+    suppress_deactivation_hide_until: Option<Instant>,
 }
 
 /// 触摸拖动判定状态。区分"点击"（按下抬起未越阈值）与"滑动滚动"（越阈值后拖动）。
@@ -420,6 +422,7 @@ impl WindowState {
             min_h: 0,
             in_size_move: false,
             suppress_deactivation_hide: false,
+            suppress_deactivation_hide_until: None,
         }
     }
 
@@ -1317,7 +1320,11 @@ unsafe extern "system" fn wnd_proc(
                 && IsWindowVisible(hwnd).as_bool()
                 && state_from(hwnd)
                     .map(|state| {
-                        state.handler.hide_on_deactivate() && !state.suppress_deactivation_hide
+                        state.handler.hide_on_deactivate()
+                            && !state.suppress_deactivation_hide
+                            && state
+                                .suppress_deactivation_hide_until
+                                .is_none_or(|until| Instant::now() >= until)
                     })
                     .unwrap_or(false);
 
@@ -1336,7 +1343,11 @@ unsafe extern "system" fn wnd_proc(
                 && GetForegroundWindow() != hwnd
                 && state_from(hwnd)
                     .map(|state| {
-                        state.handler.hide_on_deactivate() && !state.suppress_deactivation_hide
+                        state.handler.hide_on_deactivate()
+                            && !state.suppress_deactivation_hide
+                            && state
+                                .suppress_deactivation_hide_until
+                                .is_none_or(|until| Instant::now() >= until)
                     })
                     .unwrap_or(false);
             if should_hide {
@@ -1905,6 +1916,7 @@ unsafe fn run_window_size_request(hwnd: HWND, request: Option<(i32, i32)>) {
     );
     if let Some(state) = state_from(hwnd) {
         state.suppress_deactivation_hide = false;
+        state.suppress_deactivation_hide_until = Some(Instant::now() + Duration::from_millis(250));
     }
     if was_foreground && IsWindowVisible(hwnd).as_bool() && GetForegroundWindow() != hwnd {
         let _ = SetForegroundWindow(hwnd);
