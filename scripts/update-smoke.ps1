@@ -88,8 +88,8 @@ $port = 18963
 $prefix = "http://127.0.0.1:$port/"
 
 Write-JsonFile -Path $firstReleasePath -Value @{
-    tag_name = "v0.1.65"
-    html_url = "https://example.test/releases/tag/v0.1.65"
+    tag_name = "v0.1.66"
+    html_url = "https://example.test/releases/tag/v0.1.66"
     draft = $false
     prerelease = $false
     assets = @(@{
@@ -99,8 +99,8 @@ Write-JsonFile -Path $firstReleasePath -Value @{
     })
 }
 Write-JsonFile -Path $stableReleasePath -Value @{
-    tag_name = "v0.1.63"
-    html_url = "https://example.test/releases/tag/v0.1.63"
+    tag_name = "v0.1.65"
+    html_url = "https://example.test/releases/tag/v0.1.65"
     draft = $false
     prerelease = $false
     assets = @()
