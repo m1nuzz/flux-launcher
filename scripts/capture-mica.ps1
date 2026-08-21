@@ -389,8 +389,14 @@ try {
         if (![FluxWallpaper]::IsWindowVisible($launcherHandle)) {
             throw "Foreground handoff smoke expected the launcher HWND to remain visible behind another window."
         }
-        [FluxWallpaper]::SendMessage($launcherHandle, $wmHotkey, [UIntPtr]::Zero, [IntPtr]::Zero) | Out-Null
-        Start-Sleep -Milliseconds 600
+        # Use the real configured default Alt+Space key sequence here. Unlike
+        # SendMessage(WM_HOTKEY), this grants the launcher the same foreground
+        # activation permission it receives from an actual user bind.
+        [FluxWallpaper]::keybd_event(0x12, 0, 0, [UIntPtr]::Zero)
+        [FluxWallpaper]::keybd_event(0x20, 0, 0, [UIntPtr]::Zero)
+        [FluxWallpaper]::keybd_event(0x20, 0, 2, [UIntPtr]::Zero)
+        [FluxWallpaper]::keybd_event(0x12, 0, 2, [UIntPtr]::Zero)
+        Start-Sleep -Milliseconds 900
         $focusToggleVisibleAfterReopen = [FluxWallpaper]::IsWindowVisible($launcherHandle)
         $focusToggleForegroundAfterReopen = [FluxWallpaper]::GetForegroundWindow() -eq $launcherHandle
         $focusToggleProbe = $focusToggleVisibleAfterReopen -and $focusToggleForegroundAfterReopen
