@@ -799,12 +799,7 @@ try {
         Start-Sleep -Seconds 2
     }
     if (![FluxWallpaper]::IsWindowVisible($launcherHandle)) {
-        $visibilityTrace = if (Test-Path $launchTracePath) {
-            ((Get-Content $launchTracePath | Select-Object -Last 24) -join ' | ')
-        } else {
-            "<missing-trace-file>"
-        }
-        throw "Enter launch smoke could not restore a visible launcher HWND before selection. trace=$visibilityTrace"
+        throw "Enter launch smoke could not restore a visible launcher HWND before selection."
     }
     if ([FluxWallpaper]::GetForegroundWindow() -ne $launcherHandle) {
         throw "Enter launch smoke could not restore Flux as the foreground window before selection."
@@ -854,13 +849,7 @@ try {
         ($enterHideDispatchMilliseconds -lt $EnterHideDispatchBudgetMilliseconds) -and
         $enterLaunchDispatchBeforeHideProbe
     if (!$enterLaunchHidden) {
-        $tracePreview = ($enterTraceLines -join ' | ')
-        $fullTracePreview = if (Test-Path $launchTracePath) {
-            ((Get-Content $launchTracePath | Select-Object -Last 24) -join ' | ')
-        } else {
-            "<missing-trace-file>"
-        }
-        throw "Enter launch did not hide the launcher window. trace=$tracePreview full_trace_tail=$fullTracePreview."
+        throw "Enter launch did not hide the launcher window."
     }
     if (!$enterHideLatencyProbe) {
         $tracePreview = ($enterTraceLines -join ' | ')

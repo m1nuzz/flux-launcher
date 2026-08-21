@@ -2911,7 +2911,6 @@ fn main() {
                 true
             }
             Key::Enter => {
-                launch::trace_launch_event("enter-key");
                 if history_mode_for_keys.get() {
                     if let Some(result) = selected_result(
                         &current_results,
@@ -2933,7 +2932,6 @@ fn main() {
                     &selected_id_for_keys.get(),
                     selected_index_for_keys.get(),
                 ) {
-                    launch::trace_launch_event(&format!("enter-result\\t{}", result.id));
                     if result.id == "empty-recycle-bin" {
                         recycle_bin_confirmation_for_keys.set(true);
                     } else if result.id == "flux-settings" {
@@ -3809,9 +3807,6 @@ fn main() {
                 return;
             }
             let next_query = query_for_interval.get();
-            if next_query != last_query {
-                launch::trace_launch_event(&format!("query-change\\t{}", next_query));
-            }
             if next_query == last_query {
                 return;
             }
@@ -3890,7 +3885,6 @@ fn main() {
             let settings = Arc::clone(&shared_settings);
             let cursor_visibility_for_show = cursor_visibility.clone();
             move || {
-                launch::trace_launch_event("window-show");
                 cursor_visibility_for_show.show();
                 if let Ok(settings) = settings.read() {
                     selection_color.set(selection_color_for_settings(&settings));
