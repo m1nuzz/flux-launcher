@@ -69,6 +69,8 @@ public static class FluxWallpaper {
     [DllImport("user32.dll", SetLastError = true)]
     public static extern bool SetForegroundWindow(IntPtr hwnd);
     [DllImport("user32.dll", SetLastError = true)]
+    public static extern IntPtr SetFocus(IntPtr hwnd);
+    [DllImport("user32.dll", SetLastError = true)]
     public static extern bool IsWindowVisible(IntPtr hwnd);
     [DllImport("user32.dll", SetLastError = true)]
     public static extern IntPtr GetWindowLongPtr(IntPtr hwnd, int index);
@@ -669,6 +671,7 @@ try {
     [FluxWallpaper]::mouse_event(0x0004, 0, 0, 0, [UIntPtr]::Zero)
     Start-Sleep -Milliseconds 200
     [FluxWallpaper]::SetForegroundWindow($launcherHandle) | Out-Null
+    [FluxWallpaper]::SetFocus($launcherHandle) | Out-Null
     $shell.AppActivate($process.Id) | Out-Null
     Start-Sleep -Milliseconds 150
     $wmChar = 0x0102
