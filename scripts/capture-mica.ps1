@@ -671,8 +671,15 @@ try {
     [FluxWallpaper]::SetForegroundWindow($launcherHandle) | Out-Null
     $shell.AppActivate($process.Id) | Out-Null
     Start-Sleep -Milliseconds 150
-    $shell.SendKeys("^a")
-    $shell.SendKeys($navigationProbeQuery)
+    $wmChar = 0x0102
+    foreach ($character in $navigationProbeQuery.ToCharArray()) {
+        [FluxWallpaper]::SendMessage(
+            $launcherHandle,
+            $wmChar,
+            [UIntPtr]::new([int][char]$character),
+            [IntPtr]::Zero
+        ) | Out-Null
+    }
     Start-Sleep -Seconds 2
 
     if ($PointerInteractionSmoke) {
