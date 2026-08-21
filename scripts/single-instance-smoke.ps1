@@ -41,6 +41,21 @@ function Wait-FluxReady([System.Diagnostics.Process]$Process) {
 }
 
 New-Item -ItemType Directory -Path $WorkDirectory -Force | Out-Null
+$staleFlux = Get-FluxProcesses
+if ($staleFlux.Count -gt 0) {
+    Write-Host "Stopping $($staleFlux.Count) stale Flux process(es) before single-instance smoke."
+    Stop-Processes $staleFlux
+    $deadline = (Get-Date).AddSeconds(10)
+    while ((Get-Date) -lt $deadline) {
+        if ((Get-FluxProcesses).Count -eq 0) {
+            break
+        }
+        Start-Sleep -Milliseconds 250
+    }
+    if ((Get-FluxProcesses).Count -ne 0) {
+        throw "A stale Flux process remained alive before single-instance smoke"
+    }
+}
 $appData = Join-Path $WorkDirectory "AppData"
 New-Item -ItemType Directory -Path (Join-Path $appData "FluxLauncher") -Force | Out-Null
 $env:APPDATA = $appData
