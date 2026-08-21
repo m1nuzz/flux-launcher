@@ -713,10 +713,12 @@ try {
             Save-Screenshot ("navigation-cycle-{0:D2}-down.png" -f $cycle)
         }
     }
-    # The WAB query exercises long App Paths and duplicate application-like entries.
-    # Enter must execute the selected normal result and hide the launcher.
-    $shell.SendKeys("{HOME}")
-    $shell.SendKeys("{DOWN}")
+    # The recycle-bin query returns two commands; select the second command directly
+    # on the launcher HWND so pointer probes or foreground arbitration cannot consume
+    # the Home/Down navigation before the Enter launch check.
+    $wmKeyDown = 0x0100
+    [FluxWallpaper]::SendMessage($launcherHandle, $wmKeyDown, [UIntPtr]::new(0x24), [IntPtr]::Zero) | Out-Null
+    [FluxWallpaper]::SendMessage($launcherHandle, $wmKeyDown, [UIntPtr]::new(0x28), [IntPtr]::Zero) | Out-Null
     Start-Sleep -Milliseconds 350
     Save-Screenshot "keyboard-selection.png"
     [FluxWallpaper]::SetForegroundWindow($launcherHandle) | Out-Null
