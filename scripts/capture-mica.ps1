@@ -713,26 +713,33 @@ try {
             Save-Screenshot ("navigation-cycle-{0:D2}-down.png" -f $cycle)
         }
     }
-    # The recycle-bin query returns two commands; select the second command directly
-    # on the launcher HWND so pointer probes or foreground arbitration cannot consume
-    # the Home/Down navigation before the Enter launch check.
+    # The recycle-bin query returns two commands; restore the launcher first if a
+    # previous outside-click probe left it hidden, then select the second command
+    # directly on the launcher HWND.
     $wmKeyDown = 0x0100
-    [FluxWallpaper]::SendMessage($launcherHandle, $wmKeyDown, [UIntPtr]::new(0x24), [IntPtr]::Zero) | Out-Null
-    [FluxWallpaper]::SendMessage($launcherHandle, $wmKeyDown, [UIntPtr]::new(0x28), [IntPtr]::Zero) | Out-Null
-    Start-Sleep -Milliseconds 350
-    Save-Screenshot "keyboard-selection.png"
+    if (![FluxWallpaper]::IsWindowVisible($launcherHandle)) {
+        [FluxWallpaper]::keybd_event(0x12, 0, 0, [UIntPtr]::Zero)
+        [FluxWallpaper]::keybd_event(0x20, 0, 0, [UIntPtr]::Zero)
+        [FluxWallpaper]::keybd_event(0x20, 0, 2, [UIntPtr]::Zero)
+        [FluxWallpaper]::keybd_event(0x12, 0, 2, [UIntPtr]::Zero)
+        Start-Sleep -Milliseconds 800
+    }
     [FluxWallpaper]::SetForegroundWindow($launcherHandle) | Out-Null
     $foregroundDeadline = (Get-Date).AddSeconds(2)
     while ((Get-Date) -lt $foregroundDeadline -and [FluxWallpaper]::GetForegroundWindow() -ne $launcherHandle) {
         Start-Sleep -Milliseconds 50
         [FluxWallpaper]::SetForegroundWindow($launcherHandle) | Out-Null
     }
-    if ([FluxWallpaper]::GetForegroundWindow() -ne $launcherHandle) {
-        throw "Enter launch smoke could not restore Flux as the foreground window before sending Enter."
-    }
     if (![FluxWallpaper]::IsWindowVisible($launcherHandle)) {
-        throw "Enter launch smoke reached its key step with a hidden launcher HWND."
+        throw "Enter launch smoke could not restore a visible launcher HWND before selection."
     }
+    if ([FluxWallpaper]::GetForegroundWindow() -ne $launcherHandle) {
+        throw "Enter launch smoke could not restore Flux as the foreground window before selection."
+    }
+    [FluxWallpaper]::SendMessage($launcherHandle, $wmKeyDown, [UIntPtr]::new(0x24), [IntPtr]::Zero) | Out-Null
+    [FluxWallpaper]::SendMessage($launcherHandle, $wmKeyDown, [UIntPtr]::new(0x28), [IntPtr]::Zero) | Out-Null
+    Start-Sleep -Milliseconds 350
+    Save-Screenshot "keyboard-selection.png"
     Start-Sleep -Milliseconds 100
     # Send Enter to the exact launcher HWND after direct Home/Down selection. This
     # keeps the ordering assertion deterministic while the surrounding smoke suite
