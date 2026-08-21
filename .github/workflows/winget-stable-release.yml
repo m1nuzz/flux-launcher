@@ -156,16 +156,15 @@ jobs:
           git add $manifestDirectory
           git diff --cached --check
           git diff --cached --quiet
-          if ($LASTEXITCODE -eq 0) {
-            Write-Host "The fork branch already contains the generated manifest set."
-            Pop-Location
-            exit 0
-          }
-
-          git commit -m "Add m1nuzz.FluxLauncher $env:VERSION manifest"
-          git push --set-upstream origin $branch
-          if ($LASTEXITCODE -ne 0) {
-            throw "Unable to push branch $branch to m1nuzz/winget-pkgs."
+          $manifestChangesPending = $LASTEXITCODE -ne 0
+          if ($manifestChangesPending) {
+            git commit -m "Add m1nuzz.FluxLauncher $env:VERSION manifest"
+            git push --set-upstream origin $branch
+            if ($LASTEXITCODE -ne 0) {
+              throw "Unable to push branch $branch to m1nuzz/winget-pkgs."
+            }
+          } else {
+            Write-Host "The fork branch already contains the generated manifest set; continuing to PR creation."
           }
 
           $packageExists = git ls-tree -r --name-only upstream/master "manifests/m/m1nuzz/FluxLauncher" | Select-Object -First 1
