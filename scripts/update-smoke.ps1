@@ -66,6 +66,23 @@ function Get-TraceLines {
     return @(Get-Content -Path $tracePath)
 }
 
+function Stop-ExistingFluxProcesses {
+    $existing = @(Get-Process -Name "flux-launcher" -ErrorAction SilentlyContinue)
+    foreach ($process in $existing) {
+        if (!$process.HasExited) {
+            Stop-Process -Id $process.Id -Force -ErrorAction SilentlyContinue
+        }
+    }
+    $deadline = (Get-Date).AddSeconds(10)
+    while ((Get-Date) -lt $deadline) {
+        if (@(Get-Process -Name "flux-launcher" -ErrorAction SilentlyContinue).Count -eq 0) {
+            return
+        }
+        Start-Sleep -Milliseconds 250
+    }
+    throw "A previous Flux process remained alive before update smoke"
+}
+
 function Assert-LauncherResponsive {
     param(
         [Parameter(Mandatory = $true)]
@@ -82,6 +99,7 @@ function Assert-LauncherResponsive {
 }
 
 New-Item -ItemType Directory -Force -Path $fixtureRoot, $appDataRoot | Out-Null
+Stop-ExistingFluxProcesses
 Copy-Item -LiteralPath $Installer -Destination $fixtureInstaller -Force
 $installerHash = (Get-FileHash -Algorithm SHA256 -Path $fixtureInstaller).Hash.ToLowerInvariant()
 $port = 18963
@@ -189,6 +207,11 @@ try {
         throw "Fixture server did not receive the release check"
     }
     Write-Host "Update smoke passed: real HTTP download, SHA256 verification, monotonic byte progress, non-hung UI, installer handoff, and restart were verified."
+}
+catch {
+    Write-Host "Update smoke trace before failure:"
+    Get-TraceLines | ForEach-Object { Write-Host $_ }
+    throw
 }
 finally {
     if ($null -ne $launcher) {
