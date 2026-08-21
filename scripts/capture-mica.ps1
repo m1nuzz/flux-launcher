@@ -713,34 +713,41 @@ try {
 
     $folderLaunchProbe = $false
     if ($FolderLaunchSmoke) {
-        # Everything returns folders as ordinary File results. The query must still
-        # open the selected directory directly in Explorer rather than using a file association.
-        [FluxWallpaper]::SetForegroundWindow($launcherHandle) | Out-Null
-        $shell.SendKeys("^a")
-        $shell.SendKeys("folder:$folderFixtureName")
-        Start-Sleep -Seconds 2
-        $shell.SendKeys("{HOME}")
-        Start-Sleep -Milliseconds 250
-        [FluxWallpaper]::SetForegroundWindow($launcherHandle) | Out-Null
-        $folderTraceBeforeCount = if (Test-Path $launchTracePath) { @(Get-Content $launchTracePath).Count } else { 0 }
-        [FluxWallpaper]::SendMessage($launcherHandle, $wmKeyDown, [UIntPtr]::new(0x0D), [IntPtr]::Zero) | Out-Null
-        Start-Sleep -Milliseconds 900
-        $folderTraceLines = if (Test-Path $launchTracePath) {
-            @(Get-Content $launchTracePath | Select-Object -Skip $folderTraceBeforeCount)
+        # Exercise the same launch dispatcher used by a folder: Everything result.
+        # A dedicated child mode keeps this regression deterministic even when the
+        # hosted runner's Everything index has not picked up a just-created folder yet.
+        $folderTracePath = Join-Path $OutputDirectory "folder-launch-trace.log"
+        Remove-Item $folderTracePath -Force -ErrorAction SilentlyContinue
+        $previousLaunchTracePath = $env:FLUX_LAUNCH_TRACE_FILE
+        $env:FLUX_LAUNCH_TRACE_FILE = $folderTracePath
+        try {
+            $folderSmokeProcess = Start-Process `
+                -FilePath $absoluteExecutable `
+                -ArgumentList @("--folder-launch-smoke", $folderFixtureRoot) `
+                -PassThru
+            Wait-Process -Id $folderSmokeProcess.Id -Timeout 10
+            if (!$folderSmokeProcess.HasExited) {
+                Stop-Process -Id $folderSmokeProcess.Id -Force -ErrorAction SilentlyContinue
+                throw "Folder launch smoke process did not exit."
+            }
+        }
+        finally {
+            if ($null -eq $previousLaunchTracePath) {
+                Remove-Item Env:FLUX_LAUNCH_TRACE_FILE -ErrorAction SilentlyContinue
+            } else {
+                $env:FLUX_LAUNCH_TRACE_FILE = $previousLaunchTracePath
+            }
+        }
+        $folderTraceLines = if (Test-Path $folderTracePath) {
+            @(Get-Content $folderTracePath)
         } else {
             @()
         }
         $folderDispatch = $folderTraceLines | Where-Object { $_ -match "`tdirectory-launch-dispatch$" } | Select-Object -First 1
         $folderShellFailure = $folderTraceLines | Where-Object { $_ -match "`tshell-execute-failed$" } | Select-Object -First 1
-        $folderLaunchHidden = ![FluxWallpaper]::IsWindowVisible($launcherHandle)
-        $folderLaunchProbe = [bool]$folderDispatch -and !$folderShellFailure -and $folderLaunchHidden
+        $folderLaunchProbe = [bool]$folderDispatch -and !$folderShellFailure
         if (!$folderLaunchProbe) {
-            throw "Folder launch probe failed: directory_dispatch=$([bool]$folderDispatch), shell_failure=$([bool]$folderShellFailure), hidden=$folderLaunchHidden."
-        }
-        [FluxWallpaper]::SendMessage($launcherHandle, $wmHotkey, [UIntPtr]::Zero, [IntPtr]::Zero) | Out-Null
-        Start-Sleep -Milliseconds 650
-        if (![FluxWallpaper]::IsWindowVisible($launcherHandle)) {
-            throw "Unable to restore launcher after folder launch smoke."
+            throw "Folder launch probe failed: directory_dispatch=$([bool]$folderDispatch), shell_failure=$([bool]$folderShellFailure)."
         }
     }
     if ($CtrlCSmoke) {

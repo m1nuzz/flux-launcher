@@ -64,7 +64,12 @@ const MAX_VISIBLE_RESULTS: usize = 16;
 static GOOGLE_ICON_RGBA: OnceLock<Option<Vec<u8>>> = OnceLock::new();
 
 fn should_claim_single_instance(mode: Option<&std::ffi::OsStr>) -> bool {
-    mode != Some(std::ffi::OsStr::new("--plugin-host"))
+    !matches!(
+        mode,
+        Some(mode)
+            if mode == std::ffi::OsStr::new("--plugin-host")
+                || mode == std::ffi::OsStr::new("--folder-launch-smoke")
+    )
 }
 
 fn is_run_as_admin_key(event: &KeyEvent) -> bool {
@@ -1656,6 +1661,13 @@ fn main() {
             .or_else(|| std::env::var_os("FLUX_NATIVE_PLUGIN_DIR").map(std::path::PathBuf::from))
             .unwrap_or_else(|| std::path::PathBuf::from("NativePlugins"));
         native_host::run(root);
+        return;
+    }
+    if mode.as_deref() == Some(std::ffi::OsStr::new("--folder-launch-smoke")) {
+        if let Some(target) = args.next() {
+            launch::open_path_async(&target.to_string_lossy());
+            std::thread::sleep(Duration::from_millis(900));
+        }
         return;
     }
     if should_claim_single_instance(mode.as_deref())
@@ -3905,6 +3917,13 @@ mod tests {
     fn plugin_host_mode_bypasses_main_single_instance_guard() {
         assert!(!should_claim_single_instance(Some(std::ffi::OsStr::new(
             "--plugin-host"
+        ))));
+    }
+
+    #[test]
+    fn folder_launch_smoke_mode_bypasses_main_single_instance_guard() {
+        assert!(!should_claim_single_instance(Some(std::ffi::OsStr::new(
+            "--folder-launch-smoke"
         ))));
     }
 
