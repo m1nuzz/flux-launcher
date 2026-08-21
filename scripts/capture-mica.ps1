@@ -13,6 +13,7 @@ param(
     [switch]$CursorVisibilitySmoke,
     [switch]$ScrollbarGapSmoke,
     [switch]$QueryClearOnReopenSmoke,
+    [switch]$QueryResponsivenessSmoke,
     [switch]$CtrlRSmoke,
     [switch]$CtrlCSmoke,
     [switch]$IdlePerformanceSmoke,
@@ -24,7 +25,10 @@ param(
 
     # Windows-hosted runners can occasionally spend a few hundred milliseconds
     # inside a synchronous SendMessage callback while starting the shell worker.
-    [int]$EnterHideDispatchBudgetMilliseconds = 750
+    [int]$EnterHideDispatchBudgetMilliseconds = 750,
+
+    # Typing must remain responsive while Shell icons and Everything results load.
+    [int]$QueryKeystrokeBudgetMilliseconds = 180
 )
 
 $ErrorActionPreference = "Stop"
@@ -389,6 +393,9 @@ try {
     $queryClearOnReopenProbe = $false
     $ctrlRProbe = $false
     $ctrlCProbe = $false
+    $queryResponsivenessSamples = @()
+    $queryResponsivenessMaxMilliseconds = 0.0
+    $queryResponsivenessProbe = $false
     if ($CursorVisibilitySmoke) {
         $shell.SendKeys("x")
         Start-Sleep -Milliseconds 500
@@ -409,7 +416,34 @@ try {
     } else {
         $enterHideQuery
     }
+    if ($QueryResponsivenessSmoke) {
+        foreach ($probeQuery in @(".png", ".zip", "ext:zip")) {
+            $shell.SendKeys("^a")
+            $shell.SendKeys("{BACKSPACE}")
+            foreach ($character in $probeQuery.ToCharArray()) {
+                $keyTimer = [System.Diagnostics.Stopwatch]::StartNew()
+                $shell.SendKeys([string]$character)
+                $keyTimer.Stop()
+                $elapsedMilliseconds = [Math]::Round($keyTimer.Elapsed.TotalMilliseconds, 2)
+                $queryResponsivenessSamples += [ordered]@{
+                    Query = $probeQuery
+                    Character = [string]$character
+                    Milliseconds = $elapsedMilliseconds
+                }
+                if ($elapsedMilliseconds -gt $queryResponsivenessMaxMilliseconds) {
+                    $queryResponsivenessMaxMilliseconds = $elapsedMilliseconds
+                }
+                if ($elapsedMilliseconds -gt $QueryKeystrokeBudgetMilliseconds) {
+                    throw "Query responsiveness regression: '$character' in '$probeQuery' took $elapsedMilliseconds ms (budget $QueryKeystrokeBudgetMilliseconds ms)."
+                }
+            }
+            Start-Sleep -Milliseconds 250
+        }
+        $queryResponsivenessProbe = $true
+    }
     Write-Host "Navigation probe query: $navigationProbeQuery"
+    $shell.SendKeys("^a")
+    $shell.SendKeys("{BACKSPACE}")
     $shell.SendKeys($navigationProbeQuery)
     Start-Sleep -Seconds 2
     $queryMemory = Get-MemorySnapshot $process.Id
@@ -808,6 +842,9 @@ try {
         CtrlCProbe = (!$CtrlCSmoke) -or $ctrlCProbe
         TabNavigationProbe = $TabNavigationCycles -gt 0
         EverythingSyntaxProbe = $true
+        QueryResponsivenessProbe = (!$QueryResponsivenessSmoke) -or $queryResponsivenessProbe
+        QueryResponsivenessMaxMilliseconds = $queryResponsivenessMaxMilliseconds
+        QueryResponsivenessSamples = @($queryResponsivenessSamples)
         HistoryPanelProbe = $true
         HistoryUpProbe = $true
         HistoryAltUpProbe = $true

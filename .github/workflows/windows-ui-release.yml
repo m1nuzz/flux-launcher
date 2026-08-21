@@ -100,7 +100,8 @@ jobs:
         run: |
           ./scripts/capture-mica.ps1 `
             -Executable ./target/x86_64-pc-windows-msvc/release/flux-launcher.exe `
-            -OutputDirectory ./artifacts/windows-ui-release
+            -OutputDirectory ./artifacts/windows-ui-release `
+            -QueryResponsivenessSmoke
 
       - name: Sign stable launcher binaries before packaging
         if: inputs.release_channel == 'stable'
@@ -182,7 +183,7 @@ jobs:
             Flux Launcher Windows 11 x64 ${{ inputs.release_channel }} release.
             Beta releases are for testing and are ignored by the stable updater.
 
-            This workflow captures the compact transparent launcher, repeated activation, query expansion, keyboard navigation, action mode, Settings, native Flow fixture, and current provider smoke evidence.
+            This workflow captures the compact transparent launcher, repeated activation, query expansion, keyboard navigation, action mode, Settings, native Flow fixture, and current provider smoke evidence. It also measures rapid `.png`, `.zip`, and `ext:zip` keystroke dispatch and fails if a key blocks beyond the configured responsiveness budget.
 
             The workflow records DWM preflight diagnostics. GitHub standard runners may not expose live DWM Acrylic because of remote desktop composition; validate final material appearance on a physical Windows 11 desktop or a configured GPU/larger runner.
           files: |

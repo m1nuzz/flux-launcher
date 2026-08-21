@@ -17,7 +17,12 @@ mod updater;
 use std::cell::{Cell, RefCell};
 use std::collections::{HashMap, HashSet};
 use std::rc::Rc;
-use std::sync::{Arc, Mutex, OnceLock, RwLock};
+use std::sync::{
+    atomic::{AtomicBool, Ordering},
+    mpsc::{self, SyncSender},
+    Arc, Mutex, OnceLock, RwLock,
+};
+use std::thread;
 use std::time::Duration;
 
 use applications::{
@@ -119,16 +124,24 @@ struct ProviderResults {
     everything: Vec<SearchResult>,
     plugins: Vec<SearchResult>,
     native_plugins: Vec<SearchResult>,
+    applications_ready: bool,
+    everything_ready: bool,
 }
 
 impl ProviderResults {
-    fn reset(&mut self, sequence: u64, built_in: Vec<SearchResult>) {
+    fn reset(&mut self, sequence: u64, built_in: Vec<SearchResult>, everything_expected: bool) {
         self.sequence = sequence;
         self.built_in = built_in;
         self.applications.clear();
         self.everything.clear();
         self.plugins.clear();
         self.native_plugins.clear();
+        self.applications_ready = false;
+        self.everything_ready = !everything_expected;
+    }
+
+    fn core_ready(&self) -> bool {
+        self.applications_ready && self.everything_ready
     }
 
     fn merged(&self, query: &str, priorities: &[String]) -> Vec<SearchResult> {
@@ -149,6 +162,31 @@ impl ProviderResults {
         merged.truncate(MAX_VISIBLE_RESULTS);
         merged
     }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn commit_provider_results(
+    providers: &ProviderResults,
+    query: &str,
+    priorities: &[String],
+    selected_id: Signal<String>,
+    selected_index: Signal<usize>,
+    selection_touched: Signal<bool>,
+    inline_completion: Signal<String>,
+    results: Signal<Vec<SearchResult>>,
+) {
+    let merged = providers.merged(query, priorities);
+    if !selection_touched.get() {
+        selected_index.set(0);
+        selected_id.set(
+            merged
+                .first()
+                .map(|result| result.id.clone())
+                .unwrap_or_default(),
+        );
+    }
+    inline_completion.set(inline_completion_suffix(query, &merged));
+    results.set(merged);
 }
 
 fn merge_application_duplicates(results: Vec<SearchResult>) -> Vec<SearchResult> {
@@ -846,6 +884,79 @@ fn alt_key_is_down() -> bool {
 #[cfg(windows)]
 static SHELL_ICON_CACHE: OnceLock<Mutex<HashMap<String, Option<Vec<u8>>>>> = OnceLock::new();
 static SETTINGS_SAVE_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+static SHELL_ICON_REFRESH_PENDING: AtomicBool = AtomicBool::new(false);
+
+struct ShellIconWorker {
+    pending: Arc<Mutex<HashSet<String>>>,
+    wake: SyncSender<String>,
+}
+
+impl ShellIconWorker {
+    fn spawn() -> Self {
+        let pending = Arc::new(Mutex::new(HashSet::<String>::new()));
+        let pending_for_worker = Arc::clone(&pending);
+        let (wake, receiver) = mpsc::sync_channel::<String>(64);
+        thread::Builder::new()
+            .name(String::from("flux-shell-icons"))
+            .spawn(move || {
+                while let Ok(target) = receiver.recv() {
+                    if let Ok(mut pending) = pending_for_worker.lock() {
+                        pending.remove(&target);
+                    }
+                    #[cfg(windows)]
+                    let _ = shell_icon_rgba(&target);
+                    SHELL_ICON_REFRESH_PENDING.store(true, Ordering::Release);
+                }
+            })
+            .expect("failed to create shell icon worker thread");
+        Self { pending, wake }
+    }
+
+    fn request(&self, target: String) {
+        let should_send = self
+            .pending
+            .lock()
+            .map(|mut pending| pending.insert(target.clone()))
+            .unwrap_or(false);
+        if !should_send {
+            return;
+        }
+        if self.wake.try_send(target.clone()).is_err() {
+            if let Ok(mut pending) = self.pending.lock() {
+                pending.remove(&target);
+            }
+        }
+    }
+}
+
+static SHELL_ICON_WORKER: OnceLock<ShellIconWorker> = OnceLock::new();
+
+fn shell_icon_worker() -> &'static ShellIconWorker {
+    SHELL_ICON_WORKER.get_or_init(ShellIconWorker::spawn)
+}
+
+#[cfg(windows)]
+fn shell_icon_cache_lookup(target: &str) -> Option<Option<Vec<u8>>> {
+    let cache = SHELL_ICON_CACHE.get_or_init(|| Mutex::new(HashMap::new()));
+    cache
+        .lock()
+        .ok()
+        .and_then(|entries| entries.get(target).cloned())
+}
+
+#[cfg(windows)]
+fn request_shell_icon(target: &str) -> Option<Vec<u8>> {
+    if let Some(icon) = shell_icon_cache_lookup(target) {
+        return icon;
+    }
+    shell_icon_worker().request(target.to_owned());
+    None
+}
+
+#[cfg(not(windows))]
+fn request_shell_icon(_target: &str) -> Option<Vec<u8>> {
+    None
+}
 
 #[cfg(windows)]
 fn shell_icon_rgba(target: &str) -> Option<Vec<u8>> {
@@ -1377,7 +1488,7 @@ fn result_row(
     let icon = if id == "builtin:google-search" {
         google_icon_rgba()
     } else {
-        target.as_deref().and_then(shell_icon_rgba)
+        target.as_deref().and_then(request_shell_icon)
     };
     let icon_element = if let Some(icon) = icon.as_deref() {
         Element::image_rgba(32, 32, icon)
@@ -1928,7 +2039,6 @@ fn main() {
     let sequence_for_interval = current_sequence;
     let providers_for_interval = Rc::clone(&provider_results);
     let scroll_request_for_interval = scroll_request_for_rows;
-    let priorities_for_interval = priorities;
     let actions_for_interval = Rc::clone(&plugin_actions);
     let auto_enable_everything_for_interval = auto_enable_everything;
     let obsidian_enabled_for_interval = obsidian_enabled;
@@ -2075,28 +2185,24 @@ fn main() {
             return;
         }
         providers.applications = response.results;
-        let merged = providers.merged(
-            &query_for_applications.get(),
-            &priorities_for_applications
+        providers.applications_ready = true;
+        if providers.core_ready() {
+            let priorities = priorities_for_applications
                 .get()
                 .iter()
                 .map(|entry| entry.id.clone())
-                .collect::<Vec<_>>(),
-        );
-        if !selection_touched_for_applications.get() {
-            selected_index_for_applications.set(0);
-            selected_id_for_applications.set(
-                merged
-                    .first()
-                    .map(|result| result.id.clone())
-                    .unwrap_or_default(),
+                .collect::<Vec<_>>();
+            commit_provider_results(
+                &providers,
+                &query_for_applications.get(),
+                &priorities,
+                selected_id_for_applications,
+                selected_index_for_applications,
+                selection_touched_for_applications,
+                inline_completion_for_applications,
+                results_for_applications,
             );
         }
-        inline_completion_for_applications.set(inline_completion_suffix(
-            &query_for_applications.get(),
-            &merged,
-        ));
-        results_for_applications.set(merged);
         status_for_applications.set(response.status);
     });
     let application_worker = ApplicationWorker::spawn(application_sender);
@@ -2130,32 +2236,11 @@ fn main() {
         if providers.sequence != response.sequence {
             return;
         }
+        providers.everything_ready = true;
         if response.available {
             everything_installed_for_response.set(true);
             everything_status_for_response.set(String::from("Everything IPC is available"));
             providers.everything = response.results;
-            let merged = providers.merged(
-                &query_for_everything.get(),
-                &priorities_for_everything
-                    .get()
-                    .iter()
-                    .map(|entry| entry.id.clone())
-                    .collect::<Vec<_>>(),
-            );
-            if !selection_touched_for_everything.get() {
-                selected_index_for_everything.set(0);
-                selected_id_for_everything.set(
-                    merged
-                        .first()
-                        .map(|result| result.id.clone())
-                        .unwrap_or_default(),
-                );
-            }
-            inline_completion_for_everything.set(inline_completion_suffix(
-                &query_for_everything.get(),
-                &merged,
-            ));
-            results_for_everything.set(merged);
         } else if everything_installed_for_response.get() {
             everything_status_for_response.set(String::from(
                 "Everything is installed but its local IPC is unavailable",
@@ -2164,6 +2249,23 @@ fn main() {
             everything_status_for_response.set(String::from(
                 "Everything is not installed. Install it with winget to enable file search.",
             ));
+        }
+        if providers.core_ready() {
+            let priorities = priorities_for_everything
+                .get()
+                .iter()
+                .map(|entry| entry.id.clone())
+                .collect::<Vec<_>>();
+            commit_provider_results(
+                &providers,
+                &query_for_everything.get(),
+                &priorities,
+                selected_id_for_everything,
+                selected_index_for_everything,
+                selection_touched_for_everything,
+                inline_completion_for_everything,
+                results_for_everything,
+            );
         }
         status_for_everything.set(response.status);
     });
@@ -2226,26 +2328,23 @@ fn main() {
         if response.available {
             providers.plugins = response.results;
             *actions_for_plugins.borrow_mut() = response.actions;
-            let merged = providers.merged(
-                &query_for_plugins.get(),
-                &priorities_for_plugins
+            if providers.core_ready() {
+                let priorities = priorities_for_plugins
                     .get()
                     .iter()
                     .map(|entry| entry.id.clone())
-                    .collect::<Vec<_>>(),
-            );
-            if !selection_touched_for_plugins.get() {
-                selected_index_for_plugins.set(0);
-                selected_id_for_plugins.set(
-                    merged
-                        .first()
-                        .map(|result| result.id.clone())
-                        .unwrap_or_default(),
+                    .collect::<Vec<_>>();
+                commit_provider_results(
+                    &providers,
+                    &query_for_plugins.get(),
+                    &priorities,
+                    selected_id_for_plugins,
+                    selected_index_for_plugins,
+                    selection_touched_for_plugins,
+                    inline_completion_for_plugins,
+                    results_for_plugins,
                 );
             }
-            inline_completion_for_plugins
-                .set(inline_completion_suffix(&query_for_plugins.get(), &merged));
-            results_for_plugins.set(merged);
         }
         status_for_plugins.set(response.status);
     });
@@ -2282,28 +2381,23 @@ fn main() {
                 status_for_native_plugins.set(response.status.clone());
             }
         }
-        let merged = providers.merged(
-            &query_for_native_plugins.get(),
-            &priorities_for_native_plugins
+        if providers.core_ready() {
+            let priorities = priorities_for_native_plugins
                 .get()
                 .iter()
                 .map(|entry| entry.id.clone())
-                .collect::<Vec<_>>(),
-        );
-        if !selection_touched_for_native_plugins.get() {
-            selected_index_for_native_plugins.set(0);
-            selected_id_for_native_plugins.set(
-                merged
-                    .first()
-                    .map(|result| result.id.clone())
-                    .unwrap_or_default(),
+                .collect::<Vec<_>>();
+            commit_provider_results(
+                &providers,
+                &query_for_native_plugins.get(),
+                &priorities,
+                selected_id_for_native_plugins,
+                selected_index_for_native_plugins,
+                selection_touched_for_native_plugins,
+                inline_completion_for_native_plugins,
+                results_for_native_plugins,
             );
         }
-        inline_completion_for_native_plugins.set(inline_completion_suffix(
-            &query_for_native_plugins.get(),
-            &merged,
-        ));
-        results_for_native_plugins.set(merged);
     });
     let native_plugin_worker = NativePluginWorker::spawn(native_sender);
 
@@ -3606,6 +3700,12 @@ fn main() {
                     );
                 }
             }
+            if SHELL_ICON_REFRESH_PENDING.swap(false, Ordering::Acquire) {
+                // Icon extraction happens on the worker. Rebuilding here is cheap:
+                // every completed icon is already in the cache, so this never calls
+                // Windows Shell APIs from the UI callback.
+                results_for_interval.set(results_for_interval.get());
+            }
             if tray_settings_smoke_pending_for_interval.replace(false) {
                 // Exercise the same lifecycle order as the tray Settings item,
                 // without relying on brittle screen-coordinate tray automation.
@@ -3634,26 +3734,18 @@ fn main() {
             sequence_for_interval.set(sequence);
             model.set_query(&next_query);
             {
+                let everything_expected = auto_enable_everything_for_interval.get()
+                    && next_query.trim().len() >= EVERYTHING_MIN_QUERY_LEN;
                 let mut providers = providers_for_interval.borrow_mut();
-                providers.reset(sequence, model.results().to_vec());
-                let merged = providers.merged(
-                    &next_query,
-                    &priorities_for_interval
-                        .get()
-                        .iter()
-                        .map(|entry| entry.id.clone())
-                        .collect::<Vec<_>>(),
-                );
+                providers.reset(sequence, model.results().to_vec(), everything_expected);
                 selection_touched_for_interval.set(false);
                 selected_index.set(0);
-                selected_id.set(
-                    merged
-                        .first()
-                        .map(|result| result.id.clone())
-                        .unwrap_or_default(),
-                );
-                inline_completion_for_interval.set(inline_completion_suffix(&next_query, &merged));
-                results_for_interval.set(merged);
+                selected_id.set(String::new());
+                inline_completion_for_interval.set(String::new());
+                // Clear the previous query atomically. The new provider snapshot
+                // is committed once the application and Everything responses have
+                // both arrived, avoiding a visible apps-only intermediate list.
+                results_for_interval.set(Vec::new());
             }
             request_scroll(scroll_request_for_interval);
             action_mode.set(false);
@@ -3757,7 +3849,7 @@ mod tests {
         actions_for_result, format_bytes, format_update_progress, google_icon_rgba,
         history_cursor_step, hover_position_changed, is_run_as_admin_key, launcher_window_geometry,
         merge_application_duplicates, normalize_everything_query, preserve_everything_file_order,
-        quoted_result_path, should_claim_single_instance, COMPACT_WINDOW_HEIGHT,
+        quoted_result_path, should_claim_single_instance, ProviderResults, COMPACT_WINDOW_HEIGHT,
         EXPANDED_WINDOW_HEIGHT, WINDOW_WIDTH,
     };
     use flux_core::{ResultKind, ResultSource, SearchResult};
@@ -3959,6 +4051,27 @@ mod tests {
         assert_eq!(normalize_everything_query("ext:zip"), "ext:zip");
         assert_eq!(normalize_everything_query("settings"), "settings");
         assert_eq!(normalize_everything_query("."), ".");
+    }
+
+    #[test]
+    fn core_provider_snapshot_waits_for_both_search_providers() {
+        let mut providers = ProviderResults::default();
+        providers.reset(7, Vec::new(), true);
+        assert!(!providers.core_ready());
+
+        providers.applications_ready = true;
+        assert!(!providers.core_ready());
+
+        providers.everything_ready = true;
+        assert!(providers.core_ready());
+    }
+
+    #[test]
+    fn disabled_everything_does_not_delay_application_snapshot() {
+        let mut providers = ProviderResults::default();
+        providers.reset(8, Vec::new(), false);
+        providers.applications_ready = true;
+        assert!(providers.core_ready());
     }
 
     #[test]
