@@ -2703,6 +2703,13 @@ fn main() {
             return false;
         }
         let current_results = results_for_keys.get();
+        launch::trace_launch_event(&format!(
+            "key-context\\tquery={}\\tresults={}\\tselected_id={}\\tselected_index={}",
+            query,
+            current_results.len(),
+            selected_id_for_keys.get(),
+            selected_index_for_keys.get()
+        ));
         if current_results.is_empty() {
             return false;
         }
@@ -3832,6 +3839,11 @@ fn main() {
             model.set_query(&next_query);
             {
                 let built_in_results = model.results().to_vec();
+                launch::trace_launch_event(&format!(
+                    "query-snapshot\\tquery={}\\tbuiltins={}",
+                    next_query,
+                    built_in_results.len()
+                ));
                 let everything_expected = auto_enable_everything_for_interval.get()
                     && next_query.trim().len() >= EVERYTHING_MIN_QUERY_LEN;
                 let mut providers = providers_for_interval.borrow_mut();
