@@ -820,6 +820,9 @@ const CLASS_NAME: PCWSTR = w!("WindUiWindowClass");
 
 /// 跨线程唤醒消息（WM_APP+2；WM_APP+1 已用于托盘）。
 const WM_APP_WAKE: u32 = WM_APP + 2;
+/// Deferred foreground check for hide-on-deactivate. Deferring one message tick
+/// lets SetWindowPos restore the launcher after a transient DWM activation change.
+const WM_APP_DEACTIVATION_CHECK: u32 = WM_APP + 3;
 
 /// 跨线程唤醒句柄：仅持 HWND 数值，PostMessage 线程安全。
 struct Win32Wake {
@@ -1321,6 +1324,22 @@ unsafe extern "system" fn wnd_proc(
             let res = DefWindowProcW(hwnd, msg, wparam, lparam);
 
             if should_hide {
+                // Recheck foreground ownership after this message returns. DWM can
+                // emit a transient WA_INACTIVE while SetWindowPos changes height;
+                // hiding immediately would clear a valid query during expansion.
+                let _ = PostMessageW(Some(hwnd), WM_APP_DEACTIVATION_CHECK, WPARAM(0), LPARAM(0));
+            }
+            res
+        }
+        WM_APP_DEACTIVATION_CHECK => {
+            let should_hide = IsWindowVisible(hwnd).as_bool()
+                && GetForegroundWindow() != hwnd
+                && state_from(hwnd)
+                    .map(|state| {
+                        state.handler.hide_on_deactivate() && !state.suppress_deactivation_hide
+                    })
+                    .unwrap_or(false);
+            if should_hide {
                 // Two-phase execution (Iron Rule 6): release state borrow before
                 // calling ShowWindow, which synchronously dispatches WM_SHOWWINDOW.
                 if let Some(state) = state_from(hwnd) {
@@ -1331,7 +1350,7 @@ unsafe extern "system" fn wnd_proc(
                 let _ = ShowWindow(hwnd, SW_HIDE);
                 apply_window_geometry_requests(hwnd);
             }
-            res
+            LRESULT(0)
         }
         WM_PAINT => {
             trace_show_event(hwnd, "wm_paint.enter", "phase=begin");
