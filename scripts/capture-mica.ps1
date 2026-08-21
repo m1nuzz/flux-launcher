@@ -281,7 +281,7 @@ Start-Sleep -Seconds 2
 $wabFixtureRoot = Join-Path $env:APPDATA "Microsoft\Windows\Start Menu\Programs\Flux Smoke WAB"
 New-Item -ItemType Directory -Force -Path $wabFixtureRoot | Out-Null
 $folderFixtureName = "FluxFolderSmoke_{0}" -f $PID
-$folderFixtureRoot = Join-Path $wabFixtureRoot $folderFixtureName
+$folderFixtureRoot = Join-Path $env:TEMP $folderFixtureName
 New-Item -ItemType Directory -Force -Path $folderFixtureRoot | Out-Null
 $wabFixtureNames = @(
     "WAB Primary Application.lnk",
@@ -723,7 +723,7 @@ try {
         try {
             $folderSmokeProcess = Start-Process `
                 -FilePath $absoluteExecutable `
-                -ArgumentList @("--folder-launch-smoke", $folderFixtureRoot) `
+                -ArgumentList @("--folder-launch-smoke", ('"{0}"' -f $folderFixtureRoot)) `
                 -PassThru
             Wait-Process -Id $folderSmokeProcess.Id -Timeout 10
             if (!$folderSmokeProcess.HasExited) {
