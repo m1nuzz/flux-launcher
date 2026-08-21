@@ -13,14 +13,13 @@ function Get-FluxProcesses {
     $processes = @(Get-Process -Name $name -ErrorAction SilentlyContinue)
     @(
         foreach ($process in $processes) {
-            $commandLine = $null
             try {
-                $commandLine = (Get-CimInstance Win32_Process -Filter "ProcessId = $($process.Id)" -ErrorAction Stop).CommandLine
+                $process.Refresh()
+                if ($process.MainWindowHandle -ne [IntPtr]::Zero) {
+                    $process
+                }
             } catch {
-                $commandLine = $null
-            }
-            if ($commandLine -notmatch "--plugin-host") {
-                $process
+                # Ignore a process that exits while the snapshot is collected.
             }
         }
     )
