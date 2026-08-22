@@ -57,13 +57,13 @@ function Stop-Processes([System.Diagnostics.Process[]]$Processes) {
 }
 
 function Settle-FluxProcessesGone {
-    $deadline = (Get-Date).AddSeconds(5)
+    $deadline = (Get-Date).AddSeconds(15)
     $emptySnapshots = 0
     while ((Get-Date) -lt $deadline) {
         $current = Get-FluxProcesses
         if ($current.Count -eq 0) {
             $emptySnapshots++
-            if ($emptySnapshots -ge 6) {
+            if ($emptySnapshots -ge 20) {
                 return
             }
         } else {
