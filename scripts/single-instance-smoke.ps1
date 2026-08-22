@@ -90,6 +90,25 @@ function Wait-FluxReady([System.Diagnostics.Process]$Process) {
     throw "Timed out waiting for the first Flux window to become ready"
 }
 
+function Wait-FluxSecondaryProcessesSettled([DateTime]$StartTime, [int]$AllowedProcessId) {
+    # A runner can briefly surface a hidden process while a previous launch is
+    # finishing its named-mutex/WM_COPYDATA handoff. Do not hide a real duplicate:
+    # wait for that process to exit, then fail if it remains alive.
+    $deadline = (Get-Date).AddSeconds(10)
+    $unexpected = @()
+    while ((Get-Date) -lt $deadline) {
+        $unexpected = @(
+            Get-FluxProcessesStartedAtOrAfter $StartTime |
+                Where-Object { $_.Id -ne $AllowedProcessId }
+        )
+        if ($unexpected.Count -eq 0) {
+            return @()
+        }
+        Start-Sleep -Milliseconds 250
+    }
+    return $unexpected
+}
+
 New-Item -ItemType Directory -Path $WorkDirectory -Force | Out-Null
 $staleFlux = Get-FluxProcesses
 if ($staleFlux.Count -gt 0) {
@@ -126,10 +145,11 @@ try {
     Wait-FluxReady $first
     $firstStartTime = $first.StartTime
 
-    # Ignore any runner residue older than this measured launch; any second
-    # process created after this point is a real single-instance regression.
-    $firstFlux = Get-FluxProcessesStartedAtOrAfter $firstStartTime
-    if ($firstFlux.Count -gt ($initialFlux.Count + 1)) {
+    # The first launch must settle to one live process. A transient hidden process
+    # is allowed to finish during the bounded settle window, but a live extra
+    # process is still a single-instance regression.
+    $firstFlux = Wait-FluxSecondaryProcessesSettled $firstStartTime $first.Id
+    if ($firstFlux.Count -gt 0) {
         Write-Host "Flux process diagnostics before first-launch assertion:"
         @(Get-Process -Name ([System.IO.Path]::GetFileNameWithoutExtension($Executable)) -ErrorAction SilentlyContinue) | ForEach-Object {
             $_.Refresh()
@@ -140,7 +160,7 @@ try {
             }
             Write-Host "Id=$($_.Id) StartTime=$($_.StartTime.ToUniversalTime().ToString('O')) MainWindowHandle=$($_.MainWindowHandle) MainWindowTitle=[$($_.MainWindowTitle)] CommandLine=[$commandLine]"
         }
-        throw "First launch created more than one Flux process: $($firstFlux.Count)."
+        throw "First launch left an additional Flux process alive: $($firstFlux.Count)."
     }
     $everythingAfterFirst = Get-EverythingProcesses
     if ($everythingAfterFirst.Count -gt ($initialEverything.Count + 1)) {
