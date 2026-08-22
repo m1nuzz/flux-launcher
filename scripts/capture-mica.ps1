@@ -916,10 +916,14 @@ try {
     } else {
         0.0
     }
+    # Hiding is intentionally synchronous, while ShellExecuteEx runs on Flux's
+    # launch worker. Therefore process-created may legitimately arrive after the
+    # launcher hide; only dispatch-before-hide and eventual successful launch are
+    # ordering requirements.
     $launchProcessCreationProbe =
-        $launchProbeDispatchBeforeHide -and $launchProbeLaunchSucceededBeforeHide
+        $launchProbeDispatchBeforeHide -and $launchProbeLaunchSucceeded
     if (!$launchProcessCreationProbe) {
-        throw "Launch process probe failed: dispatch_before_hide=$launchProbeDispatchBeforeHide, launch_succeeded=$launchProbeLaunchSucceededBeforeHide, process_created=$($launchProbeProcessTimestamp -gt 0.0), shell_return=$($launchProbeShellReturnTimestamp -gt 0.0)."
+        throw "Launch process probe failed: dispatch_before_hide=$launchProbeDispatchBeforeHide, launch_succeeded=$launchProbeLaunchSucceeded, completed_before_hide=$launchProbeLaunchSucceededBeforeHide, process_created=$($launchProbeProcessTimestamp -gt 0.0), shell_return=$($launchProbeShellReturnTimestamp -gt 0.0)."
     }
     [FluxWallpaper]::SendMessage($launcherHandle, $wmHotkey, [UIntPtr]::Zero, [IntPtr]::Zero) | Out-Null
     Start-Sleep -Milliseconds 650
