@@ -121,6 +121,18 @@ fn launcher_window_geometry(settings_visible: bool, show_results: bool) -> (i32,
     }
 }
 
+/// Keep the previous result list visible while asynchronous providers compute a
+/// new non-empty query. Immediate publication is safe for the home page and for
+/// actionable synchronous built-in results, but publishing an empty vector for
+/// every keystroke creates a visible blank frame and makes the list flicker.
+fn should_publish_initial_query_results(
+    has_query: bool,
+    built_in_results_are_empty: bool,
+    displayed_results_are_empty: bool,
+) -> bool {
+    !has_query || !built_in_results_are_empty || displayed_results_are_empty
+}
+
 #[derive(Default)]
 struct ProviderResults {
     sequence: u64,
@@ -3831,19 +3843,28 @@ fn main() {
                     && next_query.trim().len() >= EVERYTHING_MIN_QUERY_LEN;
                 let mut providers = providers_for_interval.borrow_mut();
                 providers.reset(sequence, built_in_results.clone(), everything_expected);
-                selection_touched_for_interval.set(false);
-                selected_index.set(0);
-                selected_id.set(
-                    built_in_results
-                        .first()
-                        .map(|result| result.id.clone())
-                        .unwrap_or_default(),
+                let publish_initial_results = should_publish_initial_query_results(
+                    has_query,
+                    built_in_results.is_empty(),
+                    results_for_interval.get().is_empty(),
                 );
+                if publish_initial_results {
+                    selection_touched_for_interval.set(false);
+                    selected_index.set(0);
+                    selected_id.set(
+                        built_in_results
+                            .first()
+                            .map(|result| result.id.clone())
+                            .unwrap_or_default(),
+                    );
+                    // Built-in/system commands are synchronous and must be actionable
+                    // immediately. External providers still replace this snapshot once
+                    // their responses arrive for the same query sequence.
+                    results_for_interval.set(built_in_results);
+                }
+                // Do not derive or display completion from the previous query while
+                // the current provider generation is still pending.
                 inline_completion_for_interval.set(String::new());
-                // Built-in/system commands are synchronous and must be actionable
-                // immediately. External providers still replace this snapshot once
-                // their responses arrive for the same query sequence.
-                results_for_interval.set(built_in_results);
             }
             request_scroll(scroll_request_for_interval);
             action_mode.set(false);
@@ -3951,8 +3972,8 @@ mod tests {
         history_cursor_step, hover_position_changed, is_run_as_admin_key, launcher_window_geometry,
         merge_application_duplicates, normalize_everything_query, preserve_everything_file_order,
         quoted_result_path, relaunch_mode_for_auto_install, should_claim_single_instance,
-        should_show_launcher, ProviderResults, COMPACT_WINDOW_HEIGHT, EXPANDED_WINDOW_HEIGHT,
-        WINDOW_WIDTH,
+        should_publish_initial_query_results, should_show_launcher, ProviderResults,
+        COMPACT_WINDOW_HEIGHT, EXPANDED_WINDOW_HEIGHT, WINDOW_WIDTH,
     };
     use flux_core::{ResultKind, ResultSource, SearchResult};
     use windui::event::{Key, KeyEvent};
@@ -4199,6 +4220,18 @@ mod tests {
             relaunch_mode_for_auto_install(true),
             super::updater::RelaunchMode::Visible
         );
+    }
+
+    #[test]
+    fn pending_non_empty_query_keeps_previous_result_list_visible() {
+        assert!(!should_publish_initial_query_results(true, true, false));
+        assert!(should_publish_initial_query_results(true, true, true));
+    }
+
+    #[test]
+    fn synchronous_built_in_results_can_replace_list_immediately() {
+        assert!(should_publish_initial_query_results(true, false, false));
+        assert!(should_publish_initial_query_results(false, true, false));
     }
 
     #[test]
