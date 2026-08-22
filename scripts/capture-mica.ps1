@@ -887,20 +887,27 @@ try {
     $launchProbeDispatchLine = $launchProbeTraceLines | Where-Object { $_ -match "`tlaunch-dispatch$" } | Select-Object -First 1
     $launchProbeHideLine = $launchProbeTraceLines | Where-Object { $_ -match "`twindow-hide$" } | Select-Object -First 1
     $launchProbeProcessLine = $launchProbeTraceLines | Where-Object { $_ -match "`tprocess-created$" } | Select-Object -First 1
+    $launchProbeShellReturnLine = $launchProbeTraceLines | Where-Object { $_ -match "`tshell-return$" } | Select-Object -First 1
     $launchProbeDispatchTimestamp = if ($launchProbeDispatchLine) { [double]($launchProbeDispatchLine -split "`t", 2)[0] } else { 0.0 }
     $launchProbeHideTimestamp = if ($launchProbeHideLine) { [double]($launchProbeHideLine -split "`t", 2)[0] } else { 0.0 }
     $launchProbeProcessTimestamp = if ($launchProbeProcessLine) { [double]($launchProbeProcessLine -split "`t", 2)[0] } else { 0.0 }
+    $launchProbeShellReturnTimestamp = if ($launchProbeShellReturnLine) { [double]($launchProbeShellReturnLine -split "`t", 2)[0] } else { 0.0 }
+    $launchProbeCompletionTimestamp = if ($launchProbeProcessTimestamp -gt 0.0) {
+        $launchProbeProcessTimestamp
+    } else {
+        $launchProbeShellReturnTimestamp
+    }
     $launchProbeDispatchBeforeHide =
         $launchProbeDispatchTimestamp -gt 0.0 -and
         $launchProbeHideTimestamp -gt 0.0 -and
         $launchProbeDispatchTimestamp -le $launchProbeHideTimestamp
-    $launchProbeProcessCreated = $launchProbeProcessTimestamp -gt 0.0
-    $launchProbeProcessCreatedBeforeHide =
-        $launchProbeProcessCreated -and
+    $launchProbeLaunchSucceeded = $launchProbeCompletionTimestamp -gt 0.0
+    $launchProbeLaunchSucceededBeforeHide =
+        $launchProbeLaunchSucceeded -and
         $launchProbeHideTimestamp -gt 0.0 -and
-        $launchProbeProcessTimestamp -le $launchProbeHideTimestamp
-    $launchProbeProcessCreationMilliseconds = if ($launchProbeProcessCreated) {
-        [Math]::Round($launchProbeProcessTimestamp - $launchProbeDispatchTimestamp, 3)
+        $launchProbeCompletionTimestamp -le $launchProbeHideTimestamp
+    $launchProbeProcessCreationMilliseconds = if ($launchProbeLaunchSucceeded) {
+        [Math]::Round($launchProbeCompletionTimestamp - $launchProbeDispatchTimestamp, 3)
     } else {
         0.0
     }
@@ -910,9 +917,9 @@ try {
         0.0
     }
     $launchProcessCreationProbe =
-        $launchProbeDispatchBeforeHide -and $launchProbeProcessCreated
+        $launchProbeDispatchBeforeHide -and $launchProbeLaunchSucceededBeforeHide
     if (!$launchProcessCreationProbe) {
-        throw "Launch process probe failed: dispatch_before_hide=$launchProbeDispatchBeforeHide, process_created=$launchProbeProcessCreated."
+        throw "Launch process probe failed: dispatch_before_hide=$launchProbeDispatchBeforeHide, launch_succeeded=$launchProbeLaunchSucceededBeforeHide, process_created=$($launchProbeProcessTimestamp -gt 0.0), shell_return=$($launchProbeShellReturnTimestamp -gt 0.0)."
     }
     [FluxWallpaper]::SendMessage($launcherHandle, $wmHotkey, [UIntPtr]::Zero, [IntPtr]::Zero) | Out-Null
     Start-Sleep -Milliseconds 650
