@@ -18,7 +18,7 @@ use std::cell::{Cell, RefCell};
 use std::collections::{HashMap, HashSet};
 use std::rc::Rc;
 use std::sync::{
-    atomic::{AtomicBool, Ordering},
+    atomic::{AtomicU64, Ordering},
     mpsc::{self, SyncSender},
     Arc, Mutex, OnceLock, RwLock,
 };
@@ -574,6 +574,109 @@ impl Widget for ResultRowAnchor {
     }
 }
 
+/// A stable result-row icon that starts with a lightweight fallback and swaps to the
+/// cached Windows Shell image when the background icon worker completes. Keeping this
+/// widget inside the existing row avoids rebuilding the dynamic result list, which
+/// would otherwise reset row-local interaction state and can disturb scrolling.
+struct ResultIconView {
+    target: Option<String>,
+    fallback: String,
+    fallback_font: &'static str,
+    refresh_generation: Signal<u64>,
+    last_generation: u64,
+    image: Option<Image>,
+}
+
+impl ResultIconView {
+    fn new(
+        target: Option<String>,
+        fallback: String,
+        fallback_font: &'static str,
+        initial_rgba: Option<Vec<u8>>,
+        refresh_generation: Signal<u64>,
+    ) -> Self {
+        let image = initial_rgba
+            .as_deref()
+            .and_then(|rgba| Image::from_rgba(32, 32, rgba).ok());
+        Self {
+            target,
+            fallback,
+            fallback_font,
+            refresh_generation,
+            last_generation: refresh_generation.get(),
+            image,
+        }
+    }
+
+    fn refresh_cached_image(&mut self) {
+        let Some(target) = self.target.as_deref() else {
+            return;
+        };
+        #[cfg(windows)]
+        let rgba = shell_icon_cache_lookup(target).flatten();
+        #[cfg(not(windows))]
+        let rgba: Option<Vec<u8>> = None;
+        self.image = rgba
+            .as_deref()
+            .and_then(|bytes| Image::from_rgba(32, 32, bytes).ok());
+    }
+}
+
+impl Widget for ResultIconView {
+    fn measure(
+        &self,
+        _avail: Size,
+        _style: &Style,
+        _text: &mut dyn windui::text::TextEngine,
+    ) -> Size {
+        Size::new(32, 32)
+    }
+
+    fn paint(
+        &self,
+        bounds: Rect,
+        _content: Rect,
+        _focused: bool,
+        _enabled: bool,
+        canvas: &mut dyn Canvas,
+        style: &Style,
+    ) {
+        if let Some(image) = self.image.as_ref() {
+            canvas.draw_image(image, bounds, Fit::Contain, style.corner_radius, 1.0);
+            return;
+        }
+        let fallback_style = Style {
+            font_family: Some(self.fallback_font.to_owned()),
+            font_size: 20.0,
+            text_align: Align::Center,
+            fg: Color::rgba(201, 218, 240, 235),
+            fg_role: None,
+            ..style.clone()
+        };
+        canvas.draw_text(
+            &self.fallback,
+            bounds,
+            fallback_style.fg,
+            Align::Center,
+            &windui::text::TextStyle::of(&fallback_style),
+        );
+    }
+
+    fn on_update(&mut self, ctx: &mut EventCtx) {
+        let generation = self.refresh_generation.get();
+        if generation == self.last_generation {
+            return;
+        }
+        self.last_generation = generation;
+        self.refresh_cached_image();
+        ctx.mark_dirty();
+    }
+
+    fn on_event(&mut self, _ctx: &mut EventCtx, _event: &Event) -> bool {
+        false
+    }
+}
+
 fn quoted_result_path(result: &SearchResult) -> Option<String> {
     let target = result.target.as_deref()?.trim();
     if target.is_empty() {
@@ -964,10 +1067,14 @@ fn relaunch_mode_for_auto_install(is_foreground: bool) -> updater::RelaunchMode 
     }
 }
 
+fn icon_completion_generation_changed(previous: u64, current: u64) -> bool {
+    previous != current
+}
+
 #[cfg(windows)]
 static SHELL_ICON_CACHE: OnceLock<Mutex<HashMap<String, Option<Vec<u8>>>>> = OnceLock::new();
 static SETTINGS_SAVE_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
-static SHELL_ICON_REFRESH_PENDING: AtomicBool = AtomicBool::new(false);
+static SHELL_ICON_COMPLETION_GENERATION: AtomicU64 = AtomicU64::new(0);
 
 struct ShellIconWorker {
     pending: Arc<Mutex<HashSet<String>>>,
@@ -988,7 +1095,7 @@ impl ShellIconWorker {
                     }
                     #[cfg(windows)]
                     let _ = shell_icon_rgba(&target);
-                    SHELL_ICON_REFRESH_PENDING.store(true, Ordering::Release);
+                    SHELL_ICON_COMPLETION_GENERATION.fetch_add(1, Ordering::Release);
                 }
             })
             .expect("failed to create shell icon worker thread");
@@ -1552,6 +1659,7 @@ fn result_row(
     selected_index: Signal<usize>,
     selection_touched: Signal<bool>,
     rows_refresh: Signal<Vec<SearchResult>>,
+    icon_refresh_generation: Signal<u64>,
     plugin_actions: Rc<RefCell<HashMap<String, PluginAction>>>,
     query: Signal<String>,
     scroll_pending: Signal<bool>,
@@ -1578,19 +1686,18 @@ fn result_row(
     } else {
         target.as_deref().and_then(request_shell_icon)
     };
-    let icon_element = if let Some(icon) = icon.as_deref() {
-        Element::image_rgba(32, 32, icon)
-            .width(32)
-            .height(32)
-            .corner(7.0)
-    } else {
-        Element::label(glyph)
-            .font_family(glyph_font)
-            .font_size(20.0)
-            .fg(Color::rgba(201, 218, 240, 235))
-            .width(28)
-            .align(Align::Center)
-    };
+    let icon_element = Element::leaf()
+        .widget(ResultIconView::new(
+            target.clone(),
+            glyph,
+            glyph_font,
+            icon,
+            icon_refresh_generation,
+        ))
+        .reactive()
+        .width(32)
+        .height(32)
+        .corner(7.0);
     let selected = selected_id.get() == id;
     let title_doc_signal = signal(title_match_doc(&title, &query.get()));
     let trailing_signal = signal(if selected {
@@ -1820,6 +1927,7 @@ fn main() {
     let action_window_slot_for_rows = Rc::clone(&action_window_slot);
     let query_for_rows = query;
     let scroll_request_for_rows = signal(false);
+    let icon_refresh_generation = signal(SHELL_ICON_COMPLETION_GENERATION.load(Ordering::Acquire));
     let settings_visible_for_rows = settings_visible;
     let window_size_slot_for_rows = Rc::clone(&action_window_slot);
     let inline_completion = signal(String::new());
@@ -1883,6 +1991,7 @@ fn main() {
             selected_index_for_rows,
             selection_touched_for_rows,
             result_source,
+            icon_refresh_generation,
             Rc::clone(&actions_for_rows),
             query_for_rows,
             scroll_request_for_rows,
@@ -2127,6 +2236,7 @@ fn main() {
 
     let query_for_interval = query;
     let results_for_interval = results;
+    let icon_refresh_generation_for_interval = icon_refresh_generation;
     let status_for_interval = status;
     let show_results_for_interval = show_results;
     let inline_completion_for_interval = inline_completion;
@@ -2143,6 +2253,7 @@ fn main() {
     let history_mode_for_interval = history_mode;
     let settings_visible_for_interval = settings_visible;
     let tray_settings_smoke_pending_for_interval = Rc::clone(&tray_settings_smoke_pending);
+    let mut last_icon_generation = icon_refresh_generation.get();
     let mut last_query = String::new();
     let mut sequence = 0_u64;
 
@@ -3804,11 +3915,11 @@ fn main() {
                     );
                 }
             }
-            if SHELL_ICON_REFRESH_PENDING.swap(false, Ordering::Acquire) {
-                // Icon extraction happens on the worker. Rebuilding here is cheap:
-                // every completed icon is already in the cache, so this never calls
-                // Windows Shell APIs from the UI callback.
-                results_for_interval.set(results_for_interval.get());
+            let completed_icon_generation =
+                SHELL_ICON_COMPLETION_GENERATION.load(Ordering::Acquire);
+            if icon_completion_generation_changed(last_icon_generation, completed_icon_generation) {
+                last_icon_generation = completed_icon_generation;
+                icon_refresh_generation_for_interval.set(completed_icon_generation);
             }
             if tray_settings_smoke_pending_for_interval.replace(false) {
                 // Exercise the same lifecycle order as the tray Settings item,
@@ -3969,11 +4080,13 @@ fn main() {
 mod tests {
     use super::{
         actions_for_result, display_title, format_bytes, format_update_progress, google_icon_rgba,
-        history_cursor_step, hover_position_changed, is_run_as_admin_key, launcher_window_geometry,
-        merge_application_duplicates, normalize_everything_query, preserve_everything_file_order,
-        quoted_result_path, relaunch_mode_for_auto_install, should_claim_single_instance,
+        history_cursor_step, hover_position_changed, icon_completion_generation_changed,
+        is_run_as_admin_key, launcher_window_geometry, merge_application_duplicates,
+        normalize_everything_query, preserve_everything_file_order, quoted_result_path,
+        relaunch_mode_for_auto_install, should_claim_single_instance,
         should_publish_initial_query_results, should_show_launcher, ProviderResults,
-        COMPACT_WINDOW_HEIGHT, EXPANDED_WINDOW_HEIGHT, WINDOW_WIDTH,
+        ResultIconView, COMPACT_WINDOW_HEIGHT, EXPANDED_WINDOW_HEIGHT, LAUNCHER_FONT_FAMILY,
+        WINDOW_WIDTH,
     };
     use flux_core::{ResultKind, ResultSource, SearchResult};
     use windui::event::{Key, KeyEvent};
@@ -4018,6 +4131,36 @@ mod tests {
         let icon = google_icon_rgba().expect("bundled Google icon should decode");
         assert_eq!(icon.len(), 32 * 32 * 4);
         assert!(icon.chunks_exact(4).any(|pixel| pixel[3] > 0));
+    }
+
+    #[test]
+    fn icon_generation_changes_only_after_completion() {
+        assert!(!icon_completion_generation_changed(4, 4));
+        assert!(icon_completion_generation_changed(4, 5));
+        assert!(icon_completion_generation_changed(u64::MAX, 0));
+    }
+
+    #[test]
+    fn result_icon_view_accepts_valid_cached_rgba_and_keeps_placeholder_on_miss() {
+        let generation = windui::prelude::signal(0_u64);
+        let valid = [255_u8, 128, 64, 255].repeat(32 * 32);
+        let loaded = ResultIconView::new(
+            Some(String::from(r"C:\Program Files\Demo\demo.exe")),
+            String::from("▣"),
+            LAUNCHER_FONT_FAMILY,
+            Some(valid),
+            generation,
+        );
+        assert!(loaded.image.is_some());
+
+        let pending = ResultIconView::new(
+            Some(String::from(r"C:\Program Files\Pending\pending.exe")),
+            String::from("▣"),
+            LAUNCHER_FONT_FAMILY,
+            None,
+            generation,
+        );
+        assert!(pending.image.is_none());
     }
 
     #[test]
