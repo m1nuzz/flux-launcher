@@ -35,6 +35,10 @@ jobs:
       - name: Release build
         run: cargo build --workspace --release --target x86_64-pc-windows-msvc
 
+      - name: Smoke Steam-style shortcut icon extraction
+        shell: pwsh
+        run: ./scripts/shortcut-icon-smoke.ps1 -Executable ./target/x86_64-pc-windows-msvc/release/flux-launcher.exe -WorkDirectory ./artifacts/shortcut-icon-smoke
+
       - name: Smoke single-instance and Everything process guard
         shell: pwsh
         run: ./scripts/single-instance-smoke.ps1 -Executable ./target/x86_64-pc-windows-msvc/release/flux-launcher.exe -WorkDirectory ./artifacts/single-instance-smoke
