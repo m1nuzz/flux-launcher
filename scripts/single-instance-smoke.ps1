@@ -56,6 +56,25 @@ function Stop-Processes([System.Diagnostics.Process[]]$Processes) {
     }
 }
 
+function Settle-FluxProcessesGone {
+    $deadline = (Get-Date).AddSeconds(5)
+    $emptySnapshots = 0
+    while ((Get-Date) -lt $deadline) {
+        $current = Get-FluxProcesses
+        if ($current.Count -eq 0) {
+            $emptySnapshots++
+            if ($emptySnapshots -ge 6) {
+                return
+            }
+        } else {
+            $emptySnapshots = 0
+            Stop-Processes $current
+        }
+        Start-Sleep -Milliseconds 250
+    }
+    throw "Flux processes did not remain stopped during preflight settling"
+}
+
 function Wait-FluxReady([System.Diagnostics.Process]$Process) {
     $deadline = (Get-Date).AddSeconds(30)
     while ((Get-Date) -lt $deadline) {
@@ -76,17 +95,8 @@ $staleFlux = Get-FluxProcesses
 if ($staleFlux.Count -gt 0) {
     Write-Host "Stopping $($staleFlux.Count) stale Flux process(es) before single-instance smoke."
     Stop-Processes $staleFlux
-    $deadline = (Get-Date).AddSeconds(10)
-    while ((Get-Date) -lt $deadline) {
-        if ((Get-FluxProcesses).Count -eq 0) {
-            break
-        }
-        Start-Sleep -Milliseconds 250
-    }
-    if ((Get-FluxProcesses).Count -ne 0) {
-        throw "A stale Flux process remained alive before single-instance smoke"
-    }
 }
+Settle-FluxProcessesGone
 $appData = Join-Path $WorkDirectory "AppData"
 New-Item -ItemType Directory -Path (Join-Path $appData "FluxLauncher") -Force | Out-Null
 $env:APPDATA = $appData
@@ -107,21 +117,6 @@ $settingsPath = Join-Path $appData "FluxLauncher\settings.json"
 }
 '@ | Set-Content -LiteralPath $settingsPath -Encoding utf8
 
-# A just-terminated runner process can become visible to CIM a moment after the
-# first stale snapshot. Sweep once more before measuring the first launch.
-Start-Sleep -Milliseconds 1000
-$lateStaleFlux = Get-FluxProcesses
-if ($lateStaleFlux.Count -gt 0) {
-    Write-Host "Stopping $($lateStaleFlux.Count) late-discovered stale Flux process(es)."
-    Stop-Processes $lateStaleFlux
-    $lateDeadline = (Get-Date).AddSeconds(10)
-    while ((Get-Date) -lt $lateDeadline -and (Get-FluxProcesses).Count -gt 0) {
-        Start-Sleep -Milliseconds 250
-    }
-    if ((Get-FluxProcesses).Count -ne 0) {
-        throw "A late-discovered stale Flux process remained alive before single-instance smoke"
-    }
-}
 $initialFlux = Get-FluxProcesses
 $initialEverything = Get-EverythingProcesses
 $first = $null
@@ -143,7 +138,7 @@ try {
                 $commandLine = (Get-CimInstance Win32_Process -Filter "ProcessId = $($_.Id)" -ErrorAction Stop).CommandLine
             } catch {
             }
-            Write-Host "Id=$($_.Id) MainWindowHandle=$($_.MainWindowHandle) MainWindowTitle=[$($_.MainWindowTitle)] CommandLine=[$commandLine]"
+            Write-Host "Id=$($_.Id) StartTime=$($_.StartTime.ToUniversalTime().ToString('O')) MainWindowHandle=$($_.MainWindowHandle) MainWindowTitle=[$($_.MainWindowTitle)] CommandLine=[$commandLine]"
         }
         throw "First launch created more than one Flux process: $($firstFlux.Count)."
     }
