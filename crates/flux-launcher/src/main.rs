@@ -4300,9 +4300,13 @@ mod tests {
 
     #[test]
     fn resolves_relative_shortcut_icon_file_against_shortcut_directory() {
+        let expected = std::path::Path::new("/tmp/Steam")
+            .join("icons/game.ico")
+            .to_string_lossy()
+            .into_owned();
         assert_eq!(
             resolve_shortcut_icon_path("/tmp/Steam/Game.url", "icons/game.ico"),
-            Some(String::from("/tmp/Steam/icons/game.ico"))
+            Some(expected)
         );
     }
 
