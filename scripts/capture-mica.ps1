@@ -80,6 +80,17 @@ public static class FluxWallpaper {
     [DllImport("user32.dll", SetLastError = true)]
     public static extern IntPtr GetForegroundWindow();
     [DllImport("user32.dll", SetLastError = true)]
+    public static extern IntPtr WindowFromPoint(POINT point);
+    [DllImport("user32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
+    public static extern int GetClassName(IntPtr hWnd, char[] className, int maxCount);
+    public static string WindowClassAtPoint(int x, int y) {
+        IntPtr hwnd = WindowFromPoint(new POINT { X = x, Y = y });
+        if (hwnd == IntPtr.Zero) return "<none>";
+        char[] buffer = new char[256];
+        int length = GetClassName(hwnd, buffer, buffer.Length);
+        return length > 0 ? new string(buffer, 0, length) : "<unknown>";
+    }
+    [DllImport("user32.dll", SetLastError = true)]
     public static extern bool EnumWindows(EnumWindowsProc callback, IntPtr lParam);
     [DllImport("user32.dll", SetLastError = true)]
     public static extern uint GetWindowThreadProcessId(IntPtr hWnd, out uint processId);
@@ -1256,9 +1267,42 @@ try {
                 SliderCandidateXOffsets = @(140, 150, 160, 170, 180, 190, 200)
                 SliderCandidateYOffsets = @(200, 212, 224, 236, 248, 260, 272, 284, 296, 308, 320, 332, 344, 356, 368, 380, 392, 404, 416, 428, 440, 452, 464, 476, 488, 500, 512, 524, 536, 548, 560)
             } | ConvertTo-Json | Set-Content -Encoding utf8 (Join-Path $OutputDirectory "visual-discovery-geometry.json")
-            $sliderLeft = 0
-            $sliderRight = 0
-            $widthSliderY = 0
+            $directSliderLeft = $settingsRect.Left + [int][Math]::Round(175 * $settingsScale)
+            $directSliderRight = $directSliderLeft + [int][Math]::Round(180 * $settingsScale)
+            $directSliderY = $settingsRect.Top + [int][Math]::Round(310 * $settingsScale)
+            $directPointClass = [FluxWallpaper]::WindowClassAtPoint($directSliderLeft, $directSliderY)
+            Write-Host "Visual slider direct probe: left=$directSliderLeft right=$directSliderRight y=$directSliderY windowClass=$directPointClass"
+            $directStateBefore = if (Test-Path $settingsStderrPath) { Get-Content $settingsStderrPath -Raw } else { "" }
+            [FluxWallpaper]::SetCursorPos($directSliderLeft, $directSliderY) | Out-Null
+            [FluxWallpaper]::mouse_event(0x0002, 0, 0, 0, [UIntPtr]::Zero)
+            for ($step = 0; $step -le 10; $step++) {
+                $x = $directSliderLeft + [int](($directSliderRight - $directSliderLeft) * $step / 10.0)
+                [FluxWallpaper]::SetCursorPos($x, $directSliderY) | Out-Null
+                Start-Sleep -Milliseconds 45
+            }
+            [FluxWallpaper]::mouse_event(0x0004, 0, 0, 0, [UIntPtr]::Zero)
+            Start-Sleep -Milliseconds 400
+            $directStateAfter = Get-Content $settingsStderrPath -Raw
+            $directGeometry = [regex]::Matches(
+                $directStateAfter,
+                "VisualPreviewChild: GEOMETRY $visualPreviewProcessId (\d+) (\d+) (\d+) (\d+) (\d+)"
+            )
+            $directWidthChanged = $false
+            foreach ($match in $directGeometry) {
+                if ([int]$match.Groups[1].Value -ne $initialLogicalWidth -and
+                    [int]$match.Groups[2].Value -eq $initialLogicalHeight) {
+                    $directWidthChanged = $true
+                    break
+                }
+            }
+            $sliderLeft = $directSliderLeft
+            $sliderRight = $directSliderRight
+            $widthSliderY = $directSliderY
+            if (!$directWidthChanged) {
+                $sliderLeft = 0
+                $sliderRight = 0
+                $widthSliderY = 0
+            }
             foreach ($sliderOffset in (140, 150, 160, 170, 180, 190, 200)) {
                 $candidateLeft = $settingsRect.Left + [int][Math]::Round($sliderOffset * $settingsScale)
                 $candidateRight = $candidateLeft + [int][Math]::Round(190 * $settingsScale)
