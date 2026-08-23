@@ -1245,6 +1245,17 @@ try {
 
             # Settings has stable 18px page padding + 24px panel padding, a 110px
             # field-label column, a 200px slider, a 76px numeric field, and a Reset button.
+            Save-Screenshot "settings-visual-discovery.png"
+            [ordered]@{
+                SettingsLeft = $settingsRect.Left
+                SettingsTop = $settingsRect.Top
+                SettingsRight = $settingsRect.Right
+                SettingsBottom = $settingsRect.Bottom
+                SettingsDpi = $settingsDpi
+                SettingsScale = $settingsScale
+                SliderCandidateXOffsets = @(140, 150, 160, 170, 180, 190, 200)
+                SliderCandidateYOffsets = @(200, 212, 224, 236, 248, 260, 272, 284, 296, 308, 320, 332, 344, 356, 368, 380, 392, 404, 416, 428, 440, 452, 464, 476, 488, 500, 512, 524, 536, 548, 560)
+            } | ConvertTo-Json | Set-Content -Encoding utf8 (Join-Path $OutputDirectory "visual-discovery-geometry.json")
             $sliderLeft = 0
             $sliderRight = 0
             $widthSliderY = 0
