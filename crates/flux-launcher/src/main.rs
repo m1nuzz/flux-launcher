@@ -4299,12 +4299,14 @@ fn main() {
     });
     let second_instance_sender_for_callback = second_instance_sender.clone();
     let second_instance_window_op = window_op.clone();
-    app = app.single_instance(SINGLE_INSTANCE_ID, move |_| {
-        // The native windui listener activates the window; queue Show as well so a
-        // tray-hidden startup is made visible before the channel callback is drained.
-        second_instance_window_op.show_window();
-        let _ = second_instance_sender_for_callback.send(());
-    });
+    if !single_instance_disabled {
+        app = app.single_instance(SINGLE_INSTANCE_ID, move |_| {
+            // The native windui listener activates the window; queue Show as well so a
+            // tray-hidden startup is made visible before the channel callback is drained.
+            second_instance_window_op.show_window();
+            let _ = second_instance_sender_for_callback.send(());
+        });
+    }
     app.tray(tray)
         .hide_on_close()
         .hide_on_deactivate()

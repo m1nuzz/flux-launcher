@@ -1115,9 +1115,16 @@ try {
     try {
         Start-Sleep -Seconds 2
         $settingsProcess.Refresh()
-        $settingsHwnd = $settingsProcess.MainWindowHandle
-        if ($settingsHwnd -eq [IntPtr]::Zero) {
-            $settingsHwnd = [FluxWallpaper]::GetForegroundWindow()
+        if ($VisualSettingsSmoke -and $settingsProcess.HasExited) {
+            throw "Visual Settings smoke process exited before creating its Settings window with code $($settingsProcess.ExitCode)."
+        }
+        if ($VisualSettingsSmoke) {
+            $settingsHwnd = Get-LauncherWindowHandle $settingsProcess
+        } else {
+            $settingsHwnd = $settingsProcess.MainWindowHandle
+            if ($settingsHwnd -eq [IntPtr]::Zero) {
+                $settingsHwnd = [FluxWallpaper]::GetForegroundWindow()
+            }
         }
         if ($settingsHwnd -ne [IntPtr]::Zero) {
             $settingsRect = New-Object FluxWallpaper+RECT
