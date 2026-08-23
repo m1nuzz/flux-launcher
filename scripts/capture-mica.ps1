@@ -1481,14 +1481,46 @@ try {
                 throw "Visual Settings reset smoke failed: the native preview did not report logical 420 width and 382 height after Reset clicks."
             }
 
-            # The Visual page owns an explicit Apply dimensions action. After the second
-            # Reset button has focus, one Tab reaches Apply dimensions without depending on
-            # a guessed scroll offset; Enter closes Settings and persists both values.
+            # The Visual page owns an explicit Apply dimensions action. Scroll the
+            # Visual form to its lower action area, then locate the button by observing
+            # the app's own callback marker instead of assuming a focus order that can
+            # vary when the native scroll viewport changes.
             [FluxWallpaper]::SetForegroundWindow($settingsHwnd) | Out-Null
             $shell.AppActivate($settingsProcess.Id) | Out-Null
-            $shell.SendKeys("{TAB}")
-            $shell.SendKeys("{ENTER}")
-            Start-Sleep -Milliseconds 800
+            $scrollX = $settingsRect.Left + [int]($settingsRect.Right - $settingsRect.Left) / 2
+            $scrollY = $settingsRect.Bottom - 48
+            [FluxWallpaper]::SetCursorPos($scrollX, $scrollY) | Out-Null
+            [FluxWallpaper]::mouse_event(0x0800, 0, 0, [uint32]4294965376, [UIntPtr]::Zero)
+            Start-Sleep -Milliseconds 450
+            Save-Screenshot "settings-visual-apply.png"
+            $applyMarkerSeen = $false
+            $applyScanXs = @(
+                ($settingsRect.Left + 90),
+                ($settingsRect.Left + 180),
+                ($settingsRect.Left + 270),
+                ($settingsRect.Left + 360),
+                ($settingsRect.Left + 450),
+                ($settingsRect.Left + 540)
+            )
+            $applyScanYStart = $settingsRect.Bottom - 210
+            $applyScanYEnd = $settingsRect.Bottom - 24
+            for ($applyY = $applyScanYStart; $applyY -le $applyScanYEnd -and !$applyMarkerSeen; $applyY += 12) {
+                foreach ($applyX in $applyScanXs) {
+                    [FluxWallpaper]::SetCursorPos($applyX, $applyY) | Out-Null
+                    [FluxWallpaper]::mouse_event(0x0002, 0, 0, 0, [UIntPtr]::Zero)
+                    [FluxWallpaper]::mouse_event(0x0004, 0, 0, 0, [UIntPtr]::Zero)
+                    Start-Sleep -Milliseconds 80
+                    $applyLog = Get-Content $settingsStderrPath -Raw
+                    if ($applyLog -match "Visual Apply dimensions clicked: 420x382") {
+                        $applyMarkerSeen = $true
+                        break
+                    }
+                }
+            }
+            if (!$applyMarkerSeen) {
+                throw "Visual Apply smoke could not activate the Apply dimensions button after scrolling the Visual form."
+            }
+            Start-Sleep -Milliseconds 1200
             $settingsPath = Join-Path $env:APPDATA "FluxLauncher\settings.json"
             if (!(Test-Path $settingsPath)) {
                 throw "Visual Apply smoke could not find the persisted settings file at $settingsPath."
