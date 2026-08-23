@@ -1245,33 +1245,38 @@ try {
 
             # Settings has stable 18px page padding + 24px panel padding, a 110px
             # field-label column, a 200px slider, a 76px numeric field, and a Reset button.
-            $sliderLeft = $settingsRect.Left + [int][Math]::Round((18 + 24 + 110 + 12) * $settingsScale)
-            $sliderRight = $sliderLeft + [int][Math]::Round(190 * $settingsScale)
-            $previewLog = Get-Content $settingsStderrPath -Raw
+            $sliderLeft = 0
+            $sliderRight = 0
             $widthSliderY = 0
-            foreach ($candidateOffset in @(280, 290, 300, 310, 320, 330, 340, 350, 360, 370, 380, 390)) {
-                $candidateY = $settingsRect.Top + [int][Math]::Round($candidateOffset * $settingsScale)
-                $beforeLog = Get-Content $settingsStderrPath -Raw
-                [FluxWallpaper]::SetCursorPos($sliderLeft, $candidateY) | Out-Null
-                [FluxWallpaper]::mouse_event(0x0002, 0, 0, 0, [UIntPtr]::Zero)
-                for ($step = 0; $step -le 10; $step++) {
-                    $x = $sliderLeft + [int](($sliderRight - $sliderLeft) * $step / 10.0)
-                    [FluxWallpaper]::SetCursorPos($x, $candidateY) | Out-Null
-                    Start-Sleep -Milliseconds 45
-                }
-                [FluxWallpaper]::mouse_event(0x0004, 0, 0, 0, [UIntPtr]::Zero)
-                Start-Sleep -Milliseconds 250
-                $afterCandidateLog = Get-Content $settingsStderrPath -Raw
-                $candidateGeometry = [regex]::Matches(
-                    $afterCandidateLog,
-                    "VisualPreviewChild: GEOMETRY $visualPreviewProcessId (\d+) (\d+) (\d+) (\d+) (\d+)"
-                )
-                foreach ($match in $candidateGeometry) {
-                    if ([int]$match.Groups[1].Value -ne $initialLogicalWidth -and
-                        [int]$match.Groups[2].Value -eq $initialLogicalHeight) {
-                        $widthSliderY = $candidateY
-                        break
+            foreach ($sliderOffset in (140, 150, 160, 170, 180, 190, 200)) {
+                $candidateLeft = $settingsRect.Left + [int][Math]::Round($sliderOffset * $settingsScale)
+                $candidateRight = $candidateLeft + [int][Math]::Round(190 * $settingsScale)
+                foreach ($candidateOffset in (200..560 | Where-Object { $_ % 12 -eq 8 })) {
+                    $candidateY = $settingsRect.Top + [int][Math]::Round($candidateOffset * $settingsScale)
+                    [FluxWallpaper]::SetCursorPos($candidateLeft, $candidateY) | Out-Null
+                    [FluxWallpaper]::mouse_event(0x0002, 0, 0, 0, [UIntPtr]::Zero)
+                    for ($step = 0; $step -le 5; $step++) {
+                        $x = $candidateLeft + [int](($candidateRight - $candidateLeft) * $step / 5.0)
+                        [FluxWallpaper]::SetCursorPos($x, $candidateY) | Out-Null
+                        Start-Sleep -Milliseconds 35
                     }
+                    [FluxWallpaper]::mouse_event(0x0004, 0, 0, 0, [UIntPtr]::Zero)
+                    Start-Sleep -Milliseconds 220
+                    $afterCandidateLog = Get-Content $settingsStderrPath -Raw
+                    $candidateGeometry = [regex]::Matches(
+                        $afterCandidateLog,
+                        "VisualPreviewChild: GEOMETRY $visualPreviewProcessId (\d+) (\d+) (\d+) (\d+) (\d+)"
+                    )
+                    foreach ($match in $candidateGeometry) {
+                        if ([int]$match.Groups[1].Value -ne $initialLogicalWidth -and
+                            [int]$match.Groups[2].Value -eq $initialLogicalHeight) {
+                            $sliderLeft = $candidateLeft
+                            $sliderRight = $candidateRight
+                            $widthSliderY = $candidateY
+                            break
+                        }
+                    }
+                    if ($widthSliderY -ne 0) { break }
                 }
                 if ($widthSliderY -ne 0) { break }
             }
@@ -1280,15 +1285,15 @@ try {
             }
 
             $heightSliderY = 0
-            foreach ($candidateOffset in @(360, 370, 380, 390, 400, 410, 420, 430, 440, 450, 460, 470, 480)) {
+            foreach ($candidateOffset in (300..560 | Where-Object { $_ % 8 -eq 4 })) {
                 $candidateY = $settingsRect.Top + [int][Math]::Round($candidateOffset * $settingsScale)
                 [FluxWallpaper]::SetCursorPos($sliderLeft, $candidateY) | Out-Null
                 [FluxWallpaper]::mouse_event(0x0002, 0, 0, 0, [UIntPtr]::Zero)
-                for ($step = 0; $step -le 10; $step++) {
-                    $fraction = 1.0 - ($step / 10.0)
+                for ($step = 0; $step -le 6; $step++) {
+                    $fraction = 1.0 - ($step / 6.0)
                     $x = $sliderLeft + [int](($sliderRight - $sliderLeft) * $fraction)
                     [FluxWallpaper]::SetCursorPos($x, $candidateY) | Out-Null
-                    Start-Sleep -Milliseconds 45
+                    Start-Sleep -Milliseconds 40
                 }
                 [FluxWallpaper]::mouse_event(0x0004, 0, 0, 0, [UIntPtr]::Zero)
                 Start-Sleep -Milliseconds 250
