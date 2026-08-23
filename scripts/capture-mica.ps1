@@ -1467,18 +1467,26 @@ try {
             # Reset each control through the real button. The generation counter makes
             # a reset dispatch an IPC resize even if the user is already at that value.
             $resetX = $settingsRect.Left + [int][Math]::Round((18 + 24 + 110 + 12 + 200 + 8 + 76 + 8 + 25) * $settingsScale)
-            foreach ($resetY in @($widthSliderY, $heightSliderY)) {
-                [FluxWallpaper]::SetCursorPos($resetX, $resetY) | Out-Null
+            $resetTargets = @(
+                @{ Y = $widthSliderY; Marker = "Visual width reset clicked: 420x" },
+                @{ Y = $heightSliderY; Marker = "Visual height reset clicked: " }
+            )
+            foreach ($resetTarget in $resetTargets) {
+                [FluxWallpaper]::SetCursorPos($resetX, $resetTarget.Y) | Out-Null
                 [FluxWallpaper]::mouse_event(0x0002, 0, 0, 0, [UIntPtr]::Zero)
                 [FluxWallpaper]::mouse_event(0x0004, 0, 0, 0, [UIntPtr]::Zero)
-                Start-Sleep -Milliseconds 450
+                Start-Sleep -Milliseconds 600
+                $resetLog = if (Test-Path $settingsStderrPath) { Get-Content $settingsStderrPath -Raw } else { "" }
+                if ($resetLog -notmatch [regex]::Escape($resetTarget.Marker)) {
+                    throw "Visual Settings reset smoke could not observe callback marker '$($resetTarget.Marker)' at screen y=$($resetTarget.Y)."
+                }
             }
             $previewLog = if (Test-Path $settingsStderrPath) { Get-Content $settingsStderrPath -Raw } else { "" }
             $widthResetSeen = [regex]::IsMatch($previewLog, "VisualPreviewChild: GEOMETRY \d+ 420 \d+ \d+ \d+ \d+")
             $heightResetSeen = [regex]::IsMatch($previewLog, "VisualPreviewChild: GEOMETRY \d+ \d+ 382 \d+ \d+ \d+")
             $visualPreviewResetProbe = $widthResetSeen -and $heightResetSeen
             if (!$visualPreviewResetProbe) {
-                throw "Visual Settings reset smoke failed: the native preview did not report logical 420 width and 382 height after Reset clicks."
+                throw "Visual Settings reset smoke failed: the native preview did not report logical 420 width and 382 height after Reset callbacks."
             }
 
             # The Visual page owns an explicit Apply dimensions action. Scroll the

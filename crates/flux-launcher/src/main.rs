@@ -4217,6 +4217,7 @@ fn main() {
                                         .on_click(move |_| {
                                             let width = DEFAULT_LAUNCHER_WIDTH;
                                             let height = launcher_height.get();
+                                            eprintln!("Visual width reset clicked: {}x{}", width, height);
                                             launcher_width.set(width);
                                             launcher_width_input.set(width.to_string());
                                             launcher_width_slider.set(dimension_slider_fraction(
@@ -4261,6 +4262,7 @@ fn main() {
                                         .on_click(move |_| {
                                             let width = launcher_width.get();
                                             let height = DEFAULT_LAUNCHER_HEIGHT;
+                                            eprintln!("Visual height reset clicked: {}x{}", width, height);
                                             launcher_height.set(height);
                                             launcher_height_input.set(height.to_string());
                                             launcher_height_slider.set(dimension_slider_fraction(
