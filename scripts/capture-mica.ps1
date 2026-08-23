@@ -855,9 +855,14 @@ try {
         $tracePreview = ($enterTraceLines -join ' | ')
         throw "Enter launch/hide ordering failed: dispatch_before_hide=$enterLaunchDispatchBeforeHideProbe, hide_dispatch_ms=$enterHideDispatchMilliseconds, budget_ms=$EnterHideDispatchBudgetMilliseconds, trace=$tracePreview."
     }
-    # Restore the launcher for the remaining independent probes.
-    [FluxWallpaper]::SendMessage($launcherHandle, $wmHotkey, [UIntPtr]::Zero, [IntPtr]::Zero) | Out-Null
-    Start-Sleep -Milliseconds 650
+    # Restore the launcher for the remaining independent probes. The Enter hide
+    # callback and the next hotkey dispatch can cross on a busy CI compositor, so
+    # retry the real toggle within a bounded window instead of relying on one sleep.
+    $restoreDeadline = (Get-Date).AddSeconds(5)
+    while (![FluxWallpaper]::IsWindowVisible($launcherHandle) -and (Get-Date) -lt $restoreDeadline) {
+        [FluxWallpaper]::SendMessage($launcherHandle, $wmHotkey, [UIntPtr]::Zero, [IntPtr]::Zero) | Out-Null
+        Start-Sleep -Milliseconds 650
+    }
     if (![FluxWallpaper]::IsWindowVisible($launcherHandle)) {
         throw "Unable to restore launcher after Enter hide probe."
     }
