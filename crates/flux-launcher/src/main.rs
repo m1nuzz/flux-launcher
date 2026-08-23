@@ -2445,9 +2445,10 @@ fn main() {
     .visible_signal(action_mode);
 
     // The HWND itself owns the system Acrylic surface. Keep this root transparent so
-    // the blur fills the complete 420px client area instead of becoming an inset card.
+    // the blur fills the complete client area instead of becoming an inset card. The
+    // content must match the live window width so result rows expand with resizing.
     let launcher_content = Element::col()
-        .width(364)
+        .width_match()
         .padding(10)
         .spacing(4)
         .child(search_box)
