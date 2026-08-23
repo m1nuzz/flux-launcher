@@ -1303,37 +1303,39 @@ try {
                 $sliderRight = 0
                 $widthSliderY = 0
             }
-            foreach ($sliderOffset in (140, 150, 160, 170, 180, 190, 200)) {
-                $candidateLeft = $settingsRect.Left + [int][Math]::Round($sliderOffset * $settingsScale)
-                $candidateRight = $candidateLeft + [int][Math]::Round(190 * $settingsScale)
-                foreach ($candidateOffset in (200..560 | Where-Object { $_ % 12 -eq 8 })) {
-                    $candidateY = $settingsRect.Top + [int][Math]::Round($candidateOffset * $settingsScale)
-                    [FluxWallpaper]::SetCursorPos($candidateLeft, $candidateY) | Out-Null
-                    [FluxWallpaper]::mouse_event(0x0002, 0, 0, 0, [UIntPtr]::Zero)
-                    for ($step = 0; $step -le 5; $step++) {
-                        $x = $candidateLeft + [int](($candidateRight - $candidateLeft) * $step / 5.0)
-                        [FluxWallpaper]::SetCursorPos($x, $candidateY) | Out-Null
-                        Start-Sleep -Milliseconds 35
-                    }
-                    [FluxWallpaper]::mouse_event(0x0004, 0, 0, 0, [UIntPtr]::Zero)
-                    Start-Sleep -Milliseconds 220
-                    $afterCandidateLog = Get-Content $settingsStderrPath -Raw
-                    $candidateGeometry = [regex]::Matches(
-                        $afterCandidateLog,
-                        "VisualPreviewChild: GEOMETRY $visualPreviewProcessId (\d+) (\d+) (\d+) (\d+) (\d+)"
-                    )
-                    foreach ($match in $candidateGeometry) {
-                        if ([int]$match.Groups[1].Value -ne $initialLogicalWidth -and
-                            [int]$match.Groups[2].Value -eq $initialLogicalHeight) {
-                            $sliderLeft = $candidateLeft
-                            $sliderRight = $candidateRight
-                            $widthSliderY = $candidateY
-                            break
+            if (!$directWidthChanged) {
+                foreach ($sliderOffset in (140, 150, 160, 170, 180, 190, 200)) {
+                    $candidateLeft = $settingsRect.Left + [int][Math]::Round($sliderOffset * $settingsScale)
+                    $candidateRight = $candidateLeft + [int][Math]::Round(190 * $settingsScale)
+                    foreach ($candidateOffset in (200..560 | Where-Object { $_ % 12 -eq 8 })) {
+                        $candidateY = $settingsRect.Top + [int][Math]::Round($candidateOffset * $settingsScale)
+                        [FluxWallpaper]::SetCursorPos($candidateLeft, $candidateY) | Out-Null
+                        [FluxWallpaper]::mouse_event(0x0002, 0, 0, 0, [UIntPtr]::Zero)
+                        for ($step = 0; $step -le 5; $step++) {
+                            $x = $candidateLeft + [int](($candidateRight - $candidateLeft) * $step / 5.0)
+                            [FluxWallpaper]::SetCursorPos($x, $candidateY) | Out-Null
+                            Start-Sleep -Milliseconds 35
                         }
+                        [FluxWallpaper]::mouse_event(0x0004, 0, 0, 0, [UIntPtr]::Zero)
+                        Start-Sleep -Milliseconds 220
+                        $afterCandidateLog = Get-Content $settingsStderrPath -Raw
+                        $candidateGeometry = [regex]::Matches(
+                            $afterCandidateLog,
+                            "VisualPreviewChild: GEOMETRY $visualPreviewProcessId (\d+) (\d+) (\d+) (\d+) (\d+)"
+                        )
+                        foreach ($match in $candidateGeometry) {
+                            if ([int]$match.Groups[1].Value -ne $initialLogicalWidth -and
+                                [int]$match.Groups[2].Value -eq $initialLogicalHeight) {
+                                $sliderLeft = $candidateLeft
+                                $sliderRight = $candidateRight
+                                $widthSliderY = $candidateY
+                                break
+                            }
+                        }
+                        if ($widthSliderY -ne 0) { break }
                     }
                     if ($widthSliderY -ne 0) { break }
                 }
-                if ($widthSliderY -ne 0) { break }
             }
             if ($widthSliderY -eq 0) {
                 throw "Visual Settings smoke could not identify the width slider from native preview geometry telemetry."
