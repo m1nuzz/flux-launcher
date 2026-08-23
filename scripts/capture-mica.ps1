@@ -7,6 +7,7 @@ param(
 
     [switch]$ForceTranslucentFallback,
     [switch]$TraySettingsSmoke,
+    [switch]$VisualSettingsSmoke,
     [switch]$PointerInteractionSmoke,
     [switch]$EverythingMissingSmoke,
     [switch]$RecycleBinSmoke,
@@ -1087,12 +1088,25 @@ try {
         $env:FLUX_OPEN_SETTINGS = "1"
         Remove-Item Env:FLUX_SMOKE_TRAY_SETTINGS -ErrorAction SilentlyContinue
     }
+    if ($VisualSettingsSmoke) {
+        # The application selects the Visual tab before first paint so this smoke
+        # can drag the real fixed-track controls without coordinate-driven tab setup.
+        $env:FLUX_SMOKE_SETTINGS_TAB = "1"
+    } else {
+        Remove-Item Env:FLUX_SMOKE_SETTINGS_TAB -ErrorAction SilentlyContinue
+    }
     $settingsStdoutPath = Join-Path $OutputDirectory "settings.stdout.log"
     $settingsStderrPath = Join-Path $OutputDirectory "settings.stderr.log"
     $settingsProcess = Start-Process -FilePath $Executable -PassThru -RedirectStandardOutput $settingsStdoutPath -RedirectStandardError $settingsStderrPath
     $settingsWindowHeight = 0
     $settingsWindowWidth = 0
     $settingsWindowFound = $false
+    $settingsCenterBeforeDragX = 0
+    $settingsCenterBeforeDragY = 0
+    $settingsCenterAfterDragX = 0
+    $settingsCenterAfterDragY = 0
+    $settingsCenterDelta = 0
+    $visualSettingsSliderProbe = $false
     try {
         Start-Sleep -Seconds 2
         $settingsProcess.Refresh()
@@ -1108,6 +1122,57 @@ try {
                 $settingsWindowFound = $true
             }
         }
+        if ($VisualSettingsSmoke) {
+            if (!$settingsWindowFound) {
+                throw "Visual Settings smoke could not find the Settings window."
+            }
+            $settingsCenterBeforeDragX = [int](($settingsRect.Left + $settingsRect.Right) / 2)
+            $settingsCenterBeforeDragY = [int](($settingsRect.Top + $settingsRect.Bottom) / 2)
+            if ($settingsWindowWidth -lt 680 -or $settingsWindowHeight -lt 480) {
+                throw "Visual Settings smoke found an undersized Settings canvas: ${settingsWindowWidth}x${settingsWindowHeight}."
+            }
+            [FluxWallpaper]::SetForegroundWindow($settingsHwnd) | Out-Null
+            Start-Sleep -Milliseconds 350
+
+            # Settings has 18px page padding + 24px panel padding. Form labels use
+            # the stable 110px column and 12px gap; sliders themselves are fixed
+            # at 200px. Drag both controls across their full tracks.
+            $sliderLeft = $settingsRect.Left + 18 + 24 + 110 + 12
+            $sliderRight = $sliderLeft + 190
+            $widthSliderY = $settingsRect.Top + 280
+            $heightSliderY = $settingsRect.Top + 360
+            foreach ($sliderY in @($widthSliderY, $heightSliderY)) {
+                [FluxWallpaper]::SetCursorPos($sliderLeft, $sliderY) | Out-Null
+                [FluxWallpaper]::mouse_event(0x0002, 0, 0, 0, [UIntPtr]::Zero)
+                for ($step = 1; $step -le 10; $step++) {
+                    $x = $sliderLeft + [int](($sliderRight - $sliderLeft) * $step / 10)
+                    [FluxWallpaper]::SetCursorPos($x, $sliderY) | Out-Null
+                    Start-Sleep -Milliseconds 35
+                }
+                [FluxWallpaper]::mouse_event(0x0004, 0, 0, 0, [UIntPtr]::Zero)
+                Start-Sleep -Milliseconds 250
+            }
+            $afterDragRect = New-Object FluxWallpaper+RECT
+            if (![FluxWallpaper]::GetWindowRect($settingsHwnd, [ref]$afterDragRect)) {
+                throw "Visual Settings smoke could not read the Settings window after slider drags."
+            }
+            $settingsCenterAfterDragX = [int](($afterDragRect.Left + $afterDragRect.Right) / 2)
+            $settingsCenterAfterDragY = [int](($afterDragRect.Top + $afterDragRect.Bottom) / 2)
+            $settingsCenterDelta = [Math]::Max(
+                [Math]::Abs($settingsCenterAfterDragX - $settingsCenterBeforeDragX),
+                [Math]::Abs($settingsCenterAfterDragY - $settingsCenterBeforeDragY)
+            )
+            $afterDragWidth = $afterDragRect.Right - $afterDragRect.Left
+            $afterDragHeight = $afterDragRect.Bottom - $afterDragRect.Top
+            $visualSettingsSliderProbe =
+                $settingsCenterDelta -le 2 -and
+                $afterDragWidth -eq $settingsWindowWidth -and
+                $afterDragHeight -eq $settingsWindowHeight
+            if (!$visualSettingsSliderProbe) {
+                throw "Visual Settings slider smoke failed: center delta=${settingsCenterDelta}px, size=${afterDragWidth}x${afterDragHeight}, initial=${settingsWindowWidth}x${settingsWindowHeight}."
+            }
+            Save-Screenshot "settings-visual-sliders.png"
+        }
         Save-Screenshot "settings-panel.png"
         if ($EverythingMissingSmoke) {
             Save-Screenshot "everything-missing-settings.png"
@@ -1119,6 +1184,7 @@ try {
         }
         Remove-Item Env:FLUX_OPEN_SETTINGS -ErrorAction SilentlyContinue
         Remove-Item Env:FLUX_SMOKE_TRAY_SETTINGS -ErrorAction SilentlyContinue
+        Remove-Item Env:FLUX_SMOKE_SETTINGS_TAB -ErrorAction SilentlyContinue
     }
 
     $os = Get-CimInstance Win32_OperatingSystem
@@ -1167,6 +1233,10 @@ try {
         SettingsWindowHeight = $settingsWindowHeight
         SettingsWindowWidth = $settingsWindowWidth
         SettingsPanelProbe = $settingsWindowFound -and ($settingsWindowHeight -ge 400) -and ($settingsWindowWidth -ge 680)
+        VisualSettingsSliderProbe = (!$VisualSettingsSmoke) -or $visualSettingsSliderProbe
+        SettingsCenterBeforeDrag = [ordered]@{ X = $settingsCenterBeforeDragX; Y = $settingsCenterBeforeDragY }
+        SettingsCenterAfterDrag = [ordered]@{ X = $settingsCenterAfterDragX; Y = $settingsCenterAfterDragY }
+        SettingsCenterDeltaPixels = $settingsCenterDelta
         EverythingAutoEnableProbe = $true
         EverythingStartupProbe = $everythingStartupProbe
         EverythingMissingStateProbe = [bool]$EverythingMissingSmoke

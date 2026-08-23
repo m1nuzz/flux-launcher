@@ -108,7 +108,8 @@ jobs:
             -QueryResponsivenessSmoke `
             -FocusToggleSmoke `
             -DeactivationClickSmoke `
-            -FolderLaunchSmoke
+            -FolderLaunchSmoke `
+            -VisualSettingsSmoke
 
       - name: Sign stable launcher binaries before packaging
         if: inputs.release_channel == 'stable'

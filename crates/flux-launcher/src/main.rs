@@ -144,7 +144,10 @@ fn live_preview_geometry(
     launcher_height: i32,
 ) -> (i32, i32) {
     if settings_visible {
-        (launcher_width, launcher_height)
+        // Visual values preview the launcher after Apply. Keep the Settings canvas at
+        // its stable, centered size while the slider is being dragged; resizing this
+        // same HWND would move the pointer target and make the panel drift or clip.
+        (SETTINGS_WINDOW_WIDTH, SETTINGS_WINDOW_HEIGHT)
     } else {
         launcher_window_geometry_with_sizes(false, show_results, launcher_width, launcher_height)
     }
@@ -186,9 +189,9 @@ fn apply_launcher_preview_size(
     let height = i32::from(height.clamp(MIN_LAUNCHER_HEIGHT, MAX_LAUNCHER_HEIGHT));
     let (target_width, target_height) =
         live_preview_geometry(settings_visible, show_results, width, height);
-    // Resize the preview immediately, but keep the slider's own track fixed and
-    // avoid recentering while the pointer is dragging. Apply settings recenters
-    // the launcher after Settings closes.
+    // Keep the Settings canvas fixed while editing visual values. In launcher mode,
+    // apply the selected dimensions immediately; Apply settings recenters the launcher
+    // after Settings closes.
     size.set(target_width, target_height);
     if !settings_visible {
         if let Ok(settings) = settings.read() {
@@ -2075,7 +2078,13 @@ fn main() {
     let game_mode = signal(settings.game_mode);
     let game_mode_status = signal(game_mode_label(settings.game_mode));
     let settings_visible = signal(std::env::var_os("FLUX_OPEN_SETTINGS").is_some());
-    let settings_tab = signal(0_usize);
+    let settings_tab = signal(
+        std::env::var("FLUX_SMOKE_SETTINGS_TAB")
+            .ok()
+            .and_then(|value| value.parse::<usize>().ok())
+            .filter(|tab| *tab < 4)
+            .unwrap_or(0),
+    );
     let tray_settings_smoke_pending = Rc::new(Cell::new(
         std::env::var_os("FLUX_SMOKE_TRAY_SETTINGS").is_some(),
     ));
@@ -2203,9 +2212,11 @@ fn main() {
         .height(28)
         .padding_xy(4, 2)
         .spacing(8)
+        .child(Element::flex_spacer())
         .child(action_hint("↵", "Open"))
         .child(action_hint("Ctrl + R", "Run as admin"))
         .child(action_hint("Alt + Enter", "Open file location"))
+        .child(Element::flex_spacer())
         .visible_when(move || show_results.get() && !action_mode.get());
 
     let result_list_body = Element::host_signal(result_source, move |result| {
@@ -2491,6 +2502,7 @@ fn main() {
     let mut last_icon_generation = icon_refresh_generation.get();
     let mut last_launcher_width = launcher_width.get();
     let mut last_launcher_height = launcher_height.get();
+    let mut last_settings_visible = settings_visible.get();
     let mut last_query = String::new();
     let mut sequence = 0_u64;
 
@@ -4309,6 +4321,19 @@ fn main() {
         .on_interval(SEARCH_INTERVAL, move |ctx| {
             let current_width = width_for_interval.get();
             let current_height = height_for_interval.get();
+            let settings_is_visible = settings_visible_for_interval.get();
+            if settings_is_visible && !last_settings_visible {
+                if let Ok(settings) = settings_for_interval_geometry.read() {
+                    request_monitor_position(
+                        &position_for_interval,
+                        settings.monitor_preference,
+                        SETTINGS_WINDOW_WIDTH,
+                        SETTINGS_WINDOW_HEIGHT,
+                    );
+                }
+                size_for_interval.set(SETTINGS_WINDOW_WIDTH, SETTINGS_WINDOW_HEIGHT);
+            }
+            last_settings_visible = settings_is_visible;
             let slider_width = dimension_from_slider(
                 width_slider_for_interval.get(),
                 MIN_LAUNCHER_WIDTH,
@@ -4976,8 +5001,17 @@ mod tests {
     }
 
     #[test]
-    fn live_preview_resizes_without_repositioning_settings_canvas() {
-        assert_eq!(live_preview_geometry(true, true, 640, 520), (640, 520));
+    fn settings_canvas_stays_fixed_while_visual_values_change() {
+        // This is the geometry contract used by the Windows slider smoke: changing
+        // either visual value must not resize or drift the Settings HWND itself.
+        assert_eq!(
+            live_preview_geometry(true, true, 640, 520),
+            (super::SETTINGS_WINDOW_WIDTH, super::SETTINGS_WINDOW_HEIGHT)
+        );
+        assert_eq!(
+            live_preview_geometry(true, false, 380, 300),
+            (super::SETTINGS_WINDOW_WIDTH, super::SETTINGS_WINDOW_HEIGHT)
+        );
         assert_eq!(live_preview_geometry(false, true, 640, 520), (640, 520));
         assert_eq!(
             live_preview_geometry(false, false, 640, 520),
