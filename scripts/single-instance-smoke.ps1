@@ -90,6 +90,34 @@ function Wait-FluxReady([System.Diagnostics.Process]$Process) {
     throw "Timed out waiting for the first Flux window to become ready"
 }
 
+function Start-FluxAndWaitReady {
+    $lastError = $null
+    for ($attempt = 1; $attempt -le 2; $attempt++) {
+        $candidate = Start-Process -FilePath $Executable -PassThru
+        try {
+            Wait-FluxReady $candidate
+            if ($attempt -gt 1) {
+                Write-Host "First Flux launch became ready on bounded retry attempt $attempt."
+            }
+            return $candidate
+        }
+        catch {
+            $lastError = $_
+            $candidate.Refresh()
+            $exitCode = if ($candidate.HasExited) { $candidate.ExitCode } else { "running" }
+            Write-Host "First Flux launch attempt $attempt did not become ready; exit_code=$exitCode. Retrying once on this Windows runner."
+            if (!$candidate.HasExited) {
+                Stop-Process -Id $candidate.Id -Force -ErrorAction SilentlyContinue
+            }
+            Settle-FluxProcessesGone
+            if ($attempt -lt 2) {
+                Start-Sleep -Seconds 1
+            }
+        }
+    }
+    throw $lastError
+}
+
 function Wait-FluxSecondaryProcessesSettled([DateTime]$StartTime, [int]$AllowedProcessId) {
     # A runner can briefly surface a hidden process while a previous launch is
     # finishing its named-mutex/WM_COPYDATA handoff. Do not hide a real duplicate:
@@ -141,8 +169,7 @@ $initialEverything = Get-EverythingProcesses
 $first = $null
 $second = $null
 try {
-    $first = Start-Process -FilePath $Executable -PassThru
-    Wait-FluxReady $first
+    $first = Start-FluxAndWaitReady
     $firstStartTime = $first.StartTime
 
     # The first launch must settle to one live process. A transient hidden process
