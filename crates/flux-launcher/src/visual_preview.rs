@@ -163,6 +163,10 @@ impl PreviewProcess {
             .map_err(|error| error.to_string())
     }
 
+    pub(crate) fn pid(&self) -> u32 {
+        self.pid
+    }
+
     pub(crate) fn is_alive(&mut self) -> bool {
         self.child
             .try_wait()
@@ -171,9 +175,14 @@ impl PreviewProcess {
     }
 
     pub(crate) fn stop(&mut self) {
-        let _ = writeln!(self.stdin, "close").and_then(|_| self.stdin.flush());
-        let _ = self.child.kill();
-        let _ = self.child.wait();
+        eprintln!("Stopping visual preview process: pid={}", self.pid);
+        let close_result = writeln!(self.stdin, "close").and_then(|_| self.stdin.flush());
+        let kill_result = self.child.kill();
+        let wait_result = self.child.wait();
+        eprintln!(
+            "Stopped visual preview process: pid={} close={:?} kill={:?} wait={:?}",
+            self.pid, close_result, kill_result, wait_result
+        );
     }
 }
 

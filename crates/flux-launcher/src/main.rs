@@ -4343,6 +4343,7 @@ fn main() {
                                     "Current launcher client area: {} × {} logical px (DIP)",
                                     width, height
                                 ));
+                                eprintln!("Visual Apply dimensions clicked: {}x{}", width, height);
                                 settings_visible_for_visual_apply.set(false);
                                 let target_height = if show_results_for_visual_apply.get() {
                                     i32::from(height)
@@ -4491,7 +4492,11 @@ fn main() {
                         Err(error) => eprintln!("Could not start visual preview: {error}"),
                     }
                 }
-            } else if visual_preview_process.is_some() {
+            } else if let Some(preview) = visual_preview_process.as_mut() {
+                eprintln!(
+                    "Visual preview closing because Settings/Visual is hidden: pid={}",
+                    preview.pid()
+                );
                 visual_preview_process.take();
                 last_visual_preview_request = None;
             }
