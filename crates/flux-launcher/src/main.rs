@@ -32,7 +32,8 @@ use everything::{EverythingResponse, EverythingWorker, InstallationState};
 use flux_core::{
     history_results, rank_results_with_priorities, should_suppress_activation, HotkeyConfig,
     MonitorPreference, PriorityEntry, ResultKind, ResultSource, SearchModel, SearchResult,
-    Settings,
+    Settings, DEFAULT_LAUNCHER_HEIGHT, DEFAULT_LAUNCHER_WIDTH, MAX_LAUNCHER_HEIGHT,
+    MAX_LAUNCHER_WIDTH, MIN_LAUNCHER_HEIGHT, MIN_LAUNCHER_WIDTH,
 };
 use plugins::{
     native_plugin_install_path, FlowPluginWorker, NativePluginQueryResponse, NativePluginWorker,
@@ -46,14 +47,11 @@ use windui::render::{Canvas, Paint};
 
 const CURRENT_VERSION: &str = env!("CARGO_PKG_VERSION");
 const SINGLE_INSTANCE_ID: &str = "m1nuzz.flux-launcher";
-const WINDOW_WIDTH: i32 = 420;
 const SETTINGS_WINDOW_WIDTH: i32 = 720;
 const COMPACT_WINDOW_HEIGHT: i32 = 72;
 // Keep the result palette compact like the reference while exposing a six-row
 // viewport; additional results remain available through the native wheel scroll.
-const EXPANDED_WINDOW_HEIGHT: i32 = 382;
 const ACTION_WINDOW_HEIGHT: i32 = 250;
-const RESULT_VIEWPORT_HEIGHT: i32 = 270;
 const SETTINGS_WINDOW_HEIGHT: i32 = 520;
 const LAUNCHER_FONT_FAMILY: &str = "Segoe UI Variable";
 const SEARCH_INTERVAL: Duration = Duration::from_millis(40);
@@ -112,13 +110,73 @@ fn request_scroll(scroll_pending: Signal<bool>) {
     scroll_pending.set(true);
 }
 
+#[cfg(test)]
 fn launcher_window_geometry(settings_visible: bool, show_results: bool) -> (i32, i32) {
+    launcher_window_geometry_with_sizes(
+        settings_visible,
+        show_results,
+        DEFAULT_LAUNCHER_WIDTH as i32,
+        DEFAULT_LAUNCHER_HEIGHT as i32,
+    )
+}
+
+fn launcher_window_geometry_with_sizes(
+    settings_visible: bool,
+    show_results: bool,
+    launcher_width: i32,
+    launcher_height: i32,
+) -> (i32, i32) {
     if settings_visible {
         (SETTINGS_WINDOW_WIDTH, SETTINGS_WINDOW_HEIGHT)
     } else if show_results {
-        (WINDOW_WIDTH, EXPANDED_WINDOW_HEIGHT)
+        (launcher_width, launcher_height)
     } else {
-        (WINDOW_WIDTH, COMPACT_WINDOW_HEIGHT)
+        (launcher_width, COMPACT_WINDOW_HEIGHT)
+    }
+}
+
+fn dimension_slider_fraction(value: u16, min: u16, max: u16) -> f32 {
+    if max <= min {
+        return 0.0;
+    }
+    (value.clamp(min, max) - min) as f32 / (max - min) as f32
+}
+
+fn dimension_from_slider(value: f32, min: u16, max: u16) -> u16 {
+    if max <= min {
+        return min;
+    }
+    let span = (max - min) as f32;
+    (min as f32 + value.clamp(0.0, 1.0) * span).round() as u16
+}
+
+fn parse_dimension_input(value: &str, min: u16, max: u16) -> Option<u16> {
+    value
+        .trim()
+        .parse::<u16>()
+        .ok()
+        .map(|value| value.clamp(min, max))
+}
+
+fn apply_launcher_preview_size(
+    size: &WindowSizeHandle,
+    position: &WindowPositionHandle,
+    settings: &Arc<RwLock<Settings>>,
+    width: u16,
+    height: u16,
+    settings_visible: bool,
+    show_results: bool,
+) {
+    let width = i32::from(width.clamp(MIN_LAUNCHER_WIDTH, MAX_LAUNCHER_WIDTH));
+    let height = i32::from(height.clamp(MIN_LAUNCHER_HEIGHT, MAX_LAUNCHER_HEIGHT));
+    let target_height = if settings_visible {
+        height
+    } else {
+        launcher_window_geometry_with_sizes(false, show_results, width, height).1
+    };
+    size.set(width, target_height);
+    if let Ok(settings) = settings.read() {
+        request_monitor_position(position, settings.monitor_preference, width, target_height);
     }
 }
 
@@ -2014,6 +2072,24 @@ fn main() {
     let switch_to_english_layout = signal(settings.switch_to_english_layout);
     let use_system_accent = signal(settings.use_system_accent);
     let custom_selection_color = signal(selection_color_hex(settings.custom_selection_color));
+    let launcher_width = signal(settings.launcher_width);
+    let launcher_height = signal(settings.launcher_height);
+    let launcher_width_input = signal(settings.launcher_width.to_string());
+    let launcher_height_input = signal(settings.launcher_height.to_string());
+    let launcher_width_slider = signal(dimension_slider_fraction(
+        settings.launcher_width,
+        MIN_LAUNCHER_WIDTH,
+        MAX_LAUNCHER_WIDTH,
+    ));
+    let launcher_height_slider = signal(dimension_slider_fraction(
+        settings.launcher_height,
+        MIN_LAUNCHER_HEIGHT,
+        MAX_LAUNCHER_HEIGHT,
+    ));
+    let launcher_preview_text = signal(format!(
+        "Current launcher size: {} × {} px",
+        settings.launcher_width, settings.launcher_height
+    ));
     let clear_query_on_activation = signal(settings.clear_query_on_activation);
     let start_with_windows = signal(settings.start_with_windows);
     let auto_enable_everything = signal(settings.auto_enable_everything);
@@ -2110,14 +2186,7 @@ fn main() {
         .child(action_hint("↵", "Open"))
         .child(action_hint("Ctrl + R", "Run as admin"))
         .child(action_hint("Alt + Enter", "Open file location"))
-        .child(
-            Element::label_signal(status)
-                .font_size(9.0)
-                .fg(Color::rgba(210, 224, 244, 175))
-                .max_lines(1)
-                .truncate(Truncate::End)
-                .weight(1.0),
-        )
+        .child(Element::leaf().weight(1.0))
         .visible_when(move || show_results.get() && !action_mode.get());
 
     let result_list_body = Element::host_signal(result_source, move |result| {
@@ -2148,7 +2217,7 @@ fn main() {
     .padding_edges(6, 6, 18, 6);
     let result_list = Element::scroll()
         .width_match()
-        .height(RESULT_VIEWPORT_HEIGHT)
+        .weight(1.0)
         .child(result_list_body)
         .visible_when(move || show_results.get() && !action_mode.get());
 
@@ -2343,7 +2412,10 @@ fn main() {
                         }
                         action_mode_for_rows.set(false);
                         if let Some(handle) = action_window_slot.borrow().as_ref() {
-                            handle.set(WINDOW_WIDTH, EXPANDED_WINDOW_HEIGHT);
+                            handle.set(
+                                i32::from(launcher_width.get()),
+                                i32::from(launcher_height.get()),
+                            );
                         }
                     }
                 })
@@ -2356,7 +2428,8 @@ fn main() {
     // The HWND itself owns the system Acrylic surface. Keep this root transparent so
     // the blur fills the complete 420px client area instead of becoming an inset card.
     let launcher_content = Element::col()
-        .width(364)
+        .width_match()
+        .height_match()
         .padding(10)
         .spacing(4)
         .child(search_box)
@@ -2372,6 +2445,13 @@ fn main() {
 
     let query_for_interval = query;
     let results_for_interval = results;
+    let width_for_interval = launcher_width;
+    let height_for_interval = launcher_height;
+    let width_input_for_interval = launcher_width_input;
+    let height_input_for_interval = launcher_height_input;
+    let width_slider_for_interval = launcher_width_slider;
+    let height_slider_for_interval = launcher_height_slider;
+    let preview_text_for_interval = launcher_preview_text;
     let icon_refresh_generation_for_interval = icon_refresh_generation;
     let status_for_interval = status;
     let show_results_for_interval = show_results;
@@ -2390,6 +2470,8 @@ fn main() {
     let settings_visible_for_interval = settings_visible;
     let tray_settings_smoke_pending_for_interval = Rc::clone(&tray_settings_smoke_pending);
     let mut last_icon_generation = icon_refresh_generation.get();
+    let mut last_launcher_width = launcher_width.get();
+    let mut last_launcher_height = launcher_height.get();
     let mut last_query = String::new();
     let mut sequence = 0_u64;
 
@@ -2402,7 +2484,7 @@ fn main() {
     let initial_width = if settings_at_start {
         SETTINGS_WINDOW_WIDTH
     } else {
-        WINDOW_WIDTH
+        launcher_width.get() as i32
     };
     let window_icon = tray_icon();
     let mut app =
@@ -2414,6 +2496,8 @@ fn main() {
     }
     let window_size = app.window_size_handle();
     let window_position = app.window_position_handle();
+    let position_for_interval = window_position.clone();
+    let settings_for_interval_geometry = Arc::clone(&shared_settings);
     let window_op: WindowOpHandle = app.window_op_handle();
     let cursor_visibility: CursorVisibilityHandle = app.cursor_visibility_handle();
     let update_status_for_channel = update_status;
@@ -2786,13 +2870,19 @@ fn main() {
                 action_items_for_activation.set(Vec::new());
                 inline_completion_for_activation.set(String::new());
                 scroll_request_for_activation.set(false);
-                let (compact_width, compact_height) =
-                    launcher_window_geometry(settings_visible_for_activation.get(), false);
+                let (compact_width, compact_height) = launcher_window_geometry_with_sizes(
+                    settings_visible_for_activation.get(),
+                    false,
+                    i32::from(launcher_width.get()),
+                    i32::from(launcher_height.get()),
+                );
                 size_for_activation.set(compact_width, compact_height);
             }
-            let (width, height) = launcher_window_geometry(
+            let (width, height) = launcher_window_geometry_with_sizes(
                 settings_visible_for_activation.get(),
                 show_results_for_activation.get(),
+                i32::from(launcher_width.get()),
+                i32::from(launcher_height.get()),
             );
             request_monitor_position(
                 &position_for_activation,
@@ -2921,7 +3011,10 @@ fn main() {
             );
             results_for_keys.set(filtered);
             show_results_for_keys.set(true);
-            size_for_keys.set(WINDOW_WIDTH, EXPANDED_WINDOW_HEIGHT);
+            size_for_keys.set(
+                i32::from(launcher_width.get()),
+                i32::from(launcher_height.get()),
+            );
             return true;
         }
         let query = query_for_keys.get();
@@ -3049,7 +3142,10 @@ fn main() {
                 Key::Left | Key::Escape => {
                     action_mode_for_keys.set(false);
                     action_index_for_keys.set(0);
-                    size_for_keys.set(WINDOW_WIDTH, EXPANDED_WINDOW_HEIGHT);
+                    size_for_keys.set(
+                        i32::from(launcher_width.get()),
+                        i32::from(launcher_height.get()),
+                    );
                     return true;
                 }
                 Key::Enter | Key::Space => {
@@ -3103,7 +3199,10 @@ fn main() {
                         }
                     }
                     action_mode_for_keys.set(false);
-                    size_for_keys.set(WINDOW_WIDTH, EXPANDED_WINDOW_HEIGHT);
+                    size_for_keys.set(
+                        i32::from(launcher_width.get()),
+                        i32::from(launcher_height.get()),
+                    );
                     return true;
                 }
                 _ => return true,
@@ -3164,7 +3263,7 @@ fn main() {
                         action_index_for_keys.set(0);
                         action_mode_for_keys.set(true);
                         show_results_for_keys.set(true);
-                        size_for_keys.set(WINDOW_WIDTH, ACTION_WINDOW_HEIGHT);
+                        size_for_keys.set(i32::from(launcher_width.get()), ACTION_WINDOW_HEIGHT);
                     }
                 }
                 true
@@ -3237,7 +3336,7 @@ fn main() {
         .on_left_click(move |ctx| {
             settings_visible_for_left_click.set(false);
             let height = if show_results_for_left_click.get() {
-                EXPANDED_WINDOW_HEIGHT
+                launcher_height.get() as i32
             } else {
                 COMPACT_WINDOW_HEIGHT
             };
@@ -3245,18 +3344,18 @@ fn main() {
                 request_monitor_position(
                     &position_for_left_click,
                     settings.monitor_preference,
-                    WINDOW_WIDTH,
+                    launcher_width.get() as i32,
                     height,
                 );
             }
-            size_for_left_click.set(WINDOW_WIDTH, height);
+            size_for_left_click.set(launcher_width.get() as i32, height);
             ctx.show_window();
         })
         .menu(vec![
             TrayMenuItem::item("Show launcher", move |ctx| {
                 settings_visible_for_tray.set(false);
                 let height = if show_results_for_tray.get() {
-                    EXPANDED_WINDOW_HEIGHT
+                    launcher_height.get() as i32
                 } else {
                     COMPACT_WINDOW_HEIGHT
                 };
@@ -3264,11 +3363,11 @@ fn main() {
                     request_monitor_position(
                         &position_for_tray,
                         settings.monitor_preference,
-                        WINDOW_WIDTH,
+                        launcher_width.get() as i32,
                         height,
                     );
                 }
-                size_for_tray.set(WINDOW_WIDTH, height);
+                size_for_tray.set(launcher_width.get() as i32, height);
                 ctx.show_window();
             }),
             TrayMenuItem::item("Settings", move |ctx| {
@@ -3491,7 +3590,7 @@ fn main() {
                         ),
                 )
                 .child(Element::segmented(
-                    vec!["General", "Priorities", "Plugins"],
+                    vec!["General", "Visual", "Priorities", "Plugins"],
                     settings_tab,
                 ))
                 .child(
@@ -3500,7 +3599,7 @@ fn main() {
                         .on_click(move |_| {
                             settings_visible.set(false);
                             let height = if show_results_for_back.get() {
-                                EXPANDED_WINDOW_HEIGHT
+                                launcher_height.get() as i32
                             } else {
                                 COMPACT_WINDOW_HEIGHT
                             };
@@ -3508,11 +3607,11 @@ fn main() {
                                 request_monitor_position(
                                     &position_for_back,
                                     settings.monitor_preference,
-                                    WINDOW_WIDTH,
+                                    launcher_width.get() as i32,
                                     height,
                                 );
                             }
-                            size_for_back.set(WINDOW_WIDTH, height);
+                            size_for_back.set(launcher_width.get() as i32, height);
                         }),
                 ),
         )
@@ -3581,23 +3680,6 @@ fn main() {
                             switch_to_english_layout,
                         ),
                     ))
-                    .child(Element::field(
-                        "Selection color",
-                        Element::checkbox(
-                            "Use the Windows 11 system accent color",
-                            use_system_accent,
-                        ),
-                    ))
-                    .child(
-                        Element::col()
-                            .spacing(8)
-                            .visible_when(move || !use_system_accent.get())
-                            .child(
-                                Element::text_input(custom_selection_color, "#4C8BF4")
-                                    .width_match(),
-                            )
-                            .child(selection_palette(custom_selection_color)),
-                    )
                     .child(Element::field(
                         "Query on activation",
                         Element::checkbox(
@@ -3806,6 +3888,18 @@ fn main() {
                             };
                             let custom_color = parse_selection_color(&custom_selection_color.get())
                                 .unwrap_or(0x4c8bf4);
+                            let configured_width = parse_dimension_input(
+                                &launcher_width_input.get(),
+                                MIN_LAUNCHER_WIDTH,
+                                MAX_LAUNCHER_WIDTH,
+                            )
+                            .unwrap_or(DEFAULT_LAUNCHER_WIDTH);
+                            let configured_height = parse_dimension_input(
+                                &launcher_height_input.get(),
+                                MIN_LAUNCHER_HEIGHT,
+                                MAX_LAUNCHER_HEIGHT,
+                            )
+                            .unwrap_or(DEFAULT_LAUNCHER_HEIGHT);
                             if let Ok(mut settings) = settings_for_apply.write() {
                                 settings.activation_hotkey = configuration;
                                 settings.ignore_hotkeys_in_fullscreen = ignore_fullscreen.get();
@@ -3814,6 +3908,8 @@ fn main() {
                                 settings.switch_to_english_layout = switch_to_english_layout.get();
                                 settings.use_system_accent = use_system_accent.get();
                                 settings.custom_selection_color = custom_color;
+                                settings.launcher_width = configured_width;
+                                settings.launcher_height = configured_height;
                                 settings.clear_query_on_activation = clear_query_on_activation.get();
                                 settings.start_with_windows = start_with_windows_for_apply.get();
                                 settings.update_checks_enabled = update_checks_enabled_for_apply.get();
@@ -3839,6 +3935,24 @@ fn main() {
                                     .set(hotkeys::display_config(&settings.activation_hotkey));
                                 selection_color.set(selection_color_for_settings(&settings));
                                 custom_selection_color.set(selection_color_hex(settings.custom_selection_color));
+                                launcher_width.set(settings.launcher_width);
+                                launcher_height.set(settings.launcher_height);
+                                launcher_width_input.set(settings.launcher_width.to_string());
+                                launcher_height_input.set(settings.launcher_height.to_string());
+                                launcher_width_slider.set(dimension_slider_fraction(
+                                    settings.launcher_width,
+                                    MIN_LAUNCHER_WIDTH,
+                                    MAX_LAUNCHER_WIDTH,
+                                ));
+                                launcher_height_slider.set(dimension_slider_fraction(
+                                    settings.launcher_height,
+                                    MIN_LAUNCHER_HEIGHT,
+                                    MAX_LAUNCHER_HEIGHT,
+                                ));
+                                launcher_preview_text.set(format!(
+                                    "Current launcher size: {} × {} px",
+                                    settings.launcher_width, settings.launcher_height
+                                ));
                                 activation_handle_for_apply
                                     .set(hotkeys::activation_hotkey(&settings.activation_hotkey));
                                 activation_handle_for_apply.set_enabled(true);
@@ -3880,24 +3994,20 @@ fn main() {
                             }
                             settings_visible_for_apply.set(false);
                             let selected_preference = monitor_preference_from_index(monitor_preference.get());
+                            let applied_width = launcher_width.get() as i32;
+                            let applied_height = launcher_height.get() as i32;
+                            let target_height = if show_results.get() {
+                                applied_height
+                            } else {
+                                COMPACT_WINDOW_HEIGHT
+                            };
                             request_monitor_position(
                                 &position_for_apply,
                                 selected_preference,
-                                WINDOW_WIDTH,
-                                if show_results.get() {
-                                    EXPANDED_WINDOW_HEIGHT
-                                } else {
-                                    COMPACT_WINDOW_HEIGHT
-                                },
+                                applied_width,
+                                target_height,
                             );
-                            size_for_apply.set(
-                                WINDOW_WIDTH,
-                                if show_results.get() {
-                                    EXPANDED_WINDOW_HEIGHT
-                                } else {
-                                    COMPACT_WINDOW_HEIGHT
-                                },
-                            );
+                            size_for_apply.set(applied_width, target_height);
                             ctx.toast_ok("Settings applied");
                         }),
                     ),
@@ -3906,7 +4016,7 @@ fn main() {
         .child(
             Element::scroll()
                 .weight(1.0)
-                .visible_when(move || settings_tab.get() == 2)
+                .visible_when(move || settings_tab.get() == 3)
                 .child(
                     Element::col()
                         .width_match()
@@ -3972,6 +4082,84 @@ fn main() {
                 .child(
                     Element::col()
                         .width_match()
+                        .spacing(12)
+                        .child(Element::label("Visual appearance").font_size(17.0).fg(Color::WHITE))
+                        .child(
+                            Element::label("Tune the launcher size in real time. Values are clamped to a safe range and centered using the current monitor preference.")
+                                .font_size(11.0)
+                                .fg(Color::rgba(235, 241, 255, 180))
+                                .max_lines(3)
+                                .truncate(Truncate::End),
+                        )
+                        .child(Element::field(
+                            "Selection color",
+                            Element::checkbox(
+                                "Use the Windows 11 system accent color when available",
+                                use_system_accent,
+                            ),
+                        ))
+                        .child(Element::label("Windows accent is read from the current user profile; the custom color is used as a safe fallback.").font_size(10.0).fg(Color::rgba(235, 241, 255, 150)).max_lines(2).truncate(Truncate::End))
+                        .child(
+                            Element::col()
+                                .spacing(8)
+                                .visible_when(move || !use_system_accent.get())
+                                .child(
+                                    Element::text_input(custom_selection_color, "#4C8BF4")
+                                        .width_match(),
+                                )
+                                .child(selection_palette(custom_selection_color)),
+                        )
+                        .child(Element::field(
+                            "Launcher width",
+                            Element::row()
+                                .width_match()
+                                .spacing(8)
+                                .child(Element::slider(launcher_width_slider).width_match())
+                                .child(
+                                    Element::text_input(launcher_width_input, "420")
+                                        .width(76),
+                                )
+                                .child(Element::label("px").font_size(11.0)),
+                        ))
+                        .child(
+                            Element::label(format!(
+                                "Safe range: {}–{} px",
+                                MIN_LAUNCHER_WIDTH, MAX_LAUNCHER_WIDTH
+                            ))
+                            .font_size(10.0)
+                            .fg(Color::rgba(235, 241, 255, 150)),
+                        )
+                        .child(Element::field(
+                            "Results height",
+                            Element::row()
+                                .width_match()
+                                .spacing(8)
+                                .child(Element::slider(launcher_height_slider).width_match())
+                                .child(
+                                    Element::text_input(launcher_height_input, "382")
+                                        .width(76),
+                                )
+                                .child(Element::label("px").font_size(11.0)),
+                        ))
+                        .child(
+                            Element::label(format!(
+                                "Safe range: {}–{} px",
+                                MIN_LAUNCHER_HEIGHT, MAX_LAUNCHER_HEIGHT
+                            ))
+                            .font_size(10.0)
+                            .fg(Color::rgba(235, 241, 255, 150)),
+                        )
+                        .child(Element::label_signal(launcher_preview_text).font_size(12.0).fg(Color::WHITE))
+                        .child(Element::label("Default: 420×382 px. Changes are applied immediately; the monitor placement default remains Display with the mouse cursor.").font_size(11.0).fg(Color::rgba(235, 241, 255, 175)).max_lines(2).truncate(Truncate::End)),
+                ),
+        )
+        .child(
+            Element::scroll()
+                .weight(1.0)
+                .visible_when(move || settings_tab.get() == 2)
+                .child(
+                    Element::col()
+                        .width_match()
                         .spacing(10)
                         .child(
                             Element::label("Explicit application priorities")
@@ -4031,12 +4219,83 @@ fn main() {
         .centered()
         .frameless()
         .resizable(false)
-        .min_size(380, COMPACT_WINDOW_HEIGHT)
+        .min_size(MIN_LAUNCHER_WIDTH as i32, COMPACT_WINDOW_HEIGHT)
         .renderer(Renderer::Auto)
         .backdrop(Backdrop::Acrylic)
         .theme(launcher_theme())
         .content(content)
         .on_interval(SEARCH_INTERVAL, move |ctx| {
+            let current_width = width_for_interval.get();
+            let current_height = height_for_interval.get();
+            let slider_width = dimension_from_slider(
+                width_slider_for_interval.get(),
+                MIN_LAUNCHER_WIDTH,
+                MAX_LAUNCHER_WIDTH,
+            );
+            let slider_height = dimension_from_slider(
+                height_slider_for_interval.get(),
+                MIN_LAUNCHER_HEIGHT,
+                MAX_LAUNCHER_HEIGHT,
+            );
+            let typed_width = parse_dimension_input(
+                &width_input_for_interval.get(),
+                MIN_LAUNCHER_WIDTH,
+                MAX_LAUNCHER_WIDTH,
+            );
+            let typed_height = parse_dimension_input(
+                &height_input_for_interval.get(),
+                MIN_LAUNCHER_HEIGHT,
+                MAX_LAUNCHER_HEIGHT,
+            );
+            let next_width = typed_width
+                .filter(|value| *value != current_width)
+                .unwrap_or(if slider_width != current_width {
+                    slider_width
+                } else {
+                    current_width
+                });
+            let next_height = typed_height
+                .filter(|value| *value != current_height)
+                .unwrap_or(if slider_height != current_height {
+                    slider_height
+                } else {
+                    current_height
+                });
+            if next_width != current_width || next_height != current_height {
+                width_for_interval.set(next_width);
+                height_for_interval.set(next_height);
+                width_input_for_interval.set(next_width.to_string());
+                height_input_for_interval.set(next_height.to_string());
+                width_slider_for_interval.set(dimension_slider_fraction(
+                    next_width,
+                    MIN_LAUNCHER_WIDTH,
+                    MAX_LAUNCHER_WIDTH,
+                ));
+                height_slider_for_interval.set(dimension_slider_fraction(
+                    next_height,
+                    MIN_LAUNCHER_HEIGHT,
+                    MAX_LAUNCHER_HEIGHT,
+                ));
+                preview_text_for_interval.set(format!(
+                    "Current launcher size: {} × {} px",
+                    next_width, next_height
+                ));
+                apply_launcher_preview_size(
+                    &size_for_interval,
+                    &position_for_interval,
+                    &settings_for_interval_geometry,
+                    next_width,
+                    next_height,
+                    settings_visible_for_interval.get(),
+                    show_results_for_interval.get(),
+                );
+                last_launcher_width = next_width;
+                last_launcher_height = next_height;
+            } else if current_width != last_launcher_width || current_height != last_launcher_height
+            {
+                last_launcher_width = current_width;
+                last_launcher_height = current_height;
+            }
             if let Ok(settings) = settings_for_update_interval.read() {
                 let update_checks_allowed = std::env::var("FLUX_DISABLE_UPDATE_CHECKS")
                     .map(|value| value != "1")
@@ -4074,9 +4333,9 @@ fn main() {
             history_mode_for_interval.set(false);
             show_results_for_interval.set(has_query);
             size_for_interval.set(
-                WINDOW_WIDTH,
+                launcher_width.get() as i32,
                 if has_query {
-                    EXPANDED_WINDOW_HEIGHT
+                    launcher_height.get() as i32
                 } else {
                     COMPACT_WINDOW_HEIGHT
                 },
@@ -4204,7 +4463,12 @@ fn main() {
                     action_items.set(Vec::new());
                     inline_completion.set(String::new());
                     scroll_request_for_rows.set(false);
-                    let (width, height) = launcher_window_geometry(settings_visible.get(), false);
+                    let (width, height) = launcher_window_geometry_with_sizes(
+                        settings_visible.get(),
+                        false,
+                        launcher_width.get() as i32,
+                        launcher_height.get() as i32,
+                    );
                     size_for_visibility.set(width, height);
                 }
             }
@@ -4215,15 +4479,16 @@ fn main() {
 #[cfg(test)]
 mod tests {
     use super::{
-        actions_for_result, display_title, format_bytes, format_update_progress, google_icon_rgba,
-        history_cursor_step, hover_position_changed, icon_completion_generation_changed,
-        is_run_as_admin_key, launcher_window_geometry, merge_application_duplicates,
-        normalize_everything_query, parse_internet_shortcut_icon_location,
-        preserve_everything_file_order, quoted_result_path, relaunch_mode_for_auto_install,
-        resolve_shortcut_icon_path, should_claim_single_instance,
+        actions_for_result, dimension_from_slider, dimension_slider_fraction, display_title,
+        format_bytes, format_update_progress, google_icon_rgba, history_cursor_step,
+        hover_position_changed, icon_completion_generation_changed, is_run_as_admin_key,
+        launcher_window_geometry, launcher_window_geometry_with_sizes,
+        merge_application_duplicates, normalize_everything_query, parse_dimension_input,
+        parse_internet_shortcut_icon_location, preserve_everything_file_order, quoted_result_path,
+        relaunch_mode_for_auto_install, resolve_shortcut_icon_path, should_claim_single_instance,
         should_publish_initial_query_results, should_show_launcher, ProviderResults,
-        ResultIconView, COMPACT_WINDOW_HEIGHT, EXPANDED_WINDOW_HEIGHT, LAUNCHER_FONT_FAMILY,
-        WINDOW_WIDTH,
+        ResultIconView, COMPACT_WINDOW_HEIGHT, LAUNCHER_FONT_FAMILY, MAX_LAUNCHER_HEIGHT,
+        MAX_LAUNCHER_WIDTH, MIN_LAUNCHER_HEIGHT, MIN_LAUNCHER_WIDTH,
     };
     use flux_core::{ResultKind, ResultSource, SearchResult};
     use windui::event::{Key, KeyEvent};
@@ -4589,14 +4854,77 @@ mod tests {
     }
 
     #[test]
+    fn dimension_sliders_round_trip_at_safe_bounds() {
+        assert_eq!(
+            dimension_slider_fraction(MIN_LAUNCHER_WIDTH, MIN_LAUNCHER_WIDTH, MAX_LAUNCHER_WIDTH),
+            0.0
+        );
+        assert_eq!(
+            dimension_slider_fraction(MAX_LAUNCHER_WIDTH, MIN_LAUNCHER_WIDTH, MAX_LAUNCHER_WIDTH),
+            1.0
+        );
+        assert_eq!(
+            dimension_from_slider(0.0, MIN_LAUNCHER_HEIGHT, MAX_LAUNCHER_HEIGHT),
+            MIN_LAUNCHER_HEIGHT
+        );
+        assert_eq!(
+            dimension_from_slider(1.0, MIN_LAUNCHER_HEIGHT, MAX_LAUNCHER_HEIGHT),
+            MAX_LAUNCHER_HEIGHT
+        );
+        assert_eq!(
+            dimension_from_slider(0.5, MIN_LAUNCHER_WIDTH, MAX_LAUNCHER_WIDTH),
+            640
+        );
+    }
+
+    #[test]
+    fn dimension_input_clamps_out_of_range_values_and_rejects_partial_input() {
+        assert_eq!(
+            parse_dimension_input("100", MIN_LAUNCHER_WIDTH, MAX_LAUNCHER_WIDTH),
+            Some(MIN_LAUNCHER_WIDTH)
+        );
+        assert_eq!(
+            parse_dimension_input("1200", MIN_LAUNCHER_WIDTH, MAX_LAUNCHER_WIDTH),
+            Some(MAX_LAUNCHER_WIDTH)
+        );
+        assert_eq!(
+            parse_dimension_input("", MIN_LAUNCHER_WIDTH, MAX_LAUNCHER_WIDTH),
+            None
+        );
+        assert_eq!(
+            parse_dimension_input("abc", MIN_LAUNCHER_WIDTH, MAX_LAUNCHER_WIDTH),
+            None
+        );
+    }
+
+    #[test]
+    fn custom_geometry_uses_visual_dimensions_and_keeps_compact_height() {
+        assert_eq!(
+            launcher_window_geometry_with_sizes(false, true, 640, 520),
+            (640, 520)
+        );
+        assert_eq!(
+            launcher_window_geometry_with_sizes(false, false, 640, 520),
+            (640, COMPACT_WINDOW_HEIGHT)
+        );
+        assert_eq!(
+            launcher_window_geometry_with_sizes(true, true, 640, 520),
+            (super::SETTINGS_WINDOW_WIDTH, super::SETTINGS_WINDOW_HEIGHT)
+        );
+    }
+
+    #[test]
     fn activation_clear_uses_compact_geometry_after_expanded_query() {
         assert_eq!(
             launcher_window_geometry(false, true),
-            (WINDOW_WIDTH, EXPANDED_WINDOW_HEIGHT)
+            (
+                super::DEFAULT_LAUNCHER_WIDTH as i32,
+                super::DEFAULT_LAUNCHER_HEIGHT as i32,
+            )
         );
         assert_eq!(
             launcher_window_geometry(false, false),
-            (WINDOW_WIDTH, COMPACT_WINDOW_HEIGHT)
+            (super::DEFAULT_LAUNCHER_WIDTH as i32, COMPACT_WINDOW_HEIGHT)
         );
     }
 }

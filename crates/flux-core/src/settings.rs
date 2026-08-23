@@ -12,6 +12,13 @@ const DEFAULT_UPDATE_INTERVAL_HOURS: u32 = 24;
 const MIN_UPDATE_INTERVAL_HOURS: u32 = 1;
 const MAX_UPDATE_INTERVAL_HOURS: u32 = 168;
 
+pub const DEFAULT_LAUNCHER_WIDTH: u16 = 420;
+pub const MIN_LAUNCHER_WIDTH: u16 = 380;
+pub const MAX_LAUNCHER_WIDTH: u16 = 900;
+pub const DEFAULT_LAUNCHER_HEIGHT: u16 = 382;
+pub const MIN_LAUNCHER_HEIGHT: u16 = 300;
+pub const MAX_LAUNCHER_HEIGHT: u16 = 720;
+
 fn default_update_interval_hours() -> u32 {
     DEFAULT_UPDATE_INTERVAL_HOURS
 }
@@ -30,6 +37,14 @@ fn default_caret_duration() -> u16 {
 
 fn default_selection_color() -> u32 {
     0x4c8bf4
+}
+
+fn default_launcher_width() -> u16 {
+    DEFAULT_LAUNCHER_WIDTH
+}
+
+fn default_launcher_height() -> u16 {
+    DEFAULT_LAUNCHER_HEIGHT
 }
 
 fn default_obsidian_alias() -> String {
@@ -96,6 +111,10 @@ pub struct Settings {
     pub use_system_accent: bool,
     #[serde(default = "default_selection_color")]
     pub custom_selection_color: u32,
+    #[serde(default = "default_launcher_width")]
+    pub launcher_width: u16,
+    #[serde(default = "default_launcher_height")]
+    pub launcher_height: u16,
     #[serde(default = "enabled_by_default")]
     pub clear_query_on_activation: bool,
     #[serde(default = "enabled_by_default")]
@@ -140,6 +159,8 @@ impl Default for Settings {
             switch_to_english_layout: true,
             use_system_accent: true,
             custom_selection_color: default_selection_color(),
+            launcher_width: DEFAULT_LAUNCHER_WIDTH,
+            launcher_height: DEFAULT_LAUNCHER_HEIGHT,
             clear_query_on_activation: true,
             start_with_windows: true,
             auto_enable_everything: true,
@@ -168,6 +189,12 @@ impl Settings {
         self.update_interval_hours = self
             .update_interval_hours
             .clamp(MIN_UPDATE_INTERVAL_HOURS, MAX_UPDATE_INTERVAL_HOURS);
+        self.launcher_width = self
+            .launcher_width
+            .clamp(MIN_LAUNCHER_WIDTH, MAX_LAUNCHER_WIDTH);
+        self.launcher_height = self
+            .launcher_height
+            .clamp(MIN_LAUNCHER_HEIGHT, MAX_LAUNCHER_HEIGHT);
         if self.activation_hotkey.key.trim().is_empty() {
             self.activation_hotkey = HotkeyConfig::default();
         }
@@ -338,6 +365,8 @@ mod tests {
         assert!(settings.switch_to_english_layout);
         assert!(settings.use_system_accent);
         assert_eq!(settings.custom_selection_color, 0x4c8bf4);
+        assert_eq!(settings.launcher_width, DEFAULT_LAUNCHER_WIDTH);
+        assert_eq!(settings.launcher_height, DEFAULT_LAUNCHER_HEIGHT);
         assert!(settings.clear_query_on_activation);
         assert!(settings.start_with_windows);
         assert!(settings.auto_enable_everything);
@@ -374,6 +403,8 @@ mod tests {
             switch_to_english_layout: false,
             use_system_accent: false,
             custom_selection_color: 0x12ab34,
+            launcher_width: 640,
+            launcher_height: 520,
             clear_query_on_activation: false,
             start_with_windows: false,
             auto_enable_everything: false,
@@ -490,7 +521,27 @@ mod tests {
         fs::write(&path, r#"{"activation_hotkey":{"key":"Space"}}"#).unwrap();
         let settings = Settings::load_from(&path).unwrap();
         assert_eq!(settings.monitor_preference, MonitorPreference::Cursor);
+        assert_eq!(settings.launcher_width, DEFAULT_LAUNCHER_WIDTH);
+        assert_eq!(settings.launcher_height, DEFAULT_LAUNCHER_HEIGHT);
         fs::remove_file(path).unwrap();
+    }
+
+    #[test]
+    fn dimensions_are_clamped_to_safe_window_bounds() {
+        let mut settings = Settings {
+            launcher_width: 1,
+            launcher_height: u16::MAX,
+            ..Settings::default()
+        };
+        settings.normalize();
+        assert_eq!(settings.launcher_width, MIN_LAUNCHER_WIDTH);
+        assert_eq!(settings.launcher_height, MAX_LAUNCHER_HEIGHT);
+
+        settings.launcher_width = u16::MAX;
+        settings.launcher_height = 1;
+        settings.normalize();
+        assert_eq!(settings.launcher_width, MAX_LAUNCHER_WIDTH);
+        assert_eq!(settings.launcher_height, MIN_LAUNCHER_HEIGHT);
     }
 
     #[test]
