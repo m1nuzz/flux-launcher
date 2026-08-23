@@ -4091,7 +4091,7 @@ fn main() {
                         .spacing(12)
                         .child(Element::label("Visual appearance").font_size(17.0).fg(Color::WHITE))
                         .child(
-                            Element::label("Tune the launcher size in real time. Values are clamped to a safe range and centered using the current monitor preference.")
+                            Element::label("Preview the launcher size in real time. The settings canvas stays stable while dragging, values are clamped to a safe range, and Apply settings uses the size in the launcher.")
                                 .font_size(11.0)
                                 .fg(Color::rgba(235, 241, 255, 180))
                                 .max_lines(3)
@@ -4156,7 +4156,7 @@ fn main() {
                             .fg(Color::rgba(235, 241, 255, 150)),
                         )
                         .child(Element::label_signal(launcher_preview_text).font_size(12.0).fg(Color::WHITE))
-                        .child(Element::label("Default: 420×382 px. Changes are applied immediately; the monitor placement default remains Display with the mouse cursor.").font_size(11.0).fg(Color::rgba(235, 241, 255, 175)).max_lines(2).truncate(Truncate::End)),
+                        .child(Element::label("Default: 420×382 px. Preview values update immediately; Apply settings saves the size. Monitor placement remains Display with the mouse cursor by default.").font_size(11.0).fg(Color::rgba(235, 241, 255, 175)).max_lines(2).truncate(Truncate::End)),
                 ),
         )
         .child(
