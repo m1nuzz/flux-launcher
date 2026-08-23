@@ -2550,6 +2550,7 @@ fn main() {
     let mut visual_preview_process: Option<visual_preview::PreviewProcess> = None;
     let mut last_visual_preview_request: Option<(u16, u16)> = None;
     let mut last_visual_preview_generation = visual_preview_generation.get();
+    let mut last_visual_control_state: Option<(u16, u16, u32, u32)> = None;
     let mut sequence = 0_u64;
 
     let settings_at_start = settings_visible.get();
@@ -4501,6 +4502,21 @@ fn main() {
                 MIN_LAUNCHER_HEIGHT,
                 MAX_LAUNCHER_HEIGHT,
             );
+            if visual_preview_smoke_for_interval {
+                let control_state = (
+                    width_for_interval.get(),
+                    height_for_interval.get(),
+                    (width_slider_for_interval.get() * 10_000.0).round() as u32,
+                    (height_slider_for_interval.get() * 10_000.0).round() as u32,
+                );
+                if last_visual_control_state != Some(control_state) {
+                    eprintln!(
+                        "Visual control state: width={} height={} width_slider={} height_slider={}",
+                        control_state.0, control_state.1, control_state.2, control_state.3
+                    );
+                    last_visual_control_state = Some(control_state);
+                }
+            }
             let typed_width = parse_dimension_input(
                 &width_input_for_interval.get(),
                 MIN_LAUNCHER_WIDTH,

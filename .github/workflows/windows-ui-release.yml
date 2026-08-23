@@ -111,6 +111,14 @@ jobs:
             -FolderLaunchSmoke `
             -VisualSettingsSmoke
 
+      - name: Upload UI smoke diagnostics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: flux-launcher-windows-ui-smoke-diagnostics
+          path: artifacts/windows-ui-release
+          if-no-files-found: warn
+
       - name: Sign stable launcher binaries before packaging
         if: inputs.release_channel == 'stable'
         shell: pwsh
