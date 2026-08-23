@@ -309,6 +309,10 @@ pub struct WindowConfig {
     /// 无托盘图标也无热键时启用此项，用户将**永远看不到窗口**——故 `App::start_hidden`
     /// 在 debug 期对该组合 panic 提示误用。
     pub start_hidden: bool,
+    /// Whether the first visible frame may activate the native window.
+    pub activate_on_start: bool,
+    /// Prevent mouse clicks from activating this auxiliary native window.
+    pub no_activate: bool,
     /// 无标题栏窗口（自定义标题栏）：客户区铺满整窗，保留系统级吸附/阴影/缩放。
     pub frameless: bool,
     /// Requested native system backdrop. Unsupported systems fall back safely.
@@ -341,6 +345,8 @@ impl Default for WindowConfig {
             window_icon: None,
             hotkeys: Vec::new(),
             start_hidden: false,
+            activate_on_start: true,
+            no_activate: false,
             frameless: false,
             backdrop: Backdrop::None,
             animations: None,

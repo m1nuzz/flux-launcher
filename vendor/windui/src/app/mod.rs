@@ -346,6 +346,8 @@ impl App {
                 renderer: Renderer::default(),
                 min_width: 0,
                 min_height: 0,
+                activate_on_start: true,
+                no_activate: false,
             },
             render: None,
             content: None,
@@ -664,6 +666,21 @@ impl App {
     /// 只能从任务管理器结束进程。这几乎总是误用而非有意为之。
     pub fn start_hidden(mut self) -> Self {
         self.cfg.start_hidden = true;
+        self
+    }
+
+    /// Control whether the initial visible frame activates the native window.
+    ///
+    /// This is useful for auxiliary preview windows that must appear without stealing
+    /// keyboard focus from the Settings window that owns the controls.
+    pub fn activate_on_start(mut self, activate: bool) -> Self {
+        self.cfg.activate_on_start = activate;
+        self
+    }
+
+    /// Prevent mouse clicks from activating this auxiliary native window.
+    pub fn no_activate(mut self, no_activate: bool) -> Self {
+        self.cfg.no_activate = no_activate;
         self
     }
 
@@ -2025,6 +2042,19 @@ mod tests {
         let app =
             App::new("t", 100, 100).on_interval(std::time::Duration::from_millis(100), |_ctx| {});
         assert_eq!(app.intervals.len(), 1);
+    }
+
+    #[test]
+    fn auxiliary_window_activation_flags_preserve_default_and_opt_in_behavior() {
+        let default = App::new("t", 100, 100);
+        assert!(default.cfg.activate_on_start);
+        assert!(!default.cfg.no_activate);
+
+        let auxiliary = App::new("t", 100, 100)
+            .activate_on_start(false)
+            .no_activate(true);
+        assert!(!auxiliary.cfg.activate_on_start);
+        assert!(auxiliary.cfg.no_activate);
     }
 
     /// `defer_blocking` 排入的闭包由 `take_dialog_request` 取走，且**取走时还没跑**——

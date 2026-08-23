@@ -93,7 +93,7 @@ jobs:
         shell: pwsh
         run: ./scripts/enable-dwm-smoke.ps1 -OutputDirectory ./artifacts/windows-ui-release
 
-      - name: Capture empty and query UI states
+      - name: Capture UI states and verify exact native visual preview HWND
         shell: pwsh
         env:
           # Force the GPU path when the runner supports it; Flux still checks

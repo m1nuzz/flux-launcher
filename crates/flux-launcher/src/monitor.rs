@@ -9,11 +9,11 @@ pub(crate) struct MonitorBounds {
 }
 
 impl MonitorBounds {
-    fn width(self) -> i32 {
+    pub(crate) fn width(self) -> i32 {
         self.right - self.left
     }
 
-    fn height(self) -> i32 {
+    pub(crate) fn height(self) -> i32 {
         self.bottom - self.top
     }
 }
@@ -25,7 +25,7 @@ pub(crate) fn centered_position(
 ) -> Option<(i32, i32)> {
     #[cfg(windows)]
     {
-        let bounds = selected_monitor_bounds(preference)?;
+        let bounds = work_area(preference)?;
         Some(centered_position_in_bounds(
             bounds,
             window_width,
@@ -53,7 +53,7 @@ pub(crate) fn centered_position_in_bounds(
 }
 
 #[cfg(windows)]
-fn selected_monitor_bounds(preference: MonitorPreference) -> Option<MonitorBounds> {
+pub(crate) fn work_area(preference: MonitorPreference) -> Option<MonitorBounds> {
     use windows::core::BOOL;
     use windows::Win32::Foundation::{LPARAM, POINT, RECT};
     use windows::Win32::Graphics::Gdi::{
@@ -87,7 +87,7 @@ fn selected_monitor_bounds(preference: MonitorPreference) -> Option<MonitorBound
         MonitorPreference::Cursor => {
             let mut point = POINT::default();
             if unsafe { GetCursorPos(&mut point) }.is_err() {
-                return selected_monitor_bounds(MonitorPreference::Primary);
+                return work_area(MonitorPreference::Primary);
             }
             let monitor = unsafe {
                 windows::Win32::Graphics::Gdi::MonitorFromPoint(point, MONITOR_DEFAULTTONEAREST)
@@ -97,7 +97,7 @@ fn selected_monitor_bounds(preference: MonitorPreference) -> Option<MonitorBound
         MonitorPreference::Foreground => {
             let foreground = unsafe { GetForegroundWindow() };
             if foreground.is_invalid() {
-                return selected_monitor_bounds(MonitorPreference::Primary);
+                return work_area(MonitorPreference::Primary);
             }
             let monitor = unsafe {
                 windows::Win32::Graphics::Gdi::MonitorFromWindow(

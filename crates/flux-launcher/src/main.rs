@@ -13,6 +13,7 @@ mod native_host;
 mod plugins;
 mod startup;
 mod updater;
+mod visual_preview;
 
 use std::cell::{Cell, RefCell};
 use std::collections::{HashMap, HashSet};
@@ -137,19 +138,39 @@ fn launcher_window_geometry_with_sizes(
     }
 }
 
-fn live_preview_geometry(
-    settings_visible: bool,
-    show_results: bool,
-    launcher_width: i32,
-    launcher_height: i32,
+fn visual_preview_position(
+    preference: MonitorPreference,
+    preview_width: i32,
+    preview_height: i32,
 ) -> (i32, i32) {
-    if settings_visible {
-        // Visual values preview the launcher after Apply. Keep the Settings canvas at
-        // its stable, centered size while the slider is being dragged; resizing this
-        // same HWND would move the pointer target and make the panel drift or clip.
-        (SETTINGS_WINDOW_WIDTH, SETTINGS_WINDOW_HEIGHT)
-    } else {
-        launcher_window_geometry_with_sizes(false, show_results, launcher_width, launcher_height)
+    #[cfg(windows)]
+    {
+        let Some(bounds) = monitor::work_area(preference) else {
+            return (0, 0);
+        };
+        let (settings_x, settings_y) =
+            monitor::centered_position(preference, SETTINGS_WINDOW_WIDTH, SETTINGS_WINDOW_HEIGHT)
+                .unwrap_or((bounds.left, bounds.top));
+        let gap = 24;
+        let right_x = settings_x + SETTINGS_WINDOW_WIDTH + gap;
+        let left_x = settings_x - preview_width - gap;
+        let x = if right_x + preview_width <= bounds.right {
+            right_x
+        } else if left_x >= bounds.left {
+            left_x
+        } else {
+            bounds.left + (bounds.width() - preview_width).max(0) / 2
+        };
+        let y = settings_y + (SETTINGS_WINDOW_HEIGHT - preview_height).max(0) / 2;
+        (
+            x.clamp(bounds.left, (bounds.right - preview_width).max(bounds.left)),
+            y.clamp(bounds.top, (bounds.bottom - preview_height).max(bounds.top)),
+        )
+    }
+    #[cfg(not(windows))]
+    {
+        let _ = (preference, preview_width, preview_height);
+        (0, 0)
     }
 }
 
@@ -176,7 +197,7 @@ fn parse_dimension_input(value: &str, min: u16, max: u16) -> Option<u16> {
         .map(|value| value.clamp(min, max))
 }
 
-fn apply_launcher_preview_size(
+fn apply_launcher_size(
     size: &WindowSizeHandle,
     position: &WindowPositionHandle,
     settings: &Arc<RwLock<Settings>>,
@@ -188,10 +209,9 @@ fn apply_launcher_preview_size(
     let width = i32::from(width.clamp(MIN_LAUNCHER_WIDTH, MAX_LAUNCHER_WIDTH));
     let height = i32::from(height.clamp(MIN_LAUNCHER_HEIGHT, MAX_LAUNCHER_HEIGHT));
     let (target_width, target_height) =
-        live_preview_geometry(settings_visible, show_results, width, height);
-    // Keep the Settings canvas fixed while editing visual values. In launcher mode,
-    // apply the selected dimensions immediately; Apply settings recenters the launcher
-    // after Settings closes.
+        launcher_window_geometry_with_sizes(settings_visible, show_results, width, height);
+    // Keep the Settings canvas fixed while visual values are edited. The real preview
+    // process is resized separately; outside Settings, apply the dimensions to the launcher.
     size.set(target_width, target_height);
     if !settings_visible {
         if let Ok(settings) = settings.read() {
@@ -758,112 +778,6 @@ impl Widget for ResultIconView {
 
     fn on_event(&mut self, _ctx: &mut EventCtx, _event: &Event) -> bool {
         false
-    }
-}
-
-fn visual_preview_size(width: u16, height: u16) -> (i32, i32) {
-    let width_fraction = dimension_slider_fraction(width, MIN_LAUNCHER_WIDTH, MAX_LAUNCHER_WIDTH);
-    let height_fraction =
-        dimension_slider_fraction(height, MIN_LAUNCHER_HEIGHT, MAX_LAUNCHER_HEIGHT);
-    (
-        (170.0 + width_fraction * 210.0).round() as i32,
-        (48.0 + height_fraction * 72.0).round() as i32,
-    )
-}
-
-/// A native, signal-driven preview of the launcher proportions. The Settings HWND stays
-/// fixed for stable slider interaction, while this card gives immediate visual feedback
-/// about the dimensions that will be used by the launcher after Apply settings.
-struct VisualSizePreview {
-    width: Signal<u16>,
-    height: Signal<u16>,
-}
-
-impl VisualSizePreview {
-    fn new(width: Signal<u16>, height: Signal<u16>) -> Self {
-        Self { width, height }
-    }
-}
-
-impl Widget for VisualSizePreview {
-    fn measure(
-        &self,
-        _avail: Size,
-        _style: &Style,
-        _text: &mut dyn windui::text::TextEngine,
-    ) -> Size {
-        Size::new(420, 84)
-    }
-
-    fn paint(
-        &self,
-        bounds: Rect,
-        _content: Rect,
-        _focused: bool,
-        _enabled: bool,
-        canvas: &mut dyn Canvas,
-        _style: &Style,
-    ) {
-        let (raw_width, raw_height) = visual_preview_size(self.width.get(), self.height.get());
-        let max_width = (bounds.w - 20).max(80) as f32;
-        let max_height = (bounds.h - 12).max(40) as f32;
-        let scale = (max_width / raw_width as f32)
-            .min(max_height / raw_height as f32)
-            .min(1.0);
-        let preview_width = (raw_width as f32 * scale).round() as i32;
-        let preview_height = (raw_height as f32 * scale).round() as i32;
-        let x = bounds.x + ((bounds.w - preview_width).max(0) / 2);
-        let y = bounds.y + ((bounds.h - preview_height).max(0) / 2);
-        let card = Paint::fill(Color::rgba(22, 25, 34, 238));
-        let accent = Paint::fill(Color::rgba(76, 139, 245, 220));
-        let muted = Paint::fill(Color::rgba(214, 225, 243, 120));
-        canvas.draw_shadow(
-            x as f32 + 1.0,
-            y as f32 + 2.0,
-            preview_width as f32,
-            preview_height as f32,
-            10.0,
-            8.0,
-            Color::rgba(0, 0, 0, 90),
-        );
-        canvas.fill_round_rect(
-            x as f32,
-            y as f32,
-            preview_width as f32,
-            preview_height as f32,
-            10.0,
-            &card,
-        );
-        let inset = (12.0 * scale).round().max(6.0) as i32;
-        let inner_width = (preview_width - inset * 2).max(24);
-        canvas.fill_round_rect(
-            (x + inset) as f32,
-            (y + 10) as f32,
-            inner_width as f32,
-            (18.0 * scale).max(8.0),
-            (5.0 * scale).max(2.0),
-            &accent,
-        );
-        canvas.fill_round_rect(
-            (x + inset + (8.0 * scale).round() as i32) as f32,
-            (y + (15.0 * scale).round() as i32) as f32,
-            (inner_width / 3).max(24) as f32,
-            (4.0 * scale).max(2.0),
-            (2.0 * scale).max(1.0),
-            &muted,
-        );
-        let row_y = y + (42.0 * scale).round() as i32;
-        for (index, row_width) in [0.82_f32, 0.68, 0.56].into_iter().enumerate() {
-            let row_width = ((inner_width - 8) as f32 * row_width).round() as i32;
-            canvas.fill_round_rect(
-                (x + inset + 4) as f32,
-                (row_y + (index as f32 * 20.0 * scale).round() as i32) as f32,
-                row_width.max(28) as f32,
-                (10.0 * scale).max(5.0),
-                (4.0 * scale).max(2.0),
-                &Paint::fill(Color::rgba(255, 255, 255, if index == 0 { 32 } else { 20 })),
-            );
-        }
     }
 }
 
@@ -2112,6 +2026,22 @@ fn main() {
     let mut args = std::env::args_os();
     let _executable = args.next();
     let mode = args.next();
+    if mode.as_deref() == Some(std::ffi::OsStr::new("--visual-preview")) {
+        let mut values = [0_i32; 4];
+        for value in &mut values {
+            let Some(raw) = args.next() else {
+                eprintln!("visual preview requires width height x y");
+                std::process::exit(2);
+            };
+            let Ok(parsed) = raw.to_string_lossy().parse::<i32>() else {
+                eprintln!("visual preview dimensions and position must be integers");
+                std::process::exit(2);
+            };
+            *value = parsed;
+        }
+        visual_preview::run(values[0], values[1], values[2], values[3]);
+        return;
+    }
     if mode.as_deref() == Some(std::ffi::OsStr::new("--plugin-host")) {
         let root = args
             .next()
@@ -2224,9 +2154,10 @@ fn main() {
         MAX_LAUNCHER_HEIGHT,
     ));
     let launcher_preview_text = signal(format!(
-        "Current launcher size: {} × {} px",
+        "Current launcher client area: {} × {} logical px (DIP)",
         settings.launcher_width, settings.launcher_height
     ));
+    let visual_preview_generation = signal(0_u64);
     let clear_query_on_activation = signal(settings.clear_query_on_activation);
     let start_with_windows = signal(settings.start_with_windows);
     let auto_enable_everything = signal(settings.auto_enable_everything);
@@ -2606,6 +2537,8 @@ fn main() {
     let google_alias_for_interval = google_alias;
     let history_mode_for_interval = history_mode;
     let settings_visible_for_interval = settings_visible;
+    let settings_tab_for_interval = settings_tab;
+    let visual_preview_generation_for_interval = visual_preview_generation;
     let visual_preview_smoke_for_interval =
         std::env::var_os("FLUX_SMOKE_VISUAL_SETTINGS").is_some();
     let tray_settings_smoke_pending_for_interval = Rc::clone(&tray_settings_smoke_pending);
@@ -2614,6 +2547,9 @@ fn main() {
     let mut last_launcher_height = launcher_height.get();
     let mut last_settings_visible = settings_visible.get();
     let mut last_query = String::new();
+    let mut visual_preview_process: Option<visual_preview::PreviewProcess> = None;
+    let mut last_visual_preview_request: Option<(u16, u16)> = None;
+    let mut last_visual_preview_generation = visual_preview_generation.get();
     let mut sequence = 0_u64;
 
     let settings_at_start = settings_visible.get();
@@ -3706,12 +3642,13 @@ fn main() {
     .truncate(Truncate::End)
     .visible_when(move || priorities.get().is_empty());
 
-    let size_for_width_reset = window_size.clone();
-    let size_for_height_reset = window_size.clone();
-    let position_for_width_reset = window_position.clone();
-    let position_for_height_reset = window_position.clone();
-    let settings_for_width_reset = Arc::clone(&shared_settings);
-    let settings_for_height_reset = Arc::clone(&shared_settings);
+    let visual_preview_generation_for_width_reset = visual_preview_generation;
+    let visual_preview_generation_for_height_reset = visual_preview_generation;
+    let settings_for_visual_apply = Arc::clone(&shared_settings);
+    let size_for_visual_apply = window_size.clone();
+    let position_for_visual_apply = window_position.clone();
+    let settings_visible_for_visual_apply = settings_visible;
+    let show_results_for_visual_apply = show_results;
 
     // Settings shares the same continuous Acrylic surface as the launcher.
     // Do not add a dark card here: it hides the blur and creates the old opaque
@@ -4098,7 +4035,7 @@ fn main() {
                                     MAX_LAUNCHER_HEIGHT,
                                 ));
                                 launcher_preview_text.set(format!(
-                                    "Current launcher size: {} × {} px",
+                                    "Current launcher client area: {} × {} logical px (DIP)",
                                     settings.launcher_width, settings.launcher_height
                                 ));
                                 activation_handle_for_apply
@@ -4233,7 +4170,7 @@ fn main() {
                         .spacing(12)
                         .child(Element::label("Visual appearance").font_size(17.0).fg(Color::WHITE))
                         .child(
-                            Element::label("Preview the launcher size in real time. The settings canvas stays stable while dragging, values are clamped to a safe range, and Apply settings uses the size in the launcher.")
+                            Element::label("The live preview is a separate native windui window. Its client area is resized directly in realtime; the Settings window stays centered and stable while dragging.")
                                 .font_size(11.0)
                                 .fg(Color::rgba(235, 241, 255, 180))
                                 .max_lines(3)
@@ -4247,12 +4184,8 @@ fn main() {
                             ),
                         ))
                         .child(Element::label("Windows accent is read from the current user profile; the custom color is used as a safe fallback.").font_size(10.0).fg(Color::rgba(235, 241, 255, 150)).max_lines(2).truncate(Truncate::End))
-                                        .child(
-                            Element::leaf()
-                                .widget(VisualSizePreview::new(launcher_width, launcher_height))
-                                .width_match()
-                                .height(84),
-                        )
+                        .child(Element::label("The exact native preview window opens beside Settings when this Visual tab is active."
+).font_size(10.0).fg(Color::rgba(235, 241, 255, 170)).max_lines(2).truncate(Truncate::End))
                         .child(
                             Element::col()
                                 .spacing(8)
@@ -4287,25 +4220,21 @@ fn main() {
                                                 MAX_LAUNCHER_WIDTH,
                                             ));
                                             launcher_preview_text.set(format!(
-                                                "Current launcher size: {} × {} px",
+                                                "Current launcher client area: {} × {} logical px (DIP)",
                                                 width, height
                                             ));
-                                            apply_launcher_preview_size(
-                                                &size_for_width_reset,
-                                                &position_for_width_reset,
-                                                &settings_for_width_reset,
-                                                width,
-                                                height,
-                                                true,
-                                                false,
+                                            visual_preview_generation_for_width_reset.set(
+                                                visual_preview_generation_for_width_reset
+                                                    .get()
+                                                    .saturating_add(1),
                                             );
                                         }),
                                 )
-                                .child(Element::label("px").font_size(11.0)),
+                                .child(Element::label("DIP").font_size(11.0)),
                         ))
                         .child(
                             Element::label(format!(
-                                "Safe range: {}–{} px",
+                                "Safe range: {}–{} logical px (DIP)",
                                 MIN_LAUNCHER_WIDTH, MAX_LAUNCHER_WIDTH
                             ))
                             .font_size(10.0)
@@ -4335,32 +4264,96 @@ fn main() {
                                                 MAX_LAUNCHER_HEIGHT,
                                             ));
                                             launcher_preview_text.set(format!(
-                                                "Current launcher size: {} × {} px",
+                                                "Current launcher client area: {} × {} logical px (DIP)",
                                                 width, height
                                             ));
-                                            apply_launcher_preview_size(
-                                                &size_for_height_reset,
-                                                &position_for_height_reset,
-                                                &settings_for_height_reset,
-                                                width,
-                                                height,
-                                                true,
-                                                false,
+                                            visual_preview_generation_for_height_reset.set(
+                                                visual_preview_generation_for_height_reset
+                                                    .get()
+                                                    .saturating_add(1),
                                             );
                                         }),
                                 )
-                                .child(Element::label("px").font_size(11.0)),
+                                .child(Element::label("DIP").font_size(11.0)),
                         ))
                         .child(
                             Element::label(format!(
-                                "Safe range: {}–{} px",
+                                "Safe range: {}–{} logical px (DIP)",
                                 MIN_LAUNCHER_HEIGHT, MAX_LAUNCHER_HEIGHT
                             ))
                             .font_size(10.0)
                             .fg(Color::rgba(235, 241, 255, 150)),
                         )
                         .child(Element::label_signal(launcher_preview_text).font_size(12.0).fg(Color::WHITE))
-                        .child(Element::label("The preview scales with the selected dimensions. Apply settings saves the size; monitor placement remains Display with the mouse cursor by default.").font_size(11.0).fg(Color::rgba(235, 241, 255, 175)).max_lines(2).truncate(Truncate::End)),
+                        .child(
+                            Element::label("The native preview uses the exact requested logical client dimensions. Physical GetClientRect pixels scale with the preview monitor DPI; Apply saves the values.")
+                                .font_size(11.0)
+                                .fg(Color::rgba(235, 241, 255, 175))
+                                .max_lines(2)
+                                .truncate(Truncate::End),
+                        )
+                        .child(
+                            Element::button("Apply dimensions").on_click(move |ctx| {
+                                let mut width = parse_dimension_input(
+                                    &launcher_width_input.get(),
+                                    MIN_LAUNCHER_WIDTH,
+                                    MAX_LAUNCHER_WIDTH,
+                                )
+                                .unwrap_or(DEFAULT_LAUNCHER_WIDTH);
+                                let mut height = parse_dimension_input(
+                                    &launcher_height_input.get(),
+                                    MIN_LAUNCHER_HEIGHT,
+                                    MAX_LAUNCHER_HEIGHT,
+                                )
+                                .unwrap_or(DEFAULT_LAUNCHER_HEIGHT);
+                                let Ok(mut settings) = settings_for_visual_apply.write() else {
+                                    ctx.toast_ok("Could not lock Flux settings");
+                                    return;
+                                };
+                                settings.launcher_width = width;
+                                settings.launcher_height = height;
+                                settings.normalize();
+                                width = settings.launcher_width;
+                                height = settings.launcher_height;
+                                let preference = settings.monitor_preference;
+                                if !save_settings(&settings) {
+                                    ctx.toast_ok("Could not save visual dimensions");
+                                    return;
+                                }
+                                launcher_width.set(width);
+                                launcher_height.set(height);
+                                launcher_width_input.set(width.to_string());
+                                launcher_height_input.set(height.to_string());
+                                launcher_width_slider.set(dimension_slider_fraction(
+                                    width,
+                                    MIN_LAUNCHER_WIDTH,
+                                    MAX_LAUNCHER_WIDTH,
+                                ));
+                                launcher_height_slider.set(dimension_slider_fraction(
+                                    height,
+                                    MIN_LAUNCHER_HEIGHT,
+                                    MAX_LAUNCHER_HEIGHT,
+                                ));
+                                launcher_preview_text.set(format!(
+                                    "Current launcher client area: {} × {} logical px (DIP)",
+                                    width, height
+                                ));
+                                settings_visible_for_visual_apply.set(false);
+                                let target_height = if show_results_for_visual_apply.get() {
+                                    i32::from(height)
+                                } else {
+                                    COMPACT_WINDOW_HEIGHT
+                                };
+                                request_monitor_position(
+                                    &position_for_visual_apply,
+                                    preference,
+                                    i32::from(width),
+                                    target_height,
+                                );
+                                size_for_visual_apply.set(i32::from(width), target_height);
+                                ctx.toast_ok("Visual dimensions applied");
+                            }),
+                        ),
                 ),
         )
         .child(
@@ -4440,6 +4433,8 @@ fn main() {
             let current_width = width_for_interval.get();
             let current_height = height_for_interval.get();
             let settings_is_visible = settings_visible_for_interval.get();
+            let visual_tab_is_visible = settings_tab_for_interval.get() == 1;
+            let visual_preview_is_visible = settings_is_visible && visual_tab_is_visible;
             if settings_is_visible && !last_settings_visible {
                 if let Ok(settings) = settings_for_interval_geometry.read() {
                     request_monitor_position(
@@ -4450,6 +4445,50 @@ fn main() {
                     );
                 }
                 size_for_interval.set(SETTINGS_WINDOW_WIDTH, SETTINGS_WINDOW_HEIGHT);
+            }
+            if visual_preview_is_visible {
+                let preference = settings_for_interval_geometry
+                    .read()
+                    .map(|settings| settings.monitor_preference)
+                    .unwrap_or(MonitorPreference::Cursor);
+                let child_exited = visual_preview_process
+                    .as_mut()
+                    .is_some_and(|preview| !preview.is_alive());
+                if child_exited {
+                    visual_preview_process.take();
+                    last_visual_preview_request = None;
+                }
+                if let Some(preview) = visual_preview_process.as_mut() {
+                    match preview.poll_ready() {
+                        Ok(_) => {}
+                        Err(error) => {
+                            eprintln!("Could not ready visual preview: {error}");
+                            visual_preview_process.take();
+                            last_visual_preview_request = None;
+                        }
+                    }
+                }
+                if visual_preview_process.is_none() {
+                    let preview_width = i32::from(current_width);
+                    let preview_height = i32::from(current_height);
+                    let (preview_x, preview_y) =
+                        visual_preview_position(preference, preview_width, preview_height);
+                    match visual_preview::PreviewProcess::start(
+                        preview_width,
+                        preview_height,
+                        preview_x,
+                        preview_y,
+                    ) {
+                        Ok(preview) => {
+                            visual_preview_process = Some(preview);
+                            last_visual_preview_request = None;
+                        }
+                        Err(error) => eprintln!("Could not start visual preview: {error}"),
+                    }
+                }
+            } else if visual_preview_process.is_some() {
+                visual_preview_process.take();
+                last_visual_preview_request = None;
             }
             last_settings_visible = settings_is_visible;
             let slider_width = dimension_from_slider(
@@ -4502,21 +4541,23 @@ fn main() {
                     MAX_LAUNCHER_HEIGHT,
                 ));
                 preview_text_for_interval.set(format!(
-                    "Current launcher size: {} × {} px",
+                    "Current launcher client area: {} × {} logical px (DIP)",
                     next_width, next_height
                 ));
-                apply_launcher_preview_size(
-                    &size_for_interval,
-                    &position_for_interval,
-                    &settings_for_interval_geometry,
-                    next_width,
-                    next_height,
-                    settings_visible_for_interval.get(),
-                    show_results_for_interval.get(),
-                );
+                if !(settings_visible_for_interval.get() && settings_tab_for_interval.get() == 1) {
+                    apply_launcher_size(
+                        &size_for_interval,
+                        &position_for_interval,
+                        &settings_for_interval_geometry,
+                        next_width,
+                        next_height,
+                        false,
+                        show_results_for_interval.get(),
+                    );
+                }
                 if visual_preview_smoke_for_interval {
                     eprintln!(
-                        "Visual preview size updated: {}x{}",
+                        "Visual preview dimension state: {}x{} logical px",
                         next_width, next_height
                     );
                 }
@@ -4527,6 +4568,58 @@ fn main() {
                 last_launcher_width = current_width;
                 last_launcher_height = current_height;
             }
+
+            let preview_generation = visual_preview_generation_for_interval.get();
+            if visual_preview_is_visible {
+                let requested = (width_for_interval.get(), height_for_interval.get());
+                let must_dispatch = last_visual_preview_request != Some(requested)
+                    || last_visual_preview_generation != preview_generation;
+                if must_dispatch {
+                    let preference = settings_for_interval_geometry
+                        .read()
+                        .map(|settings| settings.monitor_preference)
+                        .unwrap_or(MonitorPreference::Cursor);
+                    let (preview_x, preview_y) = visual_preview_position(
+                        preference,
+                        i32::from(requested.0),
+                        i32::from(requested.1),
+                    );
+                    let dispatch_result = if let Some(preview) = visual_preview_process.as_mut() {
+                        match preview.poll_ready() {
+                            Ok(true) => Some(preview.resize(
+                                i32::from(requested.0),
+                                i32::from(requested.1),
+                                preview_x,
+                                preview_y,
+                            )),
+                            Ok(false) => None,
+                            Err(error) => Some(Err(error)),
+                        }
+                    } else {
+                        None
+                    };
+                    match dispatch_result {
+                        Some(Ok(())) => {
+                            last_visual_preview_request = Some(requested);
+                            last_visual_preview_generation = preview_generation;
+                            eprintln!(
+                                "Visual preview IPC resize dispatched: {}x{}",
+                                requested.0, requested.1
+                            );
+                        }
+                        Some(Err(error)) => {
+                            eprintln!("Could not update visual preview: {error}");
+                            visual_preview_process.take();
+                            last_visual_preview_request = None;
+                        }
+                        None => {}
+                    }
+                }
+            } else {
+                last_visual_preview_request = None;
+                last_visual_preview_generation = preview_generation;
+            }
+
             if let Ok(settings) = settings_for_update_interval.read() {
                 let update_checks_allowed = std::env::var("FLUX_DISABLE_UPDATE_CHECKS")
                     .map(|value| value != "1")
@@ -4713,14 +4806,13 @@ mod tests {
         actions_for_result, dimension_from_slider, dimension_slider_fraction, display_title,
         format_bytes, format_update_progress, google_icon_rgba, history_cursor_step,
         hover_position_changed, icon_completion_generation_changed, is_run_as_admin_key,
-        launcher_window_geometry, launcher_window_geometry_with_sizes, live_preview_geometry,
+        launcher_window_geometry, launcher_window_geometry_with_sizes,
         merge_application_duplicates, normalize_everything_query, parse_dimension_input,
         parse_internet_shortcut_icon_location, preserve_everything_file_order, quoted_result_path,
         relaunch_mode_for_auto_install, resolve_shortcut_icon_path, should_claim_single_instance,
-        should_publish_initial_query_results, should_show_launcher, visual_preview_size,
-        ProviderResults, ResultIconView, COMPACT_WINDOW_HEIGHT, DEFAULT_LAUNCHER_HEIGHT,
-        DEFAULT_LAUNCHER_WIDTH, LAUNCHER_FONT_FAMILY, MAX_LAUNCHER_HEIGHT, MAX_LAUNCHER_WIDTH,
-        MIN_LAUNCHER_HEIGHT, MIN_LAUNCHER_WIDTH,
+        should_publish_initial_query_results, should_show_launcher, ProviderResults,
+        ResultIconView, COMPACT_WINDOW_HEIGHT, LAUNCHER_FONT_FAMILY, MAX_LAUNCHER_HEIGHT,
+        MAX_LAUNCHER_WIDTH, MIN_LAUNCHER_HEIGHT, MIN_LAUNCHER_WIDTH,
     };
     use flux_core::{ResultKind, ResultSource, SearchResult};
     use windui::event::{Key, KeyEvent};
@@ -5126,35 +5218,23 @@ mod tests {
     }
 
     #[test]
-    fn visual_preview_scales_with_safe_dimensions() {
-        assert_eq!(
-            visual_preview_size(MIN_LAUNCHER_WIDTH, MIN_LAUNCHER_HEIGHT),
-            (170, 48)
-        );
-        assert_eq!(
-            visual_preview_size(MAX_LAUNCHER_WIDTH, MAX_LAUNCHER_HEIGHT),
-            (380, 120)
-        );
-        let default = visual_preview_size(DEFAULT_LAUNCHER_WIDTH, DEFAULT_LAUNCHER_HEIGHT);
-        assert!(default.0 > 170 && default.0 < 380);
-        assert!(default.1 > 48 && default.1 < 120);
-    }
-
-    #[test]
     fn settings_canvas_stays_fixed_while_visual_values_change() {
         // This is the geometry contract used by the Windows slider smoke: changing
         // either visual value must not resize or drift the Settings HWND itself.
         assert_eq!(
-            live_preview_geometry(true, true, 640, 520),
+            launcher_window_geometry_with_sizes(true, true, 640, 520),
             (super::SETTINGS_WINDOW_WIDTH, super::SETTINGS_WINDOW_HEIGHT)
         );
         assert_eq!(
-            live_preview_geometry(true, false, 380, 300),
+            launcher_window_geometry_with_sizes(true, false, 380, 300),
             (super::SETTINGS_WINDOW_WIDTH, super::SETTINGS_WINDOW_HEIGHT)
         );
-        assert_eq!(live_preview_geometry(false, true, 640, 520), (640, 520));
         assert_eq!(
-            live_preview_geometry(false, false, 640, 520),
+            launcher_window_geometry_with_sizes(false, true, 640, 520),
+            (640, 520)
+        );
+        assert_eq!(
+            launcher_window_geometry_with_sizes(false, false, 640, 520),
             (640, COMPACT_WINDOW_HEIGHT)
         );
     }

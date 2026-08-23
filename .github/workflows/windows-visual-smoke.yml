@@ -74,7 +74,7 @@ on:
         default: false
         type: boolean
       visual_settings_smoke:
-        description: "Open Visual Settings, drag both sliders, and verify the centered canvas stays stable"
+        description: "Open Visual Settings, measure the real preview HWND client geometry at DPI, verify realtime slider/reset IPC, stable Settings, and cleanup"
         required: false
         default: false
         type: boolean

@@ -77,14 +77,14 @@ use windows::Win32::UI::WindowsAndMessaging::{
     SM_CYFRAME, SM_CYSCREEN, SM_CYVIRTUALSCREEN, SM_REMOTESESSION, SM_XVIRTUALSCREEN,
     SM_YVIRTUALSCREEN, SPI_GETCLIENTAREAANIMATION, SWP_FRAMECHANGED, SWP_NOACTIVATE, SWP_NOMOVE,
     SWP_NOSIZE, SWP_NOZORDER, SW_HIDE, SW_MAXIMIZE, SW_MINIMIZE, SW_RESTORE, SW_SHOW,
-    SW_SHOWNORMAL, SYSTEM_PARAMETERS_INFO_UPDATE_FLAGS, WA_INACTIVE, WINDOW_EX_STYLE, WINDOW_STYLE,
-    WM_ACTIVATE, WM_APP, WM_CAPTURECHANGED, WM_CHAR, WM_CLOSE, WM_DESTROY, WM_DPICHANGED,
-    WM_DROPFILES, WM_ENTERSIZEMOVE, WM_EXITSIZEMOVE, WM_GETMINMAXINFO, WM_HOTKEY,
-    WM_IME_COMPOSITION, WM_IME_ENDCOMPOSITION, WM_IME_STARTCOMPOSITION, WM_KEYDOWN, WM_LBUTTONDOWN,
-    WM_LBUTTONUP, WM_MOUSEMOVE, WM_MOUSEWHEEL, WM_NCCALCSIZE, WM_NCCREATE, WM_NCHITTEST,
-    WM_NCMOUSEMOVE, WM_PAINT, WM_QUIT, WM_RBUTTONDOWN, WM_RBUTTONUP, WM_SETCURSOR, WM_SIZE,
-    WM_SYSKEYDOWN, WM_TIMER, WM_TOUCH, WNDCLASSEXW, WS_EX_LAYERED, WS_EX_TOOLWINDOW,
-    WS_MAXIMIZEBOX, WS_OVERLAPPEDWINDOW, WS_POPUP, WS_THICKFRAME,
+    SW_SHOWNOACTIVATE, SW_SHOWNORMAL, SYSTEM_PARAMETERS_INFO_UPDATE_FLAGS, WA_INACTIVE,
+    WINDOW_EX_STYLE, WINDOW_STYLE, WM_ACTIVATE, WM_APP, WM_CAPTURECHANGED, WM_CHAR, WM_CLOSE,
+    WM_DESTROY, WM_DPICHANGED, WM_DROPFILES, WM_ENTERSIZEMOVE, WM_EXITSIZEMOVE, WM_GETMINMAXINFO,
+    WM_HOTKEY, WM_IME_COMPOSITION, WM_IME_ENDCOMPOSITION, WM_IME_STARTCOMPOSITION, WM_KEYDOWN,
+    WM_LBUTTONDOWN, WM_LBUTTONUP, WM_MOUSEMOVE, WM_MOUSEWHEEL, WM_NCCALCSIZE, WM_NCCREATE,
+    WM_NCHITTEST, WM_NCMOUSEMOVE, WM_PAINT, WM_QUIT, WM_RBUTTONDOWN, WM_RBUTTONUP, WM_SETCURSOR,
+    WM_SIZE, WM_SYSKEYDOWN, WM_TIMER, WM_TOUCH, WNDCLASSEXW, WS_EX_LAYERED, WS_EX_NOACTIVATE,
+    WS_EX_TOOLWINDOW, WS_MAXIMIZEBOX, WS_OVERLAPPEDWINDOW, WS_POPUP, WS_THICKFRAME,
 };
 // 只用于 d2d 后端选择（RDP 远程会话下强制软渲染），随该 feature 一起门控。
 #[cfg(feature = "d2d")]
@@ -946,11 +946,14 @@ unsafe fn run_windowed(
     // from the taskbar and Alt+Tab while preserving activation and tray/global-hotkey access.
     // Add WS_EX_LAYERED only to the no-DWM fallback so its opaque dark surface
     // is composed with uniform alpha instead of becoming a white or solid slab.
-    let ex_style = if translucent_fallback {
+    let mut ex_style = if translucent_fallback {
         WS_EX_TOOLWINDOW | WS_EX_LAYERED
     } else {
         WS_EX_TOOLWINDOW
     };
+    if cfg.no_activate {
+        ex_style |= WS_EX_NOACTIVATE;
+    }
     let hwnd = match CreateWindowExW(
         ex_style,
         CLASS_NAME,
@@ -1173,7 +1176,12 @@ unsafe fn run_windowed(
         if let Some(state) = state_from(hwnd) {
             state.handler.on_window_show();
         }
-        let _ = ShowWindow(hwnd, SW_SHOW);
+        let show_command = if cfg.activate_on_start {
+            SW_SHOW
+        } else {
+            SW_SHOWNOACTIVATE
+        };
+        let _ = ShowWindow(hwnd, show_command);
         let _ = InvalidateRect(Some(hwnd), None, false);
         let _ = UpdateWindow(hwnd);
         set_interval_timers(hwnd, true);

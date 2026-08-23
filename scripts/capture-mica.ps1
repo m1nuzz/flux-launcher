@@ -112,6 +112,12 @@ public static class FluxWallpaper {
     }
     [DllImport("user32.dll", SetLastError = true)]
     public static extern bool GetWindowRect(IntPtr hwnd, out RECT rect);
+    [DllImport("user32.dll", SetLastError = true)]
+    public static extern bool GetClientRect(IntPtr hwnd, out RECT rect);
+    [DllImport("user32.dll", SetLastError = true)]
+    public static extern uint GetDpiForWindow(IntPtr hwnd);
+    public static int RectWidth(RECT rect) { return rect.Right - rect.Left; }
+    public static int RectHeight(RECT rect) { return rect.Bottom - rect.Top; }
     [StructLayout(LayoutKind.Sequential)]
     public struct CURSORINFO {
         public int cbSize;
@@ -1115,6 +1121,16 @@ try {
     $settingsCenterDelta = 0
     $visualSettingsSliderProbe = $false
     $visualPreviewUpdateCount = 0
+    $visualPreviewGeometrySampleCount = 0
+    $visualPreviewExactGeometryProbe = $false
+    $visualPreviewCleanupProbe = $false
+    $visualPreviewResetProbe = $false
+    $visualPreviewProcessId = 0
+    $visualPreviewWindowFound = $false
+    $visualPreviewGeometrySamples = @()
+    $reopenedSettingsProcess = $null
+    $reopenedPreviewProcessId = 0
+    $visualPreviewPersistenceProbe = $false
     try {
         Start-Sleep -Seconds 2
         $settingsProcess.Refresh()
@@ -1132,8 +1148,8 @@ try {
         if ($settingsHwnd -ne [IntPtr]::Zero) {
             $settingsRect = New-Object FluxWallpaper+RECT
             if ([FluxWallpaper]::GetWindowRect($settingsHwnd, [ref]$settingsRect)) {
-                $settingsWindowHeight = $settingsRect.Bottom - $settingsRect.Top
-                $settingsWindowWidth = $settingsRect.Right - $settingsRect.Left
+                $settingsWindowHeight = [FluxWallpaper]::RectHeight($settingsRect)
+                $settingsWindowWidth = [FluxWallpaper]::RectWidth($settingsRect)
                 $settingsWindowFound = $true
             }
         }
@@ -1148,32 +1164,170 @@ try {
             }
             [FluxWallpaper]::SetForegroundWindow($settingsHwnd) | Out-Null
             Start-Sleep -Milliseconds 350
+            $settingsDpi = [FluxWallpaper]::GetDpiForWindow($settingsHwnd)
+            if ($settingsDpi -eq 0) { $settingsDpi = 96 }
+            $settingsScale = $settingsDpi / 96.0
 
-            # Settings has 18px page padding + 24px panel padding. Form labels use
-            # the stable 110px column and 12px gap; sliders themselves are fixed
-            # at 200px. Drag both controls across their full tracks.
-            $sliderLeft = $settingsRect.Left + 18 + 24 + 110 + 12
-            $sliderRight = $sliderLeft + 190
-            # Settings page padding 18 + panel padding 24 + header ~60 + spacing 14,
-            # followed by the compact preview card. Probe a narrow band around each
-            # expected row center so a small font/DPI metric change cannot make the
-            # smoke click the label edge instead of the native Slider node.
-            $sliderYCandidates = @(
-                ($settingsRect.Top + 350), ($settingsRect.Top + 360), ($settingsRect.Top + 370),
-                ($settingsRect.Top + 380), ($settingsRect.Top + 430), ($settingsRect.Top + 440),
-                ($settingsRect.Top + 450), ($settingsRect.Top + 460)
-            )
-            foreach ($sliderY in $sliderYCandidates) {
-                [FluxWallpaper]::SetCursorPos($sliderLeft, $sliderY) | Out-Null
+            # The parent logs the preview child PID only after spawning the same executable
+            # in --visual-preview mode. Locate the real second HWND by that PID, never by
+            # foreground-window heuristics or by a scaled in-Settings illustration.
+            $previewChildProcessId = 0
+            $previewHwnd = [IntPtr]::Zero
+            for ($attempt = 0; $attempt -lt 60; $attempt++) {
+                $previewLog = if (Test-Path $settingsStderrPath) {
+                    Get-Content $settingsStderrPath -Raw
+                } else {
+                    ""
+                }
+                $pidMatch = [regex]::Match($previewLog, "Visual preview process started: pid=(\d+)")
+                if ($pidMatch.Success) {
+                    $previewChildProcessId = [int]$pidMatch.Groups[1].Value
+                    $candidate = [FluxWallpaper]::FindVisibleWindowByProcessId([uint32]$previewChildProcessId)
+                    if ($candidate -ne [IntPtr]::Zero) {
+                        $previewHwnd = $candidate
+                        break
+                    }
+                }
+                Start-Sleep -Milliseconds 100
+            }
+            if ($previewChildProcessId -eq 0 -or $previewHwnd -eq [IntPtr]::Zero) {
+                throw "Visual Settings smoke could not locate the READY native preview child HWND by its reported PID."
+            }
+            $visualPreviewProcessId = $previewChildProcessId
+            $visualPreviewWindowFound = $true
+            if ([FluxWallpaper]::GetForegroundWindow() -ne $settingsHwnd) {
+                throw "Visual preview startup activated the child HWND and displaced the Settings foreground window."
+            }
+            $previewExStyle = [FluxWallpaper]::GetWindowLongPtr($previewHwnd, -20).ToInt64()
+            if (($previewExStyle -band 0x08000000) -eq 0) {
+                throw "Visual preview HWND is missing WS_EX_NOACTIVATE; clicking it could hide Settings."
+            }
+
+            $initialClientRect = New-Object FluxWallpaper+RECT
+            $initialWindowRect = New-Object FluxWallpaper+RECT
+            if (![FluxWallpaper]::GetClientRect($previewHwnd, [ref]$initialClientRect) -or
+                ![FluxWallpaper]::GetWindowRect($previewHwnd, [ref]$initialWindowRect)) {
+                throw "Visual Settings smoke could not read initial preview HWND geometry."
+            }
+            $initialDpi = [FluxWallpaper]::GetDpiForWindow($previewHwnd)
+            if ($initialDpi -eq 0) { $initialDpi = 96 }
+            $initialClientWidth = [FluxWallpaper]::RectWidth($initialClientRect)
+            $initialClientHeight = [FluxWallpaper]::RectHeight($initialClientRect)
+            $initialGeometryMatch = $null
+            for ($attempt = 0; $attempt -lt 30 -and $null -eq $initialGeometryMatch; $attempt++) {
+                $previewLog = if (Test-Path $settingsStderrPath) { Get-Content $settingsStderrPath -Raw } else { "" }
+                $geometryCandidates = [regex]::Matches(
+                    $previewLog,
+                    "VisualPreviewChild: GEOMETRY $visualPreviewProcessId (\d+) (\d+) (\d+) (\d+) (\d+)"
+                )
+                if ($geometryCandidates.Count -gt 0) {
+                    $initialGeometryMatch = $geometryCandidates[$geometryCandidates.Count - 1]
+                } else {
+                    Start-Sleep -Milliseconds 100
+                }
+            }
+            if ($null -eq $initialGeometryMatch) {
+                throw "Visual Settings smoke did not receive initial GetClientRect telemetry from preview PID $visualPreviewProcessId."
+            }
+            $initialLogicalWidth = [int]$initialGeometryMatch.Groups[1].Value
+            $initialLogicalHeight = [int]$initialGeometryMatch.Groups[2].Value
+            $initialReportedClientWidth = [int]$initialGeometryMatch.Groups[3].Value
+            $initialReportedClientHeight = [int]$initialGeometryMatch.Groups[4].Value
+            $initialReportedDpi = [int]$initialGeometryMatch.Groups[5].Value
+            $expectedInitialWidth = [int][Math]::Floor(($initialLogicalWidth * $initialReportedDpi / 96.0) + 0.5)
+            $expectedInitialHeight = [int][Math]::Floor(($initialLogicalHeight * $initialReportedDpi / 96.0) + 0.5)
+            if ($initialClientWidth -ne $initialReportedClientWidth -or
+                $initialClientHeight -ne $initialReportedClientHeight -or
+                $initialClientWidth -ne $expectedInitialWidth -or
+                $initialClientHeight -ne $expectedInitialHeight) {
+                throw "Initial preview client geometry mismatch: requested=${initialLogicalWidth}x${initialLogicalHeight}, reported=${initialReportedClientWidth}x${initialReportedClientHeight}, HWND=${initialClientWidth}x${initialClientHeight}, dpi=${initialReportedDpi}, expected=${expectedInitialWidth}x${expectedInitialHeight}."
+            }
+
+            # Settings has stable 18px page padding + 24px panel padding, a 110px
+            # field-label column, a 200px slider, a 76px numeric field, and a Reset button.
+            $sliderLeft = $settingsRect.Left + [int][Math]::Round((18 + 24 + 110 + 12) * $settingsScale)
+            $sliderRight = $sliderLeft + [int][Math]::Round(190 * $settingsScale)
+            $previewLog = Get-Content $settingsStderrPath -Raw
+            $widthSliderY = 0
+            foreach ($candidateOffset in @(280, 290, 300, 310, 320, 330, 340, 350, 360, 370, 380, 390)) {
+                $candidateY = $settingsRect.Top + [int][Math]::Round($candidateOffset * $settingsScale)
+                $beforeLog = Get-Content $settingsStderrPath -Raw
+                [FluxWallpaper]::SetCursorPos($sliderLeft, $candidateY) | Out-Null
                 [FluxWallpaper]::mouse_event(0x0002, 0, 0, 0, [UIntPtr]::Zero)
-                for ($step = 1; $step -le 10; $step++) {
-                    $x = $sliderLeft + [int](($sliderRight - $sliderLeft) * $step / 10)
-                    [FluxWallpaper]::SetCursorPos($x, $sliderY) | Out-Null
-                    Start-Sleep -Milliseconds 35
+                for ($step = 0; $step -le 10; $step++) {
+                    $x = $sliderLeft + [int](($sliderRight - $sliderLeft) * $step / 10.0)
+                    [FluxWallpaper]::SetCursorPos($x, $candidateY) | Out-Null
+                    Start-Sleep -Milliseconds 45
                 }
                 [FluxWallpaper]::mouse_event(0x0004, 0, 0, 0, [UIntPtr]::Zero)
                 Start-Sleep -Milliseconds 250
+                $afterCandidateLog = Get-Content $settingsStderrPath -Raw
+                $candidateGeometry = [regex]::Matches(
+                    $afterCandidateLog,
+                    "VisualPreviewChild: GEOMETRY $visualPreviewProcessId (\d+) (\d+) (\d+) (\d+) (\d+)"
+                )
+                foreach ($match in $candidateGeometry) {
+                    if ([int]$match.Groups[1].Value -ne $initialLogicalWidth -and
+                        [int]$match.Groups[2].Value -eq $initialLogicalHeight) {
+                        $widthSliderY = $candidateY
+                        break
+                    }
+                }
+                if ($widthSliderY -ne 0) { break }
             }
+            if ($widthSliderY -eq 0) {
+                throw "Visual Settings smoke could not identify the width slider from native preview geometry telemetry."
+            }
+
+            $heightSliderY = 0
+            foreach ($candidateOffset in @(360, 370, 380, 390, 400, 410, 420, 430, 440, 450, 460, 470, 480)) {
+                $candidateY = $settingsRect.Top + [int][Math]::Round($candidateOffset * $settingsScale)
+                [FluxWallpaper]::SetCursorPos($sliderLeft, $candidateY) | Out-Null
+                [FluxWallpaper]::mouse_event(0x0002, 0, 0, 0, [UIntPtr]::Zero)
+                for ($step = 0; $step -le 10; $step++) {
+                    $fraction = 1.0 - ($step / 10.0)
+                    $x = $sliderLeft + [int](($sliderRight - $sliderLeft) * $fraction)
+                    [FluxWallpaper]::SetCursorPos($x, $candidateY) | Out-Null
+                    Start-Sleep -Milliseconds 45
+                }
+                [FluxWallpaper]::mouse_event(0x0004, 0, 0, 0, [UIntPtr]::Zero)
+                Start-Sleep -Milliseconds 250
+                $afterCandidateLog = Get-Content $settingsStderrPath -Raw
+                $candidateGeometry = [regex]::Matches(
+                    $afterCandidateLog,
+                    "VisualPreviewChild: GEOMETRY $visualPreviewProcessId (\d+) (\d+) (\d+) (\d+) (\d+)"
+                )
+                foreach ($match in $candidateGeometry) {
+                    if ([int]$match.Groups[2].Value -ne $initialLogicalHeight) {
+                        $heightSliderY = $candidateY
+                        break
+                    }
+                }
+                if ($heightSliderY -ne 0) { break }
+            }
+            if ($heightSliderY -eq 0) {
+                throw "Visual Settings smoke could not identify the results-height slider from native preview geometry telemetry."
+            }
+
+            # Exercise both discovered tracks in opposite directions so the test proves
+            # realtime changes rather than merely proving that an initial child exists.
+            foreach ($probe in @(
+                @{ Y = $widthSliderY; Start = 0; End = 10 },
+                @{ Y = $heightSliderY; Start = 10; End = 0 }
+            )) {
+                $startX = $sliderLeft + [int](($sliderRight - $sliderLeft) * $probe.Start / 10)
+                [FluxWallpaper]::SetCursorPos($startX, $probe.Y) | Out-Null
+                [FluxWallpaper]::mouse_event(0x0002, 0, 0, 0, [UIntPtr]::Zero)
+                for ($step = 0; $step -le 10; $step++) {
+                    $fraction = ($probe.Start + ($probe.End - $probe.Start) * $step / 10.0) / 10.0
+                    $x = $sliderLeft + [int](($sliderRight - $sliderLeft) * $fraction)
+                    [FluxWallpaper]::SetCursorPos($x, $probe.Y) | Out-Null
+                    Start-Sleep -Milliseconds 45
+                }
+                [FluxWallpaper]::mouse_event(0x0004, 0, 0, 0, [UIntPtr]::Zero)
+                Start-Sleep -Milliseconds 300
+            }
+
             $afterDragRect = New-Object FluxWallpaper+RECT
             if (![FluxWallpaper]::GetWindowRect($settingsHwnd, [ref]$afterDragRect)) {
                 throw "Visual Settings smoke could not read the Settings window after slider drags."
@@ -1184,30 +1338,143 @@ try {
                 [Math]::Abs($settingsCenterAfterDragX - $settingsCenterBeforeDragX),
                 [Math]::Abs($settingsCenterAfterDragY - $settingsCenterBeforeDragY)
             )
-            $afterDragWidth = $afterDragRect.Right - $afterDragRect.Left
-            $afterDragHeight = $afterDragRect.Bottom - $afterDragRect.Top
-            Start-Sleep -Milliseconds 250
-            $previewLog = if (Test-Path $settingsStderrPath) {
-                Get-Content $settingsStderrPath -Raw
-            } else {
-                ""
-            }
-            $visualPreviewUpdateCount = ([regex]::Matches(
-                $previewLog,
-                "Visual preview size updated:"
-            )).Count
-            if ($visualPreviewUpdateCount -lt 2) {
-                throw "Visual Settings live preview smoke failed: expected realtime preview updates for both sliders, observed $visualPreviewUpdateCount."
-            }
-            $visualSettingsSliderProbe =
-                $settingsCenterDelta -le 2 -and
-                $afterDragWidth -eq $settingsWindowWidth -and
-                $afterDragHeight -eq $settingsWindowHeight
-            if (!$visualSettingsSliderProbe) {
+            $afterDragWidth = [FluxWallpaper]::RectWidth($afterDragRect)
+            $afterDragHeight = [FluxWallpaper]::RectHeight($afterDragRect)
+            if ($settingsCenterDelta -gt 2 -or
+                $afterDragWidth -ne $settingsWindowWidth -or
+                $afterDragHeight -ne $settingsWindowHeight) {
                 throw "Visual Settings slider smoke failed: center delta=${settingsCenterDelta}px, size=${afterDragWidth}x${afterDragHeight}, initial=${settingsWindowWidth}x${settingsWindowHeight}."
             }
+            $visualSettingsSliderProbe = $true
+
+            Start-Sleep -Milliseconds 300
+            $previewLog = if (Test-Path $settingsStderrPath) { Get-Content $settingsStderrPath -Raw } else { "" }
+            $visualPreviewUpdateCount = ([regex]::Matches($previewLog, "Visual preview IPC resize dispatched:")).Count
+            $geometryMatches = [regex]::Matches(
+                $previewLog,
+                "VisualPreviewChild: GEOMETRY (\d+) (\d+) (\d+) (\d+) (\d+) (\d+)"
+            )
+            foreach ($match in $geometryMatches) {
+                $logicalWidth = [int]$match.Groups[2].Value
+                $logicalHeight = [int]$match.Groups[3].Value
+                $clientWidth = [int]$match.Groups[4].Value
+                $clientHeight = [int]$match.Groups[5].Value
+                $dpi = [int]$match.Groups[6].Value
+                $expectedWidth = [int][Math]::Floor(($logicalWidth * $dpi / 96.0) + 0.5)
+                $expectedHeight = [int][Math]::Floor(($logicalHeight * $dpi / 96.0) + 0.5)
+                if ($clientWidth -ne $expectedWidth -or $clientHeight -ne $expectedHeight) {
+                    throw "Preview geometry mismatch: logical=${logicalWidth}x${logicalHeight}, client=${clientWidth}x${clientHeight}, dpi=${dpi}, expected=${expectedWidth}x${expectedHeight}."
+                }
+                $visualPreviewGeometrySamples += [ordered]@{
+                    LogicalWidth = $logicalWidth
+                    LogicalHeight = $logicalHeight
+                    ClientWidth = $clientWidth
+                    ClientHeight = $clientHeight
+                    Dpi = $dpi
+                }
+            }
+            $visualPreviewGeometrySampleCount = $visualPreviewGeometrySamples.Count
+            if ($visualPreviewUpdateCount -lt 2 -or $visualPreviewGeometrySampleCount -lt 3) {
+                throw "Visual Settings exact preview smoke failed: IPC updates=$visualPreviewUpdateCount, measured geometry samples=$visualPreviewGeometrySampleCount; expected realtime updates for both sliders."
+            }
+            $visualPreviewExactGeometryProbe = $true
+
+            # Reset each control through the real button. The generation counter makes
+            # a reset dispatch an IPC resize even if the user is already at that value.
+            $resetX = $settingsRect.Left + [int][Math]::Round((18 + 24 + 110 + 12 + 200 + 8 + 76 + 8 + 25) * $settingsScale)
+            foreach ($resetY in @($widthSliderY, $heightSliderY)) {
+                [FluxWallpaper]::SetCursorPos($resetX, $resetY) | Out-Null
+                [FluxWallpaper]::mouse_event(0x0002, 0, 0, 0, [UIntPtr]::Zero)
+                [FluxWallpaper]::mouse_event(0x0004, 0, 0, 0, [UIntPtr]::Zero)
+                Start-Sleep -Milliseconds 450
+            }
+            $previewLog = if (Test-Path $settingsStderrPath) { Get-Content $settingsStderrPath -Raw } else { "" }
+            $widthResetSeen = [regex]::IsMatch($previewLog, "VisualPreviewChild: GEOMETRY \d+ 420 \d+ \d+ \d+ \d+")
+            $heightResetSeen = [regex]::IsMatch($previewLog, "VisualPreviewChild: GEOMETRY \d+ \d+ 382 \d+ \d+ \d+")
+            $visualPreviewResetProbe = $widthResetSeen -and $heightResetSeen
+            if (!$visualPreviewResetProbe) {
+                throw "Visual Settings reset smoke failed: the native preview did not report logical 420 width and 382 height after Reset clicks."
+            }
+
+            # The Visual page owns an explicit Apply dimensions action. After the second
+            # Reset button has focus, one Tab reaches Apply dimensions without depending on
+            # a guessed scroll offset; Enter closes Settings and persists both values.
+            [FluxWallpaper]::SetForegroundWindow($settingsHwnd) | Out-Null
+            $shell.AppActivate($settingsProcess.Id) | Out-Null
+            $shell.SendKeys("{TAB}")
+            $shell.SendKeys("{ENTER}")
+            Start-Sleep -Milliseconds 800
+            $settingsPath = Join-Path $env:APPDATA "FluxLauncher\settings.json"
+            if (!(Test-Path $settingsPath)) {
+                throw "Visual Apply smoke could not find the persisted settings file at $settingsPath."
+            }
+            $persistedSettings = Get-Content $settingsPath -Raw | ConvertFrom-Json
+            if ($persistedSettings.launcher_width -ne 420 -or $persistedSettings.launcher_height -ne 382) {
+                throw "Visual Apply smoke persisted unexpected dimensions: $($persistedSettings.launcher_width)x$($persistedSettings.launcher_height)."
+            }
+            $visualPreviewPersistenceProbe = $true
+            $previewStillAlive = $false
+            try {
+                $previewStillAlive = -not (Get-Process -Id $visualPreviewProcessId -ErrorAction Stop).HasExited
+            } catch { $previewStillAlive = $false }
+            if ($previewStillAlive -or
+                [FluxWallpaper]::FindVisibleWindowByProcessId([uint32]$visualPreviewProcessId) -ne [IntPtr]::Zero) {
+                throw "Visual Apply smoke failed to close preview PID $visualPreviewProcessId."
+            }
+
+            # Reopen a fresh isolated Settings process. Its first preview geometry must load
+            # the values just persisted by Apply, proving this is not only in-memory state.
+            $reopenStdoutPath = Join-Path $OutputDirectory "settings-reopen.stdout.log"
+            $reopenStderrPath = Join-Path $OutputDirectory "settings-reopen.stderr.log"
+            $reopenedSettingsProcess = Start-Process -FilePath $Executable -PassThru -RedirectStandardOutput $reopenStdoutPath -RedirectStandardError $reopenStderrPath
+            Start-Sleep -Seconds 2
+            $reopenedSettingsHwnd = Get-LauncherWindowHandle $reopenedSettingsProcess
+            $reopenedSettingsRect = New-Object FluxWallpaper+RECT
+            if (![FluxWallpaper]::GetWindowRect($reopenedSettingsHwnd, [ref]$reopenedSettingsRect)) {
+                throw "Visual persistence smoke could not find reopened Settings HWND."
+            }
+            $reopenLog = if (Test-Path $reopenStderrPath) { Get-Content $reopenStderrPath -Raw } else { "" }
+            $reopenPidMatch = [regex]::Match($reopenLog, "Visual preview process started: pid=(\d+)")
+            if (!$reopenPidMatch.Success) {
+                throw "Visual persistence smoke did not observe a preview child after reopening Settings."
+            }
+            $reopenedPreviewProcessId = [int]$reopenPidMatch.Groups[1].Value
+            $reopenGeometryMatch = $null
+            for ($attempt = 0; $attempt -lt 30 -and $null -eq $reopenGeometryMatch; $attempt++) {
+                $reopenLog = Get-Content $reopenStderrPath -Raw
+                $matches = [regex]::Matches(
+                    $reopenLog,
+                    "VisualPreviewChild: GEOMETRY $reopenedPreviewProcessId (\d+) (\d+) (\d+) (\d+) (\d+)"
+                )
+                if ($matches.Count -gt 0) { $reopenGeometryMatch = $matches[$matches.Count - 1] }
+                else { Start-Sleep -Milliseconds 100 }
+            }
+            if ($null -eq $reopenGeometryMatch -or
+                [int]$reopenGeometryMatch.Groups[1].Value -ne 420 -or
+                [int]$reopenGeometryMatch.Groups[2].Value -ne 382) {
+                throw "Visual persistence smoke reopened dimensions do not equal 420x382 logical client units."
+            }
+
+            $reopenDpi = [FluxWallpaper]::GetDpiForWindow($reopenedSettingsHwnd)
+            if ($reopenDpi -eq 0) { $reopenDpi = 96 }
+            $reopenBackX = $reopenedSettingsRect.Right - [int][Math]::Round(42 * ($reopenDpi / 96.0)) - [int][Math]::Round(30 * ($reopenDpi / 96.0))
+            $reopenBackY = $reopenedSettingsRect.Top + [int][Math]::Round(58 * ($reopenDpi / 96.0))
+            [FluxWallpaper]::SetCursorPos($reopenBackX, $reopenBackY) | Out-Null
+            [FluxWallpaper]::mouse_event(0x0002, 0, 0, 0, [UIntPtr]::Zero)
+            [FluxWallpaper]::mouse_event(0x0004, 0, 0, 0, [UIntPtr]::Zero)
+            Start-Sleep -Milliseconds 700
+            $reopenedPreviewAlive = $false
+            try {
+                $reopenedPreviewAlive = -not (Get-Process -Id $reopenedPreviewProcessId -ErrorAction Stop).HasExited
+            } catch { $reopenedPreviewAlive = $false }
+            if ($reopenedPreviewAlive -or
+                [FluxWallpaper]::FindVisibleWindowByProcessId([uint32]$reopenedPreviewProcessId) -ne [IntPtr]::Zero) {
+                throw "Visual Back cleanup smoke failed after persistence reopen: preview PID $reopenedPreviewProcessId remained."
+            }
+            $visualPreviewCleanupProbe = $true
+
             Save-Screenshot "settings-visual-sliders.png"
-            Write-Host "Visual Settings slider smoke passed: live preview card emitted $visualPreviewUpdateCount realtime updates while Settings remained centered at ${afterDragWidth}x${afterDragHeight}; center delta=${settingsCenterDelta}px."
+            Write-Host "Visual Settings exact preview smoke passed: preview PID $visualPreviewProcessId reported $visualPreviewGeometrySampleCount measured GetClientRect samples and $visualPreviewUpdateCount IPC resizes; Settings remained ${afterDragWidth}x${afterDragHeight} with center delta=${settingsCenterDelta}px; Reset, Apply persistence, reopen, and Back cleanup passed."
         }
         Save-Screenshot "settings-panel.png"
         if ($EverythingMissingSmoke) {
@@ -1217,6 +1484,16 @@ try {
     finally {
         if (!$settingsProcess.HasExited) {
             Stop-Process -Id $settingsProcess.Id -Force
+        }
+        if ($null -ne $reopenedSettingsProcess -and !$reopenedSettingsProcess.HasExited) {
+            Stop-Process -Id $reopenedSettingsProcess.Id -Force -ErrorAction SilentlyContinue
+        }
+        foreach ($previewId in @($visualPreviewProcessId, $reopenedPreviewProcessId)) {
+            if ($previewId -eq 0) { continue }
+            $orphan = Get-Process -Id $previewId -ErrorAction SilentlyContinue
+            if ($null -ne $orphan -and !$orphan.HasExited) {
+                Stop-Process -Id $previewId -Force -ErrorAction SilentlyContinue
+            }
         }
         Remove-Item Env:FLUX_OPEN_SETTINGS -ErrorAction SilentlyContinue
         Remove-Item Env:FLUX_SMOKE_TRAY_SETTINGS -ErrorAction SilentlyContinue
@@ -1273,9 +1550,18 @@ try {
         SettingsPanelProbe = $settingsWindowFound -and ($settingsWindowHeight -ge 400) -and ($settingsWindowWidth -ge 680)
         VisualSettingsSliderProbe = (!$VisualSettingsSmoke) -or $visualSettingsSliderProbe
         VisualPreviewUpdateCount = $visualPreviewUpdateCount
+        VisualPreviewProcessId = $visualPreviewProcessId
+        VisualPreviewWindowFound = $visualPreviewWindowFound
+        VisualPreviewExactGeometryProbe = (!$VisualSettingsSmoke) -or $visualPreviewExactGeometryProbe
+        VisualPreviewGeometrySampleCount = $visualPreviewGeometrySampleCount
+        VisualPreviewGeometrySamples = @($visualPreviewGeometrySamples)
+        VisualPreviewResetProbe = (!$VisualSettingsSmoke) -or $visualPreviewResetProbe
+        VisualPreviewPersistenceProbe = (!$VisualSettingsSmoke) -or $visualPreviewPersistenceProbe
+        VisualPreviewCleanupProbe = (!$VisualSettingsSmoke) -or $visualPreviewCleanupProbe
         SettingsCenterBeforeDrag = [ordered]@{ X = $settingsCenterBeforeDragX; Y = $settingsCenterBeforeDragY }
         SettingsCenterAfterDrag = [ordered]@{ X = $settingsCenterAfterDragX; Y = $settingsCenterAfterDragY }
         SettingsCenterDeltaPixels = $settingsCenterDelta
+        VisualDimensionContract = "logical client px (DIP); physical GetClientRect px = round(logical * GetDpiForWindow / 96)"
         EverythingAutoEnableProbe = $true
         EverythingStartupProbe = $everythingStartupProbe
         EverythingMissingStateProbe = [bool]$EverythingMissingSmoke
