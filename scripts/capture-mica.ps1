@@ -1154,9 +1154,16 @@ try {
             # at 200px. Drag both controls across their full tracks.
             $sliderLeft = $settingsRect.Left + 18 + 24 + 110 + 12
             $sliderRight = $sliderLeft + 190
-            $widthSliderY = $settingsRect.Top + 365
-            $heightSliderY = $settingsRect.Top + 425
-            foreach ($sliderY in @($widthSliderY, $heightSliderY)) {
+            # Settings page padding 18 + panel padding 24 + header ~60 + spacing 14,
+            # followed by the compact preview card. Probe a narrow band around each
+            # expected row center so a small font/DPI metric change cannot make the
+            # smoke click the label edge instead of the native Slider node.
+            $sliderYCandidates = @(
+                ($settingsRect.Top + 350), ($settingsRect.Top + 360), ($settingsRect.Top + 370),
+                ($settingsRect.Top + 380), ($settingsRect.Top + 430), ($settingsRect.Top + 440),
+                ($settingsRect.Top + 450), ($settingsRect.Top + 460)
+            )
+            foreach ($sliderY in $sliderYCandidates) {
                 [FluxWallpaper]::SetCursorPos($sliderLeft, $sliderY) | Out-Null
                 [FluxWallpaper]::mouse_event(0x0002, 0, 0, 0, [UIntPtr]::Zero)
                 for ($step = 1; $step -le 10; $step++) {
