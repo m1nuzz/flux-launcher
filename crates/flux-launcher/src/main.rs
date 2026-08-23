@@ -3583,6 +3583,13 @@ fn main() {
     .truncate(Truncate::End)
     .visible_when(move || priorities.get().is_empty());
 
+    let size_for_width_reset = window_size.clone();
+    let size_for_height_reset = window_size.clone();
+    let position_for_width_reset = window_position.clone();
+    let position_for_height_reset = window_position.clone();
+    let settings_for_width_reset = Arc::clone(&shared_settings);
+    let settings_for_height_reset = Arc::clone(&shared_settings);
+
     // Settings shares the same continuous Acrylic surface as the launcher.
     // Do not add a dark card here: it hides the blur and creates the old opaque
     // search-style slab inside the transparent window.
@@ -4137,6 +4144,34 @@ fn main() {
                                     Element::text_input(launcher_width_input, "420")
                                         .width(76),
                                 )
+                                .child(
+                                    Element::button("Reset")
+                                        .neutral()
+                                        .on_click(move |_| {
+                                            let width = DEFAULT_LAUNCHER_WIDTH;
+                                            let height = launcher_height.get();
+                                            launcher_width.set(width);
+                                            launcher_width_input.set(width.to_string());
+                                            launcher_width_slider.set(dimension_slider_fraction(
+                                                width,
+                                                MIN_LAUNCHER_WIDTH,
+                                                MAX_LAUNCHER_WIDTH,
+                                            ));
+                                            launcher_preview_text.set(format!(
+                                                "Current launcher size: {} × {} px",
+                                                width, height
+                                            ));
+                                            apply_launcher_preview_size(
+                                                &size_for_width_reset,
+                                                &position_for_width_reset,
+                                                &settings_for_width_reset,
+                                                width,
+                                                height,
+                                                true,
+                                                false,
+                                            );
+                                        }),
+                                )
                                 .child(Element::label("px").font_size(11.0)),
                         ))
                         .child(
@@ -4156,6 +4191,34 @@ fn main() {
                                 .child(
                                     Element::text_input(launcher_height_input, "382")
                                         .width(76),
+                                )
+                                .child(
+                                    Element::button("Reset")
+                                        .neutral()
+                                        .on_click(move |_| {
+                                            let width = launcher_width.get();
+                                            let height = DEFAULT_LAUNCHER_HEIGHT;
+                                            launcher_height.set(height);
+                                            launcher_height_input.set(height.to_string());
+                                            launcher_height_slider.set(dimension_slider_fraction(
+                                                height,
+                                                MIN_LAUNCHER_HEIGHT,
+                                                MAX_LAUNCHER_HEIGHT,
+                                            ));
+                                            launcher_preview_text.set(format!(
+                                                "Current launcher size: {} × {} px",
+                                                width, height
+                                            ));
+                                            apply_launcher_preview_size(
+                                                &size_for_height_reset,
+                                                &position_for_height_reset,
+                                                &settings_for_height_reset,
+                                                width,
+                                                height,
+                                                true,
+                                                false,
+                                            );
+                                        }),
                                 )
                                 .child(Element::label("px").font_size(11.0)),
                         ))
