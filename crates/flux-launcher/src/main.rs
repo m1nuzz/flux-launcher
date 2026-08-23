@@ -761,6 +761,112 @@ impl Widget for ResultIconView {
     }
 }
 
+fn visual_preview_size(width: u16, height: u16) -> (i32, i32) {
+    let width_fraction = dimension_slider_fraction(width, MIN_LAUNCHER_WIDTH, MAX_LAUNCHER_WIDTH);
+    let height_fraction =
+        dimension_slider_fraction(height, MIN_LAUNCHER_HEIGHT, MAX_LAUNCHER_HEIGHT);
+    (
+        (170.0 + width_fraction * 210.0).round() as i32,
+        (48.0 + height_fraction * 72.0).round() as i32,
+    )
+}
+
+/// A native, signal-driven preview of the launcher proportions. The Settings HWND stays
+/// fixed for stable slider interaction, while this card gives immediate visual feedback
+/// about the dimensions that will be used by the launcher after Apply settings.
+struct VisualSizePreview {
+    width: Signal<u16>,
+    height: Signal<u16>,
+}
+
+impl VisualSizePreview {
+    fn new(width: Signal<u16>, height: Signal<u16>) -> Self {
+        Self { width, height }
+    }
+}
+
+impl Widget for VisualSizePreview {
+    fn measure(
+        &self,
+        _avail: Size,
+        _style: &Style,
+        _text: &mut dyn windui::text::TextEngine,
+    ) -> Size {
+        Size::new(420, 148)
+    }
+
+    fn paint(
+        &self,
+        bounds: Rect,
+        _content: Rect,
+        _focused: bool,
+        _enabled: bool,
+        canvas: &mut dyn Canvas,
+        _style: &Style,
+    ) {
+        let (raw_width, raw_height) = visual_preview_size(self.width.get(), self.height.get());
+        let max_width = (bounds.w - 20).max(80) as f32;
+        let max_height = (bounds.h - 12).max(40) as f32;
+        let scale = (max_width / raw_width as f32)
+            .min(max_height / raw_height as f32)
+            .min(1.0);
+        let preview_width = (raw_width as f32 * scale).round() as i32;
+        let preview_height = (raw_height as f32 * scale).round() as i32;
+        let x = bounds.x + ((bounds.w - preview_width).max(0) / 2);
+        let y = bounds.y + ((bounds.h - preview_height).max(0) / 2);
+        let card = Paint::fill(Color::rgba(22, 25, 34, 238));
+        let accent = Paint::fill(Color::rgba(76, 139, 245, 220));
+        let muted = Paint::fill(Color::rgba(214, 225, 243, 120));
+        canvas.draw_shadow(
+            x as f32 + 1.0,
+            y as f32 + 2.0,
+            preview_width as f32,
+            preview_height as f32,
+            10.0,
+            8.0,
+            Color::rgba(0, 0, 0, 90),
+        );
+        canvas.fill_round_rect(
+            x as f32,
+            y as f32,
+            preview_width as f32,
+            preview_height as f32,
+            10.0,
+            &card,
+        );
+        let inset = (12.0 * scale).round().max(6.0) as i32;
+        let inner_width = (preview_width - inset * 2).max(24);
+        canvas.fill_round_rect(
+            (x + inset) as f32,
+            (y + 10) as f32,
+            inner_width as f32,
+            (18.0 * scale).max(8.0),
+            (5.0 * scale).max(2.0),
+            &accent,
+        );
+        canvas.fill_round_rect(
+            (x + inset + (8.0 * scale).round() as i32) as f32,
+            (y + (15.0 * scale).round() as i32) as f32,
+            (inner_width / 3).max(24) as f32,
+            (4.0 * scale).max(2.0),
+            (2.0 * scale).max(1.0),
+            &muted,
+        );
+        let row_y = y + (42.0 * scale).round() as i32;
+        for (index, row_width) in [0.82_f32, 0.68, 0.56].into_iter().enumerate() {
+            let row_width = ((inner_width - 8) as f32 * row_width).round() as i32;
+            canvas.fill_round_rect(
+                (x + inset + 4) as f32,
+                (row_y + (index as f32 * 20.0 * scale).round() as i32) as f32,
+                row_width.max(28) as f32,
+                (10.0 * scale).max(5.0),
+                (4.0 * scale).max(2.0),
+                &Paint::fill(Color::rgba(255, 255, 255, if index == 0 { 32 } else { 20 })),
+            );
+        }
+    }
+}
+
 fn quoted_result_path(result: &SearchResult) -> Option<String> {
     let target = result.target.as_deref()?.trim();
     if target.is_empty() {
@@ -2500,6 +2606,8 @@ fn main() {
     let google_alias_for_interval = google_alias;
     let history_mode_for_interval = history_mode;
     let settings_visible_for_interval = settings_visible;
+    let visual_preview_smoke_for_interval =
+        std::env::var_os("FLUX_SMOKE_VISUAL_SETTINGS").is_some();
     let tray_settings_smoke_pending_for_interval = Rc::clone(&tray_settings_smoke_pending);
     let mut last_icon_generation = icon_refresh_generation.get();
     let mut last_launcher_width = launcher_width.get();
@@ -4141,6 +4249,24 @@ fn main() {
                         .child(Element::label("Windows accent is read from the current user profile; the custom color is used as a safe fallback.").font_size(10.0).fg(Color::rgba(235, 241, 255, 150)).max_lines(2).truncate(Truncate::End))
                         .child(
                             Element::col()
+                                .spacing(4)
+                                .child(
+                                    Element::label("Live launcher preview")
+                                        .font_size(12.0)
+                                        .fg(Color::rgba(235, 241, 255, 220)),
+                                )
+                                .child(
+                                    Element::leaf()
+                                        .widget(VisualSizePreview::new(
+                                            launcher_width,
+                                            launcher_height,
+                                        ))
+                                        .width_match()
+                                        .height(148),
+                                ),
+                        )
+                        .child(
+                            Element::col()
                                 .spacing(8)
                                 .visible_when(move || !use_system_accent.get())
                                 .child(
@@ -4246,7 +4372,7 @@ fn main() {
                             .fg(Color::rgba(235, 241, 255, 150)),
                         )
                         .child(Element::label_signal(launcher_preview_text).font_size(12.0).fg(Color::WHITE))
-                        .child(Element::label("Default: 420×382 px. Preview values update immediately; Apply settings saves the size. Monitor placement remains Display with the mouse cursor by default.").font_size(11.0).fg(Color::rgba(235, 241, 255, 175)).max_lines(2).truncate(Truncate::End)),
+                        .child(Element::label("The preview scales with the selected dimensions. Apply settings saves the size; monitor placement remains Display with the mouse cursor by default.").font_size(11.0).fg(Color::rgba(235, 241, 255, 175)).max_lines(2).truncate(Truncate::End)),
                 ),
         )
         .child(
@@ -4400,6 +4526,12 @@ fn main() {
                     settings_visible_for_interval.get(),
                     show_results_for_interval.get(),
                 );
+                if visual_preview_smoke_for_interval {
+                    eprintln!(
+                        "Visual preview size updated: {}x{}",
+                        next_width, next_height
+                    );
+                }
                 last_launcher_width = next_width;
                 last_launcher_height = next_height;
             } else if current_width != last_launcher_width || current_height != last_launcher_height
@@ -4597,9 +4729,10 @@ mod tests {
         merge_application_duplicates, normalize_everything_query, parse_dimension_input,
         parse_internet_shortcut_icon_location, preserve_everything_file_order, quoted_result_path,
         relaunch_mode_for_auto_install, resolve_shortcut_icon_path, should_claim_single_instance,
-        should_publish_initial_query_results, should_show_launcher, ProviderResults,
-        ResultIconView, COMPACT_WINDOW_HEIGHT, LAUNCHER_FONT_FAMILY, MAX_LAUNCHER_HEIGHT,
-        MAX_LAUNCHER_WIDTH, MIN_LAUNCHER_HEIGHT, MIN_LAUNCHER_WIDTH,
+        should_publish_initial_query_results, should_show_launcher, visual_preview_size,
+        ProviderResults, ResultIconView, COMPACT_WINDOW_HEIGHT, DEFAULT_LAUNCHER_HEIGHT,
+        DEFAULT_LAUNCHER_WIDTH, LAUNCHER_FONT_FAMILY, MAX_LAUNCHER_HEIGHT, MAX_LAUNCHER_WIDTH,
+        MIN_LAUNCHER_HEIGHT, MIN_LAUNCHER_WIDTH,
     };
     use flux_core::{ResultKind, ResultSource, SearchResult};
     use windui::event::{Key, KeyEvent};
@@ -5002,6 +5135,21 @@ mod tests {
             parse_dimension_input("abc", MIN_LAUNCHER_WIDTH, MAX_LAUNCHER_WIDTH),
             None
         );
+    }
+
+    #[test]
+    fn visual_preview_scales_with_safe_dimensions() {
+        assert_eq!(
+            visual_preview_size(MIN_LAUNCHER_WIDTH, MIN_LAUNCHER_HEIGHT),
+            (170, 48)
+        );
+        assert_eq!(
+            visual_preview_size(MAX_LAUNCHER_WIDTH, MAX_LAUNCHER_HEIGHT),
+            (380, 120)
+        );
+        let default = visual_preview_size(DEFAULT_LAUNCHER_WIDTH, DEFAULT_LAUNCHER_HEIGHT);
+        assert!(default.0 > 170 && default.0 < 380);
+        assert!(default.1 > 48 && default.1 < 120);
     }
 
     #[test]

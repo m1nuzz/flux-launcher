@@ -1092,12 +1092,14 @@ try {
         # The application selects the Visual tab before first paint so this smoke
         # can drag the real fixed-track controls without coordinate-driven tab setup.
         $env:FLUX_SMOKE_SETTINGS_TAB = "1"
+        $env:FLUX_SMOKE_VISUAL_SETTINGS = "1"
         # The first launcher process remains alive while this independent Settings
         # process is measured. Production launches still use strict single-instance
         # behavior; this opt-out exists only to exercise Settings in isolation.
         $env:FLUX_DISABLE_SINGLE_INSTANCE = "1"
     } else {
         Remove-Item Env:FLUX_SMOKE_SETTINGS_TAB -ErrorAction SilentlyContinue
+        Remove-Item Env:FLUX_SMOKE_VISUAL_SETTINGS -ErrorAction SilentlyContinue
         Remove-Item Env:FLUX_DISABLE_SINGLE_INSTANCE -ErrorAction SilentlyContinue
     }
     $settingsStdoutPath = Join-Path $OutputDirectory "settings.stdout.log"
@@ -1112,6 +1114,7 @@ try {
     $settingsCenterAfterDragY = 0
     $settingsCenterDelta = 0
     $visualSettingsSliderProbe = $false
+    $visualPreviewUpdateCount = 0
     try {
         Start-Sleep -Seconds 2
         $settingsProcess.Refresh()
@@ -1176,6 +1179,19 @@ try {
             )
             $afterDragWidth = $afterDragRect.Right - $afterDragRect.Left
             $afterDragHeight = $afterDragRect.Bottom - $afterDragRect.Top
+            Start-Sleep -Milliseconds 250
+            $previewLog = if (Test-Path $settingsStderrPath) {
+                Get-Content $settingsStderrPath -Raw
+            } else {
+                ""
+            }
+            $visualPreviewUpdateCount = ([regex]::Matches(
+                $previewLog,
+                "Visual preview size updated:"
+            )).Count
+            if ($visualPreviewUpdateCount -lt 2) {
+                throw "Visual Settings live preview smoke failed: expected realtime preview updates for both sliders, observed $visualPreviewUpdateCount."
+            }
             $visualSettingsSliderProbe =
                 $settingsCenterDelta -le 2 -and
                 $afterDragWidth -eq $settingsWindowWidth -and
@@ -1184,6 +1200,7 @@ try {
                 throw "Visual Settings slider smoke failed: center delta=${settingsCenterDelta}px, size=${afterDragWidth}x${afterDragHeight}, initial=${settingsWindowWidth}x${settingsWindowHeight}."
             }
             Save-Screenshot "settings-visual-sliders.png"
+            Write-Host "Visual Settings slider smoke passed: live preview card emitted $visualPreviewUpdateCount realtime updates while Settings remained centered at ${afterDragWidth}x${afterDragHeight}; center delta=${settingsCenterDelta}px."
         }
         Save-Screenshot "settings-panel.png"
         if ($EverythingMissingSmoke) {
@@ -1197,6 +1214,7 @@ try {
         Remove-Item Env:FLUX_OPEN_SETTINGS -ErrorAction SilentlyContinue
         Remove-Item Env:FLUX_SMOKE_TRAY_SETTINGS -ErrorAction SilentlyContinue
         Remove-Item Env:FLUX_SMOKE_SETTINGS_TAB -ErrorAction SilentlyContinue
+        Remove-Item Env:FLUX_SMOKE_VISUAL_SETTINGS -ErrorAction SilentlyContinue
         Remove-Item Env:FLUX_DISABLE_SINGLE_INSTANCE -ErrorAction SilentlyContinue
     }
 
@@ -1247,6 +1265,7 @@ try {
         SettingsWindowWidth = $settingsWindowWidth
         SettingsPanelProbe = $settingsWindowFound -and ($settingsWindowHeight -ge 400) -and ($settingsWindowWidth -ge 680)
         VisualSettingsSliderProbe = (!$VisualSettingsSmoke) -or $visualSettingsSliderProbe
+        VisualPreviewUpdateCount = $visualPreviewUpdateCount
         SettingsCenterBeforeDrag = [ordered]@{ X = $settingsCenterBeforeDragX; Y = $settingsCenterBeforeDragY }
         SettingsCenterAfterDrag = [ordered]@{ X = $settingsCenterAfterDragX; Y = $settingsCenterAfterDragY }
         SettingsCenterDeltaPixels = $settingsCenterDelta
