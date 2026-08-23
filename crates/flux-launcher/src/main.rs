@@ -170,14 +170,21 @@ fn apply_launcher_preview_size(
 ) {
     let width = i32::from(width.clamp(MIN_LAUNCHER_WIDTH, MAX_LAUNCHER_WIDTH));
     let height = i32::from(height.clamp(MIN_LAUNCHER_HEIGHT, MAX_LAUNCHER_HEIGHT));
-    let target_height = if settings_visible {
-        height
-    } else {
-        launcher_window_geometry_with_sizes(false, show_results, width, height).1
-    };
-    size.set(width, target_height);
+    let (target_width, target_height) =
+        launcher_window_geometry_with_sizes(settings_visible, show_results, width, height);
+    // Keep the settings canvas stable while its own width slider is dragged. The
+    // preview values still update every interval, and Apply switches to the
+    // configured launcher geometry once Settings closes. Resizing the settings
+    // window itself would move the slider track under the pointer and cause an
+    // endpoint jump.
+    size.set(target_width, target_height);
     if let Ok(settings) = settings.read() {
-        request_monitor_position(position, settings.monitor_preference, width, target_height);
+        request_monitor_position(
+            position,
+            settings.monitor_preference,
+            target_width,
+            target_height,
+        );
     }
 }
 
