@@ -1126,12 +1126,10 @@ fn should_show_launcher(is_foreground: bool) -> bool {
     !is_foreground
 }
 
-fn relaunch_mode_for_auto_install(is_foreground: bool) -> updater::RelaunchMode {
-    if is_foreground {
-        updater::RelaunchMode::Visible
-    } else {
-        updater::RelaunchMode::Hidden
-    }
+fn relaunch_mode_for_auto_install() -> updater::RelaunchMode {
+    // Automatic updates must remain invisible: a restart should return to the
+    // tray and never reopen Search. Manual Install now uses Visible explicitly.
+    updater::RelaunchMode::Hidden
 }
 
 fn icon_completion_generation_changed(previous: u64, current: u64) -> bool {
@@ -2557,7 +2555,7 @@ fn main() {
                     .map(|settings| settings.auto_install_updates)
                     .unwrap_or(false);
                 if auto_install {
-                    let relaunch_mode = relaunch_mode_for_auto_install(launcher_is_foreground());
+                    let relaunch_mode = relaunch_mode_for_auto_install();
                     update_installing_for_channel.set(true);
                     update_status_for_channel.set(format!(
                         "Preparing stable {} for installation...",
@@ -4795,14 +4793,10 @@ mod tests {
     }
 
     #[test]
-    fn automatic_update_preserves_hidden_or_visible_launcher_state() {
+    fn automatic_update_always_restarts_hidden() {
         assert_eq!(
-            relaunch_mode_for_auto_install(false),
+            relaunch_mode_for_auto_install(),
             super::updater::RelaunchMode::Hidden
-        );
-        assert_eq!(
-            relaunch_mode_for_auto_install(true),
-            super::updater::RelaunchMode::Visible
         );
     }
 
