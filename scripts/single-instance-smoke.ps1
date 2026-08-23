@@ -92,7 +92,8 @@ function Wait-FluxReady([System.Diagnostics.Process]$Process) {
 
 function Start-FluxAndWaitReady {
     $lastError = $null
-    for ($attempt = 1; $attempt -le 2; $attempt++) {
+    $maxAttempts = 3
+    for ($attempt = 1; $attempt -le $maxAttempts; $attempt++) {
         $candidate = Start-Process -FilePath $Executable -PassThru
         try {
             Wait-FluxReady $candidate
@@ -105,12 +106,13 @@ function Start-FluxAndWaitReady {
             $lastError = $_
             $candidate.Refresh()
             $exitCode = if ($candidate.HasExited) { $candidate.ExitCode } else { "running" }
-            Write-Host "First Flux launch attempt $attempt did not become ready; exit_code=$exitCode. Retrying once on this Windows runner."
+            $retryMessage = if ($attempt -lt $maxAttempts) { "Retrying on this Windows runner." } else { "No more retries remain." }
+            Write-Host "First Flux launch attempt $attempt did not become ready; exit_code=$exitCode. $retryMessage"
             if (!$candidate.HasExited) {
                 Stop-Process -Id $candidate.Id -Force -ErrorAction SilentlyContinue
             }
             Settle-FluxProcessesGone
-            if ($attempt -lt 2) {
+            if ($attempt -lt $maxAttempts) {
                 Start-Sleep -Seconds 1
             }
         }
