@@ -13,6 +13,7 @@ param(
     [switch]$RecycleBinSmoke,
     [switch]$CursorVisibilitySmoke,
     [switch]$ScrollbarGapSmoke,
+    [switch]$ActionBarSmoke,
     [switch]$QueryClearOnReopenSmoke,
     [switch]$QueryResponsivenessSmoke,
     [switch]$FocusToggleSmoke,
@@ -342,6 +343,11 @@ $stderrPath = Join-Path $OutputDirectory "launcher.stderr.log"
 $launchTracePath = Join-Path $OutputDirectory "launch-trace.log"
 Remove-Item $launchTracePath -Force -ErrorAction SilentlyContinue
 $env:FLUX_LAUNCH_TRACE_FILE = $launchTracePath
+if ($ActionBarSmoke) {
+    $env:FLUX_SMOKE_ACTION_BAR = "1"
+} else {
+    Remove-Item Env:FLUX_SMOKE_ACTION_BAR -ErrorAction SilentlyContinue
+}
 $process = Start-Process -FilePath $Executable -PassThru -RedirectStandardOutput $stdoutPath -RedirectStandardError $stderrPath
 try {
     Start-Sleep -Seconds 3
@@ -546,6 +552,8 @@ try {
     $cursorHiddenAfterTyping = $false
     $cursorVisibleAfterMove = $false
     $scrollbarGapProbe = $false
+    $actionBarProbe = $false
+    $actionBarGeometry = $null
     $queryClearOnReopenProbe = $false
     $ctrlRProbe = $false
     $ctrlCProbe = $false
@@ -607,6 +615,50 @@ try {
     Start-Sleep -Seconds 2
     $queryMemory = Get-MemorySnapshot $process.Id
     Save-Screenshot "everything-fallback.png"
+
+    if ($ActionBarSmoke) {
+        Start-Sleep -Milliseconds 300
+        $clientRect = New-Object FluxWallpaper+RECT
+        if (![FluxWallpaper]::GetClientRect($launcherHandle, [ref]$clientRect)) {
+            throw "Action bar smoke could not read launcher client geometry."
+        }
+        $clientWidth = [FluxWallpaper]::RectWidth($clientRect)
+        $clientHeight = [FluxWallpaper]::RectHeight($clientRect)
+        $dpi = [FluxWallpaper]::GetDpiForWindow($launcherHandle)
+        if ($dpi -eq 0) { $dpi = 96 }
+        $scale = [double]$dpi / 96.0
+        $logicalClientWidth = [int][Math]::Round($clientWidth / $scale)
+        $logicalClientHeight = [int][Math]::Round($clientHeight / $scale)
+        $actionBarLog = if (Test-Path $stderrPath) { Get-Content $stderrPath -Raw } else { "" }
+        $actionBarMatch = [regex]::Matches(
+            $actionBarLog,
+            "ActionBarGeometry: x=(\d+) y=(\d+) width=(\d+) height=(\d+)"
+        ) | Select-Object -Last 1
+        if ($null -eq $actionBarMatch) {
+            throw "Action bar smoke did not observe native action-bar geometry telemetry."
+        }
+        $actionBarGeometry = [ordered]@{
+            X = [int]$actionBarMatch.Groups[1].Value
+            Y = [int]$actionBarMatch.Groups[2].Value
+            Width = [int]$actionBarMatch.Groups[3].Value
+            Height = [int]$actionBarMatch.Groups[4].Value
+            LogicalClientWidth = $logicalClientWidth
+            LogicalClientHeight = $logicalClientHeight
+            Dpi = [int]$dpi
+        }
+        $expectedActionBarX = 10 + [int][Math]::Floor(
+            [Math]::Max(0, $logicalClientWidth - 20 - 340) / 2.0
+        )
+        $actionBarProbe =
+            [Math]::Abs($actionBarGeometry.X - $expectedActionBarX) -le 1 -and
+            $actionBarGeometry.Width -eq 340 -and
+            $actionBarGeometry.Height -eq 28 -and
+            ($actionBarGeometry.Y + $actionBarGeometry.Height) -le ($logicalClientHeight - 10)
+        Write-Host "Action bar geometry: x=$($actionBarGeometry.X) y=$($actionBarGeometry.Y) width=$($actionBarGeometry.Width) height=$($actionBarGeometry.Height) expected_x=$expectedActionBarX client=${logicalClientWidth}x${logicalClientHeight} dpi=$dpi"
+        if (!$actionBarProbe) {
+            throw "Action bar geometry is not centered between launcher insets or lacks bottom clearance: $($actionBarGeometry | ConvertTo-Json -Compress)."
+        }
+    }
 
     if ($QueryClearOnReopenSmoke) {
         [FluxWallpaper]::SendMessage($launcherHandle, $wmHotkey, [UIntPtr]::Zero, [IntPtr]::Zero) | Out-Null
@@ -1638,6 +1690,8 @@ try {
         PointerWheelProbe = [bool]$PointerInteractionSmoke
         PointerClickProbe = [bool]$PointerInteractionSmoke
         ScrollbarGapProbe = (!$ScrollbarGapSmoke) -or $scrollbarGapProbe
+        ActionBarProbe = (!$ActionBarSmoke) -or $actionBarProbe
+        ActionBarGeometry = $actionBarGeometry
         QueryClearOnReopenProbe = (!$QueryClearOnReopenSmoke) -or $queryClearOnReopenProbe
         CtrlRProbe = (!$CtrlRSmoke) -or $ctrlRProbe
         CtrlCProbe = (!$CtrlCSmoke) -or $ctrlCProbe

@@ -51,6 +51,10 @@ const SINGLE_INSTANCE_ID: &str = "m1nuzz.flux-launcher";
 const SETTINGS_WINDOW_WIDTH: i32 = 720;
 const COMPACT_WINDOW_HEIGHT: i32 = 72;
 const VISUAL_SLIDER_WIDTH: i32 = 200;
+// The action group stays narrower than the minimum launcher content width so it
+// can be centered between the same left/right content insets at every size.
+const ACTION_BAR_WIDTH: i32 = 340;
+const ACTION_BAR_HEIGHT: i32 = 28;
 // Keep the result palette compact like the reference while exposing a six-row
 // viewport; additional results remain available through the native wheel scroll.
 const ACTION_WINDOW_HEIGHT: i32 = 250;
@@ -1876,6 +1880,35 @@ fn set_game_mode(
     }
 }
 
+#[derive(Default)]
+struct ActionBarGeometryProbe {
+    last: Cell<Option<(i32, i32, i32, i32)>>,
+}
+
+impl Widget for ActionBarGeometryProbe {
+    fn paint(
+        &self,
+        bounds: Rect,
+        _content: Rect,
+        _focused: bool,
+        _enabled: bool,
+        _canvas: &mut dyn Canvas,
+        _style: &Style,
+    ) {
+        if std::env::var_os("FLUX_SMOKE_ACTION_BAR").is_none() {
+            return;
+        }
+        let geometry = (bounds.x, bounds.y, bounds.w, bounds.h);
+        if self.last.get() != Some(geometry) {
+            eprintln!(
+                "ActionBarGeometry: x={} y={} width={} height={}",
+                geometry.0, geometry.1, geometry.2, geometry.3
+            );
+            self.last.set(Some(geometry));
+        }
+    }
+}
+
 #[allow(clippy::too_many_arguments)]
 fn result_row(
     result: SearchResult,
@@ -2250,16 +2283,27 @@ fn main() {
                     .fg(Color::rgba(222, 233, 248, 220)),
             )
     };
-    let action_bar = Element::row()
-        .width_match()
-        .height(28)
-        .padding_xy(4, 2)
+    // Use a bounded frame plus an explicitly centered content row instead of
+    // full-width spacer children. This keeps the three hints visually centered
+    // between the launcher content insets while the window width changes.
+    let action_bar_content = Element::row()
+        .height(22)
         .spacing(8)
-        .child(Element::flex_spacer())
         .child(action_hint("↵", "Open"))
         .child(action_hint("Ctrl + R", "Run as admin"))
-        .child(action_hint("Alt + Enter", "Open file location"))
-        .child(Element::flex_spacer())
+        .child(action_hint("Alt + Enter", "Open file location"));
+    let action_bar = Element::stack()
+        .width(ACTION_BAR_WIDTH)
+        .height(ACTION_BAR_HEIGHT)
+        .child(action_bar_content.align(Align::Center))
+        // Keep the probe inside the same real frame so its telemetry describes
+        // the exact slot that is centered between the launcher insets.
+        .child(
+            Element::leaf()
+                .widget(ActionBarGeometryProbe::default())
+                .fill(),
+        )
+        .align(Align::Center)
         .visible_when(move || show_results.get() && !action_mode.get());
 
     let result_list_body = Element::host_signal(result_source, move |result| {
@@ -2507,6 +2551,8 @@ fn main() {
         .spacing(4)
         .child(search_box)
         .child(result_list)
+        // Keep the action group as a distinct centered slot below the result
+        // viewport; it must never participate in the result row's width.
         .child(action_bar)
         .child(action_list)
         .child(recycle_bin_dialog)
