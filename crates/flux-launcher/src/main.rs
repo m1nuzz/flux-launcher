@@ -2428,7 +2428,7 @@ fn main() {
     // The HWND itself owns the system Acrylic surface. Keep this root transparent so
     // the blur fills the complete 420px client area instead of becoming an inset card.
     let launcher_content = Element::col()
-        .width_match()
+        .width(364)
         .padding(10)
         .spacing(4)
         .child(search_box)
