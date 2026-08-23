@@ -1092,8 +1092,13 @@ try {
         # The application selects the Visual tab before first paint so this smoke
         # can drag the real fixed-track controls without coordinate-driven tab setup.
         $env:FLUX_SMOKE_SETTINGS_TAB = "1"
+        # The first launcher process remains alive while this independent Settings
+        # process is measured. Production launches still use strict single-instance
+        # behavior; this opt-out exists only to exercise Settings in isolation.
+        $env:FLUX_DISABLE_SINGLE_INSTANCE = "1"
     } else {
         Remove-Item Env:FLUX_SMOKE_SETTINGS_TAB -ErrorAction SilentlyContinue
+        Remove-Item Env:FLUX_DISABLE_SINGLE_INSTANCE -ErrorAction SilentlyContinue
     }
     $settingsStdoutPath = Join-Path $OutputDirectory "settings.stdout.log"
     $settingsStderrPath = Join-Path $OutputDirectory "settings.stderr.log"
@@ -1185,6 +1190,7 @@ try {
         Remove-Item Env:FLUX_OPEN_SETTINGS -ErrorAction SilentlyContinue
         Remove-Item Env:FLUX_SMOKE_TRAY_SETTINGS -ErrorAction SilentlyContinue
         Remove-Item Env:FLUX_SMOKE_SETTINGS_TAB -ErrorAction SilentlyContinue
+        Remove-Item Env:FLUX_DISABLE_SINGLE_INSTANCE -ErrorAction SilentlyContinue
     }
 
     $os = Get-CimInstance Win32_OperatingSystem

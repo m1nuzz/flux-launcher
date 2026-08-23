@@ -2039,7 +2039,9 @@ fn main() {
         }
         return;
     }
-    if should_claim_single_instance(mode.as_deref())
+    let single_instance_disabled = std::env::var_os("FLUX_DISABLE_SINGLE_INSTANCE").is_some();
+    if !single_instance_disabled
+        && should_claim_single_instance(mode.as_deref())
         && matches!(
             windui::claim_instance(SINGLE_INSTANCE_ID),
             windui::InstanceRole::Handoff
