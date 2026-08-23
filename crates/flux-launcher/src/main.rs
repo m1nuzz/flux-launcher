@@ -49,6 +49,7 @@ const CURRENT_VERSION: &str = env!("CARGO_PKG_VERSION");
 const SINGLE_INSTANCE_ID: &str = "m1nuzz.flux-launcher";
 const SETTINGS_WINDOW_WIDTH: i32 = 720;
 const COMPACT_WINDOW_HEIGHT: i32 = 72;
+const VISUAL_SLIDER_WIDTH: i32 = 200;
 // Keep the result palette compact like the reference while exposing a six-row
 // viewport; additional results remain available through the native wheel scroll.
 const ACTION_WINDOW_HEIGHT: i32 = 250;
@@ -136,6 +137,19 @@ fn launcher_window_geometry_with_sizes(
     }
 }
 
+fn live_preview_geometry(
+    settings_visible: bool,
+    show_results: bool,
+    launcher_width: i32,
+    launcher_height: i32,
+) -> (i32, i32) {
+    if settings_visible {
+        (launcher_width, launcher_height)
+    } else {
+        launcher_window_geometry_with_sizes(false, show_results, launcher_width, launcher_height)
+    }
+}
+
 fn dimension_slider_fraction(value: u16, min: u16, max: u16) -> f32 {
     if max <= min {
         return 0.0;
@@ -171,20 +185,20 @@ fn apply_launcher_preview_size(
     let width = i32::from(width.clamp(MIN_LAUNCHER_WIDTH, MAX_LAUNCHER_WIDTH));
     let height = i32::from(height.clamp(MIN_LAUNCHER_HEIGHT, MAX_LAUNCHER_HEIGHT));
     let (target_width, target_height) =
-        launcher_window_geometry_with_sizes(settings_visible, show_results, width, height);
-    // Keep the settings canvas stable while its own width slider is dragged. The
-    // preview values still update every interval, and Apply switches to the
-    // configured launcher geometry once Settings closes. Resizing the settings
-    // window itself would move the slider track under the pointer and cause an
-    // endpoint jump.
+        live_preview_geometry(settings_visible, show_results, width, height);
+    // Resize the preview immediately, but keep the slider's own track fixed and
+    // avoid recentering while the pointer is dragging. Apply settings recenters
+    // the launcher after Settings closes.
     size.set(target_width, target_height);
-    if let Ok(settings) = settings.read() {
-        request_monitor_position(
-            position,
-            settings.monitor_preference,
-            target_width,
-            target_height,
-        );
+    if !settings_visible {
+        if let Ok(settings) = settings.read() {
+            request_monitor_position(
+                position,
+                settings.monitor_preference,
+                target_width,
+                target_height,
+            );
+        }
     }
 }
 
@@ -4118,7 +4132,7 @@ fn main() {
                             Element::row()
                                 .width_match()
                                 .spacing(8)
-                                .child(Element::slider(launcher_width_slider).width_match())
+                                .child(Element::slider(launcher_width_slider).width(VISUAL_SLIDER_WIDTH))
                                 .child(
                                     Element::text_input(launcher_width_input, "420")
                                         .width(76),
@@ -4138,7 +4152,7 @@ fn main() {
                             Element::row()
                                 .width_match()
                                 .spacing(8)
-                                .child(Element::slider(launcher_height_slider).width_match())
+                                .child(Element::slider(launcher_height_slider).width(VISUAL_SLIDER_WIDTH))
                                 .child(
                                     Element::text_input(launcher_height_input, "382")
                                         .width(76),
@@ -4486,7 +4500,7 @@ mod tests {
         actions_for_result, dimension_from_slider, dimension_slider_fraction, display_title,
         format_bytes, format_update_progress, google_icon_rgba, history_cursor_step,
         hover_position_changed, icon_completion_generation_changed, is_run_as_admin_key,
-        launcher_window_geometry, launcher_window_geometry_with_sizes,
+        launcher_window_geometry, launcher_window_geometry_with_sizes, live_preview_geometry,
         merge_application_duplicates, normalize_everything_query, parse_dimension_input,
         parse_internet_shortcut_icon_location, preserve_everything_file_order, quoted_result_path,
         relaunch_mode_for_auto_install, resolve_shortcut_icon_path, should_claim_single_instance,
@@ -4894,6 +4908,16 @@ mod tests {
         assert_eq!(
             parse_dimension_input("abc", MIN_LAUNCHER_WIDTH, MAX_LAUNCHER_WIDTH),
             None
+        );
+    }
+
+    #[test]
+    fn live_preview_resizes_without_repositioning_settings_canvas() {
+        assert_eq!(live_preview_geometry(true, true, 640, 520), (640, 520));
+        assert_eq!(live_preview_geometry(false, true, 640, 520), (640, 520));
+        assert_eq!(
+            live_preview_geometry(false, false, 640, 520),
+            (640, COMPACT_WINDOW_HEIGHT)
         );
     }
 
