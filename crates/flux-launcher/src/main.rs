@@ -792,7 +792,7 @@ impl Widget for VisualSizePreview {
         _style: &Style,
         _text: &mut dyn windui::text::TextEngine,
     ) -> Size {
-        Size::new(420, 148)
+        Size::new(420, 84)
     }
 
     fn paint(
@@ -4247,23 +4247,11 @@ fn main() {
                             ),
                         ))
                         .child(Element::label("Windows accent is read from the current user profile; the custom color is used as a safe fallback.").font_size(10.0).fg(Color::rgba(235, 241, 255, 150)).max_lines(2).truncate(Truncate::End))
-                        .child(
-                            Element::col()
-                                .spacing(4)
-                                .child(
-                                    Element::label("Live launcher preview")
-                                        .font_size(12.0)
-                                        .fg(Color::rgba(235, 241, 255, 220)),
-                                )
-                                .child(
-                                    Element::leaf()
-                                        .widget(VisualSizePreview::new(
-                                            launcher_width,
-                                            launcher_height,
-                                        ))
-                                        .width_match()
-                                        .height(148),
-                                ),
+                                        .child(
+                            Element::leaf()
+                                .widget(VisualSizePreview::new(launcher_width, launcher_height))
+                                .width_match()
+                                .height(84),
                         )
                         .child(
                             Element::col()

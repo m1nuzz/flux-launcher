@@ -1154,8 +1154,8 @@ try {
             # at 200px. Drag both controls across their full tracks.
             $sliderLeft = $settingsRect.Left + 18 + 24 + 110 + 12
             $sliderRight = $sliderLeft + 190
-            $widthSliderY = $settingsRect.Top + 280
-            $heightSliderY = $settingsRect.Top + 360
+            $widthSliderY = $settingsRect.Top + 365
+            $heightSliderY = $settingsRect.Top + 425
             foreach ($sliderY in @($widthSliderY, $heightSliderY)) {
                 [FluxWallpaper]::SetCursorPos($sliderLeft, $sliderY) | Out-Null
                 [FluxWallpaper]::mouse_event(0x0002, 0, 0, 0, [UIntPtr]::Zero)
