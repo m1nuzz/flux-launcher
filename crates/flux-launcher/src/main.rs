@@ -154,16 +154,20 @@ fn visual_preview_position(
         let gap = 24;
         let right_x = settings_x + SETTINGS_WINDOW_WIDTH + gap;
         let left_x = settings_x - preview_width - gap;
+        // Prefer a fully visible side-by-side preview. On a small CI desktop there
+        // may be no non-overlapping rectangle for 720x520 Settings plus the selected
+        // preview size; keep the preview outside Settings and let Windows clip its
+        // off-screen portion rather than covering the controls being dragged.
         let x = if right_x + preview_width <= bounds.right {
             right_x
         } else if left_x >= bounds.left {
             left_x
         } else {
-            bounds.left + (bounds.width() - preview_width).max(0) / 2
+            right_x
         };
         let y = settings_y + (SETTINGS_WINDOW_HEIGHT - preview_height).max(0) / 2;
         (
-            x.clamp(bounds.left, (bounds.right - preview_width).max(bounds.left)),
+            x,
             y.clamp(bounds.top, (bounds.bottom - preview_height).max(bounds.top)),
         )
     }
