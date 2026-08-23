@@ -1367,30 +1367,32 @@ try {
                 }
             }
             $heightSliderY = if ($heightDirectChanged) { $heightDirectY } else { 0 }
-            foreach ($candidateOffset in (300..560 | Where-Object { $_ % 8 -eq 4 })) {
-                $candidateY = $settingsRect.Top + [int][Math]::Round($candidateOffset * $settingsScale)
-                [FluxWallpaper]::SetCursorPos($sliderLeft, $candidateY) | Out-Null
-                [FluxWallpaper]::mouse_event(0x0002, 0, 0, 0, [UIntPtr]::Zero)
-                for ($step = 0; $step -le 6; $step++) {
-                    $fraction = 1.0 - ($step / 6.0)
-                    $x = $sliderLeft + [int](($sliderRight - $sliderLeft) * $fraction)
-                    [FluxWallpaper]::SetCursorPos($x, $candidateY) | Out-Null
-                    Start-Sleep -Milliseconds 40
-                }
-                [FluxWallpaper]::mouse_event(0x0004, 0, 0, 0, [UIntPtr]::Zero)
-                Start-Sleep -Milliseconds 250
-                $afterCandidateLog = Get-Content $settingsStderrPath -Raw
-                $candidateGeometry = [regex]::Matches(
-                    $afterCandidateLog,
-                    "VisualPreviewChild: GEOMETRY $visualPreviewProcessId (\d+) (\d+) (\d+) (\d+) (\d+)"
-                )
-                foreach ($match in $candidateGeometry) {
-                    if ([int]$match.Groups[2].Value -ne $initialLogicalHeight) {
-                        $heightSliderY = $candidateY
-                        break
+            if (!$heightDirectChanged) {
+                foreach ($candidateOffset in (300..560 | Where-Object { $_ % 8 -eq 4 })) {
+                    $candidateY = $settingsRect.Top + [int][Math]::Round($candidateOffset * $settingsScale)
+                    [FluxWallpaper]::SetCursorPos($sliderLeft, $candidateY) | Out-Null
+                    [FluxWallpaper]::mouse_event(0x0002, 0, 0, 0, [UIntPtr]::Zero)
+                    for ($step = 0; $step -le 6; $step++) {
+                        $fraction = 1.0 - ($step / 6.0)
+                        $x = $sliderLeft + [int](($sliderRight - $sliderLeft) * $fraction)
+                        [FluxWallpaper]::SetCursorPos($x, $candidateY) | Out-Null
+                        Start-Sleep -Milliseconds 40
                     }
+                    [FluxWallpaper]::mouse_event(0x0004, 0, 0, 0, [UIntPtr]::Zero)
+                    Start-Sleep -Milliseconds 250
+                    $afterCandidateLog = Get-Content $settingsStderrPath -Raw
+                    $candidateGeometry = [regex]::Matches(
+                        $afterCandidateLog,
+                        "VisualPreviewChild: GEOMETRY $visualPreviewProcessId (\d+) (\d+) (\d+) (\d+) (\d+)"
+                    )
+                    foreach ($match in $candidateGeometry) {
+                        if ([int]$match.Groups[2].Value -ne $initialLogicalHeight) {
+                            $heightSliderY = $candidateY
+                            break
+                        }
+                    }
+                    if ($heightSliderY -ne 0) { break }
                 }
-                if ($heightSliderY -ne 0) { break }
             }
             if ($heightSliderY -eq 0) {
                 throw "Visual Settings smoke could not identify the results-height slider from native preview geometry telemetry."
