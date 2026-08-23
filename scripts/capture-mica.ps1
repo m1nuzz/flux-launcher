@@ -1339,7 +1339,32 @@ try {
                 throw "Visual Settings smoke could not identify the width slider from native preview geometry telemetry."
             }
 
-            $heightSliderY = 0
+            $heightDirectY = $settingsRect.Top + [int][Math]::Round(388 * $settingsScale)
+            $heightDirectPointClass = [FluxWallpaper]::WindowClassAtPoint($sliderLeft, $heightDirectY)
+            Write-Host "Visual results-height direct probe: left=$sliderLeft right=$sliderRight y=$heightDirectY windowClass=$heightDirectPointClass"
+            [FluxWallpaper]::SetCursorPos($sliderRight, $heightDirectY) | Out-Null
+            [FluxWallpaper]::mouse_event(0x0002, 0, 0, 0, [UIntPtr]::Zero)
+            for ($step = 0; $step -le 10; $step++) {
+                $fraction = 1.0 - ($step / 10.0)
+                $x = $sliderLeft + [int](($sliderRight - $sliderLeft) * $fraction)
+                [FluxWallpaper]::SetCursorPos($x, $heightDirectY) | Out-Null
+                Start-Sleep -Milliseconds 45
+            }
+            [FluxWallpaper]::mouse_event(0x0004, 0, 0, 0, [UIntPtr]::Zero)
+            Start-Sleep -Milliseconds 400
+            $heightDirectLog = Get-Content $settingsStderrPath -Raw
+            $heightDirectGeometry = [regex]::Matches(
+                $heightDirectLog,
+                "VisualPreviewChild: GEOMETRY $visualPreviewProcessId (\d+) (\d+) (\d+) (\d+) (\d+)"
+            )
+            $heightDirectChanged = $false
+            foreach ($match in $heightDirectGeometry) {
+                if ([int]$match.Groups[2].Value -ne $initialLogicalHeight) {
+                    $heightDirectChanged = $true
+                    break
+                }
+            }
+            $heightSliderY = if ($heightDirectChanged) { $heightDirectY } else { 0 }
             foreach ($candidateOffset in (300..560 | Where-Object { $_ % 8 -eq 4 })) {
                 $candidateY = $settingsRect.Top + [int][Math]::Round($candidateOffset * $settingsScale)
                 [FluxWallpaper]::SetCursorPos($sliderLeft, $candidateY) | Out-Null
