@@ -52,6 +52,7 @@ const COMPACT_WINDOW_HEIGHT: i32 = 72;
 // Keep the result palette compact like the reference while exposing a six-row
 // viewport; additional results remain available through the native wheel scroll.
 const ACTION_WINDOW_HEIGHT: i32 = 250;
+const RESULT_VIEWPORT_HEIGHT: i32 = 270;
 const SETTINGS_WINDOW_HEIGHT: i32 = 520;
 const LAUNCHER_FONT_FAMILY: &str = "Segoe UI Variable";
 const SEARCH_INTERVAL: Duration = Duration::from_millis(40);
@@ -2186,7 +2187,6 @@ fn main() {
         .child(action_hint("↵", "Open"))
         .child(action_hint("Ctrl + R", "Run as admin"))
         .child(action_hint("Alt + Enter", "Open file location"))
-        .child(Element::leaf().weight(1.0))
         .visible_when(move || show_results.get() && !action_mode.get());
 
     let result_list_body = Element::host_signal(result_source, move |result| {
@@ -2217,7 +2217,7 @@ fn main() {
     .padding_edges(6, 6, 18, 6);
     let result_list = Element::scroll()
         .width_match()
-        .weight(1.0)
+        .height(RESULT_VIEWPORT_HEIGHT)
         .child(result_list_body)
         .visible_when(move || show_results.get() && !action_mode.get());
 
@@ -2429,7 +2429,6 @@ fn main() {
     // the blur fills the complete 420px client area instead of becoming an inset card.
     let launcher_content = Element::col()
         .width_match()
-        .height_match()
         .padding(10)
         .spacing(4)
         .child(search_box)
