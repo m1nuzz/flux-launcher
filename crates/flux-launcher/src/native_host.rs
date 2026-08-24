@@ -18,6 +18,7 @@ use std::panic::{catch_unwind, AssertUnwindSafe};
 use std::path::{Path, PathBuf};
 
 const MAX_PLUGINS: usize = 64;
+const MAX_REQUEST_BYTES: usize = 64 * 1024;
 const PLUGIN_FAILURE_QUARANTINE_THRESHOLD: u32 = 3;
 
 fn should_quarantine(failure_count: u32) -> bool {
@@ -527,6 +528,16 @@ fn run_loop(mut host: PluginHost, mut io: HostIo) {
         match io.read_line(&mut line) {
             Ok(0) => break,
             Ok(_) => {
+                if line.len() > MAX_REQUEST_BYTES {
+                    let response = serde_json::json!({
+                        "jsonrpc": "2.0",
+                        "error": { "code": -32600, "message": "request exceeds 64 KiB" }
+                    });
+                    if let Ok(encoded) = serde_json::to_string(&response) {
+                        let _ = io.write_line(&encoded);
+                    }
+                    continue;
+                }
                 let response = handle_request(&mut host, line.trim_end());
                 if let Ok(encoded) = serde_json::to_string(&response) {
                     if io.write_line(&encoded).is_err() {
