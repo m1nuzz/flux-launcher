@@ -3529,10 +3529,12 @@ fn main() {
                         SETTINGS_WINDOW_HEIGHT,
                     );
                 }
-                // show_window invokes on_window_show, which clears the normal
-                // launcher state. Apply the Settings size after that lifecycle
-                // callback so it cannot overwrite the 520px panel height.
+                // Queue the Settings size before showing the hidden tray window. The
+                // first frame must not use the compact 72-DIP launcher height.
+                size_for_settings.set(SETTINGS_WINDOW_WIDTH, SETTINGS_WINDOW_HEIGHT);
                 ctx.show_window();
+                // Keep the request after show as well because the native show lifecycle
+                // may consume a stale compact-size request from the previous hide.
                 size_for_settings.set(SETTINGS_WINDOW_WIDTH, SETTINGS_WINDOW_HEIGHT);
             }),
             TrayMenuItem::separator(),
@@ -4836,10 +4838,18 @@ fn main() {
         .on_window_show({
             let settings = Arc::clone(&shared_settings);
             let cursor_visibility_for_show = cursor_visibility.clone();
+            let settings_visible_for_show = settings_visible;
+            let size_for_show = window_size.clone();
             move || {
                 cursor_visibility_for_show.show();
                 if let Ok(settings) = settings.read() {
                     selection_color.set(selection_color_for_settings(&settings));
+                }
+                // Tray activation can show the HWND before the first interval pass.
+                // Apply the Settings client size in this lifecycle callback too, so
+                // the initial frame is the full panel rather than a 72-DIP strip.
+                if settings_visible_for_show.get() {
+                    size_for_show.set(SETTINGS_WINDOW_WIDTH, SETTINGS_WINDOW_HEIGHT);
                 }
             }
         })

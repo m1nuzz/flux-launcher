@@ -1198,6 +1198,31 @@ try {
     $reopenedPreviewProcessId = 0
     $visualPreviewPersistenceProbe = $false
     try {
+        if ($TraySettingsSmoke) {
+            $firstFrameChecked = $false
+            for ($attempt = 0; $attempt -lt 30 -and !$firstFrameChecked; $attempt++) {
+                Start-Sleep -Milliseconds 100
+                $settingsProcess.Refresh()
+                $firstFrameHwnd = Get-LauncherWindowHandle $settingsProcess
+                if ($firstFrameHwnd -eq [IntPtr]::Zero) {
+                    continue
+                }
+                $firstFrameRect = New-Object FluxWallpaper+RECT
+                if (![FluxWallpaper]::GetWindowRect($firstFrameHwnd, [ref]$firstFrameRect)) {
+                    continue
+                }
+                $firstFrameWidth = [FluxWallpaper]::RectWidth($firstFrameRect)
+                $firstFrameHeight = [FluxWallpaper]::RectHeight($firstFrameRect)
+                Write-Host "Tray Settings first-frame geometry: ${firstFrameWidth}x${firstFrameHeight}"
+                if ($firstFrameHeight -lt 480 -or $firstFrameWidth -lt 680) {
+                    throw "Tray Settings first frame was undersized: ${firstFrameWidth}x${firstFrameHeight}."
+                }
+                $firstFrameChecked = $true
+            }
+            if (!$firstFrameChecked) {
+                throw "Tray Settings smoke could not observe the first Settings frame."
+            }
+        }
         Start-Sleep -Seconds 2
         $settingsProcess.Refresh()
         if ($VisualSettingsSmoke -and $settingsProcess.HasExited) {
