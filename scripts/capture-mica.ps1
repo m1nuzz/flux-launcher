@@ -649,12 +649,14 @@ try {
         $expectedActionBarX = 10 + [int][Math]::Floor(
             [Math]::Max(0, $logicalClientWidth - 20 - 340) / 2.0
         )
+        $expectedActionBarY = $logicalClientHeight - 10 - 22
         $actionBarProbe =
             [Math]::Abs($actionBarGeometry.X - $expectedActionBarX) -le 1 -and
+            [Math]::Abs($actionBarGeometry.Y - $expectedActionBarY) -le 1 -and
             $actionBarGeometry.Width -eq 340 -and
-            $actionBarGeometry.Height -eq 28 -and
-            ($actionBarGeometry.Y + $actionBarGeometry.Height) -le ($logicalClientHeight - 10)
-        Write-Host "Action bar geometry: x=$($actionBarGeometry.X) y=$($actionBarGeometry.Y) width=$($actionBarGeometry.Width) height=$($actionBarGeometry.Height) expected_x=$expectedActionBarX client=${logicalClientWidth}x${logicalClientHeight} dpi=$dpi"
+            $actionBarGeometry.Height -eq 22 -and
+            ($actionBarGeometry.Y + $actionBarGeometry.Height) -eq ($logicalClientHeight - 10)
+        Write-Host "Action bar geometry: x=$($actionBarGeometry.X) y=$($actionBarGeometry.Y) width=$($actionBarGeometry.Width) height=$($actionBarGeometry.Height) expected_x=$expectedActionBarX expected_y=$expectedActionBarY client=${logicalClientWidth}x${logicalClientHeight} dpi=$dpi"
         if (!$actionBarProbe) {
             throw "Action bar geometry is not centered between launcher insets or lacks bottom clearance: $($actionBarGeometry | ConvertTo-Json -Compress)."
         }

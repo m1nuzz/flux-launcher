@@ -56,7 +56,7 @@ const VISUAL_SLIDER_WIDTH: i32 = 200;
 // The action group stays narrower than the minimum launcher content width so it
 // can be centered between the same left/right content insets at every size.
 const ACTION_BAR_WIDTH: i32 = 340;
-const ACTION_BAR_HEIGHT: i32 = 28;
+const ACTION_BAR_HEIGHT: i32 = 22;
 // Keep the result palette compact like the reference while exposing a six-row
 // viewport; additional results remain available through the native wheel scroll.
 const ACTION_WINDOW_HEIGHT: i32 = 250;
@@ -2560,10 +2560,14 @@ fn main() {
     // content must match the live window width so result rows expand with resizing.
     let launcher_content = Element::col()
         .width_match()
+        .height_match()
         .padding(10)
         .spacing(4)
         .child(search_box)
         .child(result_list)
+        // Reserve the remaining client height explicitly so the footer is
+        // bottom-anchored instead of being centered by the outer surface.
+        .child(Element::flex_spacer().weight(1.0))
         // Keep the action group as a distinct centered slot below the result
         // viewport; it must never participate in the result row's width.
         .child(action_bar)
