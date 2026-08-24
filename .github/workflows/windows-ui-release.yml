@@ -20,6 +20,11 @@ on:
         options:
           - beta
           - stable
+      publish_release:
+        description: "Publish the GitHub release only after explicit confirmation"
+        required: false
+        default: false
+        type: boolean
 
 permissions:
   contents: write
@@ -157,6 +162,7 @@ jobs:
             -CurrentVersion "${{ inputs.release_tag }}"
 
       - name: Publish user-facing UI release
+        if: inputs.publish_release
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ inputs.release_tag }}

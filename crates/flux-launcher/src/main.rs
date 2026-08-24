@@ -2281,6 +2281,7 @@ fn main() {
     let action_hint = |key: &'static str, label: &'static str| {
         Element::row()
             .height(22)
+            .cross(Align::Center)
             .spacing(4)
             .child(
                 Element::label(key)
