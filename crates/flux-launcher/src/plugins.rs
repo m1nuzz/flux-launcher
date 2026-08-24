@@ -11,6 +11,8 @@ use std::thread;
 use std::time::{Duration, Instant};
 
 use crate::builtin::{query_builtin_providers, BuiltinAction, BuiltinQuery};
+use crate::plugin_limits::HostResourceGuard;
+use crate::plugin_transport::{connect_host_io, ClientIo};
 use flux_core::{
     query_request_line_with_keyword, FlowAction, FlowPluginManifest, FlowResponse, SearchResult,
 };
@@ -469,6 +471,7 @@ impl NativePluginWorker {
             .name(String::from("flux-native-plugins"))
             .spawn(move || {
                 let mut host = None::<NativePluginHost>;
+                let mut restart_count = 0_u32;
                 while receiver.recv().is_ok() {
                     let Some(request) = latest_for_worker
                         .lock()
@@ -490,11 +493,15 @@ impl NativePluginWorker {
                                 active_host.stop();
                             }
                             host = None;
+                            restart_count = restart_count.saturating_add(1);
                             NativePluginQueryResponse {
                                 sequence: request.sequence,
                                 query: request.query,
                                 results: Vec::new(),
-                                status: format!("Native plugin host unavailable: {error}"),
+                                status: format!(
+                                    "Native plugin host restarted (attempt {}): {error}",
+                                    restart_count
+                                ),
                                 available: false,
                                 actions: HashMap::new(),
                             }
@@ -526,8 +533,8 @@ impl NativePluginWorker {
 
 struct NativePluginHost {
     child: Child,
-    stdin: std::process::ChildStdin,
-    responses: mpsc::Receiver<Result<String, String>>,
+    io: ClientIo,
+    _limits: HostResourceGuard,
 }
 
 impl NativePluginHost {
@@ -537,48 +544,54 @@ impl NativePluginHost {
         if !native_plugin_root_has_plugins(&root) {
             return Err(String::from("native plugin directory is empty"));
         }
-        let mut child = Command::new(&executable)
-            .arg("--plugin-host")
-            .arg(root)
-            .stdin(Stdio::piped())
-            .stdout(Stdio::piped())
-            .stderr(Stdio::null())
-            .spawn()
-            .map_err(|error| format!("{}: {error}", executable.display()))?;
-        let stdin = child
-            .stdin
-            .take()
-            .ok_or_else(|| String::from("native plugin host stdin unavailable"))?;
-        let stdout = child
-            .stdout
-            .take()
-            .ok_or_else(|| String::from("native plugin host stdout unavailable"))?;
-        let (sender, responses) = mpsc::channel();
-        thread::Builder::new()
-            .name(String::from("flux-native-plugin-reader"))
-            .spawn(move || {
-                let mut reader = BufReader::new(stdout);
-                loop {
-                    let mut line = String::new();
-                    match reader.read_line(&mut line) {
-                        Ok(0) => break,
-                        Ok(_) => {
-                            if sender.send(Ok(line.trim().to_owned())).is_err() {
-                                break;
-                            }
-                        }
-                        Err(error) => {
-                            let _ = sender.send(Err(error.to_string()));
-                            break;
-                        }
-                    }
-                }
-            })
-            .map_err(|error| format!("native plugin reader thread: {error}"))?;
+        #[cfg(windows)]
+        let (child, io, limits) = {
+            let pipe_name = format!("\\\\.\\pipe\\flux-plugin-host-{}", std::process::id());
+            let child = Command::new(&executable)
+                .arg("--plugin-host")
+                .arg(&root)
+                .arg(&pipe_name)
+                .stdin(Stdio::null())
+                .stdout(Stdio::null())
+                .stderr(Stdio::null())
+                .spawn()
+                .map_err(|error| format!("{}: {error}", executable.display()))?;
+            let limits = HostResourceGuard::attach(&child)?;
+            let io = connect_host_io(&pipe_name, Duration::from_secs(3))?;
+            (child, ClientIo::Pipe(io), limits)
+        };
+        #[cfg(not(windows))]
+        let (child, io, limits) = {
+            let mut child = Command::new(&executable)
+                .arg("--plugin-host")
+                .arg(&root)
+                .stdin(Stdio::piped())
+                .stdout(Stdio::piped())
+                .stderr(Stdio::null())
+                .spawn()
+                .map_err(|error| format!("{}: {error}", executable.display()))?;
+            let stdin = child
+                .stdin
+                .take()
+                .ok_or_else(|| String::from("native plugin host stdin unavailable"))?;
+            let stdout = child
+                .stdout
+                .take()
+                .ok_or_else(|| String::from("native plugin host stdout unavailable"))?;
+            let limits = HostResourceGuard::attach(&child)?;
+            (
+                child,
+                ClientIo::Stdio {
+                    stdin,
+                    stdout: BufReader::new(stdout),
+                },
+                limits,
+            )
+        };
         Ok(Self {
             child,
-            stdin,
-            responses,
+            io,
+            _limits: limits,
         })
     }
 
@@ -594,16 +607,17 @@ impl NativePluginHost {
             }
         });
         let line = serde_json::to_string(&request).map_err(|error| error.to_string())?;
-        self.stdin
-            .write_all(line.as_bytes())
-            .and_then(|_| self.stdin.write_all(b"\n"))
-            .and_then(|_| self.stdin.flush())
+        self.io
+            .write_line(&line)
             .map_err(|error| error.to_string())?;
-        let response = self
-            .responses
-            .recv_timeout(QUERY_TIMEOUT)
-            .map_err(|_| String::from("native plugin host query timed out"))??;
-        parse_native_response(sequence, query, &response)
+        let mut response = String::new();
+        self.io
+            .read_line(&mut response)
+            .map_err(|error| error.to_string())?;
+        if response.is_empty() {
+            return Err(String::from("native plugin host returned no response"));
+        }
+        parse_native_response(sequence, query, response.trim_end())
     }
 
     fn stop(&mut self) {

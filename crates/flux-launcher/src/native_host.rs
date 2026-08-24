@@ -1,3 +1,6 @@
+#[cfg(windows)]
+use crate::plugin_transport::create_host_io;
+use crate::plugin_transport::{stdio_host_io, HostIo};
 use flux_plugin_sdk::{
     FluxPluginApiVersionFn, FluxPluginBuffer, FluxPluginCreateFn, FluxPluginDestroyFn,
     FluxPluginExecuteFn, FluxPluginFreeBufferFn, FluxPluginManifestFn, FluxPluginQueryFn,
@@ -9,10 +12,15 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::ffi::c_void;
 use std::fs;
-use std::io::{self, BufRead, Write};
+use std::panic::{catch_unwind, AssertUnwindSafe};
 use std::path::{Path, PathBuf};
 
 const MAX_PLUGINS: usize = 64;
+const PLUGIN_FAILURE_QUARANTINE_THRESHOLD: u32 = 3;
+
+fn should_quarantine(failure_count: u32) -> bool {
+    failure_count >= PLUGIN_FAILURE_QUARANTINE_THRESHOLD
+}
 
 struct LoadedPlugin {
     id: String,
@@ -23,6 +31,8 @@ struct LoadedPlugin {
     execute: FluxPluginExecuteFn,
     free_buffer: FluxPluginFreeBufferFn,
     destroy: FluxPluginDestroyFn,
+    failure_count: u32,
+    quarantined: bool,
 }
 
 impl Drop for LoadedPlugin {
@@ -55,6 +65,10 @@ impl PluginHost {
         let mut results = Vec::new();
         let mut errors = Vec::new();
         for plugin in &mut self.plugins {
+            if plugin.quarantined {
+                errors.push(format!("{}: plugin is quarantined", plugin.id));
+                continue;
+            }
             let Some((action_keyword, search)) =
                 split_action_keyword(&request.query, &plugin.manifest.plugin.action_keywords)
             else {
@@ -65,8 +79,9 @@ impl PluginHost {
                 action_keyword,
                 locale: request.locale.clone(),
             };
-            match plugin.query(plugin_request) {
-                Ok(response) => {
+            match catch_unwind(AssertUnwindSafe(|| plugin.query(plugin_request))) {
+                Ok(Ok(response)) => {
+                    plugin.failure_count = 0;
                     for mut result in response.results {
                         if results.len() >= MAX_RESULTS {
                             break;
@@ -80,7 +95,33 @@ impl PluginHost {
                         results.push(result);
                     }
                 }
-                Err(error) => errors.push(format!("{}: {error}", plugin.id)),
+                Ok(Err(error)) => {
+                    plugin.failure_count = plugin.failure_count.saturating_add(1);
+                    if should_quarantine(plugin.failure_count) {
+                        plugin.quarantined = true;
+                        errors.push(format!(
+                            "{}: quarantined after {} failures",
+                            plugin.id, plugin.failure_count
+                        ));
+                    } else {
+                        errors.push(format!("{}: {error}", plugin.id));
+                    }
+                }
+                Err(_) => {
+                    plugin.failure_count = plugin.failure_count.saturating_add(1);
+                    if should_quarantine(plugin.failure_count) {
+                        plugin.quarantined = true;
+                        errors.push(format!(
+                            "{}: quarantined after {} failures",
+                            plugin.id, plugin.failure_count
+                        ));
+                    } else {
+                        errors.push(format!(
+                            "{}: plugin panicked while processing query",
+                            plugin.id
+                        ));
+                    }
+                }
             }
         }
         HostQueryResponse { results, errors }
@@ -96,7 +137,41 @@ impl PluginHost {
             .iter_mut()
             .find(|plugin| plugin.id == plugin_id)
             .ok_or_else(|| format!("plugin not found: {plugin_id}"))?;
-        plugin.execute(PluginExecute { action })
+        if plugin.quarantined {
+            return Err(format!("plugin is quarantined: {plugin_id}"));
+        }
+        match catch_unwind(AssertUnwindSafe(|| {
+            plugin.execute(PluginExecute { action })
+        })) {
+            Ok(Ok(response)) => {
+                plugin.failure_count = 0;
+                Ok(response)
+            }
+            Ok(Err(error)) => {
+                plugin.failure_count = plugin.failure_count.saturating_add(1);
+                if should_quarantine(plugin.failure_count) {
+                    plugin.quarantined = true;
+                    Err(format!(
+                        "plugin quarantined after {} failures: {error}",
+                        plugin.failure_count
+                    ))
+                } else {
+                    Err(error)
+                }
+            }
+            Err(_) => {
+                plugin.failure_count = plugin.failure_count.saturating_add(1);
+                if should_quarantine(plugin.failure_count) {
+                    plugin.quarantined = true;
+                    Err(format!(
+                        "plugin quarantined after {} failures: plugin panicked",
+                        plugin.failure_count
+                    ))
+                } else {
+                    Err(String::from("plugin panicked while executing action"))
+                }
+            }
+        }
     }
 }
 
@@ -185,6 +260,8 @@ fn load_plugin(directory: &Path) -> Result<LoadedPlugin, String> {
         execute,
         free_buffer,
         destroy,
+        failure_count: 0,
+        quarantined: false,
     })
 }
 
@@ -369,15 +446,38 @@ fn error_value(id: Value, message: &str) -> Value {
     .unwrap_or(Value::Null)
 }
 
-pub fn run(root: PathBuf) {
-    let mut host = PluginHost::discover(&root);
-    let stdin = io::stdin();
-    let mut stdout = io::BufWriter::new(io::stdout().lock());
-    for line in stdin.lock().lines().map_while(Result::ok) {
-        let response = handle_request(&mut host, &line);
-        if serde_json::to_writer(&mut stdout, &response).is_ok() {
-            let _ = stdout.write_all(b"\n");
-            let _ = stdout.flush();
+pub fn run(root: PathBuf, pipe_name: Option<String>) {
+    let host = PluginHost::discover(&root);
+    #[cfg(windows)]
+    if let Some(pipe_name) = pipe_name {
+        match create_host_io(&pipe_name) {
+            Ok(io) => run_loop(host, io),
+            Err(error) => {
+                eprintln!("native plugin host pipe error: {error}");
+                std::process::exit(1);
+            }
+        }
+        return;
+    }
+    let _ = pipe_name;
+    run_loop(host, stdio_host_io());
+}
+
+fn run_loop(mut host: PluginHost, mut io: HostIo) {
+    let mut line = String::new();
+    loop {
+        line.clear();
+        match io.read_line(&mut line) {
+            Ok(0) => break,
+            Ok(_) => {
+                let response = handle_request(&mut host, line.trim_end());
+                if let Ok(encoded) = serde_json::to_string(&response) {
+                    if io.write_line(&encoded).is_err() {
+                        break;
+                    }
+                }
+            }
+            Err(_) => break,
         }
     }
 }
@@ -385,6 +485,13 @@ pub fn run(root: PathBuf) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn plugin_quarantine_starts_after_three_failures() {
+        assert!(!should_quarantine(0));
+        assert!(!should_quarantine(2));
+        assert!(should_quarantine(3));
+    }
 
     #[test]
     fn keyword_matching_requires_boundary() {

@@ -49,7 +49,7 @@ jobs:
           Copy-Item ./tests/fixtures/flow-native-plugin/plugin.json (Join-Path $pluginRoot "plugin.json") -Force
           Copy-Item ./target/x86_64-pc-windows-msvc/release/flow-plugin-fixture.exe (Join-Path $pluginRoot "fixture-plugin.exe") -Force
 
-      - name: Smoke self-spawned native plugin host
+      - name: Smoke self-spawned native plugin host over Named Pipe
         shell: pwsh
         run: |
           $nativeRoot = Join-Path $env:RUNNER_TEMP "flux-native-plugins"
@@ -57,25 +57,9 @@ jobs:
           New-Item -ItemType Directory -Force -Path $nativePlugin | Out-Null
           Copy-Item ./crates/flux-plugin-example/plugin.toml (Join-Path $nativePlugin "plugin.toml") -Force
           Copy-Item ./target/x86_64-pc-windows-msvc/release/flux_plugin_example.dll (Join-Path $nativePlugin "flux_plugin_example.dll") -Force
-          $requests = Join-Path $env:RUNNER_TEMP "flux-native-plugin-requests.jsonl"
-          @'
-          {"jsonrpc":"2.0","id":1,"method":"query","params":{"query":"ex hello","action_keyword":"ex","locale":"en-US"}}
-          {"jsonrpc":"2.0","id":2,"method":"execute","plugin":"Example Native","params":{"action":{"type":"copy_text","text":"hello"}}}
-          '@ | Set-Content -Path $requests -Encoding utf8
-          $responsePath = Join-Path $env:RUNNER_TEMP "flux-native-plugin-responses.jsonl"
-          $process = Start-Process `
-            -FilePath "./target/x86_64-pc-windows-msvc/release/flux-launcher.exe" `
-            -ArgumentList @("--plugin-host", $nativeRoot) `
-            -RedirectStandardInput $requests `
-            -RedirectStandardOutput $responsePath `
-            -NoNewWindow `
-            -Wait `
-            -PassThru
-          if ($process.ExitCode -ne 0) { throw "Native plugin host exited with code $($process.ExitCode)" }
-          $responses = Get-Content $responsePath -Raw
-          Write-Host $responses
-          if ($responses -notmatch 'Example: hello') { throw "Native host query smoke failed" }
-          if ($responses -notmatch '"success":true') { throw "Native host execute smoke failed" }
+          ./scripts/native-plugin-pipe-smoke.ps1 `
+            -Executable ./target/x86_64-pc-windows-msvc/release/flux-launcher.exe `
+            -PluginRoot $nativeRoot
 
       - name: Run Windows updater and settings regression tests
         shell: pwsh

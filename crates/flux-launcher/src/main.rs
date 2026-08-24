@@ -10,6 +10,8 @@ mod keyboard_layout;
 mod launch;
 mod monitor;
 mod native_host;
+mod plugin_limits;
+mod plugin_transport;
 mod plugins;
 mod startup;
 mod updater;
@@ -2087,7 +2089,10 @@ fn main() {
             .map(std::path::PathBuf::from)
             .or_else(|| std::env::var_os("FLUX_NATIVE_PLUGIN_DIR").map(std::path::PathBuf::from))
             .unwrap_or_else(|| std::path::PathBuf::from("NativePlugins"));
-        native_host::run(root);
+        let pipe_name = args
+            .next()
+            .map(|value| value.to_string_lossy().into_owned());
+        native_host::run(root, pipe_name);
         return;
     }
     if mode.as_deref() == Some(std::ffi::OsStr::new("--folder-launch-smoke")) {
