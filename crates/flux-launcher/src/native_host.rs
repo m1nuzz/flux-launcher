@@ -10,8 +10,10 @@ use flux_plugin_sdk::{
 use libloading::{Library, Symbol};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
+use std::collections::HashMap;
 use std::ffi::c_void;
 use std::fs;
+
 use std::panic::{catch_unwind, AssertUnwindSafe};
 use std::path::{Path, PathBuf};
 
@@ -44,8 +46,15 @@ impl Drop for LoadedPlugin {
     }
 }
 
+#[derive(Clone, Debug, Default, Deserialize, Serialize)]
+struct PersistedPluginHealth {
+    failure_count: u32,
+    quarantined: bool,
+}
+
 struct PluginHost {
     plugins: Vec<LoadedPlugin>,
+    health_path: PathBuf,
 }
 
 impl PluginHost {
@@ -58,7 +67,52 @@ impl PluginHost {
             .take(MAX_PLUGINS)
             .collect::<Vec<_>>();
         plugins.sort_by(|left, right| left.id.cmp(&right.id));
-        Self { plugins }
+        let health_path = root
+            .parent()
+            .unwrap_or(root)
+            .join("native-plugin-health.json");
+        if let Ok(bytes) = fs::read(&health_path) {
+            if let Ok(health) =
+                serde_json::from_slice::<HashMap<String, PersistedPluginHealth>>(&bytes)
+            {
+                for plugin in &mut plugins {
+                    if let Some(saved) = health.get(&plugin.id) {
+                        plugin.failure_count = saved.failure_count;
+                        plugin.quarantined = saved.quarantined;
+                    }
+                }
+            }
+        }
+        Self {
+            plugins,
+            health_path,
+        }
+    }
+
+    fn persist_health(&self) {
+        let health = self
+            .plugins
+            .iter()
+            .map(|plugin| {
+                (
+                    plugin.id.clone(),
+                    PersistedPluginHealth {
+                        failure_count: plugin.failure_count,
+                        quarantined: plugin.quarantined,
+                    },
+                )
+            })
+            .collect::<HashMap<_, _>>();
+        let Ok(encoded) = serde_json::to_vec_pretty(&health) else {
+            return;
+        };
+        if let Some(parent) = self.health_path.parent() {
+            let _ = fs::create_dir_all(parent);
+        }
+        let temp = self.health_path.with_extension("json.tmp");
+        if fs::write(&temp, encoded).is_ok() {
+            let _ = fs::rename(temp, &self.health_path);
+        }
     }
 
     fn query(&mut self, request: PluginQuery) -> HostQueryResponse {
@@ -124,6 +178,7 @@ impl PluginHost {
                 }
             }
         }
+        self.persist_health();
         HostQueryResponse { results, errors }
     }
 
@@ -140,7 +195,7 @@ impl PluginHost {
         if plugin.quarantined {
             return Err(format!("plugin is quarantined: {plugin_id}"));
         }
-        match catch_unwind(AssertUnwindSafe(|| {
+        let outcome = match catch_unwind(AssertUnwindSafe(|| {
             plugin.execute(PluginExecute { action })
         })) {
             Ok(Ok(response)) => {
@@ -171,7 +226,9 @@ impl PluginHost {
                     Err(String::from("plugin panicked while executing action"))
                 }
             }
-        }
+        };
+        self.persist_health();
+        outcome
     }
 }
 
@@ -511,6 +568,7 @@ mod tests {
         let root = std::env::temp_dir().join("flux-empty-plugin-host-test");
         let mut host = PluginHost {
             plugins: Vec::new(),
+            health_path: root.join("native-plugin-health.json"),
         };
         let response = handle_request(&mut host, "not-json");
         assert_eq!(response["error"]["code"], -32700);
