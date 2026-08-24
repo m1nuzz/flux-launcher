@@ -93,6 +93,8 @@ function Assert-InstallerConfiguration {
         'Name: "startup"; Description: "Start Flux Launcher automatically with Windows"; GroupDescription: "Windows startup:"',
         '[Run]',
         'Filename: "{app}\{#AppExeName}"; Description: "Launch Flux Launcher now"; Flags: nowait postinstall skipifsilent',
+        '[UninstallRun]',
+        'Filename: "{app}\{#AppExeName}"; Parameters: "--shutdown"; Flags: waituntilterminated skipifdoesntexist; RunOnceId: "FluxLauncherShutdown"',
         '[UninstallDelete]',
         'Type: filesandordirs; Name: "{app}"',
         'Type: filesandordirs; Name: "{group}"',
@@ -166,7 +168,8 @@ function Invoke-SilentUninstall {
         [Parameter(Mandatory = $true)]
         [string]$ShortcutPath,
         [Parameter(Mandatory = $true)]
-        [string]$UserDataRoot
+        [string]$UserDataRoot,
+        [System.Diagnostics.Process]$LiveProcess
     )
 
     $uninstaller = Get-ChildItem -Path $InstallRoot -Filter "unins*.exe" -File | Select-Object -First 1
@@ -182,6 +185,15 @@ function Invoke-SilentUninstall {
     Write-Host "Uninstaller exit code for $InstallRoot`: $exitCode"
     if ($exitCode -ne 0) {
         throw "Uninstaller exited with code $exitCode"
+    }
+    if ($null -ne $LiveProcess) {
+        $LiveProcess.Refresh()
+        if (-not $LiveProcess.HasExited) {
+            if (-not $LiveProcess.WaitForExit(5000)) {
+                throw "Flux Launcher process was still running after uninstaller returned"
+            }
+        }
+        Write-Host "Uninstall shutdown order passed: Flux Launcher exited before file deletion checks."
     }
     Wait-PathGone -Path $InstallRoot -Description "Install directory"
     Wait-PathGone -Path $ShortcutPath -Description "Start Menu shortcut"
@@ -248,10 +260,30 @@ try {
         throw "Default startup registry value does not use hidden startup mode: $defaultStartupCommand"
     }
     Assert-StartupLaunchIsHidden -InstalledExe $defaultInstalledExe
-    Invoke-SilentUninstall `
-        -InstallRoot $defaultInstallRoot `
-        -ShortcutPath $defaultShortcutPath `
-        -UserDataRoot $userDataRoot
+    # Keep a real installed Flux process alive while invoking the uninstaller.
+    # The [UninstallRun] --shutdown entry must stop this process before the
+    # uninstaller is allowed to remove its executable and install directory.
+    $liveProcess = Start-Process -FilePath $defaultInstalledExe -ArgumentList @("--startup") -PassThru
+    try {
+        Start-Sleep -Seconds 3
+        $liveProcess.Refresh()
+        if ($liveProcess.HasExited) {
+            throw "Live Flux Launcher process exited before uninstall-order smoke"
+        }
+        Invoke-SilentUninstall `
+            -InstallRoot $defaultInstallRoot `
+            -ShortcutPath $defaultShortcutPath `
+            -UserDataRoot $userDataRoot `
+            -LiveProcess $liveProcess
+    }
+    finally {
+        if ($null -ne $liveProcess) {
+            $liveProcess.Refresh()
+            if (-not $liveProcess.HasExited) {
+                Stop-Process -Id $liveProcess.Id -Force -ErrorAction SilentlyContinue
+            }
+        }
+    }
     Assert-NoStartupEntry
 
     # /TASKS=!startup models the user clearing the default-checked installer checkbox.
@@ -269,7 +301,7 @@ try {
         -UserDataRoot $userDataRoot
     Assert-NoStartupEntry
 
-    Write-Host "Installer smoke passed: default startup enabled, startup opt-out, hidden --startup mode, hash validation, full install-root cleanup, Start Menu cleanup, user-data cleanup, and uninstall cleanup."
+    Write-Host "Installer smoke passed: default startup enabled, startup opt-out, hidden --startup mode, hash validation, live-process shutdown before uninstall deletion, full install-root cleanup, Start Menu cleanup, user-data cleanup, and uninstall cleanup."
 }
 finally {
     if ($null -eq $originalStartupCommand -or $originalStartupCommand -eq "") {

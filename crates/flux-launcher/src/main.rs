@@ -77,7 +77,9 @@ fn should_claim_single_instance(mode: Option<&std::ffi::OsStr>) -> bool {
                 || mode == std::ffi::OsStr::new("--shortcut-icon-smoke")
     )
 }
-
+fn is_shutdown_mode(mode: Option<&std::ffi::OsStr>) -> bool {
+    mode == Some(std::ffi::OsStr::new("--shutdown"))
+}
 fn is_run_as_admin_key(event: &KeyEvent) -> bool {
     event.ctrl
         && matches!(
@@ -2120,6 +2122,12 @@ fn main() {
             windui::InstanceRole::Handoff
         )
     {
+        return;
+    }
+    // The uninstaller uses this one-shot mode only to reach the already-running
+    // instance through the single-instance listener. Never create a new UI if
+    // there is no instance left to shut down.
+    if is_shutdown_mode(mode.as_deref()) {
         return;
     }
     let startup_launch = mode.as_deref() == Some(std::ffi::OsStr::new("--startup"));
@@ -4460,8 +4468,15 @@ fn main() {
     });
     let second_instance_sender_for_callback = second_instance_sender.clone();
     let second_instance_window_op = window_op.clone();
+    let shutdown_window_op = window_op.clone();
     if !single_instance_disabled {
-        app = app.single_instance(SINGLE_INSTANCE_ID, move |_| {
+        app = app.single_instance(SINGLE_INSTANCE_ID, move |argv| {
+            if argv.iter().any(|arg| arg == "--shutdown") {
+                // Uninstall is an application-controlled handoff: destroy the native
+                // window and exit the event loop instead of applying hide_on_close.
+                shutdown_window_op.quit();
+                return;
+            }
             // The native windui listener activates the window; queue Show as well so a
             // tray-hidden startup is made visible before the channel callback is drained.
             second_instance_window_op.show_window();
@@ -4879,7 +4894,7 @@ mod tests {
         actions_for_result, dimension_from_slider, dimension_slider_fraction, display_title,
         format_bytes, format_update_progress, google_icon_rgba, history_cursor_step,
         hover_position_changed, icon_completion_generation_changed, is_run_as_admin_key,
-        launcher_window_geometry, launcher_window_geometry_with_sizes,
+        is_shutdown_mode, launcher_window_geometry, launcher_window_geometry_with_sizes,
         merge_application_duplicates, normalize_everything_query, parse_dimension_input,
         parse_internet_shortcut_icon_location, preserve_everything_file_order, quoted_result_path,
         relaunch_mode_for_auto_install, resolve_shortcut_icon_path, should_claim_single_instance,
@@ -4910,6 +4925,16 @@ mod tests {
         assert!(should_claim_single_instance(Some(std::ffi::OsStr::new(
             "--startup"
         ))));
+    }
+
+    #[test]
+    fn shutdown_mode_is_a_single_instance_command() {
+        assert!(should_claim_single_instance(Some(std::ffi::OsStr::new(
+            "--shutdown"
+        ))));
+        assert!(is_shutdown_mode(Some(std::ffi::OsStr::new("--shutdown"))));
+        assert!(!is_shutdown_mode(Some(std::ffi::OsStr::new("--startup"))));
+        assert!(!is_shutdown_mode(None));
     }
 
     #[test]

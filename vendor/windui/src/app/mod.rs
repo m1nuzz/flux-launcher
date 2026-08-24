@@ -257,6 +257,14 @@ impl WindowOpHandle {
         *self.queue.borrow_mut() = Some(WindowOp::Hide);
         crate::anim::request_repaint();
     }
+
+    /// Request that the native window be destroyed and the application quit.
+    /// This bypasses `hide_on_close` for application-controlled handoffs such
+    /// as uninstall and self-update.
+    pub fn quit(&self) {
+        *self.queue.borrow_mut() = Some(WindowOp::Quit);
+        crate::anim::request_repaint();
+    }
 }
 
 /// A runtime handle for controlling whether the current native cursor is visible.
@@ -2109,6 +2117,15 @@ mod tests {
         handle.show_window();
         let mut app = app.content(Element::col()).into_handler_for_test();
         assert_eq!(app.take_window_op(), Some(WindowOp::Show));
+    }
+
+    #[test]
+    fn window_op_handle_can_request_quit() {
+        let mut app = App::new("t", 100, 100);
+        let handle = app.window_op_handle();
+        handle.quit();
+        let mut app = app.content(Element::col()).into_handler_for_test();
+        assert_eq!(app.take_window_op(), Some(WindowOp::Quit));
     }
 
     #[test]

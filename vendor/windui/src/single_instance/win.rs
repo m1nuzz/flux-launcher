@@ -11,11 +11,13 @@ use std::time::Duration;
 use windows::core::PCWSTR;
 use windows::Win32::Foundation::{
     CloseHandle, GetLastError, SetLastError, ERROR_ALREADY_EXISTS, HINSTANCE, HWND, LPARAM,
-    LRESULT, WIN32_ERROR, WPARAM,
+    LRESULT, WAIT_OBJECT_0, WIN32_ERROR, WPARAM,
 };
 use windows::Win32::System::DataExchange::COPYDATASTRUCT;
 use windows::Win32::System::LibraryLoader::GetModuleHandleW;
-use windows::Win32::System::Threading::CreateMutexW;
+use windows::Win32::System::Threading::{
+    CreateMutexW, OpenProcess, WaitForSingleObject, PROCESS_SYNCHRONIZE,
+};
 use windows::Win32::UI::WindowsAndMessaging::{
     AllowSetForegroundWindow, BringWindowToTop, CreateWindowExW, DefWindowProcW, FindWindowExW,
     GetWindowThreadProcessId, IsIconic, RegisterClassExW, SendMessageTimeoutW, SetForegroundWindow,
@@ -115,11 +117,28 @@ pub(crate) fn forward(app_id: &str, argv: &[String]) -> bool {
             3000,
             Some(&mut result as *mut usize),
         );
-        ret.0 != 0
+        let delivered = ret.0 != 0;
+        if delivered && argv.iter().any(|arg| arg == "--shutdown") && pid != 0 {
+            // The uninstaller must not continue while the original process still
+            // owns flux-launcher.exe. Wait on the process handle instead of using
+            // a fixed sleep, so deletion starts only after WM_DESTROY completes.
+            if let Ok(process) = OpenProcess(PROCESS_SYNCHRONIZE, false, pid) {
+                let exited = WaitForSingleObject(process, 15_000) == WAIT_OBJECT_0;
+                let _ = CloseHandle(process);
+                if !exited {
+                    // Fail closed: Inno Setup receives a non-zero helper exit code
+                    // and must not race a still-running launcher during deletion.
+                    std::process::exit(1);
+                }
+            } else {
+                std::process::exit(1);
+            }
+        }
+        delivered
     }
 }
 
-/// 首实例:在 UI 线程建 message-only 窗口(class=app_id 派生)接收二次实例消息。
+/// 首实例:在 UI 线程建 message-only 窗口(class=app_id 派生)接收 WM_COPYDATA。二次实例消息。
 /// `main_hwnd` 主窗口句柄(数值),`on_second` 收到 argv 时回调(UI 线程)。
 pub(crate) fn install_listener(
     app_id: &str,
@@ -173,6 +192,7 @@ unsafe extern "system" fn si_wnd_proc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPAR
             if !ptr.is_null() && cb > 0 {
                 let data = unsafe { std::slice::from_raw_parts(ptr, cb) };
                 let argv = decode_argv(data);
+                let is_shutdown = argv.iter().any(|arg| arg == "--shutdown");
                 SI_CTX.with(|c| {
                     // take() 释放借用后再调回调，防止 on_second 内调 install_listener
                     // 导致同线程二次 borrow_mut panic。
@@ -189,7 +209,9 @@ unsafe extern "system" fn si_wnd_proc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPAR
                             *guard = Some(ctx);
                         }
                         drop(guard);
-                        activate(main_hwnd);
+                        if !is_shutdown {
+                            activate(main_hwnd);
+                        }
                     }
                 });
             }
