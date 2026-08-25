@@ -313,6 +313,9 @@ $folderFixtureName = "FluxFolderSmoke_{0}" -f $PID
 $folderFixtureRoot = Join-Path $env:TEMP $folderFixtureName
 New-Item -ItemType Directory -Force -Path $folderFixtureRoot | Out-Null
 $wabFixtureNames = @(
+    # A real-looking spaced app name makes the compact-query screenshot
+    # deterministic even when the hosted runner has no LM Studio install.
+    "LM Studio.lnk",
     "WAB Primary Application.lnk",
     "WAB Secondary Application.lnk",
     "WAB Microsoft Windows Web Account Manager Diagnostic Resource Long Name.lnk",
@@ -324,7 +327,11 @@ foreach ($fixtureName in $wabFixtureNames) {
     $shortcut = $shortcutShell.CreateShortcut((Join-Path $wabFixtureRoot $fixtureName))
     $shortcut.TargetPath = $absoluteExecutable
     $shortcut.WorkingDirectory = Split-Path -Parent $absoluteExecutable
-    $shortcut.Description = "Flux WAB smoke application fixture"
+    $shortcut.Description = if ($fixtureName -eq "LM Studio.lnk") {
+        "LM Studio compact query smoke application fixture"
+    } else {
+        "Flux WAB smoke application fixture"
+    }
     $shortcut.Save()
 }
 $launchProbeShortcut = $shortcutShell.CreateShortcut((Join-Path $wabFixtureRoot "Zq7LaunchProbe.lnk"))
@@ -344,6 +351,16 @@ $stderrPath = Join-Path $OutputDirectory "launcher.stderr.log"
 $launchTracePath = Join-Path $OutputDirectory "launch-trace.log"
 Remove-Item $launchTracePath -Force -ErrorAction SilentlyContinue
 $env:FLUX_LAUNCH_TRACE_FILE = $launchTracePath
+$legacyFlowPluginRoot = Join-Path $env:APPDATA "FluxLauncher\Plugins\NativeFlowFixture"
+$legacyFlowPluginBackupRoot = Join-Path $env:APPDATA "FluxLauncher\Plugins\NativeFlowFixture.compact-smoke-disabled"
+$legacyFlowPluginWasDisabled = $false
+if ($CommandPrioritySmoke -and (Test-Path $legacyFlowPluginRoot)) {
+    # The workflow's legacy fixture answers every query. Keep it out of the
+    # compact-name frame so the screenshot proves ApplicationCatalog matching.
+    Remove-Item $legacyFlowPluginBackupRoot -Recurse -Force -ErrorAction SilentlyContinue
+    Move-Item -LiteralPath $legacyFlowPluginRoot -Destination $legacyFlowPluginBackupRoot -Force -ErrorAction SilentlyContinue
+    $legacyFlowPluginWasDisabled = !(Test-Path $legacyFlowPluginRoot) -and (Test-Path $legacyFlowPluginBackupRoot)
+}
 if ($ActionBarSmoke) {
     $env:FLUX_SMOKE_ACTION_BAR = "1"
 } else {
@@ -584,12 +601,13 @@ try {
             Save-Screenshot ("command-priority-{0}.png" -f $commandQuery)
         }
         # Keep a real compact-name capture alongside the console priority frames.
-        # On runners without LM Studio files this still verifies the query path;
-        # developer machines can inspect the artifact against their indexed data.
+        # The temporary LM Studio.lnk above makes this an end-to-end
+        # ApplicationCatalog check even when the hosted runner has no LM Studio
+        # installation of its own.
         $shell.SendKeys("^a")
         $shell.SendKeys("{BACKSPACE}")
         $shell.SendKeys("lmstudio")
-        Start-Sleep -Milliseconds 900
+        Start-Sleep -Milliseconds 2000
         Save-Screenshot "compact-query-lmstudio.png"
         $commandPriorityProbe = $true
     }
@@ -999,8 +1017,9 @@ try {
     $launchProbeHideDispatchMilliseconds = [Math]::Round($launchProbeTimer.Elapsed.TotalMilliseconds, 2)
     # ShellExecuteEx may create the child after the launcher hide callback on a
     # busy CI runner; wait beyond that asynchronous worker boundary before reading
-    # the opt-in lifecycle trace.
-    Start-Sleep -Milliseconds 2500
+    # the opt-in lifecycle trace. This remains bounded and does not alter the
+    # production launch path.
+    Start-Sleep -Milliseconds 6000
     $launchProbeTraceLines = if (Test-Path $launchTracePath) {
         @(Get-Content $launchTracePath | Select-Object -Skip $launchProbeTraceBeforeCount)
     } else {
@@ -1854,6 +1873,9 @@ finally {
     }
     if (Test-Path $folderFixtureRoot) {
         Remove-Item -Recurse -Force $folderFixtureRoot
+    }
+    if ($legacyFlowPluginWasDisabled -and (Test-Path $legacyFlowPluginBackupRoot)) {
+        Move-Item -LiteralPath $legacyFlowPluginBackupRoot -Destination $legacyFlowPluginRoot -Force -ErrorAction SilentlyContinue
     }
     Remove-Item Env:FLUX_LAUNCH_TRACE_FILE -ErrorAction SilentlyContinue
 }
