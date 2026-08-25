@@ -20,6 +20,7 @@ use windui::core::ClipboardProvider;
 use windui::prelude::Sender;
 
 const MAX_RESULTS: usize = 16;
+const MAX_PLUGINS: usize = 64;
 const QUERY_TIMEOUT: Duration = Duration::from_millis(450);
 const DISCOVERY_REFRESH: Duration = Duration::from_secs(5);
 
@@ -331,6 +332,7 @@ fn discover_plugins() -> Vec<PluginDescriptor> {
     plugin_roots()
         .into_iter()
         .flat_map(|root| read_plugin_root(&root))
+        .take(MAX_PLUGINS)
         .collect()
 }
 
@@ -397,40 +399,44 @@ fn invoke_json_line(
         .spawn()
         .map_err(|error| error.to_string())?;
 
-    let mut input = child
-        .stdin
-        .take()
-        .ok_or_else(|| String::from("plugin stdin unavailable"))?;
-    input
-        .write_all(request.as_bytes())
-        .and_then(|_| input.write_all(b"\n"))
-        .and_then(|_| input.flush())
-        .map_err(|error| error.to_string())?;
-    drop(input);
+    // Keep every fallible setup/read path inside one cleanup scope. Dropping a
+    // std::process::Child alone closes its handles but does not terminate it.
+    let response = (|| {
+        let mut input = child
+            .stdin
+            .take()
+            .ok_or_else(|| String::from("plugin stdin unavailable"))?;
+        input
+            .write_all(request.as_bytes())
+            .and_then(|_| input.write_all(b"\n"))
+            .and_then(|_| input.flush())
+            .map_err(|error| error.to_string())?;
+        drop(input);
 
-    let output = child
-        .stdout
-        .take()
-        .ok_or_else(|| String::from("plugin stdout unavailable"))?;
-    let (sender, receiver) = mpsc::sync_channel(1);
-    thread::spawn(move || {
-        let mut reader = BufReader::new(output);
-        let mut line = String::new();
-        let result = reader
-            .read_line(&mut line)
-            .map_err(|error| error.to_string())
-            .and_then(|count| {
-                (count > 0)
-                    .then_some(line.trim().to_owned())
-                    .ok_or_else(|| String::from("plugin returned no response"))
-            });
-        let _ = sender.send(result);
-    });
+        let output = child
+            .stdout
+            .take()
+            .ok_or_else(|| String::from("plugin stdout unavailable"))?;
+        let (sender, receiver) = mpsc::sync_channel(1);
+        thread::spawn(move || {
+            let mut reader = BufReader::new(output);
+            let mut line = String::new();
+            let result = reader
+                .read_line(&mut line)
+                .map_err(|error| error.to_string())
+                .and_then(|count| {
+                    (count > 0)
+                        .then_some(line.trim().to_owned())
+                        .ok_or_else(|| String::from("plugin returned no response"))
+                });
+            let _ = sender.send(result);
+        });
 
-    let response = receiver
-        .recv_timeout(QUERY_TIMEOUT)
-        .map_err(|_| String::from("plugin query timed out"))
-        .and_then(|response| response);
+        receiver
+            .recv_timeout(QUERY_TIMEOUT)
+            .map_err(|_| String::from("plugin query timed out"))
+            .and_then(|response| response)
+    })();
     terminate_process(&mut child);
     response
 }
@@ -547,7 +553,7 @@ impl NativePluginHost {
         #[cfg(windows)]
         let (child, io, limits) = {
             let pipe_name = format!("\\\\.\\pipe\\flux-plugin-host-{}", std::process::id());
-            let child = Command::new(&executable)
+            let mut child = Command::new(&executable)
                 .arg("--plugin-host")
                 .arg(&root)
                 .arg(&pipe_name)
@@ -556,8 +562,20 @@ impl NativePluginHost {
                 .stderr(Stdio::null())
                 .spawn()
                 .map_err(|error| format!("{}: {error}", executable.display()))?;
-            let limits = HostResourceGuard::attach(&child)?;
-            let io = connect_host_io(&pipe_name, Duration::from_secs(3))?;
+            let limits = match HostResourceGuard::attach(&child) {
+                Ok(limits) => limits,
+                Err(error) => {
+                    terminate_process(&mut child);
+                    return Err(error);
+                }
+            };
+            let io = match connect_host_io(&pipe_name, Duration::from_secs(3)) {
+                Ok(io) => io,
+                Err(error) => {
+                    terminate_process(&mut child);
+                    return Err(error);
+                }
+            };
             (child, ClientIo::Pipe(io), limits)
         };
         #[cfg(not(windows))]
@@ -570,15 +588,27 @@ impl NativePluginHost {
                 .stderr(Stdio::null())
                 .spawn()
                 .map_err(|error| format!("{}: {error}", executable.display()))?;
-            let stdin = child
-                .stdin
-                .take()
-                .ok_or_else(|| String::from("native plugin host stdin unavailable"))?;
-            let stdout = child
-                .stdout
-                .take()
-                .ok_or_else(|| String::from("native plugin host stdout unavailable"))?;
-            let limits = HostResourceGuard::attach(&child)?;
+            let stdin = match child.stdin.take() {
+                Some(stdin) => stdin,
+                None => {
+                    terminate_process(&mut child);
+                    return Err(String::from("native plugin host stdin unavailable"));
+                }
+            };
+            let stdout = match child.stdout.take() {
+                Some(stdout) => stdout,
+                None => {
+                    terminate_process(&mut child);
+                    return Err(String::from("native plugin host stdout unavailable"));
+                }
+            };
+            let limits = match HostResourceGuard::attach(&child) {
+                Ok(limits) => limits,
+                Err(error) => {
+                    terminate_process(&mut child);
+                    return Err(error);
+                }
+            };
             (
                 child,
                 ClientIo::Stdio {
