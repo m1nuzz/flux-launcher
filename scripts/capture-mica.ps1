@@ -575,15 +575,26 @@ try {
         [FluxWallpaper]::SetCursorPos($clickX, $clickY) | Out-Null
         [FluxWallpaper]::mouse_event(0x0002, 0, 0, 0, [UIntPtr]::Zero)
         [FluxWallpaper]::mouse_event(0x0004, 0, 0, 0, [UIntPtr]::Zero)
-        Start-Sleep -Milliseconds 700
-        $deactivationHiddenAfterClick = ![FluxWallpaper]::IsWindowVisible($launcherHandle)
-        $deactivationForegroundAfterClick = [FluxWallpaper]::GetForegroundWindow() -ne $launcherHandle
-        $deactivationTraceLines = if (Test-Path $launchTracePath) {
-            @(Get-Content $launchTracePath | Select-Object -Skip $deactivationTraceBeforeCount)
-        } else {
-            @()
+        Start-Sleep -Milliseconds 200
+        $deactivationHiddenAfterClick = $false
+        $deactivationForegroundAfterClick = $false
+        $deactivationEvent = $null
+        for ($attempt = 0; $attempt -lt 20; $attempt++) {
+            $deactivationHiddenAfterClick = ![FluxWallpaper]::IsWindowVisible($launcherHandle)
+            $deactivationForegroundAfterClick = [FluxWallpaper]::GetForegroundWindow() -ne $launcherHandle
+            $deactivationTraceLines = if (Test-Path $launchTracePath) {
+                @(Get-Content $launchTracePath | Select-Object -Skip $deactivationTraceBeforeCount)
+            } else {
+                @()
+            }
+            $deactivationEvent = $deactivationTraceLines | Where-Object { $_ -match "`twindow-deactivated$" } | Select-Object -First 1
+            if ($deactivationHiddenAfterClick -and
+                $deactivationForegroundAfterClick -and
+                [bool]$deactivationEvent) {
+                break
+            }
+            Start-Sleep -Milliseconds 100
         }
-        $deactivationEvent = $deactivationTraceLines | Where-Object { $_ -match "`twindow-deactivated$" } | Select-Object -First 1
         $deactivationClickProbe =
             $deactivationHiddenAfterClick -and
             $deactivationForegroundAfterClick -and
