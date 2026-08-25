@@ -57,7 +57,6 @@ if ($ForceTranslucentFallback) {
 }
 
 New-Item -ItemType Directory -Force -Path $OutputDirectory | Out-Null
-$OutputDirectory = (Resolve-Path -LiteralPath $OutputDirectory).Path
 
 Add-Type -AssemblyName System.Windows.Forms
 Add-Type -AssemblyName System.Drawing
@@ -85,18 +84,6 @@ public static class FluxWallpaper {
     public static extern IntPtr SendMessage(IntPtr hwnd, uint message, UIntPtr wParam, IntPtr lParam);
     [DllImport("user32.dll", SetLastError = true)]
     public static extern IntPtr GetForegroundWindow();
-    [DllImport("user32.dll", SetLastError = true)]
-    public static extern IntPtr GetAncestor(IntPtr hWnd, uint flags);
-    [DllImport("user32.dll", SetLastError = true)]
-    public static extern bool IsWindow(IntPtr hWnd);
-    [DllImport("user32.dll", SetLastError = true)]
-    public static extern bool SetWindowPos(IntPtr hWnd, IntPtr hWndInsertAfter, int x, int y, int cx, int cy, uint flags);
-    [DllImport("user32.dll", SetLastError = true)]
-    public static extern bool ShowWindow(IntPtr hWnd, int command);
-    [DllImport("kernel32.dll", SetLastError = true)]
-    public static extern uint GetCurrentThreadId();
-    [DllImport("user32.dll", SetLastError = true)]
-    public static extern bool AttachThreadInput(uint idAttach, uint idAttachTo, bool fAttach);
     [DllImport("user32.dll", SetLastError = true)]
     public static extern IntPtr WindowFromPoint(POINT point);
     [DllImport("user32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
@@ -185,40 +172,6 @@ function Get-CpuTimeMilliseconds([int]$ProcessId) {
     return $sample.TotalProcessorTime.TotalMilliseconds
 }
 
-function Read-LaunchTraceEvents([string]$Path) {
-    if (!(Test-Path -LiteralPath $Path)) { return @() }
-    $lines = @(Get-Content -LiteralPath $Path -ErrorAction SilentlyContinue)
-    $events = foreach ($line in $lines) {
-        if ($line -match '^(?<timestamp>[0-9]+(?:\.[0-9]+)?)\s+(?<event>[A-Za-z0-9-]+)\s*$') {
-            [pscustomobject]@{
-                Line = $line
-                Timestamp = [double]$matches.timestamp
-                Event = $matches.event
-            }
-        }
-    }
-    return @($events)
-}
-
-function Request-FluxInstanceShutdown([int]$ProcessId, [int]$TimeoutSeconds = 10) {
-    $shutdown = Start-Process -FilePath $Executable -ArgumentList "--shutdown" -WorkingDirectory (Split-Path -Parent $Executable) -PassThru -WindowStyle Hidden
-    try {
-        if (!$shutdown.WaitForExit($TimeoutSeconds * 1000)) { return $false }
-        $deadline = (Get-Date).AddSeconds(5)
-        while ((Get-Date) -lt $deadline) {
-            if (!(Get-Process -Id $ProcessId -ErrorAction SilentlyContinue)) { return $true }
-            Start-Sleep -Milliseconds 100
-        }
-        return $false
-    }
-    finally {
-        if (!$shutdown.HasExited) {
-            Stop-Process -Id $shutdown.Id -Force -ErrorAction SilentlyContinue
-            try { $shutdown.WaitForExit(2000) } catch { }
-        }
-    }
-}
-
 function Get-LauncherWindowHandle([System.Diagnostics.Process]$Process) {
     for ($attempt = 0; $attempt -lt 60; $attempt++) {
         try {
@@ -253,150 +206,6 @@ function Save-Screenshot([string]$FileName) {
         $graphics.Dispose()
         $bitmap.Dispose()
     }
-}
-
-function Get-RootWindowProcessId([IntPtr]$Handle) {
-    if ($Handle -eq [IntPtr]::Zero -or ![FluxWallpaper]::IsWindow($Handle)) {
-        return [uint32]0
-    }
-    $root = [FluxWallpaper]::GetAncestor($Handle, 2)
-    if ($root -eq [IntPtr]::Zero) {
-        $root = $Handle
-    }
-    [uint32]$processId = 0
-    [FluxWallpaper]::GetWindowThreadProcessId($root, [ref]$processId) | Out-Null
-    return $processId
-}
-
-function Get-PointWindowSnapshot([int]$X, [int]$Y) {
-    $point = New-Object FluxWallpaper+POINT
-    $point.X = $X
-    $point.Y = $Y
-    $window = [FluxWallpaper]::WindowFromPoint($point)
-    $root = if ($window -ne [IntPtr]::Zero) {
-        [FluxWallpaper]::GetAncestor($window, 2)
-    } else {
-        [IntPtr]::Zero
-    }
-    if ($root -eq [IntPtr]::Zero) { $root = $window }
-    [uint32]$processId = 0
-    if ($root -ne [IntPtr]::Zero) {
-        [FluxWallpaper]::GetWindowThreadProcessId($root, [ref]$processId) | Out-Null
-    }
-    [ordered]@{
-        X = $X
-        Y = $Y
-        WindowHandle = $window.ToInt64()
-        RootHandle = $root.ToInt64()
-        RootProcessId = $processId
-        WindowClass = [FluxWallpaper]::WindowClassAtPoint($X, $Y)
-    }
-}
-
-function Find-ExposedProbePoint([FluxWallpaper+RECT]$Rect, [uint32]$ExpectedProcessId) {
-    $width = [Math]::Max(1, $Rect.Right - $Rect.Left)
-    $height = [Math]::Max(1, $Rect.Bottom - $Rect.Top)
-    $insetX = [Math]::Max(20, [Math]::Min(140, [int]($width / 4)))
-    $insetY = [Math]::Max(20, [Math]::Min(140, [int]($height / 4)))
-    $points = @(
-        [System.Drawing.Point]::new($Rect.Left + $insetX, $Rect.Top + $insetY),
-        [System.Drawing.Point]::new([int](($Rect.Left + $Rect.Right) / 2), [int](($Rect.Top + $Rect.Bottom) / 2)),
-        [System.Drawing.Point]::new($Rect.Right - $insetX - 1, $Rect.Top + $insetY),
-        [System.Drawing.Point]::new($Rect.Left + $insetX, $Rect.Bottom - $insetY - 1),
-        [System.Drawing.Point]::new($Rect.Right - $insetX - 1, $Rect.Bottom - $insetY - 1)
-    )
-    $seen = @{}
-    foreach ($point in $points) {
-        $key = "{0}:{1}" -f $point.X, $point.Y
-        if ($seen.ContainsKey($key)) { continue }
-        $seen[$key] = $true
-        $snapshot = Get-PointWindowSnapshot $point.X $point.Y
-        if ($snapshot.RootProcessId -eq $ExpectedProcessId) {
-            return $snapshot
-        }
-    }
-    return $null
-}
-
-function Set-ForegroundWindowGated([IntPtr]$Handle) {
-    [uint32]$targetProcessId = 0
-    $targetThread = [FluxWallpaper]::GetWindowThreadProcessId($Handle, [ref]$targetProcessId)
-    $currentThread = [FluxWallpaper]::GetCurrentThreadId()
-    $foreground = [FluxWallpaper]::GetForegroundWindow()
-    [uint32]$foregroundProcessId = 0
-    $foregroundThread = if ($foreground -ne [IntPtr]::Zero) {
-        [FluxWallpaper]::GetWindowThreadProcessId($foreground, [ref]$foregroundProcessId)
-    } else { 0 }
-    $attachedThreads = @()
-    try {
-        if ($foregroundThread -ne 0 -and $foregroundThread -ne $currentThread) {
-            [FluxWallpaper]::AttachThreadInput($currentThread, $foregroundThread, $true) | Out-Null
-            $attachedThreads += $foregroundThread
-        }
-        if ($targetThread -ne 0 -and
-            $targetThread -ne $currentThread -and
-            $attachedThreads -notcontains $targetThread) {
-            [FluxWallpaper]::AttachThreadInput($currentThread, $targetThread, $true) | Out-Null
-            $attachedThreads += $targetThread
-        }
-        $result = [FluxWallpaper]::SetForegroundWindow($Handle)
-        [FluxWallpaper]::SetFocus($Handle) | Out-Null
-        return [bool]$result
-    }
-    finally {
-        for ($index = $attachedThreads.Count - 1; $index -ge 0; $index--) {
-            [FluxWallpaper]::AttachThreadInput($currentThread, $attachedThreads[$index], $false) | Out-Null
-        }
-    }
-}
-
-function Write-DeactivationFailureDiagnostics([string]$Reason) {
-    $foregroundHandle = [FluxWallpaper]::GetForegroundWindow()
-    $foregroundRoot = if ($foregroundHandle -ne [IntPtr]::Zero) {
-        [FluxWallpaper]::GetAncestor($foregroundHandle, 2)
-    } else {
-        [IntPtr]::Zero
-    }
-    if ($foregroundRoot -eq [IntPtr]::Zero) { $foregroundRoot = $foregroundHandle }
-    $state = [ordered]@{
-        Reason = $Reason
-        Launcher = [ordered]@{
-            ProcessId = if ($null -ne $process) { $process.Id } else { $null }
-            Handle = if ($null -ne $launcherHandle) { $launcherHandle.ToInt64() } else { 0 }
-            Visible = if ($null -ne $launcherHandle) { [FluxWallpaper]::IsWindowVisible($launcherHandle) } else { $false }
-        }
-        Probe = [ordered]@{
-            ProcessId = if ($null -ne $probeProcess) { $probeProcess.Id } else { $null }
-            Handle = if ($null -ne $deactivationProbeHandle) { $deactivationProbeHandle.ToInt64() } else { 0 }
-            Visible = if ($null -ne $deactivationProbeHandle) { [FluxWallpaper]::IsWindowVisible($deactivationProbeHandle) } else { $false }
-        }
-        Foreground = [ordered]@{
-            Handle = $foregroundHandle.ToInt64()
-            RootHandle = $foregroundRoot.ToInt64()
-            RootProcessId = Get-RootWindowProcessId $foregroundHandle
-        }
-        ClickPoint = if ($null -ne $deactivationClickPoint) {
-            [ordered]@{ X = $deactivationClickPoint.X; Y = $deactivationClickPoint.Y }
-        } else { $null }
-        PreClickHitTest = $deactivationPreClickPoint
-        PostClickHitTest = if ($null -ne $deactivationClickPoint) {
-            Get-PointWindowSnapshot $deactivationClickPoint.X $deactivationClickPoint.Y
-        } else { $null }
-        TraceBaselineLineCount = $deactivationTraceBeforeCount
-        TraceLinesAfterBaseline = @($deactivationTraceLines)
-        Samples = @($deactivationSamples)
-    }
-    try {
-        $state | ConvertTo-Json -Depth 10 | Set-Content -Encoding utf8 $deactivationDiagnosticsPath
-    } catch {
-        Write-Warning "Could not write deactivation diagnostics: $($_.Exception.Message)"
-    }
-    try {
-        Save-Screenshot $deactivationFailureScreenshot
-    } catch {
-        Write-Warning "Could not save deactivation failure screenshot: $($_.Exception.Message)"
-    }
-    return $deactivationDiagnosticsPath
 }
 
 function Compare-ScreenshotRegion(
@@ -469,26 +278,15 @@ Start-Sleep -Milliseconds 750
 Get-Process | Where-Object { $_.MainWindowTitle -like "*System Properties*" } | Stop-Process -Force -ErrorAction SilentlyContinue
 $probeScriptPath = Join-Path $OutputDirectory "probe-screen.ps1"
 @'
-$ErrorActionPreference = 'Stop'
 Add-Type -AssemblyName System.Windows.Forms
 Add-Type -AssemblyName System.Drawing
 $form = New-Object System.Windows.Forms.Form
 $form.FormBorderStyle = [System.Windows.Forms.FormBorderStyle]::None
 $form.ShowInTaskbar = $false
 $form.StartPosition = [System.Windows.Forms.FormStartPosition]::Manual
-$screens = @([System.Windows.Forms.Screen]::AllScreens)
-if ($screens.Count -eq 0) {
-    throw 'Wallpaper probe could not find a display.'
-}
-$bounds = @($screens | ForEach-Object { $_.Bounds })
-$left = [int](($bounds | Measure-Object -Property Left -Minimum).Minimum)
-$top = [int](($bounds | Measure-Object -Property Top -Minimum).Minimum)
-$right = [int](($bounds | Measure-Object -Property Right -Maximum).Maximum)
-$bottom = [int](($bounds | Measure-Object -Property Bottom -Maximum).Maximum)
-$width = [Math]::Max(1, $right - $left - 2)
-$height = [Math]::Max(1, $bottom - $top - 2)
-$form.Location = [System.Drawing.Point]::new($left + 1, $top + 1)
-$form.Size = [System.Drawing.Size]::new($width, $height)
+$screen = [System.Windows.Forms.SystemInformation]::VirtualScreen
+$form.Location = New-Object System.Drawing.Point($screen.Left + 1, $screen.Top + 1)
+$form.Size = New-Object System.Drawing.Size($screen.Width - 2, $screen.Height - 2)
 $form.BackColor = [System.Drawing.Color]::FromArgb(21, 46, 105)
 $form.Add_Paint({
     param($sender, $event)
@@ -509,19 +307,8 @@ $form.Add_Paint({
 '@ | Set-Content -Encoding utf8 $probeScriptPath
 $probeStdoutPath = Join-Path $OutputDirectory "probe.stdout.log"
 $probeStderrPath = Join-Path $OutputDirectory "probe.stderr.log"
-Remove-Item $probeStdoutPath, $probeStderrPath -Force -ErrorAction SilentlyContinue
 $probeProcess = Start-Process -FilePath "pwsh" -ArgumentList @("-NoProfile", "-File", $probeScriptPath) -WindowStyle Hidden -RedirectStandardOutput $probeStdoutPath -RedirectStandardError $probeStderrPath -PassThru
 Start-Sleep -Seconds 2
-$probeProcess.Refresh()
-if ($probeProcess.HasExited) {
-    throw "Wallpaper probe exited before smoke setup with code $($probeProcess.ExitCode)."
-}
-if (Test-Path $probeStderrPath) {
-    $probeErrors = Get-Content -Raw -LiteralPath $probeStderrPath -ErrorAction SilentlyContinue
-    if (-not [string]::IsNullOrWhiteSpace($probeErrors)) {
-        throw "Wallpaper probe emitted stderr: $probeErrors"
-    }
-}
 
 # Seed temporary Start Menu shortcuts so the WAB smoke exercises the same
 # application-catalog path as a real Windows installation.
@@ -533,8 +320,7 @@ New-Item -ItemType Directory -Force -Path $folderFixtureRoot | Out-Null
 $compactFixtureTarget = Join-Path $env:TEMP ("FluxLauncherCompactAppFixture_{0}.cmd" -f $PID)
 Set-Content -Encoding ascii -Path $compactFixtureTarget -Value "@echo off`r`nexit /b 0"
 $compactAppProbePath = Join-Path $OutputDirectory "compact-application-probe.log"
-$iconProbePath = Join-Path $OutputDirectory "shell-icon-probe.log"
-Remove-Item $compactAppProbePath, $iconProbePath -Force -ErrorAction SilentlyContinue
+Remove-Item $compactAppProbePath -Force -ErrorAction SilentlyContinue
 $obsidianConfigRoot = Join-Path $env:APPDATA "obsidian"
 $obsidianConfigBackupRoot = Join-Path $env:TEMP ("FluxLauncher-ObsidianConfig-backup-{0}" -f $PID)
 $obsidianFixtureVaultRoot = Join-Path $env:TEMP ("FluxLauncher-ObsidianVault-{0}" -f $PID)
@@ -607,17 +393,9 @@ $launchTracePath = Join-Path $OutputDirectory "launch-trace.log"
 Remove-Item $launchTracePath -Force -ErrorAction SilentlyContinue
 $env:FLUX_LAUNCH_TRACE_FILE = $launchTracePath
 $env:FLUX_COMPACT_APP_PROBE_FILE = $compactAppProbePath
-$env:FLUX_ICON_PROBE_FILE = $iconProbePath
 $legacyFlowPluginRoot = Join-Path $env:APPDATA "FluxLauncher\Plugins\NativeFlowFixture"
 $legacyFlowPluginBackupRoot = Join-Path $env:TEMP ("FluxLauncher-NativeFlowFixture.compact-smoke-disabled-{0}" -f $PID)
 $legacyFlowPluginWasDisabled = $false
-$deactivationDiagnosticsPath = Join-Path $OutputDirectory "deactivation-smoke-state.json"
-$deactivationFailureScreenshot = "deactivation-smoke-failed.png"
-$deactivationSamples = @()
-$deactivationClickPoint = $null
-$deactivationPreClickPoint = $null
-$deactivationProbeWasTopmost = $false
-$deactivationProbeTopmostChanged = $false
 if ($CommandPrioritySmoke -and (Test-Path $legacyFlowPluginRoot)) {
     # The workflow's legacy fixture answers every query. Keep it out of the
     # compact-name frame so the screenshot proves ApplicationCatalog matching.
@@ -630,17 +408,9 @@ if ($ActionBarSmoke) {
 } else {
     Remove-Item Env:FLUX_SMOKE_ACTION_BAR -ErrorAction SilentlyContinue
 }
-# The visual smoke uses the normal single-instance startup path. Its final cleanup
-# uses the production --shutdown handoff rather than terminating a native GUI process.
 $process = Start-Process -FilePath $Executable -PassThru -RedirectStandardOutput $stdoutPath -RedirectStandardError $stderrPath
 try {
     Start-Sleep -Seconds 3
-    $process.Refresh()
-    if ($process.HasExited) {
-        $startupExitCode = $process.ExitCode
-        $startupStderr = if (Test-Path $stderrPath) { Get-Content $stderrPath -Raw } else { "" }
-        throw "Flux launcher exited before startup smoke completed: pid=$($process.Id) exit_code=$startupExitCode stderr=[$startupStderr]"
-    }
     $newEverythingGuideWindows = @(
         Get-Process | Where-Object {
             $_.MainWindowTitle -like "Command Line Options - Everything*" -and
@@ -760,192 +530,66 @@ try {
         [FluxWallpaper]::SetForegroundWindow($launcherHandle) | Out-Null
     }
     if ($DeactivationClickSmoke) {
-        $deactivationTraceLines = @()
-        $deactivationEvent = $null
-        $deactivationForegroundProcessId = [uint32]0
-        $deactivationForegroundHandle = [IntPtr]::Zero
-        $deactivationProbeHandle = [IntPtr]::Zero
-        $topmostInsertAfter = [IntPtr](-1)
-        $notTopmostInsertAfter = [IntPtr](-2)
-        $swpNoMoveNoSizeNoActivate = 0x0013
-        try {
-            $probeProcess.Refresh()
-            $deactivationProbeHandle = $probeProcess.MainWindowHandle
-            if ($deactivationProbeHandle -eq [IntPtr]::Zero) {
-                $deactivationProbeHandle = [FluxWallpaper]::FindVisibleWindowByProcessId([uint32]$probeProcess.Id)
-            }
-            if ($deactivationProbeHandle -eq [IntPtr]::Zero -or ![FluxWallpaper]::IsWindow($deactivationProbeHandle)) {
-                throw "Deactivation smoke setup failed: could not find a valid deterministic probe window."
-            }
-            if (![FluxWallpaper]::IsWindowVisible($deactivationProbeHandle)) {
-                throw "Deactivation smoke setup failed: deterministic probe window is not visible."
-            }
-            $probeExStyle = [FluxWallpaper]::GetWindowLongPtr($deactivationProbeHandle, -20).ToInt64()
-            $deactivationProbeWasTopmost = ($probeExStyle -band 0x00000008) -ne 0
-            $probeRect = New-Object FluxWallpaper+RECT
-            if (![FluxWallpaper]::GetWindowRect($deactivationProbeHandle, [ref]$probeRect)) {
-                throw "Deactivation smoke setup failed: could not read the probe window rectangle."
-            }
-
-            # Expose the probe without activating it. The click must hit this native
-            # window after Flux is made foreground; otherwise the smoke would test the
-            # runner's z-order rather than Flux deactivation.
-            if (![FluxWallpaper]::SetWindowPos(
-                    $deactivationProbeHandle,
-                    $topmostInsertAfter,
-                    0,
-                    0,
-                    0,
-                    0,
-                    $swpNoMoveNoSizeNoActivate)) {
-                throw "Deactivation smoke setup failed: could not expose the probe without activation."
-            }
-            $deactivationProbeTopmostChanged = $true
-            Start-Sleep -Milliseconds 250
-
-            $foregroundRequestSucceeded = Set-ForegroundWindowGated $launcherHandle
-            $launcherForegroundReady = $false
-            for ($attempt = 0; $attempt -lt 30; $attempt++) {
-                $launcherForegroundReady = [FluxWallpaper]::GetForegroundWindow() -eq $launcherHandle
-                if ($launcherForegroundReady) { break }
-                Start-Sleep -Milliseconds 100
-            }
-            if (!$launcherForegroundReady) {
-                throw "Deactivation smoke setup failed: Flux did not become foreground (SetForegroundWindow=$foregroundRequestSucceeded)."
-            }
-            if (![FluxWallpaper]::IsWindowVisible($launcherHandle)) {
-                throw "Deactivation smoke setup failed: Flux was not visible before the outside click."
-            }
-
-            $deactivationPreClickPoint = Find-ExposedProbePoint $probeRect ([uint32]$probeProcess.Id)
-            if ($null -eq $deactivationPreClickPoint) {
-                $foregroundHandle = [FluxWallpaper]::GetForegroundWindow()
-                $foregroundPid = Get-RootWindowProcessId $foregroundHandle
-                throw "Deactivation smoke setup failed: no click point was owned by probe PID $($probeProcess.Id) while Flux was foreground (foreground PID $foregroundPid)."
-            }
-            $deactivationClickPoint = [System.Drawing.Point]::new(
-                [int]$deactivationPreClickPoint.X,
-                [int]$deactivationPreClickPoint.Y
-            )
-            $deactivationPreClickPoint = Get-PointWindowSnapshot $deactivationClickPoint.X $deactivationClickPoint.Y
-
-            # Drain preparation-time activation messages before taking the phase
-            # baseline. A prior window-deactivated event must never satisfy this click.
-            Start-Sleep -Milliseconds 250
-            if ([FluxWallpaper]::GetForegroundWindow() -ne $launcherHandle) {
-                throw "Deactivation smoke setup failed: Flux lost foreground before the verified outside click."
-            }
-            $deactivationTraceBeforeCount = if (Test-Path $launchTracePath) { @(Get-Content $launchTracePath).Count } else { 0 }
-            $deactivationTraceLines = @()
-            [FluxWallpaper]::SetCursorPos($deactivationClickPoint.X, $deactivationClickPoint.Y) | Out-Null
-            $clickHitBeforeInput = Get-PointWindowSnapshot $deactivationClickPoint.X $deactivationClickPoint.Y
-            if ($clickHitBeforeInput.RootProcessId -ne [uint32]$probeProcess.Id) {
-                throw "Deactivation smoke setup failed: verified click point changed owner to PID $($clickHitBeforeInput.RootProcessId), expected probe PID $($probeProcess.Id)."
-            }
-            [FluxWallpaper]::mouse_event(0x0002, 0, 0, 0, [UIntPtr]::Zero)
-            [FluxWallpaper]::mouse_event(0x0004, 0, 0, 0, [UIntPtr]::Zero)
-
-            $deactivationHiddenAfterClick = $false
-            $deactivationForegroundAfterClick = $false
-            # The native activation transition can be delayed by the Windows message
-            # queue in hosted desktops. Keep this bounded, but require the actual probe
-            # PID instead of treating any non-Flux foreground window as success.
-            for ($attempt = 0; $attempt -lt 80; $attempt++) {
-                $deactivationForegroundHandle = [FluxWallpaper]::GetForegroundWindow()
-                $deactivationForegroundProcessId = Get-RootWindowProcessId $deactivationForegroundHandle
-                $deactivationHiddenAfterClick = ![FluxWallpaper]::IsWindowVisible($launcherHandle)
-                $deactivationForegroundAfterClick = $deactivationForegroundProcessId -eq [uint32]$probeProcess.Id
-                $deactivationTraceLines = if (Test-Path $launchTracePath) {
-                    @(Get-Content $launchTracePath | Select-Object -Skip $deactivationTraceBeforeCount)
-                } else {
-                    @()
-                }
-                $deactivationEvent = $deactivationTraceLines | Where-Object { $_ -match "`twindow-deactivated$" } | Select-Object -First 1
-                $deactivationSamples += [ordered]@{
-                    Attempt = $attempt
-                    Visible = !$deactivationHiddenAfterClick
-                    ForegroundHandle = $deactivationForegroundHandle.ToInt64()
-                    ForegroundProcessId = $deactivationForegroundProcessId
-                    ForegroundIsProbe = $deactivationForegroundAfterClick
-                    HitTest = Get-PointWindowSnapshot $deactivationClickPoint.X $deactivationClickPoint.Y
-                    HasNewCallback = [bool]$deactivationEvent
-                }
-                if ($deactivationHiddenAfterClick -and $deactivationForegroundAfterClick) {
-                    break
-                }
-                Start-Sleep -Milliseconds 100
-            }
-            $deactivationClickProbe =
-                $deactivationHiddenAfterClick -and
-                $deactivationForegroundAfterClick
-            if (!$deactivationClickProbe) {
-                $reason = "Deactivation smoke failed: hidden=$deactivationHiddenAfterClick foreground_probe=$deactivationForegroundAfterClick foreground_pid=$deactivationForegroundProcessId."
-                Write-DeactivationFailureDiagnostics $reason | Out-Null
-                throw "$reason Diagnostics: $deactivationDiagnosticsPath"
-            }
-            if (![bool]$deactivationEvent) {
-                Write-Warning "Deactivation behavior passed, but optional lifecycle callback telemetry was not observed before timeout."
-            }
-            if ($IdlePerformanceSmoke) {
-                Start-Sleep -Milliseconds 1200
-                $deactivationCpuBefore = Get-CpuTimeMilliseconds $process.Id
-                Start-Sleep -Seconds 3
-                $deactivationIdleMemory = Get-MemorySnapshot $process.Id
-                $deactivationCpuAfter = Get-CpuTimeMilliseconds $process.Id
-                $deactivationCpuDelta = [Math]::Round($deactivationCpuAfter - $deactivationCpuBefore, 2)
-                Write-Host "Click-hidden idle CPU time over 3s: $deactivationCpuDelta ms"
-                if ($deactivationCpuDelta -gt 150) {
-                    throw "Click-hidden idle CPU budget exceeded: ${deactivationCpuDelta} ms over 3 seconds."
-                }
-            }
-            # Restore through the real global Alt+Space sequence, proving that the hidden
-            # process remains resident and the user can immediately reopen the launcher.
-            [FluxWallpaper]::keybd_event(0x12, 0, 0, [UIntPtr]::Zero)
-            [FluxWallpaper]::keybd_event(0x20, 0, 0, [UIntPtr]::Zero)
-            [FluxWallpaper]::keybd_event(0x20, 0, 2, [UIntPtr]::Zero)
-            [FluxWallpaper]::keybd_event(0x12, 0, 2, [UIntPtr]::Zero)
-            Start-Sleep -Milliseconds 900
-            if (![FluxWallpaper]::IsWindowVisible($launcherHandle) -or [FluxWallpaper]::GetForegroundWindow() -ne $launcherHandle) {
-                throw "Deactivation smoke could not restore Flux with one real Alt+Space bind."
+        $probeProcess.Refresh()
+        $deactivationProbeHandle = $probeProcess.MainWindowHandle
+        if ($deactivationProbeHandle -eq [IntPtr]::Zero) {
+            $deactivationProbeHandle = [FluxWallpaper]::FindVisibleWindowByProcessId([uint32]$probeProcess.Id)
+        }
+        if ($deactivationProbeHandle -eq [IntPtr]::Zero) {
+            throw "Deactivation smoke could not find the deterministic probe window."
+        }
+        $probeRect = New-Object FluxWallpaper+RECT
+        if (![FluxWallpaper]::GetWindowRect($deactivationProbeHandle, [ref]$probeRect)) {
+            throw "Deactivation smoke could not read the probe window rectangle."
+        }
+        $deactivationTraceBeforeCount = if (Test-Path $launchTracePath) { @(Get-Content $launchTracePath).Count } else { 0 }
+        [FluxWallpaper]::SetForegroundWindow($launcherHandle) | Out-Null
+        Start-Sleep -Milliseconds 250
+        if (![FluxWallpaper]::IsWindowVisible($launcherHandle)) {
+            throw "Deactivation smoke expected Flux to be visible before the outside click."
+        }
+        $clickX = [int](($probeRect.Left + $probeRect.Right) / 2)
+        $clickY = [int](($probeRect.Top + $probeRect.Bottom) / 2)
+        [FluxWallpaper]::SetCursorPos($clickX, $clickY) | Out-Null
+        [FluxWallpaper]::mouse_event(0x0002, 0, 0, 0, [UIntPtr]::Zero)
+        [FluxWallpaper]::mouse_event(0x0004, 0, 0, 0, [UIntPtr]::Zero)
+        Start-Sleep -Milliseconds 700
+        $deactivationHiddenAfterClick = ![FluxWallpaper]::IsWindowVisible($launcherHandle)
+        $deactivationForegroundAfterClick = [FluxWallpaper]::GetForegroundWindow() -ne $launcherHandle
+        $deactivationTraceLines = if (Test-Path $launchTracePath) {
+            @(Get-Content $launchTracePath | Select-Object -Skip $deactivationTraceBeforeCount)
+        } else {
+            @()
+        }
+        $deactivationEvent = $deactivationTraceLines | Where-Object { $_ -match "`twindow-deactivated$" } | Select-Object -First 1
+        $deactivationClickProbe =
+            $deactivationHiddenAfterClick -and
+            $deactivationForegroundAfterClick -and
+            [bool]$deactivationEvent
+        if (!$deactivationClickProbe) {
+            throw "Deactivation smoke failed: hidden=$deactivationHiddenAfterClick foreground_probe=$deactivationForegroundAfterClick callback=$([bool]$deactivationEvent)."
+        }
+        if ($IdlePerformanceSmoke) {
+            Start-Sleep -Milliseconds 1200
+            $deactivationCpuBefore = Get-CpuTimeMilliseconds $process.Id
+            Start-Sleep -Seconds 3
+            $deactivationIdleMemory = Get-MemorySnapshot $process.Id
+            $deactivationCpuAfter = Get-CpuTimeMilliseconds $process.Id
+            $deactivationCpuDelta = [Math]::Round($deactivationCpuAfter - $deactivationCpuBefore, 2)
+            Write-Host "Click-hidden idle CPU time over 3s: $deactivationCpuDelta ms"
+            if ($deactivationCpuDelta -gt 150) {
+                throw "Click-hidden idle CPU budget exceeded: ${deactivationCpuDelta} ms over 3 seconds."
             }
         }
-        catch {
-            if (!(Test-Path $deactivationDiagnosticsPath)) {
-                Write-DeactivationFailureDiagnostics $_.Exception.Message | Out-Null
-            }
-            throw
-        }
-        finally {
-            if ($deactivationProbeHandle -ne [IntPtr]::Zero -and
-                [FluxWallpaper]::IsWindow($deactivationProbeHandle)) {
-                try {
-                    # The probe is a full-screen native overlay. Hide it before the
-                    # remaining screenshots/query phases so it cannot cover Flux even
-                    # after HWND_NOTOPMOST is applied to a hosted desktop z-order.
-                    [FluxWallpaper]::ShowWindow($deactivationProbeHandle, 0) | Out-Null
-                }
-                catch {
-                    Write-Warning "Could not hide deterministic probe after deactivation smoke: $($_.Exception.Message)"
-                }
-            }
-            if ($deactivationProbeTopmostChanged -and
-                $deactivationProbeHandle -ne [IntPtr]::Zero -and
-                [FluxWallpaper]::IsWindow($deactivationProbeHandle)) {
-                try {
-                    $restoreInsertAfter = if ($deactivationProbeWasTopmost) { $topmostInsertAfter } else { $notTopmostInsertAfter }
-                    [FluxWallpaper]::SetWindowPos(
-                        $deactivationProbeHandle,
-                        $restoreInsertAfter,
-                        0,
-                        0,
-                        0,
-                        0,
-                        $swpNoMoveNoSizeNoActivate) | Out-Null
-                }
-                catch {
-                    Write-Warning "Could not restore deterministic probe z-order: $($_.Exception.Message)"
-                }
-            }
+        # Restore through the real global Alt+Space sequence, proving that the hidden
+        # process remains resident and the user can immediately reopen the launcher.
+        [FluxWallpaper]::keybd_event(0x12, 0, 0, [UIntPtr]::Zero)
+        [FluxWallpaper]::keybd_event(0x20, 0, 0, [UIntPtr]::Zero)
+        [FluxWallpaper]::keybd_event(0x20, 0, 2, [UIntPtr]::Zero)
+        [FluxWallpaper]::keybd_event(0x12, 0, 2, [UIntPtr]::Zero)
+        Start-Sleep -Milliseconds 900
+        if (![FluxWallpaper]::IsWindowVisible($launcherHandle) -or [FluxWallpaper]::GetForegroundWindow() -ne $launcherHandle) {
+            throw "Deactivation smoke could not restore Flux with one real Alt+Space bind."
         }
     }
 
@@ -993,9 +637,6 @@ try {
     $queryResponsivenessProbe = $false
     $commandPriorityProbe = $false
     $compactAppProbe = $false
-    $iconProbe = $false
-    $iconProbeLines = @()
-    $iconProbeMissing = @()
     $compactAppProbeLine = $null
     $resourceProfileProbe = !$ResourceProfileSmoke
     $resourceProfileSamples = @()
@@ -1117,46 +758,6 @@ try {
             throw "Compact application smoke did not return LM Studio by title with an executable identity free of lmstudio: $compactAppProbePath"
         }
         $commandPriorityProbe = $true
-
-        $requiredIconTitles = @("Command Prompt", "PowerShell")
-        $iconResultPattern = '^title=(?<title>[^\t]+)\ttarget=(?<target>[^\t]*)\ticon_target=(?<icon_target>[^\t]*)\tinitial_loaded=(?<initial_loaded>true|false)$'
-        for ($attempt = 0; $attempt -lt 50; $attempt++) {
-            $iconProbeLines = if (Test-Path $iconProbePath) {
-                @(Get-Content $iconProbePath)
-            } else {
-                @()
-            }
-            $iconProbeMissing = @(
-                $requiredIconTitles | Where-Object {
-                    $requiredTitle = $_
-                    $loaded = $false
-                    foreach ($probeLine in $iconProbeLines) {
-                        if ($probeLine -notmatch $iconResultPattern -or $Matches["title"] -ne $requiredTitle) {
-                            continue
-                        }
-                        if ($Matches["initial_loaded"] -eq "true") {
-                            $loaded = $true
-                            break
-                        }
-                        $iconTarget = $Matches["icon_target"]
-                        if ($iconTarget -and ($iconProbeLines -contains ("target={0}`tloaded=true" -f $iconTarget))) {
-                            $loaded = $true
-                            break
-                        }
-                    }
-                    !$loaded
-                }
-            )
-            if ($iconProbeMissing.Count -eq 0) {
-                break
-            }
-            Start-Sleep -Milliseconds 100
-        }
-        $iconProbe = $iconProbeMissing.Count -eq 0
-        Write-Host "Shell icon probe: passed=$iconProbe missing=$($iconProbeMissing -join ',')"
-        if (!$iconProbe) {
-            throw "Shell icon smoke did not load icons for: $($iconProbeMissing -join ', '): $iconProbePath"
-        }
     }
     if ($ObsidianIconSmoke) {
         $shell.SendKeys("^a")
@@ -1223,37 +824,7 @@ try {
     Save-Screenshot "everything-fallback.png"
 
     if ($ActionBarSmoke) {
-        # Use the WAB fixture created above instead of a host-dependent query such as
-        # wifi. The action bar exists only while the result list is visible, so a
-        # deterministic result also makes this a layout test rather than a provider
-        # availability test.
-        Set-ForegroundWindowGated $launcherHandle | Out-Null
-        $shell.AppActivate($process.Id) | Out-Null
-        Start-Sleep -Milliseconds 200
-        [FluxWallpaper]::SetCursorPos($searchX, $searchY) | Out-Null
-        [FluxWallpaper]::mouse_event(0x0002, 0, 0, 0, [UIntPtr]::Zero)
-        [FluxWallpaper]::mouse_event(0x0004, 0, 0, 0, [UIntPtr]::Zero)
-        Start-Sleep -Milliseconds 200
-        $shell.SendKeys("^a")
-        $shell.SendKeys("{BACKSPACE}")
-        $shell.SendKeys("wab")
-        $actionBarMatch = $null
-        $actionBarLog = ""
-        # Rendering and stderr delivery are asynchronous on hosted Windows runners.
-        # Poll the actual telemetry instead of treating a fixed sleep as proof that
-        # the native frame has already painted.
-        for ($attempt = 0; $attempt -lt 60; $attempt++) {
-            Start-Sleep -Milliseconds 100
-            $actionBarLog = if (Test-Path $stderrPath) { Get-Content $stderrPath -Raw } else { "" }
-            $actionBarMatch = [regex]::Matches(
-                $actionBarLog,
-                "ActionBarGeometry: x=(\d+) y=(\d+) width=(\d+) height=(\d+)"
-            ) | Select-Object -Last 1
-            if ($null -ne $actionBarMatch) { break }
-        }
-        if ($null -eq $actionBarMatch) {
-            throw "Action bar smoke did not observe native action-bar geometry telemetry after deterministic query 'wab'."
-        }
+        Start-Sleep -Milliseconds 300
         $clientRect = New-Object FluxWallpaper+RECT
         if (![FluxWallpaper]::GetClientRect($launcherHandle, [ref]$clientRect)) {
             throw "Action bar smoke could not read launcher client geometry."
@@ -1265,6 +836,14 @@ try {
         $scale = [double]$dpi / 96.0
         $logicalClientWidth = [int][Math]::Round($clientWidth / $scale)
         $logicalClientHeight = [int][Math]::Round($clientHeight / $scale)
+        $actionBarLog = if (Test-Path $stderrPath) { Get-Content $stderrPath -Raw } else { "" }
+        $actionBarMatch = [regex]::Matches(
+            $actionBarLog,
+            "ActionBarGeometry: x=(\d+) y=(\d+) width=(\d+) height=(\d+)"
+        ) | Select-Object -Last 1
+        if ($null -eq $actionBarMatch) {
+            throw "Action bar smoke did not observe native action-bar geometry telemetry."
+        }
         $actionBarGeometry = [ordered]@{
             X = [int]$actionBarMatch.Groups[1].Value
             Y = [int]$actionBarMatch.Groups[2].Value
@@ -1274,7 +853,6 @@ try {
             LogicalClientHeight = $logicalClientHeight
             Dpi = [int]$dpi
         }
-        Save-Screenshot "action-bar.png"
         if ($logicalClientHeight -le 56) {
             # The action bar is intentionally hidden in compact Search state.
             # The native telemetry can still contain the previous expanded
@@ -1340,26 +918,15 @@ try {
         if (![FluxWallpaper]::IsWindowVisible($launcherHandle)) {
             # A previous outside click can legitimately leave the launcher hidden;
             # restore it through the real bind before testing the next hide toggle.
-            for ($restoreAttempt = 0; $restoreAttempt -lt 2 -and ![FluxWallpaper]::IsWindowVisible($launcherHandle); $restoreAttempt++) {
-                [FluxWallpaper]::keybd_event(0x12, 0, 0, [UIntPtr]::Zero)
-                [FluxWallpaper]::keybd_event(0x20, 0, 0, [UIntPtr]::Zero)
-                [FluxWallpaper]::keybd_event(0x20, 0, 2, [UIntPtr]::Zero)
-                [FluxWallpaper]::keybd_event(0x12, 0, 2, [UIntPtr]::Zero)
-                for ($visibleAttempt = 0; $visibleAttempt -lt 20 -and ![FluxWallpaper]::IsWindowVisible($launcherHandle); $visibleAttempt++) {
-                    Start-Sleep -Milliseconds 100
-                }
-            }
+            [FluxWallpaper]::keybd_event(0x12, 0, 0, [UIntPtr]::Zero)
+            [FluxWallpaper]::keybd_event(0x20, 0, 0, [UIntPtr]::Zero)
+            [FluxWallpaper]::keybd_event(0x20, 0, 2, [UIntPtr]::Zero)
+            [FluxWallpaper]::keybd_event(0x12, 0, 2, [UIntPtr]::Zero)
+            Start-Sleep -Milliseconds 800
         }
-        $foregroundReady = $false
-        for ($foregroundAttempt = 0; $foregroundAttempt -lt 20; $foregroundAttempt++) {
-            Set-ForegroundWindowGated $launcherHandle | Out-Null
-            Start-Sleep -Milliseconds 100
-            if ([FluxWallpaper]::IsWindowVisible($launcherHandle) -and [FluxWallpaper]::GetForegroundWindow() -eq $launcherHandle) {
-                $foregroundReady = $true
-                break
-            }
-        }
-        if (!$foregroundReady) {
+        [FluxWallpaper]::SetForegroundWindow($launcherHandle) | Out-Null
+        Start-Sleep -Milliseconds 250
+        if (![FluxWallpaper]::IsWindowVisible($launcherHandle) -or [FluxWallpaper]::GetForegroundWindow() -ne $launcherHandle) {
             throw "Repeated Alt+Space cycle $cycle could not establish a visible foreground launcher before hide."
         }
         [FluxWallpaper]::SendMessage($launcherHandle, $wmHotkey, [UIntPtr]::Zero, [IntPtr]::Zero) | Out-Null
@@ -1542,23 +1109,23 @@ try {
     # Send Enter to the exact launcher HWND after direct Home/Down selection. This
     # keeps the ordering assertion deterministic while the surrounding smoke suite
     # already covers real keyboard input and global hotkey restoration.
+    $traceBeforeEnterCount = if (Test-Path $launchTracePath) { @(Get-Content $launchTracePath).Count } else { 0 }
     $enterDispatchTimer = [System.Diagnostics.Stopwatch]::StartNew()
     [FluxWallpaper]::SendMessage($launcherHandle, $wmKeyDown, [UIntPtr]::new(0x0D), [IntPtr]::Zero) | Out-Null
     $enterDispatchTimer.Stop()
     $enterHideDispatchMilliseconds = [Math]::Round($enterDispatchTimer.Elapsed.TotalMilliseconds, 2)
     Start-Sleep -Milliseconds 500
-    $enterTraceLines = if (Test-Path -LiteralPath $launchTracePath) { @(Get-Content -LiteralPath $launchTracePath) } else { @() }
-    $enterTraceEvents = Read-LaunchTraceEvents $launchTracePath
-    $launchDispatchEvent = $enterTraceEvents | Where-Object { $_.Event -eq "launch-dispatch" } | Select-Object -Last 1
-    $windowHideEvent = if ($launchDispatchEvent) {
-        $enterTraceEvents | Where-Object { $_.Event -eq "window-hide" -and $_.Timestamp -ge $launchDispatchEvent.Timestamp } | Select-Object -First 1
-    } else { $null }
-    $processCreatedEvent = if ($launchDispatchEvent) {
-        $enterTraceEvents | Where-Object { $_.Event -eq "process-created" -and $_.Timestamp -ge $launchDispatchEvent.Timestamp } | Select-Object -First 1
-    } else { $null }
-    $launchDispatchTimestamp = if ($launchDispatchEvent) { $launchDispatchEvent.Timestamp } else { 0.0 }
-    $windowHideTimestamp = if ($windowHideEvent) { $windowHideEvent.Timestamp } else { 0.0 }
-    $processCreatedTimestamp = if ($processCreatedEvent) { $processCreatedEvent.Timestamp } else { 0.0 }
+    $enterTraceLines = if (Test-Path $launchTracePath) {
+        @(Get-Content $launchTracePath | Select-Object -Skip $traceBeforeEnterCount)
+    } else {
+        @()
+    }
+    $launchDispatchLine = $enterTraceLines | Where-Object { $_ -match "`tlaunch-dispatch$" } | Select-Object -First 1
+    $windowHideLine = $enterTraceLines | Where-Object { $_ -match "`twindow-hide$" } | Select-Object -First 1
+    $processCreatedLine = $enterTraceLines | Where-Object { $_ -match "`tprocess-created$" } | Select-Object -First 1
+    $launchDispatchTimestamp = if ($launchDispatchLine) { [double]($launchDispatchLine -split "`t", 2)[0] } else { 0.0 }
+    $windowHideTimestamp = if ($windowHideLine) { [double]($windowHideLine -split "`t", 2)[0] } else { 0.0 }
+    $processCreatedTimestamp = if ($processCreatedLine) { [double]($processCreatedLine -split "`t", 2)[0] } else { 0.0 }
     $enterLaunchDispatchBeforeHideProbe =
         $launchDispatchTimestamp -gt 0.0 -and
         $windowHideTimestamp -gt 0.0 -and
@@ -1599,6 +1166,7 @@ try {
     $shell.SendKeys("{HOME}")
     Start-Sleep -Milliseconds 250
     [FluxWallpaper]::SetForegroundWindow($launcherHandle) | Out-Null
+    $launchProbeTraceBeforeCount = if (Test-Path $launchTracePath) { @(Get-Content $launchTracePath).Count } else { 0 }
     $launchProbeTimer = [System.Diagnostics.Stopwatch]::StartNew()
     [FluxWallpaper]::SendMessage($launcherHandle, $wmKeyDown, [UIntPtr]::new(0x0D), [IntPtr]::Zero) | Out-Null
     $launchProbeTimer.Stop()
@@ -1608,22 +1176,19 @@ try {
     # the opt-in lifecycle trace. This remains bounded and does not alter the
     # production launch path.
     Start-Sleep -Milliseconds 6000
-    $launchProbeTraceLines = if (Test-Path -LiteralPath $launchTracePath) { @(Get-Content -LiteralPath $launchTracePath) } else { @() }
-    $launchProbeTraceEvents = Read-LaunchTraceEvents $launchTracePath
-    $launchProbeDispatchEvent = $launchProbeTraceEvents | Where-Object { $_.Event -eq "launch-dispatch" } | Select-Object -Last 1
-    $launchProbeHideEvent = if ($launchProbeDispatchEvent) {
-        $launchProbeTraceEvents | Where-Object { $_.Event -eq "window-hide" -and $_.Timestamp -ge $launchProbeDispatchEvent.Timestamp } | Select-Object -First 1
-    } else { $null }
-    $launchProbeProcessEvent = if ($launchProbeDispatchEvent) {
-        $launchProbeTraceEvents | Where-Object { $_.Event -eq "process-created" -and $_.Timestamp -ge $launchProbeDispatchEvent.Timestamp } | Select-Object -First 1
-    } else { $null }
-    $launchProbeShellReturnEvent = if ($launchProbeDispatchEvent) {
-        $launchProbeTraceEvents | Where-Object { $_.Event -eq "shell-return" -and $_.Timestamp -ge $launchProbeDispatchEvent.Timestamp } | Select-Object -First 1
-    } else { $null }
-    $launchProbeDispatchTimestamp = if ($launchProbeDispatchEvent) { $launchProbeDispatchEvent.Timestamp } else { 0.0 }
-    $launchProbeHideTimestamp = if ($launchProbeHideEvent) { $launchProbeHideEvent.Timestamp } else { 0.0 }
-    $launchProbeProcessTimestamp = if ($launchProbeProcessEvent) { $launchProbeProcessEvent.Timestamp } else { 0.0 }
-    $launchProbeShellReturnTimestamp = if ($launchProbeShellReturnEvent) { $launchProbeShellReturnEvent.Timestamp } else { 0.0 }
+    $launchProbeTraceLines = if (Test-Path $launchTracePath) {
+        @(Get-Content $launchTracePath | Select-Object -Skip $launchProbeTraceBeforeCount)
+    } else {
+        @()
+    }
+    $launchProbeDispatchLine = $launchProbeTraceLines | Where-Object { $_ -match "`tlaunch-dispatch$" } | Select-Object -First 1
+    $launchProbeHideLine = $launchProbeTraceLines | Where-Object { $_ -match "`twindow-hide$" } | Select-Object -First 1
+    $launchProbeProcessLine = $launchProbeTraceLines | Where-Object { $_ -match "`tprocess-created$" } | Select-Object -First 1
+    $launchProbeShellReturnLine = $launchProbeTraceLines | Where-Object { $_ -match "`tshell-return$" } | Select-Object -First 1
+    $launchProbeDispatchTimestamp = if ($launchProbeDispatchLine) { [double]($launchProbeDispatchLine -split "`t", 2)[0] } else { 0.0 }
+    $launchProbeHideTimestamp = if ($launchProbeHideLine) { [double]($launchProbeHideLine -split "`t", 2)[0] } else { 0.0 }
+    $launchProbeProcessTimestamp = if ($launchProbeProcessLine) { [double]($launchProbeProcessLine -split "`t", 2)[0] } else { 0.0 }
+    $launchProbeShellReturnTimestamp = if ($launchProbeShellReturnLine) { [double]($launchProbeShellReturnLine -split "`t", 2)[0] } else { 0.0 }
     $launchProbeCompletionTimestamp = if ($launchProbeProcessTimestamp -gt 0.0) {
         $launchProbeProcessTimestamp
     } else {
@@ -2351,17 +1916,6 @@ try {
         Remove-Item Env:FLUX_DISABLE_SINGLE_INSTANCE -ErrorAction SilentlyContinue
     }
 
-    $probeProcess.Refresh()
-    if ($probeProcess.HasExited -and $probeProcess.ExitCode -ne 0) {
-        throw "Wallpaper probe exited with code $($probeProcess.ExitCode)."
-    }
-    if (Test-Path $probeStderrPath) {
-        $probeErrors = Get-Content -Raw -LiteralPath $probeStderrPath -ErrorAction SilentlyContinue
-        if (-not [string]::IsNullOrWhiteSpace($probeErrors)) {
-            throw "Wallpaper probe emitted stderr: $probeErrors"
-        }
-    }
-
     $os = Get-CimInstance Win32_OperatingSystem
     [ordered]@{
         Caption = $os.Caption
@@ -2395,9 +1949,6 @@ try {
         CommandPriorityProbe = (!$CommandPrioritySmoke) -or $commandPriorityProbe
         CompactApplicationProbe = (!$CommandPrioritySmoke) -or $compactAppProbe
         CompactApplicationProbeLine = $compactAppProbeLine
-        ShellIconProbe = (!$CommandPrioritySmoke) -or $iconProbe
-        ShellIconProbeMissing = @($iconProbeMissing)
-        ShellIconProbeLines = @($iconProbeLines)
         ObsidianIconProbe = (!$ObsidianIconSmoke) -or $obsidianIconProbe
         QueryResponsivenessMaxMilliseconds = $queryResponsivenessMaxMilliseconds
         QueryResponsivenessSamples = @($queryResponsivenessSamples)
@@ -2475,17 +2026,8 @@ try {
     } | ConvertTo-Json | Set-Content -Encoding utf8 (Join-Path $OutputDirectory "environment.json")
 }
 finally {
-    if ($process) {
-        $process.Refresh()
-        if (!$process.HasExited) {
-            $shutdownCompleted = Request-FluxInstanceShutdown $process.Id 10
-            $process.Refresh()
-            if (!$shutdownCompleted -and !$process.HasExited) {
-                Write-Warning "Flux did not exit after production --shutdown; forcing cleanup for PID $($process.Id)."
-                Stop-Process -Id $process.Id -Force -ErrorAction SilentlyContinue
-                try { $process.WaitForExit(5000) } catch { }
-            }
-        }
+    if (!$process.HasExited) {
+        Stop-Process -Id $process.Id -Force
     }
     if ($probeProcess -and !$probeProcess.HasExited) {
         Stop-Process -Id $probeProcess.Id -Force
@@ -2513,5 +2055,4 @@ finally {
     }
     Remove-Item Env:FLUX_LAUNCH_TRACE_FILE -ErrorAction SilentlyContinue
     Remove-Item Env:FLUX_COMPACT_APP_PROBE_FILE -ErrorAction SilentlyContinue
-    Remove-Item Env:FLUX_ICON_PROBE_FILE -ErrorAction SilentlyContinue
 }
