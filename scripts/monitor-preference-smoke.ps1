@@ -24,8 +24,6 @@ public static class FluxMonitorSmoke {
     [DllImport("user32.dll", SetLastError = true)]
     public static extern bool GetWindowRect(IntPtr hwnd, out RECT rect);
     [DllImport("user32.dll", SetLastError = true)]
-    public static extern bool PostMessage(IntPtr hwnd, uint message, IntPtr wParam, IntPtr lParam);
-    [DllImport("user32.dll", SetLastError = true)]
     public static extern bool IsWindowVisible(IntPtr hwnd);
     [DllImport("user32.dll", SetLastError = true)]
     public static extern bool EnumWindows(EnumWindowsProc callback, IntPtr lParam);
@@ -51,50 +49,45 @@ public static class FluxMonitorSmoke {
 $virtual = [System.Windows.Forms.SystemInformation]::VirtualScreen
 $processName = [System.IO.Path]::GetFileNameWithoutExtension($Executable)
 
-function Request-FluxProcessShutdown([System.Diagnostics.Process]$Process, [int]$TimeoutSeconds = 10) {
-    if ($null -eq $Process) { return $true }
+function Request-FluxInstanceShutdown([int]$TimeoutSeconds = 10) {
+    $shutdown = Start-Process -FilePath $Executable -ArgumentList "--shutdown" -WorkingDirectory (Split-Path -Parent $Executable) -PassThru -WindowStyle Hidden
     try {
-        $Process.Refresh()
-        if ($Process.HasExited) { return $true }
-    }
-    catch {
-        return $true
-    }
-    $Process.Refresh()
-    $handle = $Process.MainWindowHandle
-    if ($handle -eq [IntPtr]::Zero) {
-        $handle = [FluxMonitorSmoke]::FindWindowByProcessId([uint32]$Process.Id)
-    }
-    if ($handle -eq [IntPtr]::Zero) { return $false }
-    if (![FluxMonitorSmoke]::PostMessage($handle, 0x0010, [IntPtr]::Zero, [IntPtr]::Zero)) {
+        if (!$shutdown.WaitForExit($TimeoutSeconds * 1000)) {
+            return $false
+        }
+        $deadline = (Get-Date).AddSeconds(5)
+        while ((Get-Date) -lt $deadline) {
+            if (@(Get-Process -Name $processName -ErrorAction SilentlyContinue).Count -eq 0) {
+                return $true
+            }
+            Start-Sleep -Milliseconds 100
+        }
         return $false
     }
-    try {
-        return $Process.WaitForExit($TimeoutSeconds * 1000)
-    }
-    catch {
-        return $false
+    finally {
+        if (!$shutdown.HasExited) {
+            Stop-Process -Id $shutdown.Id -Force -ErrorAction SilentlyContinue
+            try { $shutdown.WaitForExit(2000) } catch { }
+        }
     }
 }
 
 function Stop-FluxProcessesAndWait {
     $existing = @(Get-Process -Name $processName -ErrorAction SilentlyContinue)
-    $cleanupFailures = @()
-    foreach ($item in $existing) {
-        if (!$item.HasExited -and !(Request-FluxProcessShutdown $item 10)) {
-            $cleanupFailures += $item.Id
-            # This is runner cleanup only. The caller still fails immediately and
-            # does not start a placement mode after an unclean predecessor exit.
-            Stop-Process -Id $item.Id -Force -ErrorAction SilentlyContinue
-            try { $item.WaitForExit(5000) } catch { }
+    if ($existing.Count -eq 0) { return }
+    if (!(Request-FluxInstanceShutdown 10)) {
+        $ids = $existing | ForEach-Object { $_.Id }
+        foreach ($item in $existing) {
+            if (!$item.HasExited) {
+                Stop-Process -Id $item.Id -Force -ErrorAction SilentlyContinue
+                try { $item.WaitForExit(5000) } catch { }
+            }
         }
+        throw "A previous Flux process required forced termination before monitor preference smoke: PIDs $($ids -join ', ')."
     }
     $deadline = (Get-Date).AddSeconds(10)
     while ((Get-Date) -lt $deadline) {
         if (@(Get-Process -Name $processName -ErrorAction SilentlyContinue).Count -eq 0) {
-            if ($cleanupFailures.Count -gt 0) {
-                throw "A previous Flux process required forced termination before monitor preference smoke: PIDs $($cleanupFailures -join ', ')."
-            }
             return
         }
         Start-Sleep -Milliseconds 250
@@ -126,11 +119,8 @@ try {
     foreach ($mode in $modes) {
     Stop-FluxProcessesAndWait
     $env:FLUX_SMOKE_MONITOR_PREFERENCE = $mode
-    # This script tests monitor placement, not handoff behavior. Isolate each
-    # process so a stale tray instance cannot make Start-Process return before
-    # the new native window is created.
-    $env:FLUX_DISABLE_SINGLE_INSTANCE = "1"
-    $env:FLUX_SMOKE_EXIT_ON_CLOSE = "1"
+    # This script tests monitor placement through the normal single-instance
+    # startup path; --shutdown below uses the same production tray exit route.
     $stdout = Join-Path $OutputDirectory "monitor-$mode.stdout.log"
     $stderr = Join-Path $OutputDirectory "monitor-$mode.stderr.log"
     $process = Start-Process -FilePath $Executable -WorkingDirectory (Split-Path -Parent $Executable) -PassThru -RedirectStandardOutput $stdout -RedirectStandardError $stderr
@@ -178,7 +168,7 @@ try {
             GracefulShutdown = $false
         }
         $results += $modeResult
-        if (!(Request-FluxProcessShutdown $process 10)) {
+        if (!(Request-FluxInstanceShutdown 10)) {
             throw "Monitor mode '$mode' could not shut down Flux cleanly after placement check."
         }
         $modeResult.GracefulShutdown = $true
@@ -188,7 +178,7 @@ try {
         $processStillAlive = $false
         try { $process.Refresh(); $processStillAlive = !$process.HasExited } catch { }
         if ($processStillAlive) {
-            $shutdownCompleted = Request-FluxProcessShutdown $process 5
+            $shutdownCompleted = Request-FluxInstanceShutdown 5
             if (!$shutdownCompleted) {
                 $exitCodeHex = if ($process.HasExited) { '0x{0:X8}' -f ([uint32]$process.ExitCode) } else { 'not-exited' }
                 Write-Warning "Monitor mode '$mode' required forced cleanup after orderly shutdown failed: pid=$($process.Id) exit_code=$exitCodeHex"
@@ -197,7 +187,6 @@ try {
             }
         }
         Remove-Item Env:FLUX_SMOKE_MONITOR_PREFERENCE -ErrorAction SilentlyContinue
-        Remove-Item Env:FLUX_SMOKE_EXIT_ON_CLOSE -ErrorAction SilentlyContinue
         if (!$modeShutdownCompleted) {
             # The exception from the placement/startup assertion remains the
             # authoritative failure, and foreach will not start another mode.

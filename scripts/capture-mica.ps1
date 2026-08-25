@@ -83,8 +83,6 @@ public static class FluxWallpaper {
     [DllImport("user32.dll", SetLastError = true)]
     public static extern IntPtr SendMessage(IntPtr hwnd, uint message, UIntPtr wParam, IntPtr lParam);
     [DllImport("user32.dll", SetLastError = true)]
-    public static extern bool PostMessage(IntPtr hwnd, uint message, IntPtr wParam, IntPtr lParam);
-    [DllImport("user32.dll", SetLastError = true)]
     public static extern IntPtr GetForegroundWindow();
     [DllImport("user32.dll", SetLastError = true)]
     public static extern IntPtr GetAncestor(IntPtr hWnd, uint flags);
@@ -186,25 +184,22 @@ function Get-CpuTimeMilliseconds([int]$ProcessId) {
     return $sample.TotalProcessorTime.TotalMilliseconds
 }
 
-function Request-FluxProcessShutdown([System.Diagnostics.Process]$Process, [int]$TimeoutSeconds = 10) {
-    if ($null -eq $Process) { return $true }
+function Request-FluxInstanceShutdown([int]$ProcessId, [int]$TimeoutSeconds = 10) {
+    $shutdown = Start-Process -FilePath $Executable -ArgumentList "--shutdown" -WorkingDirectory (Split-Path -Parent $Executable) -PassThru -WindowStyle Hidden
     try {
-        $Process.Refresh()
-        if ($Process.HasExited) { return $true }
-    }
-    catch {
-        return $true
-    }
-    $handle = Get-LauncherWindowHandle $Process
-    if ($handle -eq [IntPtr]::Zero) { return $false }
-    if (![FluxWallpaper]::PostMessage($handle, 0x0010, [IntPtr]::Zero, [IntPtr]::Zero)) {
+        if (!$shutdown.WaitForExit($TimeoutSeconds * 1000)) { return $false }
+        $deadline = (Get-Date).AddSeconds(5)
+        while ((Get-Date) -lt $deadline) {
+            if (!(Get-Process -Id $ProcessId -ErrorAction SilentlyContinue)) { return $true }
+            Start-Sleep -Milliseconds 100
+        }
         return $false
     }
-    try {
-        return $Process.WaitForExit($TimeoutSeconds * 1000)
-    }
-    catch {
-        return $false
+    finally {
+        if (!$shutdown.HasExited) {
+            Stop-Process -Id $shutdown.Id -Force -ErrorAction SilentlyContinue
+            try { $shutdown.WaitForExit(2000) } catch { }
+        }
     }
 }
 
@@ -619,12 +614,9 @@ if ($ActionBarSmoke) {
 } else {
     Remove-Item Env:FLUX_SMOKE_ACTION_BAR -ErrorAction SilentlyContinue
 }
-# The visual smoke owns its launcher process. Do not let a stale tray instance from a
-# reused hosted desktop make Start-Process return a short-lived handoff-only process;
-# single-instance behavior is validated independently by the Rust/API tests.
-$env:FLUX_DISABLE_SINGLE_INSTANCE = "1"
-$env:FLUX_SMOKE_EXIT_ON_CLOSE = "1"
-$process = Start-Process -FilePath $Executable -PassThru -RedirectStandardOutput $stdoutPath -RedirectStandardError $stderrPath
+# The visual smoke uses the normal single-instance startup path. Its final cleanup
+# uses the production --shutdown handoff rather than terminating a native GUI process.
+$process = Start-Process -FilePath $Executable -WorkingDirectory (Split-Path -Parent $Executable) -PassThru -RedirectStandardOutput $stdoutPath -RedirectStandardError $stderrPath
 try {
     Start-Sleep -Seconds 3
     $process.Refresh()
@@ -2454,12 +2446,16 @@ try {
     } | ConvertTo-Json | Set-Content -Encoding utf8 (Join-Path $OutputDirectory "environment.json")
 }
 finally {
-    if ($process -and !$process.HasExited) {
-        $shutdownCompleted = Request-FluxProcessShutdown $process 10
-        if (!$shutdownCompleted -and !$process.HasExited) {
-            Write-Warning "Flux did not exit after WM_CLOSE; forcing cleanup for PID $($process.Id)."
-            Stop-Process -Id $process.Id -Force -ErrorAction SilentlyContinue
-            try { $process.WaitForExit(5000) } catch { }
+    if ($process) {
+        $process.Refresh()
+        if (!$process.HasExited) {
+            $shutdownCompleted = Request-FluxInstanceShutdown $process.Id 10
+            $process.Refresh()
+            if (!$shutdownCompleted -and !$process.HasExited) {
+                Write-Warning "Flux did not exit after production --shutdown; forcing cleanup for PID $($process.Id)."
+                Stop-Process -Id $process.Id -Force -ErrorAction SilentlyContinue
+                try { $process.WaitForExit(5000) } catch { }
+            }
         }
     }
     if ($probeProcess -and !$probeProcess.HasExited) {
