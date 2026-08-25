@@ -261,6 +261,7 @@ fn append_builtin_results(
         if let Some(action) = builtin.action {
             let action = match action {
                 BuiltinAction::OpenUrl(url) => PluginAction::OpenUrl(url),
+                BuiltinAction::CopyText(text) => PluginAction::CopyText(text),
             };
             actions.insert(id, action);
         }
@@ -754,4 +755,32 @@ fn parse_native_response(
         available: true,
         actions,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn builtin_calculator_is_exposed_as_copy_text_plugin_action() {
+        let request = PluginRequest {
+            sequence: 1,
+            query: String::from("1+1"),
+            obsidian_enabled: false,
+            obsidian_keyword: String::from("ob"),
+            google_enabled: false,
+            google_keyword: String::from("g"),
+        };
+        let mut results = Vec::new();
+        let mut actions = HashMap::new();
+        append_builtin_results(&request, &mut results, &mut actions);
+
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].id, "builtin:calculator");
+        assert_eq!(results[0].title, "= 2");
+        assert!(matches!(
+            actions.get("builtin:calculator"),
+            Some(PluginAction::CopyText(text)) if text == "2"
+        ));
+    }
 }
