@@ -78,6 +78,11 @@ on:
         required: false
         default: false
         type: boolean
+      resource_profile_smoke:
+        description: "Run a bounded repeated-query process resource profile and record memory/CPU samples"
+        required: false
+        default: false
+        type: boolean
       monitor_preference_smoke:
         description: "Run Primary/Cursor/Foreground monitor placement smoke"
         required: false
@@ -167,6 +172,9 @@ jobs:
           }
           if ("${{ inputs.visual_settings_smoke }}" -eq "true") {
             $captureParams.VisualSettingsSmoke = $true
+          }
+          if ("${{ inputs.resource_profile_smoke }}" -eq "true") {
+            $captureParams.ResourceProfileSmoke = $true
           }
           $captureParams.IdlePerformanceSmoke = $true
           $captureParams.FocusToggleSmoke = $true

@@ -18,7 +18,7 @@ mod updater;
 mod visual_preview;
 
 use std::cell::{Cell, RefCell};
-use std::collections::{HashMap, HashSet};
+use std::collections::{HashMap, HashSet, VecDeque};
 use std::rc::Rc;
 use std::sync::{
     atomic::{AtomicU64, Ordering},
@@ -1204,7 +1204,55 @@ fn icon_completion_generation_changed(previous: u64, current: u64) -> bool {
 }
 
 #[cfg(windows)]
-static SHELL_ICON_CACHE: OnceLock<Mutex<HashMap<String, Option<Vec<u8>>>>> = OnceLock::new();
+const MAX_SHELL_ICON_CACHE_ENTRIES: usize = 128;
+
+#[cfg(windows)]
+struct ShellIconCache {
+    entries: HashMap<String, Option<Vec<u8>>>,
+    lru_order: VecDeque<String>,
+}
+
+#[cfg(windows)]
+impl ShellIconCache {
+    fn new() -> Self {
+        Self {
+            entries: HashMap::new(),
+            lru_order: VecDeque::new(),
+        }
+    }
+
+    fn get(&mut self, target: &str) -> Option<Option<Vec<u8>>> {
+        let icon = self.entries.get(target).cloned()?;
+        self.touch(target);
+        Some(icon)
+    }
+
+    fn insert(&mut self, target: String, icon: Option<Vec<u8>>) {
+        if self.entries.contains_key(&target) {
+            self.entries.insert(target.clone(), icon);
+            self.touch(&target);
+            return;
+        }
+        while self.entries.len() >= MAX_SHELL_ICON_CACHE_ENTRIES {
+            let Some(oldest) = self.lru_order.pop_front() else {
+                break;
+            };
+            self.entries.remove(&oldest);
+        }
+        self.lru_order.push_back(target.clone());
+        self.entries.insert(target, icon);
+    }
+
+    fn touch(&mut self, target: &str) {
+        if let Some(position) = self.lru_order.iter().position(|key| key == target) {
+            self.lru_order.remove(position);
+        }
+        self.lru_order.push_back(target.to_owned());
+    }
+}
+
+#[cfg(windows)]
+static SHELL_ICON_CACHE: OnceLock<Mutex<ShellIconCache>> = OnceLock::new();
 static SETTINGS_SAVE_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
 static SHELL_ICON_COMPLETION_GENERATION: AtomicU64 = AtomicU64::new(0);
 
@@ -1259,11 +1307,8 @@ fn shell_icon_worker() -> &'static ShellIconWorker {
 
 #[cfg(windows)]
 fn shell_icon_cache_lookup(target: &str) -> Option<Option<Vec<u8>>> {
-    let cache = SHELL_ICON_CACHE.get_or_init(|| Mutex::new(HashMap::new()));
-    cache
-        .lock()
-        .ok()
-        .and_then(|entries| entries.get(target).cloned())
+    let cache = SHELL_ICON_CACHE.get_or_init(|| Mutex::new(ShellIconCache::new()));
+    cache.lock().ok().and_then(|mut cache| cache.get(target))
 }
 
 #[cfg(windows)]
@@ -1289,10 +1334,10 @@ fn shortcut_icon_smoke(target: &str) -> bool {
 
 #[cfg(windows)]
 fn shell_icon_rgba(target: &str) -> Option<Vec<u8>> {
-    let cache = SHELL_ICON_CACHE.get_or_init(|| Mutex::new(HashMap::new()));
-    if let Ok(entries) = cache.lock() {
-        if let Some(icon) = entries.get(target) {
-            return icon.clone();
+    let cache = SHELL_ICON_CACHE.get_or_init(|| Mutex::new(ShellIconCache::new()));
+    if let Ok(mut cache) = cache.lock() {
+        if let Some(icon) = cache.get(target) {
+            return icon;
         }
     }
 
@@ -1303,8 +1348,8 @@ fn shell_icon_rgba(target: &str) -> Option<Vec<u8>> {
         .and_then(|(path, index)| extract_icon_rgba_from_source(&path, Some(index)))
         .or_else(|| extract_shell_thumbnail_rgba(target))
         .or_else(|| extract_shell_icon_rgba(target));
-    if let Ok(mut entries) = cache.lock() {
-        entries.insert(target.to_owned(), icon.clone());
+    if let Ok(mut cache) = cache.lock() {
+        cache.insert(target.to_owned(), icon.clone());
     }
     icon
 }
@@ -4935,8 +4980,9 @@ mod tests {
         preserve_everything_file_order, quoted_result_path, relaunch_mode_for_auto_install,
         resolve_shortcut_icon_path, should_claim_single_instance,
         should_publish_initial_query_results, should_show_launcher, ProviderResults,
-        ResultIconView, COMPACT_WINDOW_HEIGHT, LAUNCHER_FONT_FAMILY, MAX_LAUNCHER_HEIGHT,
-        MAX_LAUNCHER_WIDTH, MIN_LAUNCHER_HEIGHT, MIN_LAUNCHER_WIDTH,
+        ResultIconView, ShellIconCache, COMPACT_WINDOW_HEIGHT, LAUNCHER_FONT_FAMILY,
+        MAX_LAUNCHER_HEIGHT, MAX_LAUNCHER_WIDTH, MAX_SHELL_ICON_CACHE_ENTRIES, MIN_LAUNCHER_HEIGHT,
+        MIN_LAUNCHER_WIDTH,
     };
     use flux_core::{ResultKind, ResultSource, SearchResult};
     use windui::event::{Key, KeyEvent};
@@ -5006,6 +5052,41 @@ mod tests {
             .expect("Obsidian result should use the bundled icon");
         assert_eq!(icon.len(), 32 * 32 * 4);
         assert!(bundled_icon_rgba("everything:file:readme.md").is_none());
+    }
+
+    #[test]
+    fn bounded_shell_icon_cache_evicts_oldest_entries() {
+        let mut cache = ShellIconCache::new();
+        for index in 0..=MAX_SHELL_ICON_CACHE_ENTRIES {
+            cache.insert(format!("target-{index}"), Some(vec![index as u8; 32]));
+        }
+        assert_eq!(cache.entries.len(), MAX_SHELL_ICON_CACHE_ENTRIES);
+        assert!(cache.get("target-0").is_none());
+        assert!(cache
+            .get(&format!("target-{MAX_SHELL_ICON_CACHE_ENTRIES}"))
+            .is_some());
+    }
+
+    #[test]
+    fn shell_icon_cache_touch_preserves_recent_entry_during_eviction() {
+        let mut cache = ShellIconCache::new();
+        for index in 0..MAX_SHELL_ICON_CACHE_ENTRIES {
+            cache.insert(format!("target-{index}"), Some(vec![index as u8; 4]));
+        }
+        assert!(cache.get("target-0").is_some());
+        cache.insert(String::from("new-target"), None);
+        assert!(cache.get("target-0").is_some());
+        assert!(cache.get("target-1").is_none());
+        assert!(cache.get("new-target").is_some_and(|icon| icon.is_none()));
+    }
+
+    #[test]
+    fn shell_icon_cache_retains_negative_results_without_unbounded_growth() {
+        let mut cache = ShellIconCache::new();
+        cache.insert(String::from("missing-target"), None);
+        assert!(cache
+            .get("missing-target")
+            .is_some_and(|icon| icon.is_none()));
     }
 
     #[test]

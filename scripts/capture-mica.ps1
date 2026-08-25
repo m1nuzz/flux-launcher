@@ -24,6 +24,7 @@ param(
     [switch]$CtrlRSmoke,
     [switch]$CtrlCSmoke,
     [switch]$IdlePerformanceSmoke,
+    [switch]$ResourceProfileSmoke,
     [string]$NavigationQuery = "wab",
 
     [int]$NavigationCycles = 0,
@@ -626,6 +627,65 @@ try {
     $queryResponsivenessMaxMilliseconds = 0.0
     $queryResponsivenessProbe = $false
     $commandPriorityProbe = $false
+    $resourceProfileProbe = !$ResourceProfileSmoke
+    $resourceProfileSamples = @()
+    $resourceProfileSummary = $null
+    if ($ResourceProfileSmoke) {
+        # Exercise the same high-churn query path that populates application, Everything,
+        # and shell-icon results. The workload is intentionally bounded and records
+        # process counters instead of treating allocator high-water marks as a leak.
+        $profileQueries = @("wab", "ext:zip", ".png", "lmstudio", "ob ornith")
+        $profileCycles = 32
+        $profileStart = Get-MemorySnapshot $process.Id
+        $profileCpuStart = Get-CpuTimeMilliseconds $process.Id
+        $profilePeakPrivate = [int64]$profileStart.PrivateBytes
+        $profilePeakWorkingSet = [int64]$profileStart.WorkingSetBytes
+        for ($cycle = 0; $cycle -lt $profileCycles; $cycle++) {
+            $profileQuery = $profileQueries[$cycle % $profileQueries.Count]
+            $shell.SendKeys("^a")
+            $shell.SendKeys("{BACKSPACE}")
+            $shell.SendKeys($profileQuery)
+            Start-Sleep -Milliseconds 110
+            if (($cycle + 1) % 4 -eq 0) {
+                $sample = Get-MemorySnapshot $process.Id
+                $resourceProfileSamples += [ordered]@{
+                    Cycle = $cycle + 1
+                    Query = $profileQuery
+                    WorkingSetBytes = $sample.WorkingSetBytes
+                    PrivateBytes = $sample.PrivateBytes
+                    VirtualBytes = $sample.VirtualBytes
+                }
+                $profilePeakPrivate = [Math]::Max($profilePeakPrivate, [int64]$sample.PrivateBytes)
+                $profilePeakWorkingSet = [Math]::Max($profilePeakWorkingSet, [int64]$sample.WorkingSetBytes)
+            }
+        }
+        $shell.SendKeys("^a")
+        $shell.SendKeys("{BACKSPACE}")
+        Start-Sleep -Milliseconds 750
+        $profileEnd = Get-MemorySnapshot $process.Id
+        $profileCpuEnd = Get-CpuTimeMilliseconds $process.Id
+        $profilePrivateGrowth = [int64]$profileEnd.PrivateBytes - [int64]$profileStart.PrivateBytes
+        $profileWorkingSetGrowth = [int64]$profileEnd.WorkingSetBytes - [int64]$profileStart.WorkingSetBytes
+        $profileCpuDelta = [Math]::Round($profileCpuEnd - $profileCpuStart, 2)
+        $resourceProfileSummary = [ordered]@{
+            Cycles = $profileCycles
+            Queries = $profileQueries
+            Start = $profileStart
+            End = $profileEnd
+            PeakPrivateBytes = $profilePeakPrivate
+            PeakWorkingSetBytes = $profilePeakWorkingSet
+            PrivateGrowthBytes = $profilePrivateGrowth
+            WorkingSetGrowthBytes = $profileWorkingSetGrowth
+            CpuTimeMilliseconds = $profileCpuDelta
+        }
+        # This is a coarse CI guard for catastrophic retained growth, not proof that a
+        # process is leak-free. Long-run PerfMon/WPR remains the authoritative follow-up.
+        $resourceProfileProbe = $profilePrivateGrowth -lt (128 * 1024 * 1024)
+        if (!$resourceProfileProbe) {
+            throw "Resource profile private-bytes growth exceeded 128 MiB: $profilePrivateGrowth bytes after $profileCycles cycles."
+        }
+        Write-Host "Resource profile: cycles=$profileCycles private_growth=$profilePrivateGrowth working_set_growth=$profileWorkingSetGrowth cpu_ms=$profileCpuDelta"
+    }
     if ($CommandPrioritySmoke) {
         foreach ($commandQuery in @("cmd", "powershell", "pwsh")) {
             $shell.SendKeys("^a")
@@ -1897,6 +1957,9 @@ try {
         LaunchProbeProcessCreatedBeforeHide = $launchProbeProcessCreatedBeforeHide
         LaunchProbeProcessCreationMilliseconds = $launchProbeProcessCreationMilliseconds
         LaunchProbeDispatchToHideMilliseconds = $launchProbeDispatchToHideMilliseconds
+        ResourceProfileProbe = $resourceProfileProbe
+        ResourceProfileSamples = @($resourceProfileSamples)
+        ResourceProfile = $resourceProfileSummary
         Memory = [ordered]@{
             Idle = $idleMemory
             Query = $queryMemory
