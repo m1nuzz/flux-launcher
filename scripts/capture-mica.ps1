@@ -800,7 +800,8 @@ try {
         }
         $commandPriorityProbe = $true
 
-        $requiredIconExecutables = @("cmd.exe", "powershell.exe")
+        $requiredIconTitles = @("Command Prompt", "PowerShell")
+        $iconResultPattern = '^title=(?<title>[^\t]+)\ttarget=(?<target>[^\t]*)\ticon_target=(?<icon_target>[^\t]*)\tinitial_loaded=(?<initial_loaded>true|false)$'
         for ($attempt = 0; $attempt -lt 50; $attempt++) {
             $iconProbeLines = if (Test-Path $iconProbePath) {
                 @(Get-Content $iconProbePath)
@@ -808,11 +809,24 @@ try {
                 @()
             }
             $iconProbeMissing = @(
-                $requiredIconExecutables | Where-Object {
-                    $required = $_
-                    !($iconProbeLines | Where-Object {
-                        $_ -match "(?i)^target=.*\\$([regex]::Escape($required))`tloaded=true$"
-                    })
+                $requiredIconTitles | Where-Object {
+                    $requiredTitle = $_
+                    $loaded = $false
+                    foreach ($probeLine in $iconProbeLines) {
+                        if ($probeLine -notmatch $iconResultPattern -or $Matches["title"] -ne $requiredTitle) {
+                            continue
+                        }
+                        if ($Matches["initial_loaded"] -eq "true") {
+                            $loaded = $true
+                            break
+                        }
+                        $iconTarget = $Matches["icon_target"]
+                        if ($iconTarget -and ($iconProbeLines -contains ("target={0}`tloaded=true" -f $iconTarget))) {
+                            $loaded = $true
+                            break
+                        }
+                    }
+                    !$loaded
                 }
             )
             if ($iconProbeMissing.Count -eq 0) {

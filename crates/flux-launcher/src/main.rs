@@ -1327,6 +1327,32 @@ fn request_shell_icon(_target: &str) -> Option<Vec<u8>> {
     None
 }
 
+fn trace_result_icon_probe(
+    title: &str,
+    target: Option<&str>,
+    icon_target: Option<&str>,
+    initial_loaded: bool,
+) {
+    let Some(path) = std::env::var_os("FLUX_ICON_PROBE_FILE") else {
+        return;
+    };
+    let Ok(mut file) = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(path)
+    else {
+        return;
+    };
+    let sanitize = |value: &str| value.replace(['\t', '\r', '\n'], " ");
+    let title = sanitize(title);
+    let target = target.map(sanitize).unwrap_or_default();
+    let icon_target = icon_target.map(sanitize).unwrap_or_default();
+    let _ = writeln!(
+        file,
+        "title={title}\ttarget={target}\ticon_target={icon_target}\tinitial_loaded={initial_loaded}"
+    );
+}
+
 fn trace_shell_icon_probe(target: &str, loaded: bool) {
     let Some(path) = std::env::var_os("FLUX_ICON_PROBE_FILE") else {
         return;
@@ -2030,6 +2056,12 @@ fn result_row(
     };
     let icon =
         bundled_icon_rgba(&id).or_else(|| icon_target.as_deref().and_then(request_shell_icon));
+    trace_result_icon_probe(
+        &title,
+        target.as_deref(),
+        icon_target.as_deref(),
+        icon.is_some(),
+    );
     let icon_element = Element::leaf()
         .widget(ResultIconView::new(
             icon_target,
@@ -4995,14 +5027,15 @@ fn main() {
 #[cfg(test)]
 mod tests {
     use super::{
-        actions_for_result, bundled_icon_rgba, dimension_from_slider, dimension_slider_fraction,
-        display_title, format_bytes, format_update_progress, google_icon_rgba, history_cursor_step,
-        hover_position_changed, icon_completion_generation_changed, icon_target_for_path,
-        is_run_as_admin_key, is_shutdown_mode, launcher_window_geometry,
-        launcher_window_geometry_with_sizes, merge_application_duplicates,
-        normalize_everything_query, obsidian_icon_rgba, parse_dimension_input,
-        parse_internet_shortcut_icon_location, preserve_everything_file_order, quoted_result_path,
-        relaunch_mode_for_auto_install, resolve_shortcut_icon_path, should_claim_single_instance,
+        actions_for_result, bundled_icon_rgba, canonical_application_id, dimension_from_slider,
+        dimension_slider_fraction, display_title, format_bytes, format_update_progress,
+        google_icon_rgba, history_cursor_step, hover_position_changed,
+        icon_completion_generation_changed, icon_target_for_path, is_run_as_admin_key,
+        is_shutdown_mode, launcher_window_geometry, launcher_window_geometry_with_sizes,
+        merge_application_duplicates, normalize_everything_query, obsidian_icon_rgba,
+        parse_dimension_input, parse_internet_shortcut_icon_location,
+        preserve_everything_file_order, quoted_result_path, relaunch_mode_for_auto_install,
+        resolve_bare_executable_path, resolve_shortcut_icon_path, should_claim_single_instance,
         should_publish_initial_query_results, should_show_launcher, ProviderResults,
         ResultIconView, ShellIconCache, COMPACT_WINDOW_HEIGHT, LAUNCHER_FONT_FAMILY,
         MAX_LAUNCHER_HEIGHT, MAX_LAUNCHER_WIDTH, MAX_SHELL_ICON_CACHE_ENTRIES, MIN_LAUNCHER_HEIGHT,
@@ -5242,29 +5275,26 @@ mod tests {
         assert!(merged[0].subtitle.contains("Start Menu"));
     }
 
+    #[cfg(windows)]
     #[test]
     fn system_power_shell_merges_only_with_the_same_real_executable_path() {
+        let powershell_path =
+            resolve_bare_executable_path("powershell.exe").expect("PowerShell should resolve");
         let system = SearchResult {
             id: String::from("system:powershell"),
             title: String::from("PowerShell"),
             subtitle: String::from("Windows PowerShell"),
             kind: ResultKind::Command,
             source: ResultSource::BuiltIn,
-            target: Some(String::from(
-                r"C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe",
-            )),
+            target: Some(String::from("powershell.exe")),
         };
         let app_path = SearchResult {
-            id: String::from(
-                r"application:target:c:\\windows\\system32\\windowspowershell\\v1.0\\powershell.exe",
-            ),
+            id: canonical_application_id(&powershell_path).unwrap(),
             title: String::from("PowerShell"),
             subtitle: String::from("Application • App Paths"),
             kind: ResultKind::Application,
             source: ResultSource::ApplicationCatalog,
-            target: Some(String::from(
-                r"C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe",
-            )),
+            target: Some(powershell_path),
         };
         let powershell_7 = SearchResult {
             id: String::from(r"application:target:c:\\program files\\powershell\\7\\pwsh.exe"),

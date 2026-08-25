@@ -703,29 +703,26 @@ mod tests {
         );
     }
 
+    #[cfg(windows)]
     #[test]
     fn identical_real_power_shell_target_merges_system_and_app_path_results() {
+        let powershell_path = super::resolve_bare_executable_path("powershell.exe")
+            .expect("Windows PowerShell should resolve through SearchPathW");
         let system = SearchResult {
             id: String::from("system:powershell"),
             title: String::from("PowerShell"),
             subtitle: String::from("Windows PowerShell"),
             kind: ResultKind::Command,
             source: ResultSource::BuiltIn,
-            target: Some(String::from(
-                r"C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe",
-            )),
+            target: Some(String::from("powershell.exe")),
         };
         let app_path = SearchResult {
-            id: String::from(
-                r"application:target:c:\\windows\\system32\\windowspowershell\\v1.0\\powershell.exe",
-            ),
+            id: super::canonical_application_id(&powershell_path).unwrap(),
             title: String::from("PowerShell"),
             subtitle: String::from("Application • App Paths"),
             kind: ResultKind::Application,
             source: ResultSource::ApplicationCatalog,
-            target: Some(String::from(
-                r"C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe",
-            )),
+            target: Some(powershell_path),
         };
 
         assert_eq!(
