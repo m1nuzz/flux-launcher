@@ -15,6 +15,7 @@ param(
     [switch]$ScrollbarGapSmoke,
     [switch]$ActionBarSmoke,
     [switch]$CommandPrioritySmoke,
+    [switch]$ObsidianIconSmoke,
     [switch]$QueryClearOnReopenSmoke,
     [switch]$QueryResponsivenessSmoke,
     [switch]$FocusToggleSmoke,
@@ -314,6 +315,30 @@ $folderFixtureRoot = Join-Path $env:TEMP $folderFixtureName
 New-Item -ItemType Directory -Force -Path $folderFixtureRoot | Out-Null
 $compactFixtureTarget = Join-Path $env:TEMP ("FluxLauncherLmStudioSmoke_{0}.cmd" -f $PID)
 Set-Content -Encoding ascii -Path $compactFixtureTarget -Value "@echo off`r`nexit /b 0"
+$obsidianConfigRoot = Join-Path $env:APPDATA "obsidian"
+$obsidianConfigBackupRoot = Join-Path $env:TEMP ("FluxLauncher-ObsidianConfig-backup-{0}" -f $PID)
+$obsidianFixtureVaultRoot = Join-Path $env:TEMP ("FluxLauncher-ObsidianVault-{0}" -f $PID)
+$obsidianConfigWasBackedUp = $false
+$obsidianIconProbe = $false
+if ($ObsidianIconSmoke) {
+    # Use an isolated vault so the screenshot exercises the built-in Obsidian
+    # provider without requiring Obsidian to be installed on the runner.
+    if (Test-Path $obsidianConfigRoot) {
+        Remove-Item $obsidianConfigBackupRoot -Recurse -Force -ErrorAction SilentlyContinue
+        Move-Item -LiteralPath $obsidianConfigRoot -Destination $obsidianConfigBackupRoot -Force -ErrorAction Stop
+        $obsidianConfigWasBackedUp = $true
+    }
+    New-Item -ItemType Directory -Force -Path $obsidianConfigRoot, $obsidianFixtureVaultRoot | Out-Null
+    Set-Content -Encoding utf8 -Path (Join-Path $obsidianFixtureVaultRoot "Ornith-1.0-9B-MTP-NVFP4.md") -Value "# Flux Obsidian icon smoke"
+    [ordered]@{
+        vaults = [ordered]@{
+            "flux-smoke" = [ordered]@{
+                path = $obsidianFixtureVaultRoot
+                name = "Notes"
+            }
+        }
+    } | ConvertTo-Json -Depth 6 | Set-Content -Encoding utf8 (Join-Path $obsidianConfigRoot "obsidian.json")
+}
 $wabFixtureNames = @(
     # A real-looking spaced app name makes the compact-query screenshot
     # deterministic even when the hosted runner has no LM Studio install.
@@ -619,6 +644,14 @@ try {
         Start-Sleep -Milliseconds 2000
         Save-Screenshot "compact-query-lmstudio.png"
         $commandPriorityProbe = $true
+    }
+    if ($ObsidianIconSmoke) {
+        $shell.SendKeys("^a")
+        $shell.SendKeys("{BACKSPACE}")
+        $shell.SendKeys("ob ornith")
+        Start-Sleep -Milliseconds 900
+        Save-Screenshot "obsidian-icon.png"
+        $obsidianIconProbe = $true
     }
     if ($CursorVisibilitySmoke) {
         $shell.SendKeys("x")
@@ -1800,6 +1833,7 @@ try {
         EverythingSyntaxProbe = $true
         QueryResponsivenessProbe = (!$QueryResponsivenessSmoke) -or $queryResponsivenessProbe
         CommandPriorityProbe = (!$CommandPrioritySmoke) -or $commandPriorityProbe
+        ObsidianIconProbe = (!$ObsidianIconSmoke) -or $obsidianIconProbe
         QueryResponsivenessMaxMilliseconds = $queryResponsivenessMaxMilliseconds
         QueryResponsivenessSamples = @($queryResponsivenessSamples)
         FocusToggleProbe = (!$FocusToggleSmoke) -or $focusToggleProbe
@@ -1885,6 +1919,15 @@ finally {
     }
     if (Test-Path $compactFixtureTarget) {
         Remove-Item -Force $compactFixtureTarget
+    }
+    if ($ObsidianIconSmoke -and (Test-Path $obsidianConfigRoot)) {
+        Remove-Item $obsidianConfigRoot -Recurse -Force -ErrorAction SilentlyContinue
+    }
+    if (Test-Path $obsidianFixtureVaultRoot) {
+        Remove-Item $obsidianFixtureVaultRoot -Recurse -Force -ErrorAction SilentlyContinue
+    }
+    if ($obsidianConfigWasBackedUp -and (Test-Path $obsidianConfigBackupRoot)) {
+        Move-Item -LiteralPath $obsidianConfigBackupRoot -Destination $obsidianConfigRoot -Force -ErrorAction SilentlyContinue
     }
     if ($legacyFlowPluginWasDisabled -and (Test-Path $legacyFlowPluginBackupRoot)) {
         Move-Item -LiteralPath $legacyFlowPluginBackupRoot -Destination $legacyFlowPluginRoot -Force -ErrorAction SilentlyContinue

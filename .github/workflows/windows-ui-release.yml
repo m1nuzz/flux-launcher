@@ -100,6 +100,7 @@ jobs:
             -FolderLaunchSmoke `
             -ActionBarSmoke `
             -CommandPrioritySmoke `
+            -ObsidianIconSmoke `
             -VisualSettingsSmoke
 
       - name: Upload UI smoke diagnostics
