@@ -672,17 +672,25 @@ try {
         $shell.SendKeys("{BACKSPACE}")
         Start-Sleep -Milliseconds 750
         $profileEnd = Get-MemorySnapshot $process.Id
+        Start-Sleep -Seconds 3
+        $profileQuietEnd = Get-MemorySnapshot $process.Id
         $profileCpuEnd = Get-CpuTimeMilliseconds $process.Id
         $profilePrivateGrowth = [int64]$profileEnd.PrivateBytes - [int64]$profileStart.PrivateBytes
         $profileWorkingSetGrowth = [int64]$profileEnd.WorkingSetBytes - [int64]$profileStart.WorkingSetBytes
         $profileHandleGrowth = [int64]$profileEnd.HandleCount - [int64]$profileStart.HandleCount
         $profileThreadGrowth = [int64]$profileEnd.ThreadCount - [int64]$profileStart.ThreadCount
+        $profileQuietPrivateGrowth = [int64]$profileQuietEnd.PrivateBytes - [int64]$profileStart.PrivateBytes
+        $profileQuietWorkingSetGrowth = [int64]$profileQuietEnd.WorkingSetBytes - [int64]$profileStart.WorkingSetBytes
+        $profileQuietHandleGrowth = [int64]$profileQuietEnd.HandleCount - [int64]$profileStart.HandleCount
+        $profileQuietThreadGrowth = [int64]$profileQuietEnd.ThreadCount - [int64]$profileStart.ThreadCount
         $profileCpuDelta = [Math]::Round($profileCpuEnd - $profileCpuStart, 2)
         $resourceProfileSummary = [ordered]@{
             Cycles = $profileCycles
             Queries = $profileQueries
             Start = $profileStart
             End = $profileEnd
+            QuietEndAfterSeconds = 3
+            QuietEnd = $profileQuietEnd
             PeakPrivateBytes = $profilePeakPrivate
             PeakWorkingSetBytes = $profilePeakWorkingSet
             PeakHandleCount = $profilePeakHandles
@@ -691,18 +699,22 @@ try {
             WorkingSetGrowthBytes = $profileWorkingSetGrowth
             HandleGrowth = $profileHandleGrowth
             ThreadGrowth = $profileThreadGrowth
+            QuietPrivateGrowthBytes = $profileQuietPrivateGrowth
+            QuietWorkingSetGrowthBytes = $profileQuietWorkingSetGrowth
+            QuietHandleGrowth = $profileQuietHandleGrowth
+            QuietThreadGrowth = $profileQuietThreadGrowth
             CpuTimeMilliseconds = $profileCpuDelta
         }
         # This is a coarse CI guard for catastrophic retained growth, not proof that a
         # process is leak-free. Long-run PerfMon/WPR remains the authoritative follow-up.
         $resourceProfileProbe =
-            $profilePrivateGrowth -lt (128 * 1024 * 1024) -and
-            $profileHandleGrowth -le 256 -and
-            $profileThreadGrowth -le 8
+            $profileQuietPrivateGrowth -lt (128 * 1024 * 1024) -and
+            $profileQuietHandleGrowth -le 256 -and
+            $profileQuietThreadGrowth -le 8
         if (!$resourceProfileProbe) {
-            throw "Resource profile growth budget exceeded: private=$profilePrivateGrowth bytes handles=$profileHandleGrowth threads=$profileThreadGrowth after $profileCycles cycles."
+            throw "Resource profile growth budget exceeded after quiet period: private=$profileQuietPrivateGrowth bytes handles=$profileQuietHandleGrowth threads=$profileQuietThreadGrowth after $profileCycles cycles."
         }
-        Write-Host "Resource profile: cycles=$profileCycles private_growth=$profilePrivateGrowth working_set_growth=$profileWorkingSetGrowth handle_growth=$profileHandleGrowth thread_growth=$profileThreadGrowth cpu_ms=$profileCpuDelta"
+        Write-Host "Resource profile: cycles=$profileCycles private_growth=$profilePrivateGrowth quiet_private_growth=$profileQuietPrivateGrowth working_set_growth=$profileWorkingSetGrowth quiet_working_set_growth=$profileQuietWorkingSetGrowth handle_growth=$profileHandleGrowth quiet_handle_growth=$profileQuietHandleGrowth thread_growth=$profileThreadGrowth quiet_thread_growth=$profileQuietThreadGrowth cpu_ms=$profileCpuDelta"
     }
     if ($CommandPrioritySmoke) {
         foreach ($commandQuery in @("cmd", "powershell", "pwsh")) {
