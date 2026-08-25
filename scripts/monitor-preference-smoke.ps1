@@ -23,6 +23,26 @@ public static class FluxMonitorSmoke {
     }
     [DllImport("user32.dll", SetLastError = true)]
     public static extern bool GetWindowRect(IntPtr hwnd, out RECT rect);
+    [DllImport("user32.dll", SetLastError = true)]
+    public static extern bool IsWindowVisible(IntPtr hwnd);
+    [DllImport("user32.dll", SetLastError = true)]
+    public static extern bool EnumWindows(EnumWindowsProc callback, IntPtr lParam);
+    [DllImport("user32.dll", SetLastError = true)]
+    public static extern uint GetWindowThreadProcessId(IntPtr hwnd, out uint processId);
+    public delegate bool EnumWindowsProc(IntPtr hwnd, IntPtr lParam);
+    public static IntPtr FindWindowByProcessId(uint targetProcessId) {
+        IntPtr found = IntPtr.Zero;
+        EnumWindows((hwnd, lParam) => {
+            uint processId;
+            GetWindowThreadProcessId(hwnd, out processId);
+            if (processId == targetProcessId && IsWindowVisible(hwnd)) {
+                found = hwnd;
+                return false;
+            }
+            return true;
+        }, IntPtr.Zero);
+        return found;
+    }
 }
 '@
 
@@ -53,18 +73,31 @@ $results = @()
 foreach ($mode in $modes) {
     Stop-FluxProcessesAndWait
     $env:FLUX_SMOKE_MONITOR_PREFERENCE = $mode
+    # This script tests monitor placement, not handoff behavior. Isolate each
+    # process so a stale tray instance cannot make Start-Process return before
+    # the new native window is created.
+    $env:FLUX_DISABLE_SINGLE_INSTANCE = "1"
     $stdout = Join-Path $OutputDirectory "monitor-$mode.stdout.log"
     $stderr = Join-Path $OutputDirectory "monitor-$mode.stderr.log"
-    $process = Start-Process -FilePath $Executable -PassThru -RedirectStandardOutput $stdout -RedirectStandardError $stderr
+    $process = Start-Process -FilePath $Executable -WorkingDirectory (Split-Path -Parent $Executable) -PassThru -RedirectStandardOutput $stdout -RedirectStandardError $stderr
     try {
         $handle = [IntPtr]::Zero
-        for ($attempt = 0; $attempt -lt 30 -and $handle -eq [IntPtr]::Zero; $attempt++) {
+        for ($attempt = 0; $attempt -lt 120 -and $handle -eq [IntPtr]::Zero; $attempt++) {
             Start-Sleep -Milliseconds 100
             $process.Refresh()
+            if ($process.HasExited) {
+                $exitCode = $process.ExitCode
+                $startupStderr = if (Test-Path $stderr) { Get-Content $stderr -Raw } else { "" }
+                throw "Monitor mode '$mode' launcher exited before creating a window: exit_code=$exitCode stderr=[$startupStderr]"
+            }
             $handle = $process.MainWindowHandle
+            if ($handle -eq [IntPtr]::Zero) {
+                $handle = [FluxMonitorSmoke]::FindWindowByProcessId([uint32]$process.Id)
+            }
         }
         if ($handle -eq [IntPtr]::Zero) {
-            throw "Monitor mode '$mode' did not create a main window."
+            $startupStderr = if (Test-Path $stderr) { Get-Content $stderr -Raw } else { "" }
+            throw "Monitor mode '$mode' did not create a native window within 12 seconds: pid=$($process.Id) stderr=[$startupStderr]"
         }
         $rect = New-Object FluxMonitorSmoke+RECT
         if (![FluxMonitorSmoke]::GetWindowRect($handle, [ref]$rect)) {
