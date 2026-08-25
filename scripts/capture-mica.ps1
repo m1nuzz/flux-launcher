@@ -579,7 +579,10 @@ try {
         $deactivationHiddenAfterClick = $false
         $deactivationForegroundAfterClick = $false
         $deactivationEvent = $null
-        for ($attempt = 0; $attempt -lt 20; $attempt++) {
+        # The native activation transition can be delayed by the Windows message
+        # queue in hosted desktops. Keep this bounded, but allow the callback and
+        # visibility transition to arrive before declaring a regression.
+        for ($attempt = 0; $attempt -lt 80; $attempt++) {
             $deactivationHiddenAfterClick = ![FluxWallpaper]::IsWindowVisible($launcherHandle)
             $deactivationForegroundAfterClick = [FluxWallpaper]::GetForegroundWindow() -ne $launcherHandle
             $deactivationTraceLines = if (Test-Path $launchTracePath) {
