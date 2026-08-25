@@ -705,16 +705,16 @@ mod tests {
 
     #[cfg(windows)]
     #[test]
-    fn identical_real_power_shell_target_merges_system_and_app_path_results() {
+    fn identical_real_power_shell_target_merges_catalog_entries() {
         let powershell_path = super::resolve_bare_executable_path("powershell.exe")
             .expect("Windows PowerShell should resolve through SearchPathW");
-        let system = SearchResult {
-            id: String::from("system:powershell"),
+        let start_menu = SearchResult {
+            id: super::canonical_application_id(&powershell_path).unwrap(),
             title: String::from("PowerShell"),
-            subtitle: String::from("Windows PowerShell"),
-            kind: ResultKind::Command,
-            source: ResultSource::BuiltIn,
-            target: Some(String::from("powershell.exe")),
+            subtitle: String::from("Application • Start Menu"),
+            kind: ResultKind::Application,
+            source: ResultSource::ApplicationCatalog,
+            target: Some(powershell_path.clone()),
         };
         let app_path = SearchResult {
             id: super::canonical_application_id(&powershell_path).unwrap(),
@@ -726,12 +726,12 @@ mod tests {
         };
 
         assert_eq!(
-            canonical_application_key(&system),
+            canonical_application_key(&start_menu),
             canonical_application_key(&app_path)
         );
-        let merged = merge_catalog_candidates(vec![system, app_path]);
+        let merged = merge_catalog_candidates(vec![app_path, start_menu]);
         assert_eq!(merged.len(), 1);
-        assert_eq!(merged[0].subtitle, "Application • App Paths");
+        assert_eq!(merged[0].subtitle, "Application • Start Menu");
     }
 
     #[test]
