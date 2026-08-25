@@ -317,8 +317,10 @@ New-Item -ItemType Directory -Force -Path $wabFixtureRoot | Out-Null
 $folderFixtureName = "FluxFolderSmoke_{0}" -f $PID
 $folderFixtureRoot = Join-Path $env:TEMP $folderFixtureName
 New-Item -ItemType Directory -Force -Path $folderFixtureRoot | Out-Null
-$compactFixtureTarget = Join-Path $env:TEMP ("FluxLauncherLmStudioSmoke_{0}.cmd" -f $PID)
+$compactFixtureTarget = Join-Path $env:TEMP ("FluxLauncherCompactAppFixture_{0}.cmd" -f $PID)
 Set-Content -Encoding ascii -Path $compactFixtureTarget -Value "@echo off`r`nexit /b 0"
+$compactAppProbePath = Join-Path $OutputDirectory "compact-application-probe.log"
+Remove-Item $compactAppProbePath -Force -ErrorAction SilentlyContinue
 $obsidianConfigRoot = Join-Path $env:APPDATA "obsidian"
 $obsidianConfigBackupRoot = Join-Path $env:TEMP ("FluxLauncher-ObsidianConfig-backup-{0}" -f $PID)
 $obsidianFixtureVaultRoot = Join-Path $env:TEMP ("FluxLauncher-ObsidianVault-{0}" -f $PID)
@@ -357,8 +359,9 @@ $absoluteExecutable = [System.IO.Path]::GetFullPath($Executable)
 foreach ($fixtureName in $wabFixtureNames) {
     $shortcut = $shortcutShell.CreateShortcut((Join-Path $wabFixtureRoot $fixtureName))
     if ($fixtureName -eq "LM Studio.lnk") {
-        # Use a unique command fixture so canonical application merging cannot
-        # collapse this spaced title into the other Flux smoke shortcuts.
+        # Use a neutral unique command fixture so the smoke cannot pass by
+        # matching `lmstudio` in the executable name; only the spaced shortcut
+        # title must satisfy the compact application matcher.
         $shortcut.TargetPath = $compactFixtureTarget
         $shortcut.WorkingDirectory = Split-Path -Parent $compactFixtureTarget
     } else {
@@ -389,6 +392,7 @@ $stderrPath = Join-Path $OutputDirectory "launcher.stderr.log"
 $launchTracePath = Join-Path $OutputDirectory "launch-trace.log"
 Remove-Item $launchTracePath -Force -ErrorAction SilentlyContinue
 $env:FLUX_LAUNCH_TRACE_FILE = $launchTracePath
+$env:FLUX_COMPACT_APP_PROBE_FILE = $compactAppProbePath
 $legacyFlowPluginRoot = Join-Path $env:APPDATA "FluxLauncher\Plugins\NativeFlowFixture"
 $legacyFlowPluginBackupRoot = Join-Path $env:TEMP ("FluxLauncher-NativeFlowFixture.compact-smoke-disabled-{0}" -f $PID)
 $legacyFlowPluginWasDisabled = $false
@@ -632,6 +636,8 @@ try {
     $queryResponsivenessMaxMilliseconds = 0.0
     $queryResponsivenessProbe = $false
     $commandPriorityProbe = $false
+    $compactAppProbe = $false
+    $compactAppProbeLine = $null
     $resourceProfileProbe = !$ResourceProfileSmoke
     $resourceProfileSamples = @()
     $resourceProfileSummary = $null
@@ -735,6 +741,22 @@ try {
         $shell.SendKeys("lmstudio")
         Start-Sleep -Milliseconds 2000
         Save-Screenshot "compact-query-lmstudio.png"
+        if (Test-Path $compactAppProbePath) {
+            foreach ($probeLine in @(Get-Content $compactAppProbePath)) {
+                if ($probeLine -match "^query=lmstudio`ttitle=LM Studio`tid=(?<id>[^`t]+)`ttarget=") {
+                    $probeId = [string]$Matches["id"]
+                    if ($probeId -notmatch "lmstudio") {
+                        $compactAppProbeLine = $probeLine
+                        $compactAppProbe = $true
+                        break
+                    }
+                }
+            }
+        }
+        Write-Host "Compact application probe: passed=$compactAppProbe line=[$compactAppProbeLine]"
+        if (!$compactAppProbe) {
+            throw "Compact application smoke did not return LM Studio by title with an executable identity free of lmstudio: $compactAppProbePath"
+        }
         $commandPriorityProbe = $true
     }
     if ($ObsidianIconSmoke) {
@@ -1925,6 +1947,8 @@ try {
         EverythingSyntaxProbe = $true
         QueryResponsivenessProbe = (!$QueryResponsivenessSmoke) -or $queryResponsivenessProbe
         CommandPriorityProbe = (!$CommandPrioritySmoke) -or $commandPriorityProbe
+        CompactApplicationProbe = (!$CommandPrioritySmoke) -or $compactAppProbe
+        CompactApplicationProbeLine = $compactAppProbeLine
         ObsidianIconProbe = (!$ObsidianIconSmoke) -or $obsidianIconProbe
         QueryResponsivenessMaxMilliseconds = $queryResponsivenessMaxMilliseconds
         QueryResponsivenessSamples = @($queryResponsivenessSamples)
@@ -2030,4 +2054,5 @@ finally {
         Move-Item -LiteralPath $legacyFlowPluginBackupRoot -Destination $legacyFlowPluginRoot -Force -ErrorAction SilentlyContinue
     }
     Remove-Item Env:FLUX_LAUNCH_TRACE_FILE -ErrorAction SilentlyContinue
+    Remove-Item Env:FLUX_COMPACT_APP_PROBE_FILE -ErrorAction SilentlyContinue
 }

@@ -1,10 +1,12 @@
 use std::collections::HashMap;
 use std::ffi::OsString;
+use std::fs::OpenOptions;
+use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::sync::{mpsc, Arc, Mutex};
 use std::thread;
 
-use flux_core::{rank_results, ResultKind, ResultSource, SearchResult};
+use flux_core::{matches_search_text, rank_results, ResultKind, ResultSource, SearchResult};
 use windui::prelude::Sender;
 
 const MAX_APPLICATION_RESULTS: usize = 16;
@@ -105,6 +107,7 @@ impl ApplicationCatalog {
             .collect::<Vec<_>>();
         rank_results(query, &mut results);
         results.truncate(MAX_APPLICATION_RESULTS);
+        trace_application_probe(query, &results);
         results
     }
 }
@@ -113,9 +116,30 @@ fn normalize(value: &str) -> String {
     value.trim().to_ascii_lowercase()
 }
 
+fn trace_application_probe(query: &str, results: &[SearchResult]) {
+    let Some(path) = std::env::var_os("FLUX_COMPACT_APP_PROBE_FILE") else {
+        return;
+    };
+    let Ok(mut file) = OpenOptions::new().create(true).append(true).open(path) else {
+        return;
+    };
+    for result in results {
+        let id = result.id.replace(['\t', '\r', '\n'], " ");
+        let title = result.title.replace(['\t', '\r', '\n'], " ");
+        let target = result
+            .target
+            .as_deref()
+            .unwrap_or_default()
+            .replace(['\t', '\r', '\n'], " ");
+        let _ = writeln!(
+            file,
+            "query={query}\ttitle={title}\tid={id}\ttarget={target}"
+        );
+    }
+}
+
 fn application_matches_query(result: &SearchResult, normalized_query: &str) -> bool {
-    let title = normalize(&result.title);
-    if title.contains(normalized_query) {
+    if matches_search_text(&result.title, normalized_query) {
         return true;
     }
     let Some(identity) = result.id.strip_prefix("application:target:") else {
@@ -127,7 +151,7 @@ fn application_matches_query(result: &SearchResult, normalized_query: &str) -> b
         .rsplit('\\')
         .next()
         .unwrap_or_default();
-    normalize(executable).contains(normalized_query)
+    matches_search_text(executable, normalized_query)
 }
 
 /// Returns the canonical identity for an application result.
@@ -571,8 +595,9 @@ fn _keep_os_string_type_available(_: OsString) {}
 #[cfg(test)]
 mod tests {
     use super::{
-        canonical_application_id, canonical_target_key, expand_percent_variables,
-        extract_executable_target, is_executable_target, ApplicationCatalog,
+        application_matches_query, canonical_application_id, canonical_target_key,
+        expand_percent_variables, extract_executable_target, is_executable_target,
+        ApplicationCatalog,
     };
     use flux_core::{ResultKind, ResultSource, SearchResult};
 
@@ -646,6 +671,65 @@ mod tests {
         assert_eq!(results.len(), 1);
         assert_eq!(results[0].title, "Steam");
         assert_eq!(results[0].kind, ResultKind::Application);
+    }
+
+    #[test]
+    fn compact_query_finds_spaced_lm_studio_application_before_ranking() {
+        let spaced_title = SearchResult {
+            id: String::from(r"application:target:c:\\program files\\lm studio\\lm studio.exe"),
+            title: String::from("LM Studio"),
+            subtitle: String::from("Application • Start Menu"),
+            kind: ResultKind::Application,
+            source: ResultSource::ApplicationCatalog,
+            target: Some(String::from(r"C:\\Users\\m1nus\\LM Studio.lnk")),
+        };
+        let executable_title = SearchResult {
+            id: String::from(r"application:target:c:\\tools\\lm studio.exe"),
+            title: String::from("Local Model Runner"),
+            subtitle: String::from("Application • App Paths"),
+            kind: ResultKind::Application,
+            source: ResultSource::ApplicationCatalog,
+            target: Some(String::from(r"C:\\Tools\\LM Studio.exe")),
+        };
+        let catalog = ApplicationCatalog {
+            entries: vec![spaced_title.clone(), executable_title],
+        };
+        let results = catalog.search("lmstudio");
+        assert_eq!(results.len(), 2);
+        assert_eq!(results[0].title, "LM Studio");
+        assert!(application_matches_query(&spaced_title, "lmstudio"));
+        assert!(!application_matches_query(&spaced_title, "!!!"));
+    }
+
+    #[test]
+    fn compact_application_queries_match_common_spaced_titles_and_preserve_literal_precedence() {
+        let catalog = ApplicationCatalog {
+            entries: vec![
+                SearchResult {
+                    id: String::from(r"application:target:c:\\apps\\visual-studio-code.exe"),
+                    title: String::from("Visual Studio Code"),
+                    subtitle: String::from("Application • Start Menu"),
+                    kind: ResultKind::Application,
+                    source: ResultSource::ApplicationCatalog,
+                    target: Some(String::from(r"C:\\Apps\\Visual Studio Code.lnk")),
+                },
+                SearchResult {
+                    id: String::from(r"application:target:c:\\apps\\visualstudiocode.exe"),
+                    title: String::from("visualstudiocode"),
+                    subtitle: String::from("Application • App Paths"),
+                    kind: ResultKind::Application,
+                    source: ResultSource::ApplicationCatalog,
+                    target: Some(String::from(r"C:\\Apps\\visualstudiocode.exe")),
+                },
+            ],
+        };
+
+        let compact_results = catalog.search("visualstudiocode");
+        assert_eq!(compact_results.len(), 2);
+        assert_eq!(compact_results[0].title, "visualstudiocode");
+        assert_eq!(compact_results[1].title, "Visual Studio Code");
+        assert_eq!(catalog.search("visual-studio-code").len(), 2);
+        assert!(catalog.search("!!!").is_empty());
     }
 
     #[test]

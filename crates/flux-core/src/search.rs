@@ -137,12 +137,27 @@ fn compact_contains(title: &str, query: &str) -> bool {
     !compact_query.is_empty() && compact_search_key(title).contains(&compact_query)
 }
 
+/// Returns whether a candidate title matches a plain query literally or after
+/// removing separators, which lets `lmstudio` match `LM Studio`.
+///
+/// This helper is intentionally limited to title matching. Provider-specific
+/// query languages such as Everything's `ext:` and `parent:` remain untouched.
+pub fn matches_search_text(candidate: &str, query: &str) -> bool {
+    let normalized_candidate = normalize(candidate);
+    let normalized_query = normalize(query);
+    if normalized_query.is_empty() || compact_search_key(&normalized_query).is_empty() {
+        return false;
+    }
+    normalized_candidate.contains(&normalized_query)
+        || compact_contains(&normalized_candidate, &normalized_query)
+}
+
 fn match_app_title(title: &str, query: &str) -> u8 {
     if query.is_empty() || title == query {
         0
     } else if title.starts_with(query) {
         1
-    } else if title.contains(query) || compact_contains(title, query) {
+    } else if matches_search_text(title, query) {
         2
     } else {
         3
@@ -156,7 +171,7 @@ fn match_file_title(title: &str, query: &str) -> u8 {
         0
     } else if title.starts_with(query) {
         1
-    } else if title.contains(query) || compact_contains(title, query) {
+    } else if matches_search_text(title, query) {
         2
     } else {
         3
@@ -670,6 +685,10 @@ mod tests {
         assert_eq!(results[1].title, "lmstudio.json");
 
         assert_eq!(match_app_title("LM Studio", "lmstudio"), 2);
+        assert!(matches_search_text("LM Studio", "lmstudio"));
+        assert!(matches_search_text("lmstudio.json", "lmstudio"));
+        assert!(matches_search_text("LM-Studio", "lmstudio"));
+        assert!(!matches_search_text("LM Studio", "!!!"));
         assert_eq!(match_file_title("lmstudio.json", "lmstudio"), 1);
         assert_eq!(match_app_title("Chrome", "..."), 3);
     }
