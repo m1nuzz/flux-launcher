@@ -156,20 +156,56 @@ public static class FluxWallpaper {
 }
 '@
 
-function Get-MemorySnapshot([int]$ProcessId) {
-    $sample = Get-Process -Id $ProcessId
-    [ordered]@{
-        WorkingSetBytes = [int64]$sample.WorkingSet64
-        PrivateBytes = [int64]$sample.PrivateMemorySize64
-        VirtualBytes = [int64]$sample.VirtualMemorySize64
-        HandleCount = [int64]$sample.HandleCount
-        ThreadCount = [int64]$sample.Threads.Count
+function Get-ProcessExitCodeText([System.Diagnostics.Process]$Process) {
+    try {
+        $Process.Refresh()
+        if ($Process.HasExited) {
+            return "exit_code=$($Process.ExitCode)"
+        }
+    }
+    catch {
+        return "exit_code=unavailable"
+    }
+    return "running"
+}
+
+function Assert-ProcessAlive([System.Diagnostics.Process]$Process, [string]$Context) {
+    try {
+        $Process.Refresh()
+        if ($Process.HasExited) {
+            throw "Flux process exited unexpectedly during $Context: pid=$($Process.Id) $(Get-ProcessExitCodeText $Process)"
+        }
+    }
+    catch {
+        if ($_.Exception.Message -like "Flux process exited unexpectedly*") { throw }
+        throw "Flux process could not be inspected during $Context: pid=$($Process.Id) ($($_.Exception.Message))"
     }
 }
 
-function Get-CpuTimeMilliseconds([int]$ProcessId) {
-    $sample = Get-Process -Id $ProcessId
-    return $sample.TotalProcessorTime.TotalMilliseconds
+function Get-MemorySnapshot([System.Diagnostics.Process]$Process, [string]$Context = "memory snapshot") {
+    Assert-ProcessAlive $Process $Context
+    try {
+        [ordered]@{
+            WorkingSetBytes = [int64]$Process.WorkingSet64
+            PrivateBytes = [int64]$Process.PrivateMemorySize64
+            VirtualBytes = [int64]$Process.VirtualMemorySize64
+            HandleCount = [int64]$Process.HandleCount
+            ThreadCount = [int64]$Process.Threads.Count
+        }
+    }
+    catch {
+        throw "Flux process snapshot failed during $Context: pid=$($Process.Id) ($($_.Exception.Message))"
+    }
+}
+
+function Get-CpuTimeMilliseconds([System.Diagnostics.Process]$Process, [string]$Context = "CPU snapshot") {
+    Assert-ProcessAlive $Process $Context
+    try {
+        return $Process.TotalProcessorTime.TotalMilliseconds
+    }
+    catch {
+        throw "Flux CPU snapshot failed during $Context: pid=$($Process.Id) ($($_.Exception.Message))"
+    }
 }
 
 function Get-LauncherWindowHandle([System.Diagnostics.Process]$Process) {
@@ -421,7 +457,7 @@ try {
     if (!$everythingStartupProbe) {
         throw "Everything startup opened its command-line guide window."
     }
-    $idleMemory = Get-MemorySnapshot $process.Id
+    $idleMemory = Get-MemorySnapshot $process
     Save-Screenshot "mica-desktop.png"
 
     # Regression probe: exercise the real global Alt+Space hide/show path twice
@@ -458,9 +494,9 @@ try {
         }
         # Let queued hide work and startup activity settle before sampling.
         Start-Sleep -Milliseconds 1500
-        $idleCpuBefore = Get-CpuTimeMilliseconds $process.Id
+        $idleCpuBefore = Get-CpuTimeMilliseconds $process
         Start-Sleep -Seconds 3
-        $idleCpuAfter = Get-CpuTimeMilliseconds $process.Id
+        $idleCpuAfter = Get-CpuTimeMilliseconds $process
         $idleCpuDelta = [Math]::Round($idleCpuAfter - $idleCpuBefore, 2)
         Write-Host "Hidden idle CPU time over 3s: $idleCpuDelta ms"
         # 150 ms over 3 seconds is a 5% single-process CPU ceiling. This catches
@@ -571,10 +607,10 @@ try {
         }
         if ($IdlePerformanceSmoke) {
             Start-Sleep -Milliseconds 1200
-            $deactivationCpuBefore = Get-CpuTimeMilliseconds $process.Id
+            $deactivationCpuBefore = Get-CpuTimeMilliseconds $process
             Start-Sleep -Seconds 3
-            $deactivationIdleMemory = Get-MemorySnapshot $process.Id
-            $deactivationCpuAfter = Get-CpuTimeMilliseconds $process.Id
+            $deactivationIdleMemory = Get-MemorySnapshot $process
+            $deactivationCpuAfter = Get-CpuTimeMilliseconds $process
             $deactivationCpuDelta = [Math]::Round($deactivationCpuAfter - $deactivationCpuBefore, 2)
             Write-Host "Click-hidden idle CPU time over 3s: $deactivationCpuDelta ms"
             if ($deactivationCpuDelta -gt 150) {
@@ -647,8 +683,8 @@ try {
         # process counters instead of treating allocator high-water marks as a leak.
         $profileQueries = @("wab", "ext:zip", ".png", "lmstudio", "ob ornith")
         $profileCycles = [Math]::Max(1, $ResourceProfileCycles)
-        $profileStart = Get-MemorySnapshot $process.Id
-        $profileCpuStart = Get-CpuTimeMilliseconds $process.Id
+        $profileStart = Get-MemorySnapshot $process
+        $profileCpuStart = Get-CpuTimeMilliseconds $process
         $profilePeakPrivate = [int64]$profileStart.PrivateBytes
         $profilePeakWorkingSet = [int64]$profileStart.WorkingSetBytes
         $profilePeakHandles = [int64]$profileStart.HandleCount
@@ -660,7 +696,7 @@ try {
             $shell.SendKeys($profileQuery)
             Start-Sleep -Milliseconds 110
             if (($cycle + 1) % 4 -eq 0) {
-                $sample = Get-MemorySnapshot $process.Id
+                $sample = Get-MemorySnapshot $process
                 $resourceProfileSamples += [ordered]@{
                     Cycle = $cycle + 1
                     Query = $profileQuery
@@ -679,10 +715,10 @@ try {
         $shell.SendKeys("^a")
         $shell.SendKeys("{BACKSPACE}")
         Start-Sleep -Milliseconds 750
-        $profileEnd = Get-MemorySnapshot $process.Id
+        $profileEnd = Get-MemorySnapshot $process
         Start-Sleep -Seconds 3
-        $profileQuietEnd = Get-MemorySnapshot $process.Id
-        $profileCpuEnd = Get-CpuTimeMilliseconds $process.Id
+        $profileQuietEnd = Get-MemorySnapshot $process
+        $profileCpuEnd = Get-CpuTimeMilliseconds $process
         $profilePrivateGrowth = [int64]$profileEnd.PrivateBytes - [int64]$profileStart.PrivateBytes
         $profileWorkingSetGrowth = [int64]$profileEnd.WorkingSetBytes - [int64]$profileStart.WorkingSetBytes
         $profileHandleGrowth = [int64]$profileEnd.HandleCount - [int64]$profileStart.HandleCount
@@ -820,7 +856,7 @@ try {
     $shell.SendKeys("{BACKSPACE}")
     $shell.SendKeys($navigationProbeQuery)
     Start-Sleep -Seconds 2
-    $queryMemory = Get-MemorySnapshot $process.Id
+    $queryMemory = Get-MemorySnapshot $process
     Save-Screenshot "everything-fallback.png"
 
     if ($ActionBarSmoke) {
@@ -1340,7 +1376,7 @@ try {
     # Flow-style query history: Ctrl+H opens selectable history results.
     $shell.SendKeys("^h")
     Start-Sleep -Milliseconds 500
-    $historyMemory = Get-MemorySnapshot $process.Id
+    $historyMemory = Get-MemorySnapshot $process
     Save-Screenshot "history-panel.png"
     $shell.SendKeys("{ENTER}")
     Start-Sleep -Seconds 1
