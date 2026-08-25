@@ -161,6 +161,8 @@ function Get-MemorySnapshot([int]$ProcessId) {
         WorkingSetBytes = [int64]$sample.WorkingSet64
         PrivateBytes = [int64]$sample.PrivateMemorySize64
         VirtualBytes = [int64]$sample.VirtualMemorySize64
+        HandleCount = [int64]$sample.HandleCount
+        ThreadCount = [int64]$sample.Threads.Count
     }
 }
 
@@ -640,6 +642,8 @@ try {
         $profileCpuStart = Get-CpuTimeMilliseconds $process.Id
         $profilePeakPrivate = [int64]$profileStart.PrivateBytes
         $profilePeakWorkingSet = [int64]$profileStart.WorkingSetBytes
+        $profilePeakHandles = [int64]$profileStart.HandleCount
+        $profilePeakThreads = [int64]$profileStart.ThreadCount
         for ($cycle = 0; $cycle -lt $profileCycles; $cycle++) {
             $profileQuery = $profileQueries[$cycle % $profileQueries.Count]
             $shell.SendKeys("^a")
@@ -654,9 +658,13 @@ try {
                     WorkingSetBytes = $sample.WorkingSetBytes
                     PrivateBytes = $sample.PrivateBytes
                     VirtualBytes = $sample.VirtualBytes
+                    HandleCount = $sample.HandleCount
+                    ThreadCount = $sample.ThreadCount
                 }
                 $profilePeakPrivate = [Math]::Max($profilePeakPrivate, [int64]$sample.PrivateBytes)
                 $profilePeakWorkingSet = [Math]::Max($profilePeakWorkingSet, [int64]$sample.WorkingSetBytes)
+                $profilePeakHandles = [Math]::Max($profilePeakHandles, [int64]$sample.HandleCount)
+                $profilePeakThreads = [Math]::Max($profilePeakThreads, [int64]$sample.ThreadCount)
             }
         }
         $shell.SendKeys("^a")
@@ -666,6 +674,8 @@ try {
         $profileCpuEnd = Get-CpuTimeMilliseconds $process.Id
         $profilePrivateGrowth = [int64]$profileEnd.PrivateBytes - [int64]$profileStart.PrivateBytes
         $profileWorkingSetGrowth = [int64]$profileEnd.WorkingSetBytes - [int64]$profileStart.WorkingSetBytes
+        $profileHandleGrowth = [int64]$profileEnd.HandleCount - [int64]$profileStart.HandleCount
+        $profileThreadGrowth = [int64]$profileEnd.ThreadCount - [int64]$profileStart.ThreadCount
         $profileCpuDelta = [Math]::Round($profileCpuEnd - $profileCpuStart, 2)
         $resourceProfileSummary = [ordered]@{
             Cycles = $profileCycles
@@ -674,17 +684,24 @@ try {
             End = $profileEnd
             PeakPrivateBytes = $profilePeakPrivate
             PeakWorkingSetBytes = $profilePeakWorkingSet
+            PeakHandleCount = $profilePeakHandles
+            PeakThreadCount = $profilePeakThreads
             PrivateGrowthBytes = $profilePrivateGrowth
             WorkingSetGrowthBytes = $profileWorkingSetGrowth
+            HandleGrowth = $profileHandleGrowth
+            ThreadGrowth = $profileThreadGrowth
             CpuTimeMilliseconds = $profileCpuDelta
         }
         # This is a coarse CI guard for catastrophic retained growth, not proof that a
         # process is leak-free. Long-run PerfMon/WPR remains the authoritative follow-up.
-        $resourceProfileProbe = $profilePrivateGrowth -lt (128 * 1024 * 1024)
+        $resourceProfileProbe =
+            $profilePrivateGrowth -lt (128 * 1024 * 1024) -and
+            $profileHandleGrowth -le 256 -and
+            $profileThreadGrowth -le 8
         if (!$resourceProfileProbe) {
-            throw "Resource profile private-bytes growth exceeded 128 MiB: $profilePrivateGrowth bytes after $profileCycles cycles."
+            throw "Resource profile growth budget exceeded: private=$profilePrivateGrowth bytes handles=$profileHandleGrowth threads=$profileThreadGrowth after $profileCycles cycles."
         }
-        Write-Host "Resource profile: cycles=$profileCycles private_growth=$profilePrivateGrowth working_set_growth=$profileWorkingSetGrowth cpu_ms=$profileCpuDelta"
+        Write-Host "Resource profile: cycles=$profileCycles private_growth=$profilePrivateGrowth working_set_growth=$profileWorkingSetGrowth handle_growth=$profileHandleGrowth thread_growth=$profileThreadGrowth cpu_ms=$profileCpuDelta"
     }
     if ($CommandPrioritySmoke) {
         foreach ($commandQuery in @("cmd", "powershell", "pwsh")) {
