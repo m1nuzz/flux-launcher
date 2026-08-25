@@ -679,22 +679,31 @@ try {
             LogicalClientHeight = $logicalClientHeight
             Dpi = [int]$dpi
         }
-        $expectedActionBarX = 10 + [int][Math]::Floor(
-            [Math]::Max(0, $logicalClientWidth - 20 - 340) / 2.0
-        )
-        # Intrinsic layout uses equal vertical insets and can round the centered
-        # result by a few DIP. Keep the accepted bottom breathing room narrow so
-        # the old weighted-spacer gap cannot return.
-        $actionBarBottomInset = $logicalClientHeight - ($actionBarGeometry.Y + $actionBarGeometry.Height)
-        $actionBarProbe =
-            [Math]::Abs($actionBarGeometry.X - $expectedActionBarX) -le 1 -and
-            $actionBarGeometry.Width -eq 340 -and
-            $actionBarGeometry.Height -eq 22 -and
-            $actionBarBottomInset -ge 14 -and
-            $actionBarBottomInset -le 20
-        Write-Host "Action bar geometry: x=$($actionBarGeometry.X) y=$($actionBarGeometry.Y) width=$($actionBarGeometry.Width) height=$($actionBarGeometry.Height) bottom_inset=$actionBarBottomInset client=${logicalClientWidth}x${logicalClientHeight} dpi=$dpi"
-        if (!$actionBarProbe) {
-            throw "Action bar geometry is not centered between launcher insets or has the wrong bottom inset: $($actionBarGeometry | ConvertTo-Json -Compress)."
+        if ($logicalClientHeight -le 56) {
+            # The action bar is intentionally hidden in compact Search state.
+            # The native telemetry can still contain the previous expanded
+            # bounds, so do not validate that stale geometry against a 56-DIP
+            # client rectangle.
+            Write-Host "Action bar hidden in compact state: client=${logicalClientWidth}x${logicalClientHeight} dpi=$dpi"
+            $actionBarProbe = $true
+        } else {
+            $expectedActionBarX = 10 + [int][Math]::Floor(
+                [Math]::Max(0, $logicalClientWidth - 20 - 340) / 2.0
+            )
+            # Intrinsic layout uses equal vertical insets and can round the centered
+            # result by a few DIP. Keep the accepted bottom breathing room narrow so
+            # the old weighted-spacer gap cannot return.
+            $actionBarBottomInset = $logicalClientHeight - ($actionBarGeometry.Y + $actionBarGeometry.Height)
+            $actionBarProbe =
+                [Math]::Abs($actionBarGeometry.X - $expectedActionBarX) -le 1 -and
+                $actionBarGeometry.Width -eq 340 -and
+                $actionBarGeometry.Height -eq 22 -and
+                $actionBarBottomInset -ge 14 -and
+                $actionBarBottomInset -le 20
+            Write-Host "Action bar geometry: x=$($actionBarGeometry.X) y=$($actionBarGeometry.Y) width=$($actionBarGeometry.Width) height=$($actionBarGeometry.Height) bottom_inset=$actionBarBottomInset client=${logicalClientWidth}x${logicalClientHeight} dpi=$dpi"
+            if (!$actionBarProbe) {
+                throw "Action bar geometry is not centered between launcher insets or has the wrong bottom inset: $($actionBarGeometry | ConvertTo-Json -Compress)."
+            }
         }
     }
 
