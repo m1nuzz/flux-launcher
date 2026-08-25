@@ -478,6 +478,7 @@ try {
     $deactivationHiddenAfterClick = $false
     $deactivationForegroundAfterClick = $false
     $deactivationCpuDelta = 0.0
+    $deactivationIdleMemory = $null
     if ($FocusToggleSmoke) {
         $probeProcess.Refresh()
         $focusProbeHandle = $probeProcess.MainWindowHandle
@@ -568,6 +569,7 @@ try {
             Start-Sleep -Milliseconds 1200
             $deactivationCpuBefore = Get-CpuTimeMilliseconds $process.Id
             Start-Sleep -Seconds 3
+            $deactivationIdleMemory = Get-MemorySnapshot $process.Id
             $deactivationCpuAfter = Get-CpuTimeMilliseconds $process.Id
             $deactivationCpuDelta = [Math]::Round($deactivationCpuAfter - $deactivationCpuBefore, 2)
             Write-Host "Click-hidden idle CPU time over 3s: $deactivationCpuDelta ms"
@@ -1934,6 +1936,7 @@ try {
         DeactivationHiddenAfterClick = $deactivationHiddenAfterClick
         DeactivationForegroundAfterClick = $deactivationForegroundAfterClick
         DeactivationCpuMilliseconds = $deactivationCpuDelta
+        DeactivationIdleMemory = $deactivationIdleMemory
         HistoryPanelProbe = $true
         HistoryUpProbe = $true
         HistoryAltUpProbe = $true
@@ -1994,6 +1997,7 @@ try {
             Idle = $idleMemory
             Query = $queryMemory
             HistoryPanel = $historyMemory
+            HiddenIdleAfterDeactivation = $deactivationIdleMemory
         }
     } | ConvertTo-Json | Set-Content -Encoding utf8 (Join-Path $OutputDirectory "environment.json")
 }
