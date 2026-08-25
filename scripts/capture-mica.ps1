@@ -1166,7 +1166,30 @@ try {
     Save-Screenshot "everything-fallback.png"
 
     if ($ActionBarSmoke) {
-        Start-Sleep -Milliseconds 300
+        # Use the WAB fixture created above instead of a host-dependent query such as
+        # wifi. The action bar exists only while the result list is visible, so a
+        # deterministic result also makes this a layout test rather than a provider
+        # availability test.
+        $shell.SendKeys("^a")
+        $shell.SendKeys("{BACKSPACE}")
+        $shell.SendKeys("wab")
+        $actionBarMatch = $null
+        $actionBarLog = ""
+        # Rendering and stderr delivery are asynchronous on hosted Windows runners.
+        # Poll the actual telemetry instead of treating a fixed sleep as proof that
+        # the native frame has already painted.
+        for ($attempt = 0; $attempt -lt 60; $attempt++) {
+            Start-Sleep -Milliseconds 100
+            $actionBarLog = if (Test-Path $stderrPath) { Get-Content $stderrPath -Raw } else { "" }
+            $actionBarMatch = [regex]::Matches(
+                $actionBarLog,
+                "ActionBarGeometry: x=(\d+) y=(\d+) width=(\d+) height=(\d+)"
+            ) | Select-Object -Last 1
+            if ($null -ne $actionBarMatch) { break }
+        }
+        if ($null -eq $actionBarMatch) {
+            throw "Action bar smoke did not observe native action-bar geometry telemetry after deterministic query 'wab'."
+        }
         $clientRect = New-Object FluxWallpaper+RECT
         if (![FluxWallpaper]::GetClientRect($launcherHandle, [ref]$clientRect)) {
             throw "Action bar smoke could not read launcher client geometry."
@@ -1178,14 +1201,6 @@ try {
         $scale = [double]$dpi / 96.0
         $logicalClientWidth = [int][Math]::Round($clientWidth / $scale)
         $logicalClientHeight = [int][Math]::Round($clientHeight / $scale)
-        $actionBarLog = if (Test-Path $stderrPath) { Get-Content $stderrPath -Raw } else { "" }
-        $actionBarMatch = [regex]::Matches(
-            $actionBarLog,
-            "ActionBarGeometry: x=(\d+) y=(\d+) width=(\d+) height=(\d+)"
-        ) | Select-Object -Last 1
-        if ($null -eq $actionBarMatch) {
-            throw "Action bar smoke did not observe native action-bar geometry telemetry."
-        }
         $actionBarGeometry = [ordered]@{
             X = [int]$actionBarMatch.Groups[1].Value
             Y = [int]$actionBarMatch.Groups[2].Value
@@ -1195,6 +1210,7 @@ try {
             LogicalClientHeight = $logicalClientHeight
             Dpi = [int]$dpi
         }
+        Save-Screenshot "action-bar.png"
         if ($logicalClientHeight -le 56) {
             # The action bar is intentionally hidden in compact Search state.
             # The native telemetry can still contain the previous expanded
