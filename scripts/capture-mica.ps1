@@ -674,7 +674,9 @@ try {
         $expectedActionBarX = 10 + [int][Math]::Floor(
             [Math]::Max(0, $logicalClientWidth - 20 - 340) / 2.0
         )
-        $actionBarBottomInset = 4
+        # Intrinsic result/footer layout leaves a symmetric 14-DIP bottom inset
+        # after removing the weighted spacer that created the large gap above the footer.
+        $actionBarBottomInset = 14
         $expectedActionBarY = $logicalClientHeight - $actionBarBottomInset - 22
         $actionBarProbe =
             [Math]::Abs($actionBarGeometry.X - $expectedActionBarX) -le 1 -and
