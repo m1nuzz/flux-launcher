@@ -83,6 +83,8 @@ public static class FluxWallpaper {
     [DllImport("user32.dll", SetLastError = true)]
     public static extern IntPtr SendMessage(IntPtr hwnd, uint message, UIntPtr wParam, IntPtr lParam);
     [DllImport("user32.dll", SetLastError = true)]
+    public static extern bool PostMessage(IntPtr hwnd, uint message, IntPtr wParam, IntPtr lParam);
+    [DllImport("user32.dll", SetLastError = true)]
     public static extern IntPtr GetForegroundWindow();
     [DllImport("user32.dll", SetLastError = true)]
     public static extern IntPtr GetAncestor(IntPtr hWnd, uint flags);
@@ -182,6 +184,28 @@ function Get-MemorySnapshot([int]$ProcessId) {
 function Get-CpuTimeMilliseconds([int]$ProcessId) {
     $sample = Get-Process -Id $ProcessId
     return $sample.TotalProcessorTime.TotalMilliseconds
+}
+
+function Request-FluxProcessShutdown([System.Diagnostics.Process]$Process, [int]$TimeoutSeconds = 10) {
+    if ($null -eq $Process) { return $true }
+    try {
+        $Process.Refresh()
+        if ($Process.HasExited) { return $true }
+    }
+    catch {
+        return $true
+    }
+    $handle = Get-LauncherWindowHandle $Process
+    if ($handle -eq [IntPtr]::Zero) { return $false }
+    if (![FluxWallpaper]::PostMessage($handle, 0x0010, [IntPtr]::Zero, [IntPtr]::Zero)) {
+        return $false
+    }
+    try {
+        return $Process.WaitForExit($TimeoutSeconds * 1000)
+    }
+    catch {
+        return $false
+    }
 }
 
 function Get-LauncherWindowHandle([System.Diagnostics.Process]$Process) {
@@ -599,6 +623,7 @@ if ($ActionBarSmoke) {
 # reused hosted desktop make Start-Process return a short-lived handoff-only process;
 # single-instance behavior is validated independently by the Rust/API tests.
 $env:FLUX_DISABLE_SINGLE_INSTANCE = "1"
+$env:FLUX_SMOKE_EXIT_ON_CLOSE = "1"
 $process = Start-Process -FilePath $Executable -PassThru -RedirectStandardOutput $stdoutPath -RedirectStandardError $stderrPath
 try {
     Start-Sleep -Seconds 3
@@ -2429,8 +2454,13 @@ try {
     } | ConvertTo-Json | Set-Content -Encoding utf8 (Join-Path $OutputDirectory "environment.json")
 }
 finally {
-    if (!$process.HasExited) {
-        Stop-Process -Id $process.Id -Force
+    if ($process -and !$process.HasExited) {
+        $shutdownCompleted = Request-FluxProcessShutdown $process 10
+        if (!$shutdownCompleted -and !$process.HasExited) {
+            Write-Warning "Flux did not exit after WM_CLOSE; forcing cleanup for PID $($process.Id)."
+            Stop-Process -Id $process.Id -Force -ErrorAction SilentlyContinue
+            try { $process.WaitForExit(5000) } catch { }
+        }
     }
     if ($probeProcess -and !$probeProcess.HasExited) {
         Stop-Process -Id $probeProcess.Id -Force

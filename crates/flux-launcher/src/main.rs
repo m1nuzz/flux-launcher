@@ -2235,6 +2235,7 @@ fn main() {
         return;
     }
     let single_instance_disabled = std::env::var_os("FLUX_DISABLE_SINGLE_INSTANCE").is_some();
+    let smoke_exit_on_close = std::env::var_os("FLUX_SMOKE_EXIT_ON_CLOSE").is_some();
     if !single_instance_disabled
         && should_claim_single_instance(mode.as_deref())
         && matches!(
@@ -4615,6 +4616,16 @@ fn main() {
         .hide_on_close()
         .hide_on_deactivate()
         .focus_first_control_on_show()
+        .on_close_request(move |ctx| {
+            if smoke_exit_on_close {
+                // Monitor-placement smoke owns this process and must exercise the
+                // same orderly quit pipeline as the tray Exit action, not a hard kill.
+                ctx.quit();
+                false
+            } else {
+                true
+            }
+        })
         // The Win32 backend keeps this transparent on local Acrylic-capable
         // sessions and uses this dark color only for an honest RDP fallback.
         .bg(Color::rgba(32, 33, 35, 255))
