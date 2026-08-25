@@ -103,10 +103,6 @@ $previousFluxDisableSingleInstance = [Environment]::GetEnvironmentVariable(
     "FLUX_DISABLE_SINGLE_INSTANCE",
     [EnvironmentVariableTarget]::Process
 )
-$previousSmokeExitOnClose = [Environment]::GetEnvironmentVariable(
-    "FLUX_SMOKE_EXIT_ON_CLOSE",
-    [EnvironmentVariableTarget]::Process
-)
 try {
     # D2D/compositor behavior is covered by capture-mica.ps1. This helper validates
     # monitor placement and avoids repeatedly tearing down the D2D device between
@@ -205,11 +201,6 @@ finally {
         Remove-Item Env:FLUX_DISABLE_SINGLE_INSTANCE -ErrorAction SilentlyContinue
     } else {
         $env:FLUX_DISABLE_SINGLE_INSTANCE = $previousFluxDisableSingleInstance
-    }
-    if ($null -eq $previousSmokeExitOnClose) {
-        Remove-Item Env:FLUX_SMOKE_EXIT_ON_CLOSE -ErrorAction SilentlyContinue
-    } else {
-        $env:FLUX_SMOKE_EXIT_ON_CLOSE = $previousSmokeExitOnClose
     }
 }
 
