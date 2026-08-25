@@ -278,15 +278,26 @@ Start-Sleep -Milliseconds 750
 Get-Process | Where-Object { $_.MainWindowTitle -like "*System Properties*" } | Stop-Process -Force -ErrorAction SilentlyContinue
 $probeScriptPath = Join-Path $OutputDirectory "probe-screen.ps1"
 @'
+$ErrorActionPreference = 'Stop'
 Add-Type -AssemblyName System.Windows.Forms
 Add-Type -AssemblyName System.Drawing
 $form = New-Object System.Windows.Forms.Form
 $form.FormBorderStyle = [System.Windows.Forms.FormBorderStyle]::None
 $form.ShowInTaskbar = $false
 $form.StartPosition = [System.Windows.Forms.FormStartPosition]::Manual
-$screen = [System.Windows.Forms.SystemInformation]::VirtualScreen
-$form.Location = New-Object System.Drawing.Point($screen.Left + 1, $screen.Top + 1)
-$form.Size = New-Object System.Drawing.Size($screen.Width - 2, $screen.Height - 2)
+$screens = @([System.Windows.Forms.Screen]::AllScreens)
+if ($screens.Count -eq 0) {
+    throw 'Wallpaper probe could not find a display.'
+}
+$bounds = @($screens | ForEach-Object { $_.Bounds })
+$left = [int](($bounds | Measure-Object -Property Left -Minimum).Minimum)
+$top = [int](($bounds | Measure-Object -Property Top -Minimum).Minimum)
+$right = [int](($bounds | Measure-Object -Property Right -Maximum).Maximum)
+$bottom = [int](($bounds | Measure-Object -Property Bottom -Maximum).Maximum)
+$width = [Math]::Max(1, $right - $left - 2)
+$height = [Math]::Max(1, $bottom - $top - 2)
+$form.Location = [System.Drawing.Point]::new($left + 1, $top + 1)
+$form.Size = [System.Drawing.Size]::new($width, $height)
 $form.BackColor = [System.Drawing.Color]::FromArgb(21, 46, 105)
 $form.Add_Paint({
     param($sender, $event)
@@ -307,8 +318,19 @@ $form.Add_Paint({
 '@ | Set-Content -Encoding utf8 $probeScriptPath
 $probeStdoutPath = Join-Path $OutputDirectory "probe.stdout.log"
 $probeStderrPath = Join-Path $OutputDirectory "probe.stderr.log"
+Remove-Item $probeStdoutPath, $probeStderrPath -Force -ErrorAction SilentlyContinue
 $probeProcess = Start-Process -FilePath "pwsh" -ArgumentList @("-NoProfile", "-File", $probeScriptPath) -WindowStyle Hidden -RedirectStandardOutput $probeStdoutPath -RedirectStandardError $probeStderrPath -PassThru
 Start-Sleep -Seconds 2
+$probeProcess.Refresh()
+if ($probeProcess.HasExited) {
+    throw "Wallpaper probe exited before smoke setup with code $($probeProcess.ExitCode)."
+}
+if (Test-Path $probeStderrPath) {
+    $probeErrors = Get-Content -Raw -LiteralPath $probeStderrPath -ErrorAction SilentlyContinue
+    if (-not [string]::IsNullOrWhiteSpace($probeErrors)) {
+        throw "Wallpaper probe emitted stderr: $probeErrors"
+    }
+}
 
 # Seed temporary Start Menu shortcuts so the WAB smoke exercises the same
 # application-catalog path as a real Windows installation.
@@ -1914,6 +1936,17 @@ try {
         Remove-Item Env:FLUX_SMOKE_SETTINGS_TAB -ErrorAction SilentlyContinue
         Remove-Item Env:FLUX_SMOKE_VISUAL_SETTINGS -ErrorAction SilentlyContinue
         Remove-Item Env:FLUX_DISABLE_SINGLE_INSTANCE -ErrorAction SilentlyContinue
+    }
+
+    $probeProcess.Refresh()
+    if ($probeProcess.HasExited -and $probeProcess.ExitCode -ne 0) {
+        throw "Wallpaper probe exited with code $($probeProcess.ExitCode)."
+    }
+    if (Test-Path $probeStderrPath) {
+        $probeErrors = Get-Content -Raw -LiteralPath $probeStderrPath -ErrorAction SilentlyContinue
+        if (-not [string]::IsNullOrWhiteSpace($probeErrors)) {
+            throw "Wallpaper probe emitted stderr: $probeErrors"
+        }
     }
 
     $os = Get-CimInstance Win32_OperatingSystem
