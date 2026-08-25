@@ -342,7 +342,8 @@ New-Item -ItemType Directory -Force -Path $folderFixtureRoot | Out-Null
 $compactFixtureTarget = Join-Path $env:TEMP ("FluxLauncherCompactAppFixture_{0}.cmd" -f $PID)
 Set-Content -Encoding ascii -Path $compactFixtureTarget -Value "@echo off`r`nexit /b 0"
 $compactAppProbePath = Join-Path $OutputDirectory "compact-application-probe.log"
-Remove-Item $compactAppProbePath -Force -ErrorAction SilentlyContinue
+$iconProbePath = Join-Path $OutputDirectory "shell-icon-probe.log"
+Remove-Item $compactAppProbePath, $iconProbePath -Force -ErrorAction SilentlyContinue
 $obsidianConfigRoot = Join-Path $env:APPDATA "obsidian"
 $obsidianConfigBackupRoot = Join-Path $env:TEMP ("FluxLauncher-ObsidianConfig-backup-{0}" -f $PID)
 $obsidianFixtureVaultRoot = Join-Path $env:TEMP ("FluxLauncher-ObsidianVault-{0}" -f $PID)
@@ -415,6 +416,7 @@ $launchTracePath = Join-Path $OutputDirectory "launch-trace.log"
 Remove-Item $launchTracePath -Force -ErrorAction SilentlyContinue
 $env:FLUX_LAUNCH_TRACE_FILE = $launchTracePath
 $env:FLUX_COMPACT_APP_PROBE_FILE = $compactAppProbePath
+$env:FLUX_ICON_PROBE_FILE = $iconProbePath
 $legacyFlowPluginRoot = Join-Path $env:APPDATA "FluxLauncher\Plugins\NativeFlowFixture"
 $legacyFlowPluginBackupRoot = Join-Path $env:TEMP ("FluxLauncher-NativeFlowFixture.compact-smoke-disabled-{0}" -f $PID)
 $legacyFlowPluginWasDisabled = $false
@@ -673,6 +675,9 @@ try {
     $queryResponsivenessProbe = $false
     $commandPriorityProbe = $false
     $compactAppProbe = $false
+    $iconProbe = $false
+    $iconProbeLines = @()
+    $iconProbeMissing = @()
     $compactAppProbeLine = $null
     $resourceProfileProbe = !$ResourceProfileSmoke
     $resourceProfileSamples = @()
@@ -794,6 +799,32 @@ try {
             throw "Compact application smoke did not return LM Studio by title with an executable identity free of lmstudio: $compactAppProbePath"
         }
         $commandPriorityProbe = $true
+
+        $requiredIconExecutables = @("cmd.exe", "powershell.exe")
+        for ($attempt = 0; $attempt -lt 50; $attempt++) {
+            $iconProbeLines = if (Test-Path $iconProbePath) {
+                @(Get-Content $iconProbePath)
+            } else {
+                @()
+            }
+            $iconProbeMissing = @(
+                $requiredIconExecutables | Where-Object {
+                    $required = $_
+                    !($iconProbeLines | Where-Object {
+                        $_ -match "(?i)^target=.*\\$([regex]::Escape($required))`tloaded=true$"
+                    })
+                }
+            )
+            if ($iconProbeMissing.Count -eq 0) {
+                break
+            }
+            Start-Sleep -Milliseconds 100
+        }
+        $iconProbe = $iconProbeMissing.Count -eq 0
+        Write-Host "Shell icon probe: passed=$iconProbe missing=$($iconProbeMissing -join ',')"
+        if (!$iconProbe) {
+            throw "Shell icon smoke did not load icons for: $($iconProbeMissing -join ', '): $iconProbePath"
+        }
     }
     if ($ObsidianIconSmoke) {
         $shell.SendKeys("^a")
@@ -1996,6 +2027,9 @@ try {
         CommandPriorityProbe = (!$CommandPrioritySmoke) -or $commandPriorityProbe
         CompactApplicationProbe = (!$CommandPrioritySmoke) -or $compactAppProbe
         CompactApplicationProbeLine = $compactAppProbeLine
+        ShellIconProbe = (!$CommandPrioritySmoke) -or $iconProbe
+        ShellIconProbeMissing = @($iconProbeMissing)
+        ShellIconProbeLines = @($iconProbeLines)
         ObsidianIconProbe = (!$ObsidianIconSmoke) -or $obsidianIconProbe
         QueryResponsivenessMaxMilliseconds = $queryResponsivenessMaxMilliseconds
         QueryResponsivenessSamples = @($queryResponsivenessSamples)
@@ -2102,4 +2136,5 @@ finally {
     }
     Remove-Item Env:FLUX_LAUNCH_TRACE_FILE -ErrorAction SilentlyContinue
     Remove-Item Env:FLUX_COMPACT_APP_PROBE_FILE -ErrorAction SilentlyContinue
+    Remove-Item Env:FLUX_ICON_PROBE_FILE -ErrorAction SilentlyContinue
 }

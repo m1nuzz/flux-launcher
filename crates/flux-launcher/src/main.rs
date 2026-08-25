@@ -19,6 +19,7 @@ mod visual_preview;
 
 use std::cell::{Cell, RefCell};
 use std::collections::{HashMap, HashSet, VecDeque};
+use std::io::Write;
 use std::rc::Rc;
 use std::sync::{
     atomic::{AtomicU64, Ordering},
@@ -29,7 +30,8 @@ use std::thread;
 use std::time::Duration;
 
 use applications::{
-    canonical_application_id, canonical_application_key, ApplicationResponse, ApplicationWorker,
+    canonical_application_id, canonical_application_key, resolve_bare_executable_path,
+    ApplicationResponse, ApplicationWorker,
 };
 use everything::{EverythingResponse, EverythingWorker, InstallationState};
 use flux_core::{
@@ -1325,6 +1327,21 @@ fn request_shell_icon(_target: &str) -> Option<Vec<u8>> {
     None
 }
 
+fn trace_shell_icon_probe(target: &str, loaded: bool) {
+    let Some(path) = std::env::var_os("FLUX_ICON_PROBE_FILE") else {
+        return;
+    };
+    let Ok(mut file) = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(path)
+    else {
+        return;
+    };
+    let target = target.replace(['\t', '\r', '\n'], " ");
+    let _ = writeln!(file, "target={target}\tloaded={loaded}");
+}
+
 #[cfg(windows)]
 fn shortcut_icon_smoke(target: &str) -> bool {
     shortcut_icon_location(target)
@@ -1348,6 +1365,7 @@ fn shell_icon_rgba(target: &str) -> Option<Vec<u8>> {
         .and_then(|(path, index)| extract_icon_rgba_from_source(&path, Some(index)))
         .or_else(|| extract_shell_thumbnail_rgba(target))
         .or_else(|| extract_shell_icon_rgba(target));
+    trace_shell_icon_probe(target, icon.is_some());
     if let Ok(mut cache) = cache.lock() {
         cache.insert(target.to_owned(), icon.clone());
     }
@@ -1976,6 +1994,10 @@ impl Widget for ActionBarGeometryProbe {
     }
 }
 
+fn icon_target_for_path(target: &str) -> String {
+    resolve_bare_executable_path(target).unwrap_or_else(|| target.to_owned())
+}
+
 #[allow(clippy::too_many_arguments)]
 fn result_row(
     result: SearchResult,
@@ -1999,16 +2021,18 @@ fn result_row(
     let target = result.target;
     let title = result.title;
     let subtitle = result.subtitle;
+    let icon_target = target.as_deref().map(icon_target_for_path);
     let (glyph, glyph_font) = match id.as_str() {
         "empty-recycle-bin" => (String::from("\u{ea99}"), "Segoe Fluent Icons"),
         "open-recycle-bin" => (String::from("\u{e74d}"), "Segoe Fluent Icons"),
         _ if subtitle.contains("Application") => (String::from("◉"), LAUNCHER_FONT_FAMILY),
         _ => (String::from("▣"), LAUNCHER_FONT_FAMILY),
     };
-    let icon = bundled_icon_rgba(&id).or_else(|| target.as_deref().and_then(request_shell_icon));
+    let icon =
+        bundled_icon_rgba(&id).or_else(|| icon_target.as_deref().and_then(request_shell_icon));
     let icon_element = Element::leaf()
         .widget(ResultIconView::new(
-            target.clone(),
+            icon_target,
             glyph,
             glyph_font,
             icon,
@@ -4973,12 +4997,12 @@ mod tests {
     use super::{
         actions_for_result, bundled_icon_rgba, dimension_from_slider, dimension_slider_fraction,
         display_title, format_bytes, format_update_progress, google_icon_rgba, history_cursor_step,
-        hover_position_changed, icon_completion_generation_changed, is_run_as_admin_key,
-        is_shutdown_mode, launcher_window_geometry, launcher_window_geometry_with_sizes,
-        merge_application_duplicates, normalize_everything_query, obsidian_icon_rgba,
-        parse_dimension_input, parse_internet_shortcut_icon_location,
-        preserve_everything_file_order, quoted_result_path, relaunch_mode_for_auto_install,
-        resolve_shortcut_icon_path, should_claim_single_instance,
+        hover_position_changed, icon_completion_generation_changed, icon_target_for_path,
+        is_run_as_admin_key, is_shutdown_mode, launcher_window_geometry,
+        launcher_window_geometry_with_sizes, merge_application_duplicates,
+        normalize_everything_query, obsidian_icon_rgba, parse_dimension_input,
+        parse_internet_shortcut_icon_location, preserve_everything_file_order, quoted_result_path,
+        relaunch_mode_for_auto_install, resolve_shortcut_icon_path, should_claim_single_instance,
         should_publish_initial_query_results, should_show_launcher, ProviderResults,
         ResultIconView, ShellIconCache, COMPACT_WINDOW_HEIGHT, LAUNCHER_FONT_FAMILY,
         MAX_LAUNCHER_HEIGHT, MAX_LAUNCHER_WIDTH, MAX_SHELL_ICON_CACHE_ENTRIES, MIN_LAUNCHER_HEIGHT,
@@ -5216,6 +5240,59 @@ mod tests {
         assert_eq!(merged.len(), 1);
         assert_eq!(merged[0].title, "Google Chrome");
         assert!(merged[0].subtitle.contains("Start Menu"));
+    }
+
+    #[test]
+    fn system_power_shell_merges_only_with_the_same_real_executable_path() {
+        let system = SearchResult {
+            id: String::from("system:powershell"),
+            title: String::from("PowerShell"),
+            subtitle: String::from("Windows PowerShell"),
+            kind: ResultKind::Command,
+            source: ResultSource::BuiltIn,
+            target: Some(String::from(
+                r"C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe",
+            )),
+        };
+        let app_path = SearchResult {
+            id: String::from(
+                r"application:target:c:\\windows\\system32\\windowspowershell\\v1.0\\powershell.exe",
+            ),
+            title: String::from("PowerShell"),
+            subtitle: String::from("Application • App Paths"),
+            kind: ResultKind::Application,
+            source: ResultSource::ApplicationCatalog,
+            target: Some(String::from(
+                r"C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe",
+            )),
+        };
+        let powershell_7 = SearchResult {
+            id: String::from(r"application:target:c:\\program files\\powershell\\7\\pwsh.exe"),
+            title: String::from("PowerShell 7"),
+            subtitle: String::from("Application • App Paths"),
+            kind: ResultKind::Application,
+            source: ResultSource::ApplicationCatalog,
+            target: Some(String::from(r"C:\\Program Files\\PowerShell\\7\\pwsh.exe")),
+        };
+
+        let merged = merge_application_duplicates(vec![system, app_path, powershell_7]);
+        assert_eq!(merged.len(), 2);
+        assert!(merged.iter().any(|result| result.title == "PowerShell"));
+        assert!(merged.iter().any(|result| result.title == "PowerShell 7"));
+    }
+
+    #[test]
+    fn icon_target_preserves_explicit_paths_and_resolves_bare_names_on_windows() {
+        let explicit = r"C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe";
+        assert_eq!(icon_target_for_path(explicit), explicit);
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn icon_target_resolves_bare_powershell_to_a_real_path() {
+        let resolved = icon_target_for_path("powershell.exe").to_ascii_lowercase();
+        assert!(resolved.ends_with(r"\powershell.exe"));
+        assert!(resolved.contains(r"\windowspowershell\"));
     }
 
     #[test]

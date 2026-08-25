@@ -78,17 +78,17 @@ impl ApplicationWorker {
 
 impl ApplicationCatalog {
     fn load() -> Self {
-        let mut by_title = HashMap::<String, SearchResult>::new();
+        let mut candidates = Vec::<SearchResult>::new();
 
         #[cfg(windows)]
         {
             for root in start_menu_roots() {
-                collect_files(&root, 0, &mut by_title);
+                collect_files(&root, 0, &mut candidates);
             }
-            collect_app_paths(&mut by_title);
+            collect_app_paths(&mut candidates);
         }
 
-        let mut entries = merge_catalog_candidates(by_title.into_values().collect());
+        let mut entries = merge_catalog_candidates(candidates);
         entries.sort_by_key(|result| result.title.to_ascii_lowercase());
         entries.truncate(MAX_CATALOG_ENTRIES);
         Self { entries }
@@ -161,15 +161,31 @@ fn application_matches_query(result: &SearchResult, normalized_query: &str) -> b
 /// source path in `target` for launch behavior, but uses this resolved identity
 /// to merge App Paths, Start Menu, Desktop, and Everything application hits.
 pub(crate) fn canonical_application_key(result: &SearchResult) -> Option<String> {
-    if result.kind != ResultKind::Application {
+    if !is_mergeable_application_result(result) {
         return None;
     }
-    if let Some(identity) = result.id.strip_prefix("application:target:") {
-        if !identity.is_empty() {
-            return Some(identity.to_owned());
+    if let Some(target) = result.target.as_deref() {
+        if let Some(identity) = canonical_target_key(target) {
+            return Some(identity);
         }
     }
-    canonical_target_key(result.target.as_deref()?)
+    result
+        .id
+        .strip_prefix("application:target:")
+        .filter(|identity| !identity.is_empty())
+        .map(str::to_owned)
+}
+
+fn is_mergeable_application_result(result: &SearchResult) -> bool {
+    if result.kind == ResultKind::Application {
+        return true;
+    }
+    result.source == ResultSource::BuiltIn
+        && result.id.starts_with("system:")
+        && result
+            .target
+            .as_deref()
+            .is_some_and(is_bare_executable_target)
 }
 
 pub(crate) fn canonical_application_id(target: &str) -> Option<String> {
@@ -196,7 +212,61 @@ pub(crate) fn canonical_target_key(target: &str) -> Option<String> {
             });
         }
     }
+    if let Some(resolved) = resolve_bare_executable_path(target) {
+        return Some(normalize_windows_path(&resolved));
+    }
     Some(normalize_windows_path(target))
+}
+
+pub(crate) fn resolve_bare_executable_path(value: &str) -> Option<String> {
+    let value = value.trim().trim_matches('"');
+    if !is_bare_executable_target(value) {
+        return None;
+    }
+
+    #[cfg(windows)]
+    {
+        use windows::core::{PCWSTR, PWSTR};
+        use windows::Win32::Storage::FileSystem::SearchPathW;
+
+        let filename = value
+            .encode_utf16()
+            .chain(std::iter::once(0))
+            .collect::<Vec<_>>();
+        let mut buffer = vec![0_u16; 32_768];
+        let length = unsafe {
+            SearchPathW(
+                PCWSTR::null(),
+                PCWSTR(filename.as_ptr()),
+                PCWSTR::null(),
+                Some(&mut buffer),
+                Some(std::ptr::null_mut::<PWSTR>()),
+            )
+        };
+        if length == 0 || length as usize >= buffer.len() {
+            return None;
+        }
+        String::from_utf16(&buffer[..length as usize]).ok()
+    }
+
+    #[cfg(not(windows))]
+    {
+        None
+    }
+}
+
+fn is_bare_executable_target(value: &str) -> bool {
+    let value = value.trim().trim_matches('"');
+    !value.is_empty()
+        && !value.contains(['\\', '/'])
+        && matches!(
+            Path::new(value)
+                .extension()
+                .and_then(|extension| extension.to_str())
+                .map(|extension| extension.to_ascii_lowercase())
+                .as_deref(),
+            Some("exe") | Some("com") | Some("bat") | Some("cmd")
+        )
 }
 
 fn merge_catalog_candidates(results: Vec<SearchResult>) -> Vec<SearchResult> {
@@ -244,8 +314,12 @@ fn is_shortcut_path(value: &str) -> bool {
 fn normalize_windows_path(value: &str) -> String {
     let trimmed = value.trim().trim_matches('"');
     let normalized = trimmed.replace('/', "\\");
-    let normalized = normalized.trim_end_matches('\\');
-    normalize(normalized)
+    let normalized = normalized.trim_end_matches('\\').to_owned();
+    #[cfg(windows)]
+    let normalized = std::fs::canonicalize(&normalized)
+        .map(|path| path.to_string_lossy().replace('/', "\\"))
+        .unwrap_or(normalized);
+    normalize(&normalized)
 }
 
 #[cfg(windows)]
@@ -397,15 +471,15 @@ fn start_menu_roots() -> Vec<PathBuf> {
 }
 
 #[cfg(windows)]
-fn collect_files(root: &Path, depth: usize, by_title: &mut HashMap<String, SearchResult>) {
-    if depth > MAX_SCAN_DEPTH || by_title.len() >= MAX_CATALOG_ENTRIES {
+fn collect_files(root: &Path, depth: usize, candidates: &mut Vec<SearchResult>) {
+    if depth > MAX_SCAN_DEPTH || candidates.len() >= MAX_CATALOG_ENTRIES {
         return;
     }
     let Ok(entries) = std::fs::read_dir(root) else {
         return;
     };
     for entry in entries.flatten() {
-        if by_title.len() >= MAX_CATALOG_ENTRIES {
+        if candidates.len() >= MAX_CATALOG_ENTRIES {
             return;
         }
         let path = entry.path();
@@ -413,7 +487,7 @@ fn collect_files(root: &Path, depth: usize, by_title: &mut HashMap<String, Searc
             continue;
         };
         if file_type.is_dir() {
-            collect_files(&path, depth + 1, by_title);
+            collect_files(&path, depth + 1, candidates);
             continue;
         }
         if !file_type.is_file() || !is_application_file(&path) {
@@ -422,8 +496,7 @@ fn collect_files(root: &Path, depth: usize, by_title: &mut HashMap<String, Searc
         let Some(result) = application_result(path, "Start Menu") else {
             continue;
         };
-        let key = normalize(&result.title);
-        by_title.entry(key).or_insert(result);
+        candidates.push(result);
     }
 }
 
@@ -458,7 +531,7 @@ fn application_result(path: PathBuf, source: &str) -> Option<SearchResult> {
 }
 
 #[cfg(windows)]
-fn collect_app_paths(by_title: &mut HashMap<String, SearchResult>) {
+fn collect_app_paths(candidates: &mut Vec<SearchResult>) {
     use windows::core::{w, PCWSTR, PWSTR};
     use windows::Win32::Foundation::{ERROR_NO_MORE_ITEMS, ERROR_SUCCESS};
     use windows::Win32::System::Registry::{
@@ -466,11 +539,7 @@ fn collect_app_paths(by_title: &mut HashMap<String, SearchResult>) {
         HKEY_LOCAL_MACHINE, KEY_READ, REG_EXPAND_SZ, REG_SZ,
     };
 
-    unsafe fn collect_root(
-        root: HKEY,
-        subkey: PCWSTR,
-        by_title: &mut HashMap<String, SearchResult>,
-    ) {
+    unsafe fn collect_root(root: HKEY, subkey: PCWSTR, candidates: &mut Vec<SearchResult>) {
         let mut app_paths = HKEY::default();
         if RegOpenKeyExW(root, subkey, None, KEY_READ, &mut app_paths) != ERROR_SUCCESS {
             return;
@@ -498,9 +567,11 @@ fn collect_app_paths(by_title: &mut HashMap<String, SearchResult>) {
                 continue;
             }
             let key_name = String::from_utf16_lossy(&name[..name_len as usize]);
+            if candidates.len() >= MAX_CATALOG_ENTRIES {
+                break;
+            }
             if let Some((title, target)) = read_app_path(app_paths, &key_name) {
-                let key = normalize(&title);
-                by_title.entry(key).or_insert_with(|| SearchResult {
+                candidates.push(SearchResult {
                     id: canonical_application_id(&target)
                         .unwrap_or_else(|| format!("application:source:{}", normalize(&target))),
                     title,
@@ -568,12 +639,12 @@ fn collect_app_paths(by_title: &mut HashMap<String, SearchResult>) {
         collect_root(
             HKEY_CURRENT_USER,
             w!("Software\\Microsoft\\Windows\\CurrentVersion\\App Paths"),
-            by_title,
+            candidates,
         );
         collect_root(
             HKEY_LOCAL_MACHINE,
             w!("Software\\Microsoft\\Windows\\CurrentVersion\\App Paths"),
-            by_title,
+            candidates,
         );
     }
 }
@@ -584,10 +655,10 @@ fn start_menu_roots() -> Vec<PathBuf> {
 }
 
 #[cfg(not(windows))]
-fn collect_files(_root: &Path, _depth: usize, _by_title: &mut HashMap<String, SearchResult>) {}
+fn collect_files(_root: &Path, _depth: usize, _candidates: &mut Vec<SearchResult>) {}
 
 #[cfg(not(windows))]
-fn collect_app_paths(_by_title: &mut HashMap<String, SearchResult>) {}
+fn collect_app_paths(_candidates: &mut Vec<SearchResult>) {}
 
 #[allow(dead_code)]
 fn _keep_os_string_type_available(_: OsString) {}
@@ -595,9 +666,9 @@ fn _keep_os_string_type_available(_: OsString) {}
 #[cfg(test)]
 mod tests {
     use super::{
-        application_matches_query, canonical_application_id, canonical_target_key,
-        expand_percent_variables, extract_executable_target, is_executable_target,
-        ApplicationCatalog,
+        application_matches_query, canonical_application_id, canonical_application_key,
+        canonical_target_key, expand_percent_variables, extract_executable_target,
+        is_executable_target, merge_catalog_candidates, ApplicationCatalog,
     };
     use flux_core::{ResultKind, ResultSource, SearchResult};
 
@@ -613,6 +684,111 @@ mod tests {
             second.as_deref(),
             Some("c:\\program files\\google\\chrome\\chrome.exe")
         );
+    }
+
+    #[test]
+    fn canonical_target_wins_over_stale_application_id() {
+        let result = SearchResult {
+            id: String::from(r"application:target:c:\\old\\powershell.exe"),
+            title: String::from("PowerShell"),
+            subtitle: String::from("Application • App Paths"),
+            kind: ResultKind::Application,
+            source: ResultSource::ApplicationCatalog,
+            target: Some(String::from(r"C:\\new\\powershell.exe")),
+        };
+
+        assert_eq!(
+            canonical_application_key(&result).as_deref(),
+            Some(r"c:\\new\\powershell.exe")
+        );
+    }
+
+    #[test]
+    fn identical_real_power_shell_target_merges_system_and_app_path_results() {
+        let system = SearchResult {
+            id: String::from("system:powershell"),
+            title: String::from("PowerShell"),
+            subtitle: String::from("Windows PowerShell"),
+            kind: ResultKind::Command,
+            source: ResultSource::BuiltIn,
+            target: Some(String::from(
+                r"C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe",
+            )),
+        };
+        let app_path = SearchResult {
+            id: String::from(
+                r"application:target:c:\\windows\\system32\\windowspowershell\\v1.0\\powershell.exe",
+            ),
+            title: String::from("PowerShell"),
+            subtitle: String::from("Application • App Paths"),
+            kind: ResultKind::Application,
+            source: ResultSource::ApplicationCatalog,
+            target: Some(String::from(
+                r"C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe",
+            )),
+        };
+
+        assert_eq!(
+            canonical_application_key(&system),
+            canonical_application_key(&app_path)
+        );
+        let merged = merge_catalog_candidates(vec![system, app_path]);
+        assert_eq!(merged.len(), 1);
+        assert_eq!(merged[0].subtitle, "Application • App Paths");
+    }
+
+    #[test]
+    fn different_power_shell_executable_paths_remain_distinct() {
+        let windows_power_shell = SearchResult {
+            id: String::from(
+                r"application:target:c:\\windows\\system32\\windowspowershell\\v1.0\\powershell.exe",
+            ),
+            title: String::from("PowerShell"),
+            subtitle: String::from("Application • App Paths"),
+            kind: ResultKind::Application,
+            source: ResultSource::ApplicationCatalog,
+            target: Some(String::from(
+                r"C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe",
+            )),
+        };
+        let powershell_7 = SearchResult {
+            id: String::from(r"application:target:c:\\program files\\powershell\\7\\pwsh.exe"),
+            title: String::from("PowerShell 7"),
+            subtitle: String::from("Application • Start Menu"),
+            kind: ResultKind::Application,
+            source: ResultSource::ApplicationCatalog,
+            target: Some(String::from(r"C:\\Program Files\\PowerShell\\7\\pwsh.exe")),
+        };
+
+        let merged = merge_catalog_candidates(vec![windows_power_shell, powershell_7]);
+        assert_eq!(merged.len(), 2);
+    }
+
+    #[test]
+    fn same_executable_with_different_arguments_remains_distinct() {
+        let first = SearchResult {
+            id: String::from(
+                r"application:target:c:\\program files\\powershell\\7\\pwsh.exe|args:-nologo",
+            ),
+            title: String::from("PowerShell 7"),
+            subtitle: String::from("Application • Start Menu"),
+            kind: ResultKind::Application,
+            source: ResultSource::ApplicationCatalog,
+            target: Some(String::from(r"C:\\PowerShell.lnk")),
+        };
+        let second = SearchResult {
+            id: String::from(
+                r"application:target:c:\\program files\\powershell\\7\\pwsh.exe|args:-nologo -noprofile",
+            ),
+            title: String::from("PowerShell 7 No Profile"),
+            subtitle: String::from("Application • Start Menu"),
+            kind: ResultKind::Application,
+            source: ResultSource::ApplicationCatalog,
+            target: Some(String::from(r"C:\\PowerShell No Profile.lnk")),
+        };
+
+        let merged = merge_catalog_candidates(vec![first, second]);
+        assert_eq!(merged.len(), 2);
     }
 
     #[test]
