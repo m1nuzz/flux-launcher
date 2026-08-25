@@ -583,6 +583,14 @@ try {
             Start-Sleep -Milliseconds 700
             Save-Screenshot ("command-priority-{0}.png" -f $commandQuery)
         }
+        # Keep a real compact-name capture alongside the console priority frames.
+        # On runners without LM Studio files this still verifies the query path;
+        # developer machines can inspect the artifact against their indexed data.
+        $shell.SendKeys("^a")
+        $shell.SendKeys("{BACKSPACE}")
+        $shell.SendKeys("lmstudio")
+        Start-Sleep -Milliseconds 900
+        Save-Screenshot "compact-query-lmstudio.png"
         $commandPriorityProbe = $true
     }
     if ($CursorVisibilitySmoke) {
