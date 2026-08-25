@@ -616,7 +616,7 @@ if ($ActionBarSmoke) {
 }
 # The visual smoke uses the normal single-instance startup path. Its final cleanup
 # uses the production --shutdown handoff rather than terminating a native GUI process.
-$process = Start-Process -FilePath $Executable -WorkingDirectory (Split-Path -Parent $Executable) -PassThru -RedirectStandardOutput $stdoutPath -RedirectStandardError $stderrPath
+$process = Start-Process -FilePath $Executable -PassThru -RedirectStandardOutput $stdoutPath -RedirectStandardError $stderrPath
 try {
     Start-Sleep -Seconds 3
     $process.Refresh()
