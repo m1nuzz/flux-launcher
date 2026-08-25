@@ -95,6 +95,12 @@ public static class FluxWallpaper {
         int length = GetClassName(hwnd, buffer, buffer.Length);
         return length > 0 ? new string(buffer, 0, length) : "<unknown>";
     }
+    public static uint WindowProcessIdAtPoint(int x, int y) {
+        IntPtr hwnd = WindowFromPoint(new POINT { X = x, Y = y });
+        if (hwnd == IntPtr.Zero) return 0;
+        uint processId;
+        return GetWindowThreadProcessId(hwnd, out processId) == 0 ? 0 : processId;
+    }
     [DllImport("user32.dll", SetLastError = true)]
     public static extern bool EnumWindows(EnumWindowsProc callback, IntPtr lParam);
     [DllImport("user32.dll", SetLastError = true)]
@@ -582,26 +588,69 @@ try {
         if (![FluxWallpaper]::GetWindowRect($deactivationProbeHandle, [ref]$probeRect)) {
             throw "Deactivation smoke could not read the probe window rectangle."
         }
+        $launcherRect = New-Object FluxWallpaper+RECT
+        if (![FluxWallpaper]::GetWindowRect($launcherHandle, [ref]$launcherRect)) {
+            throw "Deactivation smoke could not read the launcher rectangle."
+        }
         $deactivationTraceBeforeCount = if (Test-Path $launchTracePath) { @(Get-Content $launchTracePath).Count } else { 0 }
         [FluxWallpaper]::SetForegroundWindow($launcherHandle) | Out-Null
         Start-Sleep -Milliseconds 250
         if (![FluxWallpaper]::IsWindowVisible($launcherHandle)) {
             throw "Deactivation smoke expected Flux to be visible before the outside click."
         }
-        $clickX = [int](($probeRect.Left + $probeRect.Right) / 2)
-        $clickY = [int](($probeRect.Top + $probeRect.Bottom) / 2)
+        # The probe covers the virtual screen, so its center can be underneath the
+        # launcher itself. Select a point only after WindowFromPoint proves that the
+        # actual top-level owner is the probe process and that it is outside Flux.
+        $probeProcessId = [uint32]$probeProcess.Id
+        $candidatePoints = @(
+            [pscustomobject]@{ X = [int]($probeRect.Left + 8); Y = [int]($probeRect.Top + 8) },
+            [pscustomobject]@{ X = [int]($probeRect.Right - 8); Y = [int]($probeRect.Top + 8) },
+            [pscustomobject]@{ X = [int]($probeRect.Left + 8); Y = [int]($probeRect.Bottom - 32) },
+            [pscustomobject]@{ X = [int]($probeRect.Right - 8); Y = [int]($probeRect.Bottom - 32) },
+            [pscustomobject]@{ X = [int]($probeRect.Left + 20); Y = [int](($probeRect.Top + $probeRect.Bottom) / 2) },
+            [pscustomobject]@{ X = [int]($probeRect.Right - 20); Y = [int](($probeRect.Top + $probeRect.Bottom) / 2) },
+            [pscustomobject]@{ X = [int](($probeRect.Left + $probeRect.Right) / 2); Y = [int]($probeRect.Top + 20) },
+            [pscustomobject]@{ X = [int](($probeRect.Left + $probeRect.Right) / 2); Y = [int]($probeRect.Bottom - 40) }
+        )
+        $outsidePoint = $null
+        foreach ($candidate in $candidatePoints) {
+            $insideLauncher = $candidate.X -ge $launcherRect.Left -and
+                $candidate.X -lt $launcherRect.Right -and
+                $candidate.Y -ge $launcherRect.Top -and
+                $candidate.Y -lt $launcherRect.Bottom
+            $ownerProcessId = [FluxWallpaper]::WindowProcessIdAtPoint($candidate.X, $candidate.Y)
+            Write-Host "Deactivation candidate x=$($candidate.X) y=$($candidate.Y) owner_pid=$ownerProcessId inside_launcher=$insideLauncher"
+            if (!$insideLauncher -and $ownerProcessId -eq $probeProcessId) {
+                $outsidePoint = $candidate
+                break
+            }
+        }
+        if ($null -eq $outsidePoint) {
+            throw "Deactivation smoke could not find a probe-owned point outside the launcher."
+        }
+        $clickX = [int]$outsidePoint.X
+        $clickY = [int]$outsidePoint.Y
         [FluxWallpaper]::SetCursorPos($clickX, $clickY) | Out-Null
         [FluxWallpaper]::mouse_event(0x0002, 0, 0, 0, [UIntPtr]::Zero)
         [FluxWallpaper]::mouse_event(0x0004, 0, 0, 0, [UIntPtr]::Zero)
-        Start-Sleep -Milliseconds 700
-        $deactivationHiddenAfterClick = ![FluxWallpaper]::IsWindowVisible($launcherHandle)
-        $deactivationForegroundAfterClick = [FluxWallpaper]::GetForegroundWindow() -ne $launcherHandle
-        $deactivationTraceLines = if (Test-Path $launchTracePath) {
-            @(Get-Content $launchTracePath | Select-Object -Skip $deactivationTraceBeforeCount)
-        } else {
-            @()
+        $deactivationEvent = $null
+        $deactivationTraceLines = @()
+        for ($sample = 0; $sample -lt 20; $sample++) {
+            $deactivationHiddenAfterClick = ![FluxWallpaper]::IsWindowVisible($launcherHandle)
+            $deactivationForegroundAfterClick = [FluxWallpaper]::GetForegroundWindow() -ne $launcherHandle
+            $deactivationTraceLines = if (Test-Path $launchTracePath) {
+                @(Get-Content $launchTracePath | Select-Object -Skip $deactivationTraceBeforeCount)
+            } else {
+                @()
+            }
+            $deactivationEvent = $deactivationTraceLines |
+                Where-Object { $_ -match "`twindow-deactivated$" } |
+                Select-Object -First 1
+            if ($deactivationHiddenAfterClick -and $deactivationForegroundAfterClick -and $deactivationEvent) {
+                break
+            }
+            Start-Sleep -Milliseconds 100
         }
-        $deactivationEvent = $deactivationTraceLines | Where-Object { $_ -match "`twindow-deactivated$" } | Select-Object -First 1
         $deactivationClickProbe =
             $deactivationHiddenAfterClick -and
             $deactivationForegroundAfterClick -and
