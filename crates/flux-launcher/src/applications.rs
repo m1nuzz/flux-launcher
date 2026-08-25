@@ -226,7 +226,7 @@ pub(crate) fn resolve_bare_executable_path(value: &str) -> Option<String> {
 
     #[cfg(windows)]
     {
-        use windows::core::{PCWSTR, PWSTR};
+        use windows::core::PCWSTR;
         use windows::Win32::Storage::FileSystem::SearchPathW;
 
         let filename = value
@@ -240,7 +240,7 @@ pub(crate) fn resolve_bare_executable_path(value: &str) -> Option<String> {
                 PCWSTR(filename.as_ptr()),
                 PCWSTR::null(),
                 Some(&mut buffer),
-                Some(std::ptr::null_mut::<PWSTR>()),
+                None,
             )
         };
         if length == 0 || length as usize >= buffer.len() {
