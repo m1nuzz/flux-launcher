@@ -1340,15 +1340,26 @@ try {
         if (![FluxWallpaper]::IsWindowVisible($launcherHandle)) {
             # A previous outside click can legitimately leave the launcher hidden;
             # restore it through the real bind before testing the next hide toggle.
-            [FluxWallpaper]::keybd_event(0x12, 0, 0, [UIntPtr]::Zero)
-            [FluxWallpaper]::keybd_event(0x20, 0, 0, [UIntPtr]::Zero)
-            [FluxWallpaper]::keybd_event(0x20, 0, 2, [UIntPtr]::Zero)
-            [FluxWallpaper]::keybd_event(0x12, 0, 2, [UIntPtr]::Zero)
-            Start-Sleep -Milliseconds 800
+            for ($restoreAttempt = 0; $restoreAttempt -lt 2 -and ![FluxWallpaper]::IsWindowVisible($launcherHandle); $restoreAttempt++) {
+                [FluxWallpaper]::keybd_event(0x12, 0, 0, [UIntPtr]::Zero)
+                [FluxWallpaper]::keybd_event(0x20, 0, 0, [UIntPtr]::Zero)
+                [FluxWallpaper]::keybd_event(0x20, 0, 2, [UIntPtr]::Zero)
+                [FluxWallpaper]::keybd_event(0x12, 0, 2, [UIntPtr]::Zero)
+                for ($visibleAttempt = 0; $visibleAttempt -lt 20 -and ![FluxWallpaper]::IsWindowVisible($launcherHandle); $visibleAttempt++) {
+                    Start-Sleep -Milliseconds 100
+                }
+            }
         }
-        [FluxWallpaper]::SetForegroundWindow($launcherHandle) | Out-Null
-        Start-Sleep -Milliseconds 250
-        if (![FluxWallpaper]::IsWindowVisible($launcherHandle) -or [FluxWallpaper]::GetForegroundWindow() -ne $launcherHandle) {
+        $foregroundReady = $false
+        for ($foregroundAttempt = 0; $foregroundAttempt -lt 20; $foregroundAttempt++) {
+            Set-ForegroundWindowGated $launcherHandle | Out-Null
+            Start-Sleep -Milliseconds 100
+            if ([FluxWallpaper]::IsWindowVisible($launcherHandle) -and [FluxWallpaper]::GetForegroundWindow() -eq $launcherHandle) {
+                $foregroundReady = $true
+                break
+            }
+        }
+        if (!$foregroundReady) {
             throw "Repeated Alt+Space cycle $cycle could not establish a visible foreground launcher before hide."
         }
         [FluxWallpaper]::SendMessage($launcherHandle, $wmHotkey, [UIntPtr]::Zero, [IntPtr]::Zero) | Out-Null
