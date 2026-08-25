@@ -870,10 +870,13 @@ try {
         $shell.SendKeys("{BACKSPACE}")
         Start-Sleep -Milliseconds 350
     }
-    # Use a deterministic built-in Windows target for the launch/hide ordering probe;
-    # Recycle Bin commands are covered separately and the first one intentionally
-    # opens a confirmation mode instead of dispatching a shell launch.
-    $enterHideQuery = "wifi"
+    # Use the unique shortcut fixture created above for the launch/hide ordering
+    # probe. A generic query such as `wifi` can return a different provider result
+    # in front of the built-in target, so Home/Down would no longer prove the
+    # real shell-launch path deterministically. Recycle Bin commands are covered
+    # separately and the first one intentionally opens confirmation mode instead
+    # of dispatching a shell launch.
+    $enterHideQuery = "zq7launchprobe"
     $navigationProbeQuery = if ($NavigationCycles -gt 0 -and $NavigationQuery.Trim().Length -gt 0) {
         $NavigationQuery.Trim()
     } else {
