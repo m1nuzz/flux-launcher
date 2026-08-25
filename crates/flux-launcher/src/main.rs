@@ -71,6 +71,7 @@ const PLUGIN_MIN_QUERY_LEN: usize = 2;
 const MAX_VISIBLE_RESULTS: usize = 16;
 
 static GOOGLE_ICON_RGBA: OnceLock<Option<Vec<u8>>> = OnceLock::new();
+static OBSIDIAN_ICON_RGBA: OnceLock<Option<Vec<u8>>> = OnceLock::new();
 
 fn should_claim_single_instance(mode: Option<&std::ffi::OsStr>) -> bool {
     !matches!(
@@ -851,37 +852,52 @@ fn execute_result_action(result: &SearchResult, action: &ActionKind) -> bool {
     }
 }
 
+fn decode_bundled_icon(bytes: &[u8]) -> Option<Vec<u8>> {
+    const ICON_SIZE: usize = 32;
+    let decoder = png::Decoder::new(std::io::Cursor::new(bytes));
+    let Ok(mut reader) = decoder.read_info() else {
+        return None;
+    };
+    let mut source = vec![0; reader.output_buffer_size()];
+    let Ok(info) = reader.next_frame(&mut source) else {
+        return None;
+    };
+    if info.color_type != png::ColorType::Rgba || info.bit_depth != png::BitDepth::Eight {
+        return None;
+    }
+
+    let source = &source[..info.buffer_size()];
+    let mut icon = vec![0_u8; ICON_SIZE * ICON_SIZE * 4];
+    for y in 0..ICON_SIZE {
+        let source_y = y * info.height as usize / ICON_SIZE;
+        for x in 0..ICON_SIZE {
+            let source_x = x * info.width as usize / ICON_SIZE;
+            let source_index = (source_y * info.width as usize + source_x) * 4;
+            let target_index = (y * ICON_SIZE + x) * 4;
+            icon[target_index..target_index + 4]
+                .copy_from_slice(&source[source_index..source_index + 4]);
+        }
+    }
+    Some(icon)
+}
+
+fn bundled_icon_rgba(result_id: &str) -> Option<Vec<u8>> {
+    match result_id {
+        "builtin:google-search" => google_icon_rgba(),
+        _ if result_id.starts_with("builtin:obsidian:") => obsidian_icon_rgba(),
+        _ => None,
+    }
+}
+
 fn google_icon_rgba() -> Option<Vec<u8>> {
     GOOGLE_ICON_RGBA
-        .get_or_init(|| {
-            const ICON_SIZE: usize = 32;
-            let decoder =
-                png::Decoder::new(std::io::Cursor::new(include_bytes!("../assets/google.png")));
-            let Ok(mut reader) = decoder.read_info() else {
-                return None;
-            };
-            let mut source = vec![0; reader.output_buffer_size()];
-            let Ok(info) = reader.next_frame(&mut source) else {
-                return None;
-            };
-            if info.color_type != png::ColorType::Rgba || info.bit_depth != png::BitDepth::Eight {
-                return None;
-            }
+        .get_or_init(|| decode_bundled_icon(include_bytes!("../assets/google.png")))
+        .clone()
+}
 
-            let source = &source[..info.buffer_size()];
-            let mut icon = vec![0_u8; ICON_SIZE * ICON_SIZE * 4];
-            for y in 0..ICON_SIZE {
-                let source_y = y * info.height as usize / ICON_SIZE;
-                for x in 0..ICON_SIZE {
-                    let source_x = x * info.width as usize / ICON_SIZE;
-                    let source_index = (source_y * info.width as usize + source_x) * 4;
-                    let target_index = (y * ICON_SIZE + x) * 4;
-                    icon[target_index..target_index + 4]
-                        .copy_from_slice(&source[source_index..source_index + 4]);
-                }
-            }
-            Some(icon)
-        })
+fn obsidian_icon_rgba() -> Option<Vec<u8>> {
+    OBSIDIAN_ICON_RGBA
+        .get_or_init(|| decode_bundled_icon(include_bytes!("../assets/obsidian.png")))
         .clone()
 }
 
@@ -1944,11 +1960,7 @@ fn result_row(
         _ if subtitle.contains("Application") => (String::from("◉"), LAUNCHER_FONT_FAMILY),
         _ => (String::from("▣"), LAUNCHER_FONT_FAMILY),
     };
-    let icon = if id == "builtin:google-search" {
-        google_icon_rgba()
-    } else {
-        target.as_deref().and_then(request_shell_icon)
-    };
+    let icon = bundled_icon_rgba(&id).or_else(|| target.as_deref().and_then(request_shell_icon));
     let icon_element = Element::leaf()
         .widget(ResultIconView::new(
             target.clone(),
@@ -4914,13 +4926,14 @@ fn main() {
 #[cfg(test)]
 mod tests {
     use super::{
-        actions_for_result, dimension_from_slider, dimension_slider_fraction, display_title,
-        format_bytes, format_update_progress, google_icon_rgba, history_cursor_step,
+        actions_for_result, bundled_icon_rgba, dimension_from_slider, dimension_slider_fraction,
+        display_title, format_bytes, format_update_progress, google_icon_rgba, history_cursor_step,
         hover_position_changed, icon_completion_generation_changed, is_run_as_admin_key,
         is_shutdown_mode, launcher_window_geometry, launcher_window_geometry_with_sizes,
-        merge_application_duplicates, normalize_everything_query, parse_dimension_input,
-        parse_internet_shortcut_icon_location, preserve_everything_file_order, quoted_result_path,
-        relaunch_mode_for_auto_install, resolve_shortcut_icon_path, should_claim_single_instance,
+        merge_application_duplicates, normalize_everything_query, obsidian_icon_rgba,
+        parse_dimension_input, parse_internet_shortcut_icon_location,
+        preserve_everything_file_order, quoted_result_path, relaunch_mode_for_auto_install,
+        resolve_shortcut_icon_path, should_claim_single_instance,
         should_publish_initial_query_results, should_show_launcher, ProviderResults,
         ResultIconView, COMPACT_WINDOW_HEIGHT, LAUNCHER_FONT_FAMILY, MAX_LAUNCHER_HEIGHT,
         MAX_LAUNCHER_WIDTH, MIN_LAUNCHER_HEIGHT, MIN_LAUNCHER_WIDTH,
@@ -4978,6 +4991,21 @@ mod tests {
         let icon = google_icon_rgba().expect("bundled Google icon should decode");
         assert_eq!(icon.len(), 32 * 32 * 4);
         assert!(icon.chunks_exact(4).any(|pixel| pixel[3] > 0));
+    }
+
+    #[test]
+    fn bundled_obsidian_icon_decodes_to_32_pixel_rgba_bitmap() {
+        let icon = obsidian_icon_rgba().expect("bundled Obsidian icon should decode");
+        assert_eq!(icon.len(), 32 * 32 * 4);
+        assert!(icon.chunks_exact(4).any(|pixel| pixel[3] > 0));
+    }
+
+    #[test]
+    fn obsidian_result_uses_the_bundled_icon() {
+        let icon = bundled_icon_rgba("builtin:obsidian:notes/readme.md")
+            .expect("Obsidian result should use the bundled icon");
+        assert_eq!(icon.len(), 32 * 32 * 4);
+        assert!(bundled_icon_rgba("everything:file:readme.md").is_none());
     }
 
     #[test]
