@@ -25,6 +25,7 @@ param(
     [switch]$CtrlCSmoke,
     [switch]$IdlePerformanceSmoke,
     [switch]$ResourceProfileSmoke,
+    [int]$ResourceProfileCycles = 32,
     [string]$NavigationQuery = "wab",
 
     [int]$NavigationCycles = 0,
@@ -637,7 +638,7 @@ try {
         # and shell-icon results. The workload is intentionally bounded and records
         # process counters instead of treating allocator high-water marks as a leak.
         $profileQueries = @("wab", "ext:zip", ".png", "lmstudio", "ob ornith")
-        $profileCycles = 32
+        $profileCycles = [Math]::Max(1, $ResourceProfileCycles)
         $profileStart = Get-MemorySnapshot $process.Id
         $profileCpuStart = Get-CpuTimeMilliseconds $process.Id
         $profilePeakPrivate = [int64]$profileStart.PrivateBytes

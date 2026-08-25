@@ -83,6 +83,11 @@ on:
         required: false
         default: false
         type: boolean
+      resource_profile_cycles:
+        description: "Number of repeated query cycles for resource profiling"
+        required: false
+        default: "32"
+        type: string
       monitor_preference_smoke:
         description: "Run Primary/Cursor/Foreground monitor placement smoke"
         required: false
@@ -175,6 +180,7 @@ jobs:
           }
           if ("${{ inputs.resource_profile_smoke }}" -eq "true") {
             $captureParams.ResourceProfileSmoke = $true
+            $captureParams.ResourceProfileCycles = [int]"${{ inputs.resource_profile_cycles }}"
           }
           $captureParams.IdlePerformanceSmoke = $true
           $captureParams.FocusToggleSmoke = $true
