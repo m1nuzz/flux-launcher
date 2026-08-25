@@ -593,9 +593,19 @@ if ($ActionBarSmoke) {
 } else {
     Remove-Item Env:FLUX_SMOKE_ACTION_BAR -ErrorAction SilentlyContinue
 }
+# The visual smoke owns its launcher process. Do not let a stale tray instance from a
+# reused hosted desktop make Start-Process return a short-lived handoff-only process;
+# single-instance behavior is validated independently by the Rust/API tests.
+$env:FLUX_DISABLE_SINGLE_INSTANCE = "1"
 $process = Start-Process -FilePath $Executable -PassThru -RedirectStandardOutput $stdoutPath -RedirectStandardError $stderrPath
 try {
     Start-Sleep -Seconds 3
+    $process.Refresh()
+    if ($process.HasExited) {
+        $startupExitCode = $process.ExitCode
+        $startupStderr = if (Test-Path $stderrPath) { Get-Content $stderrPath -Raw } else { "" }
+        throw "Flux launcher exited before startup smoke completed: pid=$($process.Id) exit_code=$startupExitCode stderr=[$startupStderr]"
+    }
     $newEverythingGuideWindows = @(
         Get-Process | Where-Object {
             $_.MainWindowTitle -like "Command Line Options - Everything*" -and
