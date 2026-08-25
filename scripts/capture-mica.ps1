@@ -173,7 +173,7 @@ function Assert-ProcessAlive([System.Diagnostics.Process]$Process, [string]$Cont
     try {
         $Process.Refresh()
         if ($Process.HasExited) {
-            throw "Flux process exited unexpectedly during $Context: pid=$($Process.Id) $(Get-ProcessExitCodeText $Process)"
+            throw "Flux process exited unexpectedly during ${Context}: pid=$($Process.Id) $(Get-ProcessExitCodeText $Process)"
         }
     }
     catch {
