@@ -2564,12 +2564,11 @@ fn main() {
     // Keep the empty search strip and the results palette intrinsically sized. A
     // full-height column plus a weighted spacer made the compact state look too
     // tall and left an oversized gap between the last result and the footer.
-    // Keep the compact Search baseline visually balanced: the old 10-DIP top
-    // inset made the empty strip look pushed down. Move that space below the
-    // control while preserving the same total vertical padding.
+    // Keep the compact Search baseline genuinely centered: equal vertical
+    // insets avoid moving the empty-state control toward either edge.
     let launcher_content = Element::col()
         .width_match()
-        .padding_edges(10, 4, 10, 10)
+        .padding_edges(10, 7, 10, 7)
         .spacing(4)
         .child(search_box)
         .child(result_list)
