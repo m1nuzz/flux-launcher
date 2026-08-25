@@ -85,6 +85,16 @@ public static class FluxWallpaper {
     [DllImport("user32.dll", SetLastError = true)]
     public static extern IntPtr GetForegroundWindow();
     [DllImport("user32.dll", SetLastError = true)]
+    public static extern IntPtr GetAncestor(IntPtr hWnd, uint flags);
+    [DllImport("user32.dll", SetLastError = true)]
+    public static extern bool IsWindow(IntPtr hWnd);
+    [DllImport("user32.dll", SetLastError = true)]
+    public static extern bool SetWindowPos(IntPtr hWnd, IntPtr hWndInsertAfter, int x, int y, int cx, int cy, uint flags);
+    [DllImport("kernel32.dll", SetLastError = true)]
+    public static extern uint GetCurrentThreadId();
+    [DllImport("user32.dll", SetLastError = true)]
+    public static extern bool AttachThreadInput(uint idAttach, uint idAttachTo, bool fAttach);
+    [DllImport("user32.dll", SetLastError = true)]
     public static extern IntPtr WindowFromPoint(POINT point);
     [DllImport("user32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
     public static extern int GetClassName(IntPtr hWnd, char[] className, int maxCount);
@@ -206,6 +216,150 @@ function Save-Screenshot([string]$FileName) {
         $graphics.Dispose()
         $bitmap.Dispose()
     }
+}
+
+function Get-RootWindowProcessId([IntPtr]$Handle) {
+    if ($Handle -eq [IntPtr]::Zero -or ![FluxWallpaper]::IsWindow($Handle)) {
+        return [uint32]0
+    }
+    $root = [FluxWallpaper]::GetAncestor($Handle, 2)
+    if ($root -eq [IntPtr]::Zero) {
+        $root = $Handle
+    }
+    [uint32]$processId = 0
+    [FluxWallpaper]::GetWindowThreadProcessId($root, [ref]$processId) | Out-Null
+    return $processId
+}
+
+function Get-PointWindowSnapshot([int]$X, [int]$Y) {
+    $point = New-Object FluxWallpaper+POINT
+    $point.X = $X
+    $point.Y = $Y
+    $window = [FluxWallpaper]::WindowFromPoint($point)
+    $root = if ($window -ne [IntPtr]::Zero) {
+        [FluxWallpaper]::GetAncestor($window, 2)
+    } else {
+        [IntPtr]::Zero
+    }
+    if ($root -eq [IntPtr]::Zero) { $root = $window }
+    [uint32]$processId = 0
+    if ($root -ne [IntPtr]::Zero) {
+        [FluxWallpaper]::GetWindowThreadProcessId($root, [ref]$processId) | Out-Null
+    }
+    [ordered]@{
+        X = $X
+        Y = $Y
+        WindowHandle = $window.ToInt64()
+        RootHandle = $root.ToInt64()
+        RootProcessId = $processId
+        WindowClass = [FluxWallpaper]::WindowClassAtPoint($X, $Y)
+    }
+}
+
+function Find-ExposedProbePoint([FluxWallpaper+RECT]$Rect, [uint32]$ExpectedProcessId) {
+    $width = [Math]::Max(1, $Rect.Right - $Rect.Left)
+    $height = [Math]::Max(1, $Rect.Bottom - $Rect.Top)
+    $insetX = [Math]::Max(20, [Math]::Min(140, [int]($width / 4)))
+    $insetY = [Math]::Max(20, [Math]::Min(140, [int]($height / 4)))
+    $points = @(
+        [System.Drawing.Point]::new($Rect.Left + $insetX, $Rect.Top + $insetY),
+        [System.Drawing.Point]::new([int](($Rect.Left + $Rect.Right) / 2), [int](($Rect.Top + $Rect.Bottom) / 2)),
+        [System.Drawing.Point]::new($Rect.Right - $insetX - 1, $Rect.Top + $insetY),
+        [System.Drawing.Point]::new($Rect.Left + $insetX, $Rect.Bottom - $insetY - 1),
+        [System.Drawing.Point]::new($Rect.Right - $insetX - 1, $Rect.Bottom - $insetY - 1)
+    )
+    $seen = @{}
+    foreach ($point in $points) {
+        $key = "{0}:{1}" -f $point.X, $point.Y
+        if ($seen.ContainsKey($key)) { continue }
+        $seen[$key] = $true
+        $snapshot = Get-PointWindowSnapshot $point.X $point.Y
+        if ($snapshot.RootProcessId -eq $ExpectedProcessId) {
+            return $snapshot
+        }
+    }
+    return $null
+}
+
+function Set-ForegroundWindowGated([IntPtr]$Handle) {
+    [uint32]$targetProcessId = 0
+    $targetThread = [FluxWallpaper]::GetWindowThreadProcessId($Handle, [ref]$targetProcessId)
+    $currentThread = [FluxWallpaper]::GetCurrentThreadId()
+    $foreground = [FluxWallpaper]::GetForegroundWindow()
+    [uint32]$foregroundProcessId = 0
+    $foregroundThread = if ($foreground -ne [IntPtr]::Zero) {
+        [FluxWallpaper]::GetWindowThreadProcessId($foreground, [ref]$foregroundProcessId)
+    } else { 0 }
+    $attachedThreads = @()
+    try {
+        if ($foregroundThread -ne 0 -and $foregroundThread -ne $currentThread) {
+            [FluxWallpaper]::AttachThreadInput($currentThread, $foregroundThread, $true) | Out-Null
+            $attachedThreads += $foregroundThread
+        }
+        if ($targetThread -ne 0 -and
+            $targetThread -ne $currentThread -and
+            $attachedThreads -notcontains $targetThread) {
+            [FluxWallpaper]::AttachThreadInput($currentThread, $targetThread, $true) | Out-Null
+            $attachedThreads += $targetThread
+        }
+        $result = [FluxWallpaper]::SetForegroundWindow($Handle)
+        [FluxWallpaper]::SetFocus($Handle) | Out-Null
+        return [bool]$result
+    }
+    finally {
+        for ($index = $attachedThreads.Count - 1; $index -ge 0; $index--) {
+            [FluxWallpaper]::AttachThreadInput($currentThread, $attachedThreads[$index], $false) | Out-Null
+        }
+    }
+}
+
+function Write-DeactivationFailureDiagnostics([string]$Reason) {
+    $foregroundHandle = [FluxWallpaper]::GetForegroundWindow()
+    $foregroundRoot = if ($foregroundHandle -ne [IntPtr]::Zero) {
+        [FluxWallpaper]::GetAncestor($foregroundHandle, 2)
+    } else {
+        [IntPtr]::Zero
+    }
+    if ($foregroundRoot -eq [IntPtr]::Zero) { $foregroundRoot = $foregroundHandle }
+    $state = [ordered]@{
+        Reason = $Reason
+        Launcher = [ordered]@{
+            ProcessId = if ($null -ne $process) { $process.Id } else { $null }
+            Handle = if ($null -ne $launcherHandle) { $launcherHandle.ToInt64() } else { 0 }
+            Visible = if ($null -ne $launcherHandle) { [FluxWallpaper]::IsWindowVisible($launcherHandle) } else { $false }
+        }
+        Probe = [ordered]@{
+            ProcessId = if ($null -ne $probeProcess) { $probeProcess.Id } else { $null }
+            Handle = if ($null -ne $deactivationProbeHandle) { $deactivationProbeHandle.ToInt64() } else { 0 }
+            Visible = if ($null -ne $deactivationProbeHandle) { [FluxWallpaper]::IsWindowVisible($deactivationProbeHandle) } else { $false }
+        }
+        Foreground = [ordered]@{
+            Handle = $foregroundHandle.ToInt64()
+            RootHandle = $foregroundRoot.ToInt64()
+            RootProcessId = Get-RootWindowProcessId $foregroundHandle
+        }
+        ClickPoint = if ($null -ne $deactivationClickPoint) {
+            [ordered]@{ X = $deactivationClickPoint.X; Y = $deactivationClickPoint.Y }
+        } else { $null }
+        PreClickHitTest = $deactivationPreClickPoint
+        PostClickHitTest = if ($null -ne $deactivationClickPoint) {
+            Get-PointWindowSnapshot $deactivationClickPoint.X $deactivationClickPoint.Y
+        } else { $null }
+        TraceBaselineLineCount = $deactivationTraceBeforeCount
+        TraceLinesAfterBaseline = @($deactivationTraceLines)
+        Samples = @($deactivationSamples)
+    }
+    try {
+        $state | ConvertTo-Json -Depth 10 | Set-Content -Encoding utf8 $deactivationDiagnosticsPath
+    } catch {
+        Write-Warning "Could not write deactivation diagnostics: $($_.Exception.Message)"
+    }
+    try {
+        Save-Screenshot $deactivationFailureScreenshot
+    } catch {
+        Write-Warning "Could not save deactivation failure screenshot: $($_.Exception.Message)"
+    }
+    return $deactivationDiagnosticsPath
 }
 
 function Compare-ScreenshotRegion(
@@ -420,6 +574,13 @@ $env:FLUX_ICON_PROBE_FILE = $iconProbePath
 $legacyFlowPluginRoot = Join-Path $env:APPDATA "FluxLauncher\Plugins\NativeFlowFixture"
 $legacyFlowPluginBackupRoot = Join-Path $env:TEMP ("FluxLauncher-NativeFlowFixture.compact-smoke-disabled-{0}" -f $PID)
 $legacyFlowPluginWasDisabled = $false
+$deactivationDiagnosticsPath = Join-Path $OutputDirectory "deactivation-smoke-state.json"
+$deactivationFailureScreenshot = "deactivation-smoke-failed.png"
+$deactivationSamples = @()
+$deactivationClickPoint = $null
+$deactivationPreClickPoint = $null
+$deactivationProbeWasTopmost = $false
+$deactivationProbeTopmostChanged = $false
 if ($CommandPrioritySmoke -and (Test-Path $legacyFlowPluginRoot)) {
     # The workflow's legacy fixture answers every query. Keep it out of the
     # compact-name frame so the screenshot proves ApplicationCatalog matching.
@@ -554,80 +715,180 @@ try {
         [FluxWallpaper]::SetForegroundWindow($launcherHandle) | Out-Null
     }
     if ($DeactivationClickSmoke) {
-        $probeProcess.Refresh()
-        $deactivationProbeHandle = $probeProcess.MainWindowHandle
-        if ($deactivationProbeHandle -eq [IntPtr]::Zero) {
-            $deactivationProbeHandle = [FluxWallpaper]::FindVisibleWindowByProcessId([uint32]$probeProcess.Id)
-        }
-        if ($deactivationProbeHandle -eq [IntPtr]::Zero) {
-            throw "Deactivation smoke could not find the deterministic probe window."
-        }
-        $probeRect = New-Object FluxWallpaper+RECT
-        if (![FluxWallpaper]::GetWindowRect($deactivationProbeHandle, [ref]$probeRect)) {
-            throw "Deactivation smoke could not read the probe window rectangle."
-        }
-        $deactivationTraceBeforeCount = if (Test-Path $launchTracePath) { @(Get-Content $launchTracePath).Count } else { 0 }
-        [FluxWallpaper]::SetForegroundWindow($launcherHandle) | Out-Null
-        Start-Sleep -Milliseconds 250
-        if (![FluxWallpaper]::IsWindowVisible($launcherHandle)) {
-            throw "Deactivation smoke expected Flux to be visible before the outside click."
-        }
-        $clickX = [int](($probeRect.Left + $probeRect.Right) / 2)
-        $clickY = [int](($probeRect.Top + $probeRect.Bottom) / 2)
-        [FluxWallpaper]::SetCursorPos($clickX, $clickY) | Out-Null
-        [FluxWallpaper]::mouse_event(0x0002, 0, 0, 0, [UIntPtr]::Zero)
-        [FluxWallpaper]::mouse_event(0x0004, 0, 0, 0, [UIntPtr]::Zero)
-        Start-Sleep -Milliseconds 200
-        $deactivationHiddenAfterClick = $false
-        $deactivationForegroundAfterClick = $false
+        $deactivationTraceLines = @()
         $deactivationEvent = $null
-        # The native activation transition can be delayed by the Windows message
-        # queue in hosted desktops. Keep this bounded, but allow the callback and
-        # visibility transition to arrive before declaring a regression.
-        for ($attempt = 0; $attempt -lt 80; $attempt++) {
-            $deactivationHiddenAfterClick = ![FluxWallpaper]::IsWindowVisible($launcherHandle)
-            $deactivationForegroundAfterClick = [FluxWallpaper]::GetForegroundWindow() -ne $launcherHandle
-            $deactivationTraceLines = if (Test-Path $launchTracePath) {
-                @(Get-Content $launchTracePath | Select-Object -Skip $deactivationTraceBeforeCount)
-            } else {
-                @()
+        $deactivationForegroundProcessId = [uint32]0
+        $deactivationForegroundHandle = [IntPtr]::Zero
+        $deactivationProbeHandle = [IntPtr]::Zero
+        $topmostInsertAfter = [IntPtr](-1)
+        $notTopmostInsertAfter = [IntPtr](-2)
+        $swpNoMoveNoSizeNoActivate = 0x0013
+        try {
+            $probeProcess.Refresh()
+            $deactivationProbeHandle = $probeProcess.MainWindowHandle
+            if ($deactivationProbeHandle -eq [IntPtr]::Zero) {
+                $deactivationProbeHandle = [FluxWallpaper]::FindVisibleWindowByProcessId([uint32]$probeProcess.Id)
             }
-            $deactivationEvent = $deactivationTraceLines | Where-Object { $_ -match "`twindow-deactivated$" } | Select-Object -First 1
-            if ($deactivationHiddenAfterClick -and
+            if ($deactivationProbeHandle -eq [IntPtr]::Zero -or ![FluxWallpaper]::IsWindow($deactivationProbeHandle)) {
+                throw "Deactivation smoke setup failed: could not find a valid deterministic probe window."
+            }
+            if (![FluxWallpaper]::IsWindowVisible($deactivationProbeHandle)) {
+                throw "Deactivation smoke setup failed: deterministic probe window is not visible."
+            }
+            $probeExStyle = [FluxWallpaper]::GetWindowLongPtr($deactivationProbeHandle, -20).ToInt64()
+            $deactivationProbeWasTopmost = ($probeExStyle -band 0x00000008) -ne 0
+            $probeRect = New-Object FluxWallpaper+RECT
+            if (![FluxWallpaper]::GetWindowRect($deactivationProbeHandle, [ref]$probeRect)) {
+                throw "Deactivation smoke setup failed: could not read the probe window rectangle."
+            }
+
+            # Expose the probe without activating it. The click must hit this native
+            # window after Flux is made foreground; otherwise the smoke would test the
+            # runner's z-order rather than Flux deactivation.
+            if (![FluxWallpaper]::SetWindowPos(
+                    $deactivationProbeHandle,
+                    $topmostInsertAfter,
+                    0,
+                    0,
+                    0,
+                    0,
+                    $swpNoMoveNoSizeNoActivate)) {
+                throw "Deactivation smoke setup failed: could not expose the probe without activation."
+            }
+            $deactivationProbeTopmostChanged = $true
+            Start-Sleep -Milliseconds 250
+
+            $foregroundRequestSucceeded = Set-ForegroundWindowGated $launcherHandle
+            $launcherForegroundReady = $false
+            for ($attempt = 0; $attempt -lt 30; $attempt++) {
+                $launcherForegroundReady = [FluxWallpaper]::GetForegroundWindow() -eq $launcherHandle
+                if ($launcherForegroundReady) { break }
+                Start-Sleep -Milliseconds 100
+            }
+            if (!$launcherForegroundReady) {
+                throw "Deactivation smoke setup failed: Flux did not become foreground (SetForegroundWindow=$foregroundRequestSucceeded)."
+            }
+            if (![FluxWallpaper]::IsWindowVisible($launcherHandle)) {
+                throw "Deactivation smoke setup failed: Flux was not visible before the outside click."
+            }
+
+            $deactivationPreClickPoint = Find-ExposedProbePoint $probeRect ([uint32]$probeProcess.Id)
+            if ($null -eq $deactivationPreClickPoint) {
+                $foregroundHandle = [FluxWallpaper]::GetForegroundWindow()
+                $foregroundPid = Get-RootWindowProcessId $foregroundHandle
+                throw "Deactivation smoke setup failed: no click point was owned by probe PID $($probeProcess.Id) while Flux was foreground (foreground PID $foregroundPid)."
+            }
+            $deactivationClickPoint = [System.Drawing.Point]::new(
+                [int]$deactivationPreClickPoint.X,
+                [int]$deactivationPreClickPoint.Y
+            )
+            $deactivationPreClickPoint = Get-PointWindowSnapshot $deactivationClickPoint.X $deactivationClickPoint.Y
+
+            # Drain preparation-time activation messages before taking the phase
+            # baseline. A prior window-deactivated event must never satisfy this click.
+            Start-Sleep -Milliseconds 250
+            if ([FluxWallpaper]::GetForegroundWindow() -ne $launcherHandle) {
+                throw "Deactivation smoke setup failed: Flux lost foreground before the verified outside click."
+            }
+            $deactivationTraceBeforeCount = if (Test-Path $launchTracePath) { @(Get-Content $launchTracePath).Count } else { 0 }
+            $deactivationTraceLines = @()
+            [FluxWallpaper]::SetCursorPos($deactivationClickPoint.X, $deactivationClickPoint.Y) | Out-Null
+            $clickHitBeforeInput = Get-PointWindowSnapshot $deactivationClickPoint.X $deactivationClickPoint.Y
+            if ($clickHitBeforeInput.RootProcessId -ne [uint32]$probeProcess.Id) {
+                throw "Deactivation smoke setup failed: verified click point changed owner to PID $($clickHitBeforeInput.RootProcessId), expected probe PID $($probeProcess.Id)."
+            }
+            [FluxWallpaper]::mouse_event(0x0002, 0, 0, 0, [UIntPtr]::Zero)
+            [FluxWallpaper]::mouse_event(0x0004, 0, 0, 0, [UIntPtr]::Zero)
+
+            $deactivationHiddenAfterClick = $false
+            $deactivationForegroundAfterClick = $false
+            # The native activation transition can be delayed by the Windows message
+            # queue in hosted desktops. Keep this bounded, but require the actual probe
+            # PID instead of treating any non-Flux foreground window as success.
+            for ($attempt = 0; $attempt -lt 80; $attempt++) {
+                $deactivationForegroundHandle = [FluxWallpaper]::GetForegroundWindow()
+                $deactivationForegroundProcessId = Get-RootWindowProcessId $deactivationForegroundHandle
+                $deactivationHiddenAfterClick = ![FluxWallpaper]::IsWindowVisible($launcherHandle)
+                $deactivationForegroundAfterClick = $deactivationForegroundProcessId -eq [uint32]$probeProcess.Id
+                $deactivationTraceLines = if (Test-Path $launchTracePath) {
+                    @(Get-Content $launchTracePath | Select-Object -Skip $deactivationTraceBeforeCount)
+                } else {
+                    @()
+                }
+                $deactivationEvent = $deactivationTraceLines | Where-Object { $_ -match "`twindow-deactivated$" } | Select-Object -First 1
+                $deactivationSamples += [ordered]@{
+                    Attempt = $attempt
+                    Visible = !$deactivationHiddenAfterClick
+                    ForegroundHandle = $deactivationForegroundHandle.ToInt64()
+                    ForegroundProcessId = $deactivationForegroundProcessId
+                    ForegroundIsProbe = $deactivationForegroundAfterClick
+                    HitTest = Get-PointWindowSnapshot $deactivationClickPoint.X $deactivationClickPoint.Y
+                    HasNewCallback = [bool]$deactivationEvent
+                }
+                if ($deactivationHiddenAfterClick -and
+                    $deactivationForegroundAfterClick -and
+                    [bool]$deactivationEvent) {
+                    break
+                }
+                Start-Sleep -Milliseconds 100
+            }
+            $deactivationClickProbe =
+                $deactivationHiddenAfterClick -and
                 $deactivationForegroundAfterClick -and
-                [bool]$deactivationEvent) {
-                break
+                [bool]$deactivationEvent
+            if (!$deactivationClickProbe) {
+                $reason = "Deactivation smoke failed: hidden=$deactivationHiddenAfterClick foreground_probe=$deactivationForegroundAfterClick foreground_pid=$deactivationForegroundProcessId callback=$([bool]$deactivationEvent)."
+                Write-DeactivationFailureDiagnostics $reason | Out-Null
+                throw "$reason Diagnostics: $deactivationDiagnosticsPath"
             }
-            Start-Sleep -Milliseconds 100
-        }
-        $deactivationClickProbe =
-            $deactivationHiddenAfterClick -and
-            $deactivationForegroundAfterClick -and
-            [bool]$deactivationEvent
-        if (!$deactivationClickProbe) {
-            throw "Deactivation smoke failed: hidden=$deactivationHiddenAfterClick foreground_probe=$deactivationForegroundAfterClick callback=$([bool]$deactivationEvent)."
-        }
-        if ($IdlePerformanceSmoke) {
-            Start-Sleep -Milliseconds 1200
-            $deactivationCpuBefore = Get-CpuTimeMilliseconds $process.Id
-            Start-Sleep -Seconds 3
-            $deactivationIdleMemory = Get-MemorySnapshot $process.Id
-            $deactivationCpuAfter = Get-CpuTimeMilliseconds $process.Id
-            $deactivationCpuDelta = [Math]::Round($deactivationCpuAfter - $deactivationCpuBefore, 2)
-            Write-Host "Click-hidden idle CPU time over 3s: $deactivationCpuDelta ms"
-            if ($deactivationCpuDelta -gt 150) {
-                throw "Click-hidden idle CPU budget exceeded: ${deactivationCpuDelta} ms over 3 seconds."
+            if ($IdlePerformanceSmoke) {
+                Start-Sleep -Milliseconds 1200
+                $deactivationCpuBefore = Get-CpuTimeMilliseconds $process.Id
+                Start-Sleep -Seconds 3
+                $deactivationIdleMemory = Get-MemorySnapshot $process.Id
+                $deactivationCpuAfter = Get-CpuTimeMilliseconds $process.Id
+                $deactivationCpuDelta = [Math]::Round($deactivationCpuAfter - $deactivationCpuBefore, 2)
+                Write-Host "Click-hidden idle CPU time over 3s: $deactivationCpuDelta ms"
+                if ($deactivationCpuDelta -gt 150) {
+                    throw "Click-hidden idle CPU budget exceeded: ${deactivationCpuDelta} ms over 3 seconds."
+                }
+            }
+            # Restore through the real global Alt+Space sequence, proving that the hidden
+            # process remains resident and the user can immediately reopen the launcher.
+            [FluxWallpaper]::keybd_event(0x12, 0, 0, [UIntPtr]::Zero)
+            [FluxWallpaper]::keybd_event(0x20, 0, 0, [UIntPtr]::Zero)
+            [FluxWallpaper]::keybd_event(0x20, 0, 2, [UIntPtr]::Zero)
+            [FluxWallpaper]::keybd_event(0x12, 0, 2, [UIntPtr]::Zero)
+            Start-Sleep -Milliseconds 900
+            if (![FluxWallpaper]::IsWindowVisible($launcherHandle) -or [FluxWallpaper]::GetForegroundWindow() -ne $launcherHandle) {
+                throw "Deactivation smoke could not restore Flux with one real Alt+Space bind."
             }
         }
-        # Restore through the real global Alt+Space sequence, proving that the hidden
-        # process remains resident and the user can immediately reopen the launcher.
-        [FluxWallpaper]::keybd_event(0x12, 0, 0, [UIntPtr]::Zero)
-        [FluxWallpaper]::keybd_event(0x20, 0, 0, [UIntPtr]::Zero)
-        [FluxWallpaper]::keybd_event(0x20, 0, 2, [UIntPtr]::Zero)
-        [FluxWallpaper]::keybd_event(0x12, 0, 2, [UIntPtr]::Zero)
-        Start-Sleep -Milliseconds 900
-        if (![FluxWallpaper]::IsWindowVisible($launcherHandle) -or [FluxWallpaper]::GetForegroundWindow() -ne $launcherHandle) {
-            throw "Deactivation smoke could not restore Flux with one real Alt+Space bind."
+        catch {
+            if (!(Test-Path $deactivationDiagnosticsPath)) {
+                Write-DeactivationFailureDiagnostics $_.Exception.Message | Out-Null
+            }
+            throw
+        }
+        finally {
+            if ($deactivationProbeTopmostChanged -and
+                $deactivationProbeHandle -ne [IntPtr]::Zero -and
+                [FluxWallpaper]::IsWindow($deactivationProbeHandle)) {
+                try {
+                    $restoreInsertAfter = if ($deactivationProbeWasTopmost) { $topmostInsertAfter } else { $notTopmostInsertAfter }
+                    [FluxWallpaper]::SetWindowPos(
+                        $deactivationProbeHandle,
+                        $restoreInsertAfter,
+                        0,
+                        0,
+                        0,
+                        0,
+                        $swpNoMoveNoSizeNoActivate) | Out-Null
+                }
+                catch {
+                    Write-Warning "Could not restore deterministic probe z-order: $($_.Exception.Message)"
+                }
+            }
         }
     }
 
