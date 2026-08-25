@@ -1263,6 +1263,23 @@ struct ShellIconWorker {
     wake: SyncSender<String>,
 }
 
+#[cfg(windows)]
+fn initialize_shell_icon_worker_com() -> bool {
+    use windows::Win32::Foundation::RPC_E_CHANGED_MODE;
+    use windows::Win32::System::Com::{CoInitializeEx, COINIT_MULTITHREADED};
+
+    let result = unsafe { CoInitializeEx(None, COINIT_MULTITHREADED) };
+    if result.is_ok() {
+        true
+    } else if result == RPC_E_CHANGED_MODE {
+        eprintln!("[flux] shell icon worker inherited an initialized COM apartment");
+        false
+    } else {
+        eprintln!("[flux] shell icon worker COM initialization failed: {result:?}");
+        false
+    }
+}
+
 impl ShellIconWorker {
     fn spawn() -> Self {
         let pending = Arc::new(Mutex::new(HashSet::<String>::new()));
@@ -1271,6 +1288,9 @@ impl ShellIconWorker {
         thread::Builder::new()
             .name(String::from("flux-shell-icons"))
             .spawn(move || {
+                #[cfg(windows)]
+                let owns_com_apartment = initialize_shell_icon_worker_com();
+
                 while let Ok(target) = receiver.recv() {
                     if let Ok(mut pending) = pending_for_worker.lock() {
                         pending.remove(&target);
@@ -1278,6 +1298,11 @@ impl ShellIconWorker {
                     #[cfg(windows)]
                     let _ = shell_icon_rgba(&target);
                     SHELL_ICON_COMPLETION_GENERATION.fetch_add(1, Ordering::Release);
+                }
+
+                #[cfg(windows)]
+                if owns_com_apartment {
+                    unsafe { windows::Win32::System::Com::CoUninitialize() };
                 }
             })
             .expect("failed to create shell icon worker thread");
