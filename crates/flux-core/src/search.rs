@@ -98,9 +98,21 @@ impl SearchResult {
         } else {
             None
         };
+        let exact_shell_command = self.id == "system:command-prompt"
+            && matches!(query.as_str(), "cmd" | "command prompt" | "command line")
+            || self.id == "system:powershell"
+                && matches!(query.as_str(), "powershell" | "pwsh" | "power shell");
         (
-            priority.map_or(1, |_| 0),
-            priority.unwrap_or_default(),
+            if exact_shell_command {
+                0
+            } else {
+                priority.map_or(1, |_| 0)
+            },
+            if exact_shell_command {
+                0
+            } else {
+                priority.unwrap_or_default()
+            },
             provider_tier,
             title_tier.saturating_add(subtitle_match),
             title,
