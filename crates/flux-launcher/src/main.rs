@@ -58,9 +58,6 @@ const VISUAL_SLIDER_WIDTH: i32 = 200;
 // can be centered between the same left/right content insets at every size.
 const ACTION_BAR_WIDTH: i32 = 340;
 const ACTION_BAR_HEIGHT: i32 = 22;
-// Leave only a small visual breathing room below the action hints; the top and
-// side insets remain 10 DIP so the launcher width and search alignment are unchanged.
-const ACTION_BAR_BOTTOM_INSET: i32 = 4;
 // Keep the result palette compact like the reference while exposing a six-row
 // viewport; additional results remain available through the native wheel scroll.
 const ACTION_WINDOW_HEIGHT: i32 = 250;
@@ -2567,9 +2564,12 @@ fn main() {
     // Keep the empty search strip and the results palette intrinsically sized. A
     // full-height column plus a weighted spacer made the compact state look too
     // tall and left an oversized gap between the last result and the footer.
+    // Keep the compact Search baseline visually balanced: the old 10-DIP top
+    // inset made the empty strip look pushed down. Move that space below the
+    // control while preserving the same total vertical padding.
     let launcher_content = Element::col()
         .width_match()
-        .padding_edges(10, 10, 10, ACTION_BAR_BOTTOM_INSET)
+        .padding_edges(10, 4, 10, 10)
         .spacing(4)
         .child(search_box)
         .child(result_list)
