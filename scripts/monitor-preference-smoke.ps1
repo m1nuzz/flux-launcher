@@ -49,6 +49,15 @@ public static class FluxMonitorSmoke {
 $virtual = [System.Windows.Forms.SystemInformation]::VirtualScreen
 $processName = [System.IO.Path]::GetFileNameWithoutExtension($Executable)
 
+function Format-ExitCodeHex([int]$ExitCode) {
+    $unsigned = if ($ExitCode -lt 0) {
+        [uint64]$ExitCode + 0x100000000
+    } else {
+        [uint64]$ExitCode
+    }
+    return ('0x{0:X8}' -f $unsigned)
+}
+
 function Request-FluxInstanceShutdown([int]$TimeoutSeconds = 10) {
     $shutdown = Start-Process -FilePath $Executable -ArgumentList "--shutdown" -WorkingDirectory (Split-Path -Parent $Executable) -PassThru -WindowStyle Hidden
     try {
@@ -128,7 +137,7 @@ try {
             $process.Refresh()
             if ($process.HasExited) {
                 $exitCode = $process.ExitCode
-                $exitCodeHex = '0x{0:X8}' -f ([uint32]$exitCode)
+                $exitCodeHex = Format-ExitCodeHex $exitCode
                 $startupStderr = if (Test-Path $stderr) { Get-Content $stderr -Raw } else { "" }
                 throw "Monitor mode '$mode' launcher exited before creating a window: exit_code=$exitCode exit_code_hex=$exitCodeHex stderr=[$startupStderr]"
             }
@@ -176,7 +185,7 @@ try {
         if ($processStillAlive) {
             $shutdownCompleted = Request-FluxInstanceShutdown 5
             if (!$shutdownCompleted) {
-                $exitCodeHex = if ($process.HasExited) { '0x{0:X8}' -f ([uint32]$process.ExitCode) } else { 'not-exited' }
+                $exitCodeHex = if ($process.HasExited) { Format-ExitCodeHex $process.ExitCode } else { 'not-exited' }
                 Write-Warning "Monitor mode '$mode' required forced cleanup after orderly shutdown failed: pid=$($process.Id) exit_code=$exitCodeHex"
                 Stop-Process -Id $process.Id -Force -ErrorAction SilentlyContinue
                 try { $process.WaitForExit(5000) } catch { }
