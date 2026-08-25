@@ -261,6 +261,20 @@ struct SystemResultSpec {
 
 const SYSTEM_RESULT_SPECS: &[SystemResultSpec] = &[
     SystemResultSpec {
+        id: "system:command-prompt",
+        title: "Command Prompt",
+        subtitle: "Windows command line",
+        target: "cmd.exe",
+        aliases: &["cmd", "command prompt", "command line", "terminal"],
+    },
+    SystemResultSpec {
+        id: "system:powershell",
+        title: "PowerShell",
+        subtitle: "Windows PowerShell",
+        target: "powershell.exe",
+        aliases: &["powershell", "pwsh", "power shell", "terminal"],
+    },
+    SystemResultSpec {
         id: "system:settings",
         title: "Settings",
         subtitle: "Windows Settings",
@@ -592,6 +606,21 @@ mod tests {
         assert!(!model.results().is_empty());
         assert!(model.results().len() <= MAX_RESULTS);
         assert_eq!(model.selected_index(), 0);
+    }
+
+    #[test]
+    fn exact_shell_queries_put_the_matching_console_first() {
+        let mut model = SearchModel::new();
+        model.set_query("cmd");
+        assert_eq!(model.results()[0].id, "system:command-prompt");
+        assert_eq!(model.results()[0].target.as_deref(), Some("cmd.exe"));
+
+        model.set_query("powershell");
+        assert_eq!(model.results()[0].id, "system:powershell");
+        assert_eq!(model.results()[0].target.as_deref(), Some("powershell.exe"));
+
+        model.set_query("pwsh");
+        assert_eq!(model.results()[0].id, "system:powershell");
     }
 
     #[test]

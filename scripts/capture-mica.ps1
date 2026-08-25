@@ -14,6 +14,7 @@ param(
     [switch]$CursorVisibilitySmoke,
     [switch]$ScrollbarGapSmoke,
     [switch]$ActionBarSmoke,
+    [switch]$CommandPrioritySmoke,
     [switch]$QueryClearOnReopenSmoke,
     [switch]$QueryResponsivenessSmoke,
     [switch]$FocusToggleSmoke,
@@ -532,6 +533,19 @@ try {
     }
 
     Save-Screenshot "mica-repeat-show-empty.png"
+    $compactClientRect = New-Object FluxWallpaper+RECT
+    if (![FluxWallpaper]::GetClientRect($launcherHandle, [ref]$compactClientRect)) {
+        throw "Unable to read compact launcher client geometry."
+    }
+    $compactDpi = [FluxWallpaper]::GetDpiForWindow($launcherHandle)
+    if ($compactDpi -eq 0) { $compactDpi = 96 }
+    $compactScale = [double]$compactDpi / 96.0
+    $compactLogicalHeight = [int][Math]::Round(([FluxWallpaper]::RectHeight($compactClientRect)) / $compactScale)
+    $compactLayoutProbe = $compactLogicalHeight -eq 56
+    Write-Host "Compact launcher geometry: client_height=$compactLogicalHeight dpi=$compactDpi"
+    if (!$compactLayoutProbe) {
+        throw "Compact launcher has unexpected logical height: $compactLogicalHeight (expected 56)."
+    }
     $launcherRect = New-Object FluxWallpaper+RECT
     if (![FluxWallpaper]::GetWindowRect($launcherHandle, [ref]$launcherRect)) {
         throw "Unable to locate launcher rectangle before typing the navigation query."
@@ -560,6 +574,17 @@ try {
     $queryResponsivenessSamples = @()
     $queryResponsivenessMaxMilliseconds = 0.0
     $queryResponsivenessProbe = $false
+    $commandPriorityProbe = $false
+    if ($CommandPrioritySmoke) {
+        foreach ($commandQuery in @("cmd", "powershell", "pwsh")) {
+            $shell.SendKeys("^a")
+            $shell.SendKeys("{BACKSPACE}")
+            $shell.SendKeys($commandQuery)
+            Start-Sleep -Milliseconds 700
+            Save-Screenshot ("command-priority-{0}.png" -f $commandQuery)
+        }
+        $commandPriorityProbe = $true
+    }
     if ($CursorVisibilitySmoke) {
         $shell.SendKeys("x")
         Start-Sleep -Milliseconds 500
@@ -687,7 +712,7 @@ try {
             ($reopenRect.Left - [System.Windows.Forms.SystemInformation]::VirtualScreen.Left) `
             ($reopenRect.Top - [System.Windows.Forms.SystemInformation]::VirtualScreen.Top) `
             ($reopenRect.Right - $reopenRect.Left) `
-            72
+            56
         if (!$queryClearOnReopenProbe) {
             throw "Query-clear smoke detected stale content in the reopened search bar."
         }
@@ -1708,6 +1733,7 @@ try {
         CapturedAtUtc = (Get-Date).ToUniversalTime().ToString("O")
         WallpaperProbe = $true
         RepeatShowEmptyProbe = $true
+        CompactLayoutProbe = $compactLayoutProbe
         FirstHotkeyHideProbe = $hiddenAfterFirstHotkey
         SecondHotkeyShowProbe = $visibleAfterSecondHotkey
         RepeatedHotkeyPositionProbe = $repeatedHotkeyPositionProbe
@@ -1726,6 +1752,7 @@ try {
         TabNavigationProbe = $TabNavigationCycles -gt 0
         EverythingSyntaxProbe = $true
         QueryResponsivenessProbe = (!$QueryResponsivenessSmoke) -or $queryResponsivenessProbe
+        CommandPriorityProbe = (!$CommandPrioritySmoke) -or $commandPriorityProbe
         QueryResponsivenessMaxMilliseconds = $queryResponsivenessMaxMilliseconds
         QueryResponsivenessSamples = @($queryResponsivenessSamples)
         FocusToggleProbe = (!$FocusToggleSmoke) -or $focusToggleProbe

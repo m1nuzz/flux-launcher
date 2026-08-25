@@ -99,6 +99,7 @@ jobs:
             -DeactivationClickSmoke `
             -FolderLaunchSmoke `
             -ActionBarSmoke `
+            -CommandPrioritySmoke `
             -VisualSettingsSmoke
 
       - name: Upload UI smoke diagnostics

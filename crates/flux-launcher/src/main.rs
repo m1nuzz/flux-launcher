@@ -51,7 +51,8 @@ use windui::render::{Canvas, Paint};
 const CURRENT_VERSION: &str = env!("CARGO_PKG_VERSION");
 const SINGLE_INSTANCE_ID: &str = "m1nuzz.flux-launcher";
 const SETTINGS_WINDOW_WIDTH: i32 = 720;
-const COMPACT_WINDOW_HEIGHT: i32 = 72;
+// The empty launcher is a compact search strip; the results state keeps the user-configured height.
+const COMPACT_WINDOW_HEIGHT: i32 = 56;
 const VISUAL_SLIDER_WIDTH: i32 = 200;
 // The action group stays narrower than the minimum launcher content width so it
 // can be centered between the same left/right content insets at every size.
@@ -63,7 +64,8 @@ const ACTION_BAR_BOTTOM_INSET: i32 = 4;
 // Keep the result palette compact like the reference while exposing a six-row
 // viewport; additional results remain available through the native wheel scroll.
 const ACTION_WINDOW_HEIGHT: i32 = 250;
-const RESULT_VIEWPORT_HEIGHT: i32 = 270;
+// Six 46-DIP result rows plus local scroll padding keep the footer close to the results.
+const RESULT_VIEWPORT_HEIGHT: i32 = 288;
 const SETTINGS_WINDOW_HEIGHT: i32 = 520;
 const LAUNCHER_FONT_FAMILY: &str = "Segoe UI Variable";
 const SEARCH_INTERVAL: Duration = Duration::from_millis(40);
@@ -2562,18 +2564,17 @@ fn main() {
     // The HWND itself owns the system Acrylic surface. Keep this root transparent so
     // the blur fills the complete client area instead of becoming an inset card. The
     // content must match the live window width so result rows expand with resizing.
+    // Keep the empty search strip and the results palette intrinsically sized. A
+    // full-height column plus a weighted spacer made the compact state look too
+    // tall and left an oversized gap between the last result and the footer.
     let launcher_content = Element::col()
         .width_match()
-        .height_match()
         .padding_edges(10, 10, 10, ACTION_BAR_BOTTOM_INSET)
         .spacing(4)
         .child(search_box)
         .child(result_list)
-        // Reserve the remaining client height explicitly so the footer is
-        // bottom-anchored instead of being centered by the outer surface.
-        .child(Element::flex_spacer().weight(1.0))
-        // Keep the action group as a distinct centered slot below the result
-        // viewport; it must never participate in the result row's width.
+        // The result viewport now ends immediately before the fixed footer. Do not
+        // add a weighted spacer: it creates a visible blank band for short queries.
         .child(action_bar)
         .child(action_list)
         .child(recycle_bin_dialog)
