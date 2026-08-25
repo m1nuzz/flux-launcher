@@ -1180,6 +1180,13 @@ try {
         # wifi. The action bar exists only while the result list is visible, so a
         # deterministic result also makes this a layout test rather than a provider
         # availability test.
+        Set-ForegroundWindowGated $launcherHandle | Out-Null
+        $shell.AppActivate($process.Id) | Out-Null
+        Start-Sleep -Milliseconds 200
+        [FluxWallpaper]::SetCursorPos($searchX, $searchY) | Out-Null
+        [FluxWallpaper]::mouse_event(0x0002, 0, 0, 0, [UIntPtr]::Zero)
+        [FluxWallpaper]::mouse_event(0x0004, 0, 0, 0, [UIntPtr]::Zero)
+        Start-Sleep -Milliseconds 200
         $shell.SendKeys("^a")
         $shell.SendKeys("{BACKSPACE}")
         $shell.SendKeys("wab")
