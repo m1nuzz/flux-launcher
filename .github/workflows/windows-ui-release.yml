@@ -175,7 +175,18 @@ jobs:
           body: |
             Flux Launcher Windows 11 x64 ${{ inputs.release_channel }} release.
 
-            This release contains only the user-facing installer and portable executable. CI screenshots, DWM diagnostics, smoke logs, and test fixtures remain workflow artifacts rather than public downloads.
+            ## What's changed
+
+            - Fixed installed application discovery for compact queries such as `lmstudio`, so the Start Menu application `LM Studio` is found without typing the space.
+            - Moved separator-insensitive application matching into the ApplicationCatalog filtering stage, before final ranking.
+            - Added regression coverage for `LM Studio`, `Visual Studio Code`, punctuation separators, literal-match precedence, and punctuation-only queries.
+            - Repaired the Windows UI smoke fixture so its executable name cannot accidentally satisfy the compact query; the smoke now verifies the returned display title and canonical application identity.
+
+            ## Validation
+
+            - Windows UI workflow completed successfully on Windows Server 2025, build 26100.
+            - Native Windows tests, Clippy with `-D warnings`, installer/uninstall smoke, self-update smoke, and UI diagnostics passed.
+            - The release includes only the user-facing installer and portable executable. CI screenshots, DWM diagnostics, smoke logs, and test fixtures remain workflow artifacts.
 
             Beta releases are for testing and are ignored by the stable updater. Stable releases are the versions intended for WinGet and normal automatic updates.
           files: |
