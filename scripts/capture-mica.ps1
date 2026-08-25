@@ -178,7 +178,7 @@ function Assert-ProcessAlive([System.Diagnostics.Process]$Process, [string]$Cont
     }
     catch {
         if ($_.Exception.Message -like "Flux process exited unexpectedly*") { throw }
-        throw "Flux process could not be inspected during $Context: pid=$($Process.Id) ($($_.Exception.Message))"
+        throw "Flux process could not be inspected during ${Context}: pid=$($Process.Id) ($($_.Exception.Message))"
     }
 }
 
@@ -194,7 +194,7 @@ function Get-MemorySnapshot([System.Diagnostics.Process]$Process, [string]$Conte
         }
     }
     catch {
-        throw "Flux process snapshot failed during $Context: pid=$($Process.Id) ($($_.Exception.Message))"
+        throw "Flux process snapshot failed during ${Context}: pid=$($Process.Id) ($($_.Exception.Message))"
     }
 }
 
@@ -204,7 +204,7 @@ function Get-CpuTimeMilliseconds([System.Diagnostics.Process]$Process, [string]$
         return $Process.TotalProcessorTime.TotalMilliseconds
     }
     catch {
-        throw "Flux CPU snapshot failed during $Context: pid=$($Process.Id) ($($_.Exception.Message))"
+        throw "Flux CPU snapshot failed during ${Context}: pid=$($Process.Id) ($($_.Exception.Message))"
     }
 }
 
