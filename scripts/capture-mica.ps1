@@ -57,6 +57,7 @@ if ($ForceTranslucentFallback) {
 }
 
 New-Item -ItemType Directory -Force -Path $OutputDirectory | Out-Null
+$OutputDirectory = (Resolve-Path -LiteralPath $OutputDirectory).Path
 
 Add-Type -AssemblyName System.Windows.Forms
 Add-Type -AssemblyName System.Drawing
@@ -182,6 +183,21 @@ function Get-MemorySnapshot([int]$ProcessId) {
 function Get-CpuTimeMilliseconds([int]$ProcessId) {
     $sample = Get-Process -Id $ProcessId
     return $sample.TotalProcessorTime.TotalMilliseconds
+}
+
+function Read-LaunchTraceEvents([string]$Path) {
+    if (!(Test-Path -LiteralPath $Path)) { return @() }
+    $lines = @(Get-Content -LiteralPath $Path -ErrorAction SilentlyContinue)
+    $events = foreach ($line in $lines) {
+        if ($line -match '^(?<timestamp>[0-9]+(?:\.[0-9]+)?)\s+(?<event>[A-Za-z0-9-]+)\s*$') {
+            [pscustomobject]@{
+                Line = $line
+                Timestamp = [double]$matches.timestamp
+                Event = $matches.event
+            }
+        }
+    }
+    return @($events)
 }
 
 function Request-FluxInstanceShutdown([int]$ProcessId, [int]$TimeoutSeconds = 10) {
@@ -1515,23 +1531,23 @@ try {
     # Send Enter to the exact launcher HWND after direct Home/Down selection. This
     # keeps the ordering assertion deterministic while the surrounding smoke suite
     # already covers real keyboard input and global hotkey restoration.
-    $traceBeforeEnterCount = if (Test-Path $launchTracePath) { @(Get-Content $launchTracePath).Count } else { 0 }
     $enterDispatchTimer = [System.Diagnostics.Stopwatch]::StartNew()
     [FluxWallpaper]::SendMessage($launcherHandle, $wmKeyDown, [UIntPtr]::new(0x0D), [IntPtr]::Zero) | Out-Null
     $enterDispatchTimer.Stop()
     $enterHideDispatchMilliseconds = [Math]::Round($enterDispatchTimer.Elapsed.TotalMilliseconds, 2)
     Start-Sleep -Milliseconds 500
-    $enterTraceLines = if (Test-Path $launchTracePath) {
-        @(Get-Content $launchTracePath | Select-Object -Skip $traceBeforeEnterCount)
-    } else {
-        @()
-    }
-    $launchDispatchLine = $enterTraceLines | Where-Object { $_ -match "`tlaunch-dispatch$" } | Select-Object -First 1
-    $windowHideLine = $enterTraceLines | Where-Object { $_ -match "`twindow-hide$" } | Select-Object -First 1
-    $processCreatedLine = $enterTraceLines | Where-Object { $_ -match "`tprocess-created$" } | Select-Object -First 1
-    $launchDispatchTimestamp = if ($launchDispatchLine) { [double]($launchDispatchLine -split "`t", 2)[0] } else { 0.0 }
-    $windowHideTimestamp = if ($windowHideLine) { [double]($windowHideLine -split "`t", 2)[0] } else { 0.0 }
-    $processCreatedTimestamp = if ($processCreatedLine) { [double]($processCreatedLine -split "`t", 2)[0] } else { 0.0 }
+    $enterTraceLines = if (Test-Path -LiteralPath $launchTracePath) { @(Get-Content -LiteralPath $launchTracePath) } else { @() }
+    $enterTraceEvents = Read-LaunchTraceEvents $launchTracePath
+    $launchDispatchEvent = $enterTraceEvents | Where-Object { $_.Event -eq "launch-dispatch" } | Select-Object -Last 1
+    $windowHideEvent = if ($launchDispatchEvent) {
+        $enterTraceEvents | Where-Object { $_.Event -eq "window-hide" -and $_.Timestamp -ge $launchDispatchEvent.Timestamp } | Select-Object -First 1
+    } else { $null }
+    $processCreatedEvent = if ($launchDispatchEvent) {
+        $enterTraceEvents | Where-Object { $_.Event -eq "process-created" -and $_.Timestamp -ge $launchDispatchEvent.Timestamp } | Select-Object -First 1
+    } else { $null }
+    $launchDispatchTimestamp = if ($launchDispatchEvent) { $launchDispatchEvent.Timestamp } else { 0.0 }
+    $windowHideTimestamp = if ($windowHideEvent) { $windowHideEvent.Timestamp } else { 0.0 }
+    $processCreatedTimestamp = if ($processCreatedEvent) { $processCreatedEvent.Timestamp } else { 0.0 }
     $enterLaunchDispatchBeforeHideProbe =
         $launchDispatchTimestamp -gt 0.0 -and
         $windowHideTimestamp -gt 0.0 -and
@@ -1572,7 +1588,6 @@ try {
     $shell.SendKeys("{HOME}")
     Start-Sleep -Milliseconds 250
     [FluxWallpaper]::SetForegroundWindow($launcherHandle) | Out-Null
-    $launchProbeTraceBeforeCount = if (Test-Path $launchTracePath) { @(Get-Content $launchTracePath).Count } else { 0 }
     $launchProbeTimer = [System.Diagnostics.Stopwatch]::StartNew()
     [FluxWallpaper]::SendMessage($launcherHandle, $wmKeyDown, [UIntPtr]::new(0x0D), [IntPtr]::Zero) | Out-Null
     $launchProbeTimer.Stop()
@@ -1582,19 +1597,22 @@ try {
     # the opt-in lifecycle trace. This remains bounded and does not alter the
     # production launch path.
     Start-Sleep -Milliseconds 6000
-    $launchProbeTraceLines = if (Test-Path $launchTracePath) {
-        @(Get-Content $launchTracePath | Select-Object -Skip $launchProbeTraceBeforeCount)
-    } else {
-        @()
-    }
-    $launchProbeDispatchLine = $launchProbeTraceLines | Where-Object { $_ -match "`tlaunch-dispatch$" } | Select-Object -First 1
-    $launchProbeHideLine = $launchProbeTraceLines | Where-Object { $_ -match "`twindow-hide$" } | Select-Object -First 1
-    $launchProbeProcessLine = $launchProbeTraceLines | Where-Object { $_ -match "`tprocess-created$" } | Select-Object -First 1
-    $launchProbeShellReturnLine = $launchProbeTraceLines | Where-Object { $_ -match "`tshell-return$" } | Select-Object -First 1
-    $launchProbeDispatchTimestamp = if ($launchProbeDispatchLine) { [double]($launchProbeDispatchLine -split "`t", 2)[0] } else { 0.0 }
-    $launchProbeHideTimestamp = if ($launchProbeHideLine) { [double]($launchProbeHideLine -split "`t", 2)[0] } else { 0.0 }
-    $launchProbeProcessTimestamp = if ($launchProbeProcessLine) { [double]($launchProbeProcessLine -split "`t", 2)[0] } else { 0.0 }
-    $launchProbeShellReturnTimestamp = if ($launchProbeShellReturnLine) { [double]($launchProbeShellReturnLine -split "`t", 2)[0] } else { 0.0 }
+    $launchProbeTraceLines = if (Test-Path -LiteralPath $launchTracePath) { @(Get-Content -LiteralPath $launchTracePath) } else { @() }
+    $launchProbeTraceEvents = Read-LaunchTraceEvents $launchTracePath
+    $launchProbeDispatchEvent = $launchProbeTraceEvents | Where-Object { $_.Event -eq "launch-dispatch" } | Select-Object -Last 1
+    $launchProbeHideEvent = if ($launchProbeDispatchEvent) {
+        $launchProbeTraceEvents | Where-Object { $_.Event -eq "window-hide" -and $_.Timestamp -ge $launchProbeDispatchEvent.Timestamp } | Select-Object -First 1
+    } else { $null }
+    $launchProbeProcessEvent = if ($launchProbeDispatchEvent) {
+        $launchProbeTraceEvents | Where-Object { $_.Event -eq "process-created" -and $_.Timestamp -ge $launchProbeDispatchEvent.Timestamp } | Select-Object -First 1
+    } else { $null }
+    $launchProbeShellReturnEvent = if ($launchProbeDispatchEvent) {
+        $launchProbeTraceEvents | Where-Object { $_.Event -eq "shell-return" -and $_.Timestamp -ge $launchProbeDispatchEvent.Timestamp } | Select-Object -First 1
+    } else { $null }
+    $launchProbeDispatchTimestamp = if ($launchProbeDispatchEvent) { $launchProbeDispatchEvent.Timestamp } else { 0.0 }
+    $launchProbeHideTimestamp = if ($launchProbeHideEvent) { $launchProbeHideEvent.Timestamp } else { 0.0 }
+    $launchProbeProcessTimestamp = if ($launchProbeProcessEvent) { $launchProbeProcessEvent.Timestamp } else { 0.0 }
+    $launchProbeShellReturnTimestamp = if ($launchProbeShellReturnEvent) { $launchProbeShellReturnEvent.Timestamp } else { 0.0 }
     $launchProbeCompletionTimestamp = if ($launchProbeProcessTimestamp -gt 0.0) {
         $launchProbeProcessTimestamp
     } else {
