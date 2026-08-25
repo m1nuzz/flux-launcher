@@ -124,12 +124,25 @@ fn normalize(value: &str) -> String {
     value.trim().to_ascii_lowercase()
 }
 
+fn compact_search_key(value: &str) -> String {
+    value
+        .chars()
+        .flat_map(char::to_lowercase)
+        .filter(|character| character.is_alphanumeric())
+        .collect()
+}
+
+fn compact_contains(title: &str, query: &str) -> bool {
+    let compact_query = compact_search_key(query);
+    !compact_query.is_empty() && compact_search_key(title).contains(&compact_query)
+}
+
 fn match_app_title(title: &str, query: &str) -> u8 {
     if query.is_empty() || title == query {
         0
     } else if title.starts_with(query) {
         1
-    } else if title.contains(query) {
+    } else if title.contains(query) || compact_contains(title, query) {
         2
     } else {
         3
@@ -143,7 +156,7 @@ fn match_file_title(title: &str, query: &str) -> u8 {
         0
     } else if title.starts_with(query) {
         1
-    } else if title.contains(query) {
+    } else if title.contains(query) || compact_contains(title, query) {
         2
     } else {
         3
@@ -633,6 +646,32 @@ mod tests {
 
         model.set_query("pwsh");
         assert_eq!(model.results()[0].id, "system:powershell");
+    }
+
+    #[test]
+    fn compact_queries_match_spaced_app_titles_and_filenames() {
+        let mut results = vec![
+            SearchResult {
+                id: String::from("application:lm-studio"),
+                title: String::from("LM Studio"),
+                subtitle: String::from("Application • Start Menu"),
+                kind: ResultKind::Application,
+                source: ResultSource::ApplicationCatalog,
+                target: Some(String::from("C:/LM Studio.lnk")),
+            },
+            SearchResult::file(
+                String::from("C:/Downloads/lmstudio.json"),
+                String::from("lmstudio.json"),
+                String::from("C:/Downloads"),
+            ),
+        ];
+        rank_results("lmstudio", &mut results);
+        assert_eq!(results[0].title, "LM Studio");
+        assert_eq!(results[1].title, "lmstudio.json");
+
+        assert_eq!(match_app_title("LM Studio", "lmstudio"), 2);
+        assert_eq!(match_file_title("lmstudio.json", "lmstudio"), 1);
+        assert_eq!(match_app_title("Chrome", "..."), 3);
     }
 
     #[test]
