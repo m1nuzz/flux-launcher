@@ -321,8 +321,12 @@ $form.FormBorderStyle = [System.Windows.Forms.FormBorderStyle]::None
 $form.ShowInTaskbar = $false
 $form.StartPosition = [System.Windows.Forms.FormStartPosition]::Manual
 $screen = [System.Windows.Forms.SystemInformation]::VirtualScreen
-$form.Location = New-Object System.Drawing.Point($screen.Left + 1, $screen.Top + 1)
-$form.Size = New-Object System.Drawing.Size($screen.Width - 2, $screen.Height - 2)
+$screenLeft = [int]$screen.Left
+$screenTop = [int]$screen.Top
+$screenWidth = [int]$screen.Width
+$screenHeight = [int]$screen.Height
+$form.Location = [System.Drawing.Point]::new(($screenLeft + 1), ($screenTop + 1))
+$form.Size = [System.Drawing.Size]::new(($screenWidth - 2), ($screenHeight - 2))
 $form.BackColor = [System.Drawing.Color]::FromArgb(21, 46, 105)
 $form.Add_Paint({
     param($sender, $event)
