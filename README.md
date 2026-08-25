@@ -1,5 +1,7 @@
 # Flux Launcher
 
+> **Compatibility notice:** Flux Launcher has currently been tested only on Windows 11. Other Windows versions have not been officially verified yet.
+
 <p align="center">
   <img src="assets/logotype.png" alt="Flux Launcher logo" width="520">
 </p>
