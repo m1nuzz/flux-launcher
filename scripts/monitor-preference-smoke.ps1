@@ -51,7 +51,7 @@ $processName = [System.IO.Path]::GetFileNameWithoutExtension($Executable)
 
 function Format-ExitCodeHex([int]$ExitCode) {
     $unsigned = if ($ExitCode -lt 0) {
-        [uint64]$ExitCode + 0x100000000
+        [uint64](([int64]$ExitCode) + [int64]0x100000000)
     } else {
         [uint64]$ExitCode
     }
