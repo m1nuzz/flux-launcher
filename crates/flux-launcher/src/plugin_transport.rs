@@ -115,12 +115,14 @@ pub fn connect_host_io(pipe_name: &str, timeout: Duration) -> Result<HostIo, Str
                 )
             };
             if let Ok(handle) = handle {
+                // Transfer ownership before any fallible configuration call. If
+                // SetNamedPipeHandleState fails, File's Drop closes the raw handle.
+                let file = unsafe { File::from_raw_handle(handle.0 as _) };
                 let mode = PIPE_READMODE_BYTE | PIPE_NOWAIT;
                 unsafe {
                     SetNamedPipeHandleState(handle, Some(&mode), None, None)
                         .map_err(|error| format!("SetNamedPipeHandleState failed: {error}"))?;
                 }
-                let file = unsafe { File::from_raw_handle(handle.0 as _) };
                 let reader = file
                     .try_clone()
                     .map_err(|error| format!("clone named pipe client reader: {error}"))?;
