@@ -312,6 +312,8 @@ New-Item -ItemType Directory -Force -Path $wabFixtureRoot | Out-Null
 $folderFixtureName = "FluxFolderSmoke_{0}" -f $PID
 $folderFixtureRoot = Join-Path $env:TEMP $folderFixtureName
 New-Item -ItemType Directory -Force -Path $folderFixtureRoot | Out-Null
+$compactFixtureTarget = Join-Path $env:TEMP ("FluxLauncherLmStudioSmoke_{0}.cmd" -f $PID)
+Set-Content -Encoding ascii -Path $compactFixtureTarget -Value "@echo off`r`nexit /b 0"
 $wabFixtureNames = @(
     # A real-looking spaced app name makes the compact-query screenshot
     # deterministic even when the hosted runner has no LM Studio install.
@@ -325,8 +327,15 @@ $shortcutShell = New-Object -ComObject WScript.Shell
 $absoluteExecutable = [System.IO.Path]::GetFullPath($Executable)
 foreach ($fixtureName in $wabFixtureNames) {
     $shortcut = $shortcutShell.CreateShortcut((Join-Path $wabFixtureRoot $fixtureName))
-    $shortcut.TargetPath = $absoluteExecutable
-    $shortcut.WorkingDirectory = Split-Path -Parent $absoluteExecutable
+    if ($fixtureName -eq "LM Studio.lnk") {
+        # Use a unique command fixture so canonical application merging cannot
+        # collapse this spaced title into the other Flux smoke shortcuts.
+        $shortcut.TargetPath = $compactFixtureTarget
+        $shortcut.WorkingDirectory = Split-Path -Parent $compactFixtureTarget
+    } else {
+        $shortcut.TargetPath = $absoluteExecutable
+        $shortcut.WorkingDirectory = Split-Path -Parent $absoluteExecutable
+    }
     $shortcut.Description = if ($fixtureName -eq "LM Studio.lnk") {
         "LM Studio compact query smoke application fixture"
     } else {
@@ -352,7 +361,7 @@ $launchTracePath = Join-Path $OutputDirectory "launch-trace.log"
 Remove-Item $launchTracePath -Force -ErrorAction SilentlyContinue
 $env:FLUX_LAUNCH_TRACE_FILE = $launchTracePath
 $legacyFlowPluginRoot = Join-Path $env:APPDATA "FluxLauncher\Plugins\NativeFlowFixture"
-$legacyFlowPluginBackupRoot = Join-Path $env:APPDATA "FluxLauncher\Plugins\NativeFlowFixture.compact-smoke-disabled"
+$legacyFlowPluginBackupRoot = Join-Path $env:TEMP ("FluxLauncher-NativeFlowFixture.compact-smoke-disabled-{0}" -f $PID)
 $legacyFlowPluginWasDisabled = $false
 if ($CommandPrioritySmoke -and (Test-Path $legacyFlowPluginRoot)) {
     # The workflow's legacy fixture answers every query. Keep it out of the
@@ -1873,6 +1882,9 @@ finally {
     }
     if (Test-Path $folderFixtureRoot) {
         Remove-Item -Recurse -Force $folderFixtureRoot
+    }
+    if (Test-Path $compactFixtureTarget) {
+        Remove-Item -Force $compactFixtureTarget
     }
     if ($legacyFlowPluginWasDisabled -and (Test-Path $legacyFlowPluginBackupRoot)) {
         Move-Item -LiteralPath $legacyFlowPluginBackupRoot -Destination $legacyFlowPluginRoot -Force -ErrorAction SilentlyContinue
