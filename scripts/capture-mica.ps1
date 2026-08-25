@@ -90,6 +90,8 @@ public static class FluxWallpaper {
     public static extern bool IsWindow(IntPtr hWnd);
     [DllImport("user32.dll", SetLastError = true)]
     public static extern bool SetWindowPos(IntPtr hWnd, IntPtr hWndInsertAfter, int x, int y, int cx, int cy, uint flags);
+    [DllImport("user32.dll", SetLastError = true)]
+    public static extern bool ShowWindow(IntPtr hWnd, int command);
     [DllImport("kernel32.dll", SetLastError = true)]
     public static extern uint GetCurrentThreadId();
     [DllImport("user32.dll", SetLastError = true)]
@@ -881,6 +883,18 @@ try {
             throw
         }
         finally {
+            if ($deactivationProbeHandle -ne [IntPtr]::Zero -and
+                [FluxWallpaper]::IsWindow($deactivationProbeHandle)) {
+                try {
+                    # The probe is a full-screen native overlay. Hide it before the
+                    # remaining screenshots/query phases so it cannot cover Flux even
+                    # after HWND_NOTOPMOST is applied to a hosted desktop z-order.
+                    [FluxWallpaper]::ShowWindow($deactivationProbeHandle, 0) | Out-Null
+                }
+                catch {
+                    Write-Warning "Could not hide deterministic probe after deactivation smoke: $($_.Exception.Message)"
+                }
+            }
             if ($deactivationProbeTopmostChanged -and
                 $deactivationProbeHandle -ne [IntPtr]::Zero -and
                 [FluxWallpaper]::IsWindow($deactivationProbeHandle)) {
