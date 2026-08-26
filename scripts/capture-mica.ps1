@@ -1756,6 +1756,7 @@ try {
         Remove-Item Env:FLUX_SMOKE_TRAY_SETTINGS -ErrorAction SilentlyContinue
     }
     if ($VisualSettingsSmoke) {
+        $env:FLUX_SMOKE_SETTINGS_UI = "1"
         # The application selects the Visual tab before first paint so this smoke
         # can drag the real fixed-track controls without coordinate-driven tab setup.
         $env:FLUX_SMOKE_SETTINGS_TAB = "1"
@@ -1775,6 +1776,7 @@ try {
     $settingsWindowHeight = 0
     $settingsWindowWidth = 0
     $settingsWindowFound = $false
+    $settingsUiProbe = $false
     $settingsCenterBeforeDragX = 0
     $settingsCenterBeforeDragY = 0
     $settingsCenterAfterDragX = 0
@@ -1822,6 +1824,13 @@ try {
         $settingsProcess.Refresh()
         if ($VisualSettingsSmoke -and $settingsProcess.HasExited) {
             throw "Visual Settings smoke process exited before creating its Settings window with code $($settingsProcess.ExitCode)."
+        }
+        $settingsContractLog = if (Test-Path $settingsStderrPath) { Get-Content $settingsStderrPath -Raw } else { "" }
+        if ($VisualSettingsSmoke) {
+            $settingsUiProbe = $settingsContractLog -match "Settings UI contract: UpdateActionVersionLabel=Current version: \d+\.\d+\.\d+; SmoothCaretTab=Visual; SmoothCaretGeneral=false"
+            if (!$settingsUiProbe) {
+                throw "Visual Settings smoke did not observe the expected Update version/Smooth Caret tab contract."
+            }
         }
         if ($VisualSettingsSmoke) {
             $settingsHwnd = Get-LauncherWindowHandle $settingsProcess
@@ -2286,6 +2295,7 @@ try {
             }
         }
         Remove-Item Env:FLUX_OPEN_SETTINGS -ErrorAction SilentlyContinue
+        Remove-Item Env:FLUX_SMOKE_SETTINGS_UI -ErrorAction SilentlyContinue
         Remove-Item Env:FLUX_SMOKE_TRAY_SETTINGS -ErrorAction SilentlyContinue
         Remove-Item Env:FLUX_SMOKE_SETTINGS_TAB -ErrorAction SilentlyContinue
         Remove-Item Env:FLUX_SMOKE_VISUAL_SETTINGS -ErrorAction SilentlyContinue
@@ -2354,6 +2364,7 @@ try {
         SettingsWindowHeight = $settingsWindowHeight
         SettingsWindowWidth = $settingsWindowWidth
         SettingsPanelProbe = $settingsWindowFound -and ($settingsWindowHeight -ge 400) -and ($settingsWindowWidth -ge 680)
+        SettingsUiContractProbe = (!$VisualSettingsSmoke) -or $settingsUiProbe
         VisualSettingsSliderProbe = (!$VisualSettingsSmoke) -or $visualSettingsSliderProbe
         VisualPreviewUpdateCount = $visualPreviewUpdateCount
         VisualPreviewProcessId = $visualPreviewProcessId

@@ -4138,12 +4138,20 @@ fn main() {
                                     )
                                     .child(Element::label("hours between checks").font_size(11.0)),
                             )
-                            .child(Element::field(
-                                "Update action",
-                                Element::checkbox(
-                                    "Install stable updates automatically",
-                                    auto_install_updates,
-                                ),
+                            .child(
+                                Element::row()
+                                    .width_match()
+                                    .spacing(8)
+                                    .child(Element::label("Update action").width_match())
+                                    .child(
+                                        Element::label(format!("Current version: {CURRENT_VERSION}"))
+                                            .font_size(11.0)
+                                            .fg(Color::rgba(235, 241, 255, 190)),
+                                    ),
+                            )
+                            .child(Element::checkbox(
+                                "Install stable updates automatically",
+                                auto_install_updates,
                             ))
                             .child(
                                 Element::row()
@@ -4261,14 +4269,6 @@ fn main() {
                                 ctx.toast_ok("Query history cleared");
                             })),
                     )
-                    .child(Element::field(
-                        "Smooth Caret",
-                        Element::checkbox("Animate search caret movement", smooth_caret),
-                    ))
-                    .child(Element::field(
-                        "Caret duration (ms)",
-                        Element::text_input(caret_duration, "95").width_match(),
-                    ))
                     .child(
                         Element::label("Native Flow plugins: %APPDATA%\\FluxLauncher\\Plugins or FLUX_PLUGIN_DIR")
                             .font_size(12.0)
@@ -4495,6 +4495,14 @@ fn main() {
                                 .truncate(Truncate::End),
                         )
                         .child(Element::field(
+                            "Smooth Caret",
+                            Element::checkbox("Animate search caret movement", smooth_caret),
+                        ))
+                        .child(Element::field(
+                            "Caret duration (ms)",
+                            Element::text_input(caret_duration, "95").width_match(),
+                        ))
+                        .child(Element::field(
                             "Selection color",
                             Element::checkbox(
                                 "Use the Windows 11 system accent color when available",
@@ -4626,12 +4634,20 @@ fn main() {
                                     MAX_LAUNCHER_HEIGHT,
                                 )
                                 .unwrap_or(DEFAULT_LAUNCHER_HEIGHT);
+                                let duration = caret_duration
+                                    .get()
+                                    .trim()
+                                    .parse::<u16>()
+                                    .unwrap_or(95)
+                                    .clamp(60, 160);
                                 let Ok(mut settings) = settings_for_visual_apply.write() else {
                                     ctx.toast_ok("Could not lock Flux settings");
                                     return;
                                 };
                                 settings.launcher_width = width;
                                 settings.launcher_height = height;
+                                settings.smooth_caret = smooth_caret.get();
+                                settings.smooth_caret_duration_ms = duration;
                                 settings.normalize();
                                 width = settings.launcher_width;
                                 height = settings.launcher_height;
@@ -4711,6 +4727,12 @@ fn main() {
         .padding(18)
         .child(settings_panel)
         .visible_signal(settings_visible);
+    if std::env::var_os("FLUX_SMOKE_SETTINGS_UI").is_some() {
+        eprintln!(
+            "Settings UI contract: UpdateActionVersionLabel=Current version: {CURRENT_VERSION}; SmoothCaretTab=Visual; SmoothCaretGeneral=false"
+        );
+    }
+
     let content = Element::stack()
         .fill()
         .font_family(LAUNCHER_FONT_FAMILY)
