@@ -185,7 +185,7 @@ fn is_mergeable_application_result(result: &SearchResult) -> bool {
         && result
             .target
             .as_deref()
-            .is_some_and(is_bare_executable_target)
+            .is_some_and(|target| is_bare_executable_target(target) || is_executable_target(target))
 }
 
 pub(crate) fn canonical_application_id(target: &str) -> Option<String> {

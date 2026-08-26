@@ -885,13 +885,16 @@ try {
             }
             Start-Sleep -Milliseconds 100
         }
-        $powerShellIdentities = @($powerShellRows | ForEach-Object {
+        $powerShellIdentityRows = @($powerShellRows | Where-Object {
+            $_ -match "`tsource=(ApplicationCatalog|BuiltIn)`t"
+        })
+        $powerShellIdentities = @($powerShellIdentityRows | ForEach-Object {
             if ($_ -match "`tidentity=([^`t]*)") { $Matches[1] }
         } | Where-Object { $_ -and $_.Length -gt 0 })
         $duplicatePowerShellIdentities = @($powerShellIdentities | Group-Object | Where-Object Count -gt 1)
         $powerShellDedupeProbe =
-            $powerShellRows.Count -gt 0 -and
-            $powerShellIdentities.Count -eq $powerShellRows.Count -and
+            $powerShellIdentityRows.Count -gt 0 -and
+            $powerShellIdentities.Count -eq $powerShellIdentityRows.Count -and
             $duplicatePowerShellIdentities.Count -eq 0
 
         $powerShellIconLines = @(Get-Content $iconProbePath -ErrorAction SilentlyContinue | Where-Object {
