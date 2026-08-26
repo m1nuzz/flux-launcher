@@ -308,7 +308,10 @@ impl ProviderResults {
 
 fn trace_query_probe(query: &str, results: &[SearchResult]) {
     let normalized = query.trim().to_ascii_lowercase();
-    if !matches!(normalized.as_str(), "1+1" | "powershell" | "pwsh") {
+    if !matches!(
+        normalized.as_str(),
+        "1+1" | "2026-08" | "powershell" | "pwsh"
+    ) {
         return;
     }
     let Some(path) = std::env::var_os("FLUX_QUERY_PROBE_FILE") else {
