@@ -1436,7 +1436,6 @@ try {
     $shell.SendKeys("{HOME}")
     Start-Sleep -Milliseconds 250
     [FluxWallpaper]::SetForegroundWindow($launcherHandle) | Out-Null
-    $launchProbeTraceBeforeCount = if (Test-Path $launchTracePath) { @(Get-Content $launchTracePath).Count } else { 0 }
     $launchProbeTimer = [System.Diagnostics.Stopwatch]::StartNew()
     [FluxWallpaper]::SendMessage($launcherHandle, $wmKeyDown, [UIntPtr]::new(0x0D), [IntPtr]::Zero) | Out-Null
     $launchProbeTimer.Stop()
@@ -1446,8 +1445,20 @@ try {
     # the opt-in lifecycle trace. This remains bounded and does not alter the
     # production launch path.
     Start-Sleep -Milliseconds 6000
-    $launchProbeTraceLines = if (Test-Path $launchTracePath) {
-        @(Get-Content $launchTracePath | Select-Object -Skip $launchProbeTraceBeforeCount)
+    $launchProbeAllTraceLines = if (Test-Path $launchTracePath) {
+        @(Get-Content $launchTracePath)
+    } else {
+        @()
+    }
+    $launchProbeDispatchIndexes = @(
+        for ($traceIndex = 0; $traceIndex -lt $launchProbeAllTraceLines.Count; $traceIndex++) {
+            if ($launchProbeAllTraceLines[$traceIndex] -match "`tlaunch-dispatch$") {
+                $traceIndex
+            }
+        }
+    )
+    $launchProbeTraceLines = if ($launchProbeDispatchIndexes.Count -gt 0) {
+        @($launchProbeAllTraceLines | Select-Object -Skip $launchProbeDispatchIndexes[-1])
     } else {
         @()
     }
