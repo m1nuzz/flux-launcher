@@ -556,17 +556,19 @@ try {
             throw "First-keystroke focus smoke failed after global hotkey show."
         }
 
-        # Clear the first character through the same focused keyboard path before
-        # exercising the two Unicode conversion-result delivery forms directly on
-        # the real launcher HWND. This is deterministic message-level coverage for
-        # custom controls; genuine Microsoft Pinyin composition still requires a
-        # runner with that IME and is reported as not covered below.
-        [FluxWallpaper]::keybd_event(0x11, 0, 0, [UIntPtr]::Zero)
-        [FluxWallpaper]::keybd_event(0x41, 0, 0, [UIntPtr]::Zero)
-        [FluxWallpaper]::keybd_event(0x41, 0, 2, [UIntPtr]::Zero)
-        [FluxWallpaper]::keybd_event(0x11, 0, 2, [UIntPtr]::Zero)
-        [FluxWallpaper]::keybd_event(0x08, 0, 0, [UIntPtr]::Zero)
-        [FluxWallpaper]::keybd_event(0x08, 0, 2, [UIntPtr]::Zero)
+        # Clear the first character through the real launcher hide/show lifecycle
+        # rather than relying on a synthetic selection shortcut. This also proves
+        # that focus is restored before the Unicode messages are delivered.
+        [FluxWallpaper]::SendMessage($launcherHandle, $wmHotkey, [UIntPtr]::Zero, [IntPtr]::Zero) | Out-Null
+        Start-Sleep -Milliseconds 450
+        if ([FluxWallpaper]::IsWindowVisible($launcherHandle)) {
+            throw "IME message smoke could not hide the launcher before its clean-query cycle."
+        }
+        [FluxWallpaper]::SendMessage($launcherHandle, $wmHotkey, [UIntPtr]::Zero, [IntPtr]::Zero) | Out-Null
+        Start-Sleep -Milliseconds 650
+        if (![FluxWallpaper]::IsWindowVisible($launcherHandle) -or [FluxWallpaper]::GetForegroundWindow() -ne $launcherHandle) {
+            throw "IME message smoke could not restore a focused launcher before Unicode injection."
+        }
         Start-Sleep -Milliseconds 250
 
         $wmChar = 0x0102
