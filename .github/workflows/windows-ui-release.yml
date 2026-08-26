@@ -173,19 +173,23 @@ jobs:
           make_latest: ${{ inputs.release_channel == 'stable' }}
           generate_release_notes: false
           body: |
-            Flux Launcher Windows 11 x64 ${{ inputs.release_channel }} release.
+            Flux Launcher Windows 11 x64 beta release.
 
             ## What's changed
 
-            - Fixed installed application discovery for compact queries such as `lmstudio`, so the Start Menu application `LM Studio` is found without typing the space.
-            - Moved separator-insensitive application matching into the ApplicationCatalog filtering stage, before final ranking.
-            - Added regression coverage for `LM Studio`, `Visual Studio Code`, punctuation separators, literal-match precedence, and punctuation-only queries.
-            - Repaired the Windows UI smoke fixture so its executable name cannot accidentally satisfy the compact query; the smoke now verifies the returned display title and canonical application identity.
+            - Fixed PowerShell result identity normalization so the built-in `powershell` result merges only with an application entry that resolves to the same executable path and arguments.
+            - Kept different PowerShell installations and argument variants separate, including Windows PowerShell, PowerShell 7, `pwsh`, and entries with different targets.
+            - Restored native executable icon loading for PowerShell results, with the executable icon used as a reliable fallback when shell thumbnail extraction is unavailable.
+            - Ensured the built-in calculator result for expressions such as `1+1` is ranked first after the asynchronous provider response and displays `= 2`.
+            - Added regression coverage for post-merge console identity, PowerShell path/argument separation, calculator ranking, date-like calculator behavior, icon loading, query responsiveness, and Windows UI smoke evidence.
+            - Preserved the native COM initialization fix for the background shell-icon worker, preventing the previously observed native `0xC0000005` failure path.
 
             ## Validation
 
-            - Windows UI workflow completed successfully on Windows Server 2025, build 26100.
-            - Native Windows tests, Clippy with `-D warnings`, installer/uninstall smoke, self-update smoke, and UI diagnostics passed.
+            - Normal CI completed successfully on the verified commit.
+            - Windows visual smoke completed successfully on Windows Server 2025, including PowerShell dedupe/icon checks, calculator ordering, lifecycle checks, and query responsiveness.
+            - The final artifact reported `PowerShellDedupeProbe=true`, `PowerShellIconProbe=true`, `CalculatorProbe=true`, `CalculatorPolicyProbe=true`, and `QueryResponsivenessProbe=true`.
+            - Query keystroke latency stayed within the configured budget, with a recorded maximum of 5.49 ms in the smoke run.
             - The release includes only the user-facing installer and portable executable. CI screenshots, DWM diagnostics, smoke logs, and test fixtures remain workflow artifacts.
 
             Beta releases are for testing and are ignored by the stable updater. Stable releases are the versions intended for WinGet and normal automatic updates.
