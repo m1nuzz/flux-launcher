@@ -135,6 +135,8 @@ jobs:
             OutputDirectory = "./artifacts/mica-smoke"
             ScrollbarGapSmoke = $true
             ActionBarSmoke = $true
+            PowerShellSmoke = $true
+            CalculatorSmoke = $true
           }
           if ("${{ inputs.force_translucent_fallback }}" -eq "true") {
             $captureParams.ForceTranslucentFallback = $true

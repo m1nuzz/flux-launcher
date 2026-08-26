@@ -15,6 +15,8 @@ param(
     [switch]$ScrollbarGapSmoke,
     [switch]$ActionBarSmoke,
     [switch]$CommandPrioritySmoke,
+    [switch]$PowerShellSmoke,
+    [switch]$CalculatorSmoke,
     [switch]$ObsidianIconSmoke,
     [switch]$QueryClearOnReopenSmoke,
     [switch]$QueryResponsivenessSmoke,
@@ -367,6 +369,11 @@ $compactFixtureTarget = Join-Path $env:TEMP ("FluxLauncherCompactAppFixture_{0}.
 Set-Content -Encoding ascii -Path $compactFixtureTarget -Value "@echo off`r`nexit /b 0"
 $compactAppProbePath = Join-Path $OutputDirectory "compact-application-probe.log"
 Remove-Item $compactAppProbePath -Force -ErrorAction SilentlyContinue
+$iconProbePath = Join-Path $OutputDirectory "icon-probe.log"
+$queryProbePath = Join-Path $OutputDirectory "query-probe.log"
+Remove-Item $iconProbePath, $queryProbePath -Force -ErrorAction SilentlyContinue
+$env:FLUX_ICON_PROBE_FILE = $iconProbePath
+$env:FLUX_QUERY_PROBE_FILE = $queryProbePath
 $obsidianConfigRoot = Join-Path $env:APPDATA "obsidian"
 $obsidianConfigBackupRoot = Join-Path $env:TEMP ("FluxLauncher-ObsidianConfig-backup-{0}" -f $PID)
 $obsidianFixtureVaultRoot = Join-Path $env:TEMP ("FluxLauncher-ObsidianVault-{0}" -f $PID)
@@ -727,6 +734,9 @@ try {
     $commandPriorityProbe = $false
     $compactAppProbe = $false
     $compactAppProbeLine = $null
+    $powerShellDedupeProbe = $false
+    $powerShellIconProbe = $false
+    $calculatorProbe = $false
     $resourceProfileProbe = !$ResourceProfileSmoke
     $resourceProfileSamples = @()
     $resourceProfileSummary = $null
@@ -847,6 +857,86 @@ try {
             throw "Compact application smoke did not return LM Studio by title with an executable identity free of lmstudio: $compactAppProbePath"
         }
         $commandPriorityProbe = $true
+    }
+    if ($PowerShellSmoke) {
+        $shell.SendKeys("^a")
+        $shell.SendKeys("{BACKSPACE}")
+        $shell.SendKeys("powershell")
+        Start-Sleep -Seconds 2
+        Save-Screenshot "powershell-results.png"
+
+        $powerShellRows = @()
+        $powerShellSnapshot = $null
+        $powerShellDeadline = (Get-Date).AddSeconds(3)
+        while ((Get-Date) -lt $powerShellDeadline) {
+            if (Test-Path $queryProbePath) {
+                $candidateRows = @(Get-Content $queryProbePath | Where-Object {
+                    $_ -match "`tquery=powershell`tindex="
+                })
+                if ($candidateRows.Count -gt 0) {
+                    $powerShellSnapshot = ($candidateRows | ForEach-Object {
+                        if ($_ -match "^snapshot=(\d+)") { [uint64]$Matches[1] }
+                    } | Sort-Object -Descending | Select-Object -First 1)
+                    $powerShellRows = @($candidateRows | Where-Object {
+                        $_ -match "^snapshot=$powerShellSnapshot`t"
+                    })
+                    if ($powerShellRows.Count -gt 0) { break }
+                }
+            }
+            Start-Sleep -Milliseconds 100
+        }
+        $powerShellIdentities = @($powerShellRows | ForEach-Object {
+            if ($_ -match "`tidentity=([^`t]*)") { $Matches[1] }
+        } | Where-Object { $_ -and $_.Length -gt 0 })
+        $duplicatePowerShellIdentities = @($powerShellIdentities | Group-Object | Where-Object Count -gt 1)
+        $powerShellDedupeProbe =
+            $powerShellRows.Count -gt 0 -and
+            $powerShellIdentities.Count -eq $powerShellRows.Count -and
+            $duplicatePowerShellIdentities.Count -eq 0
+
+        $powerShellIconLines = @(Get-Content $iconProbePath -ErrorAction SilentlyContinue | Where-Object {
+            $_ -match "(?i)^title=(powershell|pwsh)(\s|`t)" -or
+            $_ -match "(?i)^title=powershell\s+"
+        })
+        $powerShellLoadedIconLines = @(Get-Content $iconProbePath -ErrorAction SilentlyContinue | Where-Object {
+            $_ -match "(?i)^target=.*(powershell|pwsh).*`tloaded=True$"
+        })
+        $powerShellIconTargets = @($powerShellIconLines | ForEach-Object {
+            if ($_ -match "`ticon_target=([^`t]*)") { $Matches[1] }
+        } | Where-Object { $_ -and $_.Length -gt 0 } | Sort-Object -Unique)
+        $powerShellIconProbe =
+            $powerShellIconTargets.Count -gt 0 -and
+            $powerShellLoadedIconLines.Count -gt 0
+        Write-Host "PowerShell probes: rows=$($powerShellRows.Count) unique_identities=$($powerShellIdentities.Count) duplicate_identities=$($duplicatePowerShellIdentities.Count) icon_targets=$($powerShellIconTargets.Count) loaded_icons=$($powerShellLoadedIconLines.Count)"
+        if (!$powerShellDedupeProbe) {
+            throw "PowerShell dedupe smoke failed: rows=$($powerShellRows.Count), identities=$($powerShellIdentities -join ', ')."
+        }
+        if (!$powerShellIconProbe) {
+            throw "PowerShell icon smoke failed: no loaded icon for PowerShell result; targets=$($powerShellIconTargets -join ', ')."
+        }
+    }
+    if ($CalculatorSmoke) {
+        $shell.SendKeys("^a")
+        $shell.SendKeys("{BACKSPACE}")
+        $shell.SendKeys("1+1")
+        Start-Sleep -Milliseconds 700
+        Save-Screenshot "calculator-1-plus-1.png"
+
+        $calculatorProbe = $false
+        $calculatorDeadline = (Get-Date).AddSeconds(3)
+        while ((Get-Date) -lt $calculatorDeadline) {
+            if (Test-Path $queryProbePath) {
+                $calculatorProbe = @(Get-Content $queryProbePath | Where-Object {
+                    $_ -match "`tquery=1\+1`tindex=0`tid=builtin:calculator`t"
+                }).Count -gt 0
+            }
+            if ($calculatorProbe) { break }
+            Start-Sleep -Milliseconds 100
+        }
+        Write-Host "Calculator ordering probe: passed=$calculatorProbe"
+        if (!$calculatorProbe) {
+            throw "Calculator ordering smoke failed: builtin:calculator was not the first merged result for 1+1."
+        }
     }
     if ($ObsidianIconSmoke) {
         $shell.SendKeys("^a")
@@ -2041,6 +2131,9 @@ try {
         CommandPriorityProbe = (!$CommandPrioritySmoke) -or $commandPriorityProbe
         CompactApplicationProbe = (!$CommandPrioritySmoke) -or $compactAppProbe
         CompactApplicationProbeLine = $compactAppProbeLine
+        PowerShellDedupeProbe = (!$PowerShellSmoke) -or $powerShellDedupeProbe
+        PowerShellIconProbe = (!$PowerShellSmoke) -or $powerShellIconProbe
+        CalculatorProbe = (!$CalculatorSmoke) -or $calculatorProbe
         ObsidianIconProbe = (!$ObsidianIconSmoke) -or $obsidianIconProbe
         QueryResponsivenessMaxMilliseconds = $queryResponsivenessMaxMilliseconds
         QueryResponsivenessSamples = @($queryResponsivenessSamples)
@@ -2147,4 +2240,6 @@ finally {
     }
     Remove-Item Env:FLUX_LAUNCH_TRACE_FILE -ErrorAction SilentlyContinue
     Remove-Item Env:FLUX_COMPACT_APP_PROBE_FILE -ErrorAction SilentlyContinue
+    Remove-Item Env:FLUX_ICON_PROBE_FILE -ErrorAction SilentlyContinue
+    Remove-Item Env:FLUX_QUERY_PROBE_FILE -ErrorAction SilentlyContinue
 }

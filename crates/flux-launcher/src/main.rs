@@ -301,7 +301,53 @@ impl ProviderResults {
         rank_results_with_priorities(query, &mut merged, priorities);
         preserve_everything_file_order(&mut merged, &self.everything);
         merged.truncate(MAX_VISIBLE_RESULTS);
+        trace_query_probe(query, &merged);
         merged
+    }
+}
+
+fn trace_query_probe(query: &str, results: &[SearchResult]) {
+    let normalized = query.trim().to_ascii_lowercase();
+    if !matches!(normalized.as_str(), "1+1" | "powershell" | "pwsh") {
+        return;
+    }
+    let Some(path) = std::env::var_os("FLUX_QUERY_PROBE_FILE") else {
+        return;
+    };
+    let Ok(mut file) = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(path)
+    else {
+        return;
+    };
+    let snapshot = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|duration| duration.as_micros())
+        .unwrap_or_default();
+    let sanitize = |value: &str| value.replace(['\t', '\r', '\n'], " ");
+    let _ = writeln!(
+        file,
+        "snapshot={snapshot}\tquery={}\tcount={}",
+        sanitize(&normalized),
+        results.len()
+    );
+    for (index, result) in results.iter().enumerate() {
+        let target = result.target.as_deref().map(sanitize).unwrap_or_default();
+        let identity = canonical_application_key(result)
+            .map(|value| sanitize(&value))
+            .unwrap_or_default();
+        let _ = writeln!(
+            file,
+            "snapshot={snapshot}\tquery={}\tindex={index}\tid={}\ttitle={}\tsource={:?}\tkind={:?}\ttarget={}\tidentity={}",
+            sanitize(&normalized),
+            sanitize(&result.id),
+            sanitize(&result.title),
+            result.source,
+            result.kind,
+            target,
+            identity
+        );
     }
 }
 
@@ -395,6 +441,20 @@ fn preserve_everything_file_order(merged: &mut [SearchResult], provider_order: &
             continue;
         };
         merged[slot] = result;
+    }
+}
+
+fn normalize_built_in_executable_targets(results: &mut [SearchResult]) {
+    for result in results {
+        if result.source != ResultSource::BuiltIn || !result.id.starts_with("system:") {
+            continue;
+        }
+        let Some(target) = result.target.as_deref() else {
+            continue;
+        };
+        if let Some(resolved) = resolve_bare_executable_path(target) {
+            result.target = Some(resolved);
+        }
     }
 }
 
@@ -1414,6 +1474,11 @@ fn shell_icon_rgba(target: &str) -> Option<Vec<u8>> {
     // matching Flow Launcher's shortcut-aware image loader, then use Shell fallbacks.
     let icon = shortcut_icon_location(target)
         .and_then(|(path, index)| extract_icon_rgba_from_source(&path, Some(index)))
+        .or_else(|| {
+            is_executable_icon_target(target)
+                .then(|| extract_shell_icon_rgba(target))
+                .flatten()
+        })
         .or_else(|| extract_shell_thumbnail_rgba(target))
         .or_else(|| extract_shell_icon_rgba(target));
     trace_shell_icon_probe(target, icon.is_some());
@@ -1618,6 +1683,17 @@ fn extract_shell_thumbnail_rgba(target: &str) -> Option<Vec<u8>> {
 #[cfg(windows)]
 fn extract_shell_icon_rgba(target: &str) -> Option<Vec<u8>> {
     extract_icon_rgba_from_source(target, None)
+}
+
+fn is_executable_icon_target(target: &str) -> bool {
+    matches!(
+        std::path::Path::new(target.trim().trim_matches('"'))
+            .extension()
+            .and_then(|extension| extension.to_str())
+            .map(|extension| extension.to_ascii_lowercase())
+            .as_deref(),
+        Some("exe") | Some("com") | Some("bat") | Some("cmd")
+    )
 }
 
 #[cfg(windows)]
@@ -4909,7 +4985,8 @@ fn main() {
             sequence_for_interval.set(sequence);
             model.set_query(&next_query);
             {
-                let built_in_results = model.results().to_vec();
+                let mut built_in_results = model.results().to_vec();
+                normalize_built_in_executable_targets(&mut built_in_results);
                 let everything_expected = auto_enable_everything_for_interval.get()
                     && next_query.trim().len() >= EVERYTHING_MIN_QUERY_LEN;
                 let mut providers = providers_for_interval.borrow_mut();
@@ -5055,9 +5132,10 @@ mod tests {
         actions_for_result, bundled_icon_rgba, canonical_application_id, dimension_from_slider,
         dimension_slider_fraction, display_title, format_bytes, format_update_progress,
         google_icon_rgba, history_cursor_step, hover_position_changed,
-        icon_completion_generation_changed, icon_target_for_path, is_run_as_admin_key,
-        is_shutdown_mode, launcher_window_geometry, launcher_window_geometry_with_sizes,
-        merge_application_duplicates, normalize_everything_query, obsidian_icon_rgba,
+        icon_completion_generation_changed, icon_target_for_path, is_executable_icon_target,
+        is_run_as_admin_key, is_shutdown_mode, launcher_window_geometry,
+        launcher_window_geometry_with_sizes, merge_application_duplicates,
+        normalize_built_in_executable_targets, normalize_everything_query, obsidian_icon_rgba,
         parse_dimension_input, parse_internet_shortcut_icon_location,
         preserve_everything_file_order, quoted_result_path, relaunch_mode_for_auto_install,
         resolve_bare_executable_path, resolve_shortcut_icon_path, should_claim_single_instance,
@@ -5334,6 +5412,39 @@ mod tests {
         assert_eq!(merged.len(), 2);
         assert!(merged.iter().any(|result| result.title == "PowerShell"));
         assert!(merged.iter().any(|result| result.title == "PowerShell 7"));
+    }
+
+    #[test]
+    fn executable_icon_target_detection_accepts_shell_executables_only() {
+        assert!(is_executable_icon_target(
+            r"C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe"
+        ));
+        assert!(is_executable_icon_target(
+            r"C:\\Program Files\\PowerShell\\7\\pwsh.exe"
+        ));
+        assert!(!is_executable_icon_target(
+            r"C:\\Users\\m1nus\\PowerShell.lnk"
+        ));
+        assert!(!is_executable_icon_target("ms-settings:network-wifi"));
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn builtin_power_shell_target_is_resolved_before_merge_and_icon_loading() {
+        let mut results = vec![SearchResult {
+            id: String::from("system:powershell"),
+            title: String::from("PowerShell"),
+            subtitle: String::from("Windows PowerShell"),
+            kind: ResultKind::Command,
+            source: ResultSource::BuiltIn,
+            target: Some(String::from("powershell.exe")),
+        }];
+
+        normalize_built_in_executable_targets(&mut results);
+
+        let target = results[0].target.as_deref().unwrap().to_ascii_lowercase();
+        assert!(target.ends_with(r"\powershell.exe"));
+        assert!(target.contains(r"\windowspowershell\"));
     }
 
     #[test]

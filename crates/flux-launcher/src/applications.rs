@@ -199,6 +199,7 @@ pub(crate) fn canonical_target_key(target: &str) -> Option<String> {
     }
     if is_shortcut_path(target) {
         if let Some((resolved, arguments)) = resolve_shell_link_target(target) {
+            let resolved = expand_percent_variables(&resolved).unwrap_or(resolved);
             let key = normalize_windows_path(&resolved);
             let arguments = normalize(&arguments);
             return Some(if arguments.is_empty() {
@@ -732,6 +733,31 @@ mod tests {
         let merged = merge_catalog_candidates(vec![app_path, start_menu]);
         assert_eq!(merged.len(), 1);
         assert_eq!(merged[0].subtitle, "Application • Start Menu");
+    }
+
+    #[test]
+    fn identical_power_shell_app_paths_with_different_display_names_merge() {
+        let first = SearchResult {
+            id: String::from(r"application:target:c:\program files\powershell\7\pwsh.exe"),
+            title: String::from("pwsh"),
+            subtitle: String::from("Application • App Paths"),
+            kind: ResultKind::Application,
+            source: ResultSource::ApplicationCatalog,
+            target: Some(String::from(r"C:\Program Files\PowerShell\7\pwsh.exe")),
+        };
+        let second = SearchResult {
+            id: String::from(r"application:target:C:/PROGRAM FILES/POWERSHELL/7/pwsh.exe"),
+            title: String::from("PowerShell 7"),
+            subtitle: String::from("Application • App Paths"),
+            kind: ResultKind::Application,
+            source: ResultSource::ApplicationCatalog,
+            target: Some(String::from(r"c:/Program Files/PowerShell/7/pwsh.exe")),
+        };
+
+        let merged = merge_catalog_candidates(vec![first, second]);
+
+        assert_eq!(merged.len(), 1);
+        assert_eq!(merged[0].title, "pwsh");
     }
 
     #[test]

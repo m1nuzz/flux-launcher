@@ -98,17 +98,18 @@ impl SearchResult {
         } else {
             None
         };
-        let exact_shell_command = self.id == "system:command-prompt"
-            && matches!(query.as_str(), "cmd" | "command prompt" | "command line")
-            || self.id == "system:powershell"
-                && matches!(query.as_str(), "powershell" | "pwsh" | "power shell");
+        let exact_calculator = self.id == "builtin:calculator";
+        let exact_shell_command = (self.id == "system:command-prompt"
+            && matches!(query.as_str(), "cmd" | "command prompt" | "command line"))
+            || (self.id == "system:powershell"
+                && matches!(query.as_str(), "powershell" | "pwsh" | "power shell"));
         (
-            if exact_shell_command {
+            if exact_calculator || exact_shell_command {
                 0
             } else {
                 priority.map_or(1, |_| 0)
             },
-            if exact_shell_command {
+            if exact_calculator || exact_shell_command {
                 0
             } else {
                 priority.unwrap_or_default()
@@ -661,6 +662,33 @@ mod tests {
 
         model.set_query("pwsh");
         assert_eq!(model.results()[0].id, "system:powershell");
+    }
+
+    #[test]
+    fn calculator_result_outranks_application_matches_for_expression_queries() {
+        let mut results = vec![
+            SearchResult {
+                id: String::from("application:uninstall-3d-sdk"),
+                title: String::from("Uninstall 3D SDK 1.10.15"),
+                subtitle: String::from("Application • Start Menu"),
+                kind: ResultKind::Application,
+                source: ResultSource::ApplicationCatalog,
+                target: Some(String::from(r"C:\\Program Files\\SDK\\uninstall.exe")),
+            },
+            SearchResult {
+                id: String::from("builtin:calculator"),
+                title: String::from("= 2"),
+                subtitle: String::from("Calculator • 1+1"),
+                kind: ResultKind::Placeholder,
+                source: ResultSource::Plugin,
+                target: None,
+            },
+        ];
+
+        rank_results_with_priorities("1+1", &mut results, &[]);
+
+        assert_eq!(results[0].id, "builtin:calculator");
+        assert_eq!(results[1].id, "application:uninstall-3d-sdk");
     }
 
     #[test]
