@@ -4496,11 +4496,15 @@ fn main() {
                         )
                         .child(Element::field(
                             "Smooth Caret",
-                            Element::checkbox("Animate search caret movement", smooth_caret),
-                        ))
-                        .child(Element::field(
-                            "Caret duration (ms)",
-                            Element::text_input(caret_duration, "95").width_match(),
+                            Element::row()
+                                .width_match()
+                                .spacing(8)
+                                .child(
+                                    Element::checkbox("Animate search caret movement", smooth_caret)
+                                        .width_match(),
+                                )
+                                .child(Element::text_input(caret_duration, "95").width(76))
+                                .child(Element::label("ms").font_size(11.0)),
                         ))
                         .child(Element::field(
                             "Selection color",

@@ -1953,7 +1953,7 @@ try {
             } | ConvertTo-Json | Set-Content -Encoding utf8 (Join-Path $OutputDirectory "visual-discovery-geometry.json")
             $directSliderLeft = $settingsRect.Left + [int][Math]::Round(175 * $settingsScale)
             $directSliderRight = $directSliderLeft + [int][Math]::Round(180 * $settingsScale)
-            $directSliderY = $settingsRect.Top + [int][Math]::Round(410 * $settingsScale)
+            $directSliderY = $settingsRect.Top + [int][Math]::Round(360 * $settingsScale)
             $directPointClass = [FluxWallpaper]::WindowClassAtPoint($directSliderLeft, $directSliderY)
             Write-Host "Visual slider direct probe: left=$directSliderLeft right=$directSliderRight y=$directSliderY windowClass=$directPointClass"
             $directStateBefore = if (Test-Path $settingsStderrPath) { Get-Content $settingsStderrPath -Raw } else { "" }
@@ -2025,7 +2025,7 @@ try {
                 throw "Visual Settings smoke could not identify the width slider from native preview geometry telemetry."
             }
 
-            $heightDirectY = $settingsRect.Top + [int][Math]::Round(388 * $settingsScale)
+            $heightDirectY = $settingsRect.Top + [int][Math]::Round(438 * $settingsScale)
             $heightDirectPointClass = [FluxWallpaper]::WindowClassAtPoint($sliderLeft, $heightDirectY)
             Write-Host "Visual results-height direct probe: left=$sliderLeft right=$sliderRight y=$heightDirectY windowClass=$heightDirectPointClass"
             [FluxWallpaper]::SetCursorPos($sliderRight, $heightDirectY) | Out-Null
