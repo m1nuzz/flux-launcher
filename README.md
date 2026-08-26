@@ -81,6 +81,19 @@ Flux stores user settings in `%APPDATA%\FluxLauncher\settings.json`. The default
 | `Ctrl+R` | Run the selected application as administrator |
 | `Escape` | Return from actions or hide the launcher |
 
+### Keyboard layouts and IME
+
+Flux uses the Unicode Win32 input path provided by windui. Ordinary text, Unicode `WM_IME_CHAR` results, and committed `WM_IME_COMPOSITION` results are routed through the same UTF-16 decoder, so Chinese characters and supplementary-plane Unicode text follow the same focus and surrogate-pair behavior. The IME composition window is positioned at the focused search caret while composition is active. The `Settings > General > Start typing in English and restore the previous layout on hide` option remains available for users who want it; disabling that option lets Windows keep the input method selected by the user.
+
+If keyboard input is not reaching the search field, diagnostics can be enabled for one session with PowerShell:
+
+```powershell
+$env:FLUX_INPUT_TRACE_FILE = Join-Path $env:TEMP "flux-input-trace.log"
+.\flux-launcher.exe
+```
+
+The trace contains only message names, HWND/thread relationships, active HKL identifier, IME composition state, and routing flags. It never records typed characters, query text, clipboard contents, or private file paths. Remove the environment variable after the diagnostic session to return to the default zero-trace path.
+
 Search results remain bounded to 16 items per provider. Applications are deduplicated and ranked before ordinary Everything files. Query history is persisted atomically, deduplicated case-insensitively, and capped at 32 entries.
 
 ## Performance

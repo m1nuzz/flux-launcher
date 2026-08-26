@@ -47,13 +47,14 @@ use windows::Win32::UI::HiDpi::{
     SetProcessDpiAwarenessContext, DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2,
 };
 use windows::Win32::UI::Input::Ime::{
-    ImmGetContext, ImmReleaseContext, ImmSetCandidateWindow, ImmSetCompositionFontW,
-    ImmSetCompositionWindow, CANDIDATEFORM, CFS_CANDIDATEPOS, CFS_POINT, COMPOSITIONFORM,
+    ImmGetCompositionStringW, ImmGetContext, ImmReleaseContext, ImmSetCandidateWindow,
+    ImmSetCompositionFontW, ImmSetCompositionWindow, CANDIDATEFORM, CFS_CANDIDATEPOS, CFS_POINT,
+    COMPOSITIONFORM, GCS_RESULTSTR,
 };
 use windows::Win32::UI::Input::KeyboardAndMouse::{
-    GetDoubleClickTime, GetKeyState, ReleaseCapture, SetCapture, TrackMouseEvent, TME_LEAVE,
-    TRACKMOUSEEVENT, VK_BACK, VK_CONTROL, VK_DELETE, VK_DOWN, VK_END, VK_ESCAPE, VK_HOME, VK_LEFT,
-    VK_RETURN, VK_RIGHT, VK_SHIFT, VK_SPACE, VK_TAB, VK_UP,
+    GetDoubleClickTime, GetFocus, GetKeyState, GetKeyboardLayout, ReleaseCapture, SetCapture,
+    TrackMouseEvent, TME_LEAVE, TRACKMOUSEEVENT, VK_BACK, VK_CONTROL, VK_DELETE, VK_DOWN, VK_END,
+    VK_ESCAPE, VK_HOME, VK_LEFT, VK_RETURN, VK_RIGHT, VK_SHIFT, VK_SPACE, VK_TAB, VK_UP,
 };
 use windows::Win32::UI::Input::Touch::{
     CloseTouchInputHandle, GetTouchInputInfo, RegisterTouchWindow, HTOUCHINPUT,
@@ -65,26 +66,27 @@ use windows::Win32::UI::Shell::{
 use windows::Win32::UI::WindowsAndMessaging::{
     CreateIconIndirect, CreateWindowExW, DefWindowProcW, DestroyIcon, DestroyWindow,
     DispatchMessageW, GetClientRect, GetCursorPos, GetForegroundWindow, GetMessageExtraInfo,
-    GetMessageTime, GetMessageW, GetSystemMetrics, GetWindowLongPtrW, GetWindowRect, IsIconic,
-    IsWindowVisible, IsZoomed, KillTimer, LoadCursorW, LoadIconW, MsgWaitForMultipleObjectsEx,
-    PeekMessageW, PostMessageW, PostQuitMessage, RegisterClassExW, SetCursor, SetCursorPos,
-    SetForegroundWindow, SetLayeredWindowAttributes, SetTimer, SetWindowLongPtrW, SetWindowPos,
-    ShowWindow, SystemParametersInfoW, TranslateMessage, CREATESTRUCTW, CW_USEDEFAULT,
-    GWLP_USERDATA, HICON, HTBOTTOM, HTBOTTOMLEFT, HTBOTTOMRIGHT, HTCAPTION, HTCLIENT, HTLEFT,
-    HTRIGHT, HTTOP, HTTOPLEFT, HTTOPRIGHT, ICONINFO, IDC_ARROW, IDC_HAND, IDC_IBEAM, LWA_ALPHA,
-    MINMAXINFO, MSG, MWMO_INPUTAVAILABLE, NCCALCSIZE_PARAMS, PM_REMOVE, QS_ALLINPUT,
-    SIZE_MINIMIZED, SM_CXDOUBLECLK, SM_CXFRAME, SM_CXPADDEDBORDER, SM_CXSCREEN, SM_CYDOUBLECLK,
-    SM_CYFRAME, SM_CYSCREEN, SM_CYVIRTUALSCREEN, SM_REMOTESESSION, SM_XVIRTUALSCREEN,
-    SM_YVIRTUALSCREEN, SPI_GETCLIENTAREAANIMATION, SWP_FRAMECHANGED, SWP_NOACTIVATE, SWP_NOMOVE,
-    SWP_NOSIZE, SWP_NOZORDER, SW_HIDE, SW_MAXIMIZE, SW_MINIMIZE, SW_RESTORE, SW_SHOW,
-    SW_SHOWNOACTIVATE, SW_SHOWNORMAL, SYSTEM_PARAMETERS_INFO_UPDATE_FLAGS, WA_INACTIVE,
-    WINDOW_EX_STYLE, WINDOW_STYLE, WM_ACTIVATE, WM_APP, WM_CAPTURECHANGED, WM_CHAR, WM_CLOSE,
-    WM_DESTROY, WM_DPICHANGED, WM_DROPFILES, WM_ENTERSIZEMOVE, WM_EXITSIZEMOVE, WM_GETMINMAXINFO,
-    WM_HOTKEY, WM_IME_COMPOSITION, WM_IME_ENDCOMPOSITION, WM_IME_STARTCOMPOSITION, WM_KEYDOWN,
-    WM_LBUTTONDOWN, WM_LBUTTONUP, WM_MOUSEMOVE, WM_MOUSEWHEEL, WM_NCCALCSIZE, WM_NCCREATE,
-    WM_NCHITTEST, WM_NCMOUSEMOVE, WM_PAINT, WM_QUIT, WM_RBUTTONDOWN, WM_RBUTTONUP, WM_SETCURSOR,
-    WM_SIZE, WM_SYSKEYDOWN, WM_TIMER, WM_TOUCH, WNDCLASSEXW, WS_EX_LAYERED, WS_EX_NOACTIVATE,
-    WS_EX_TOOLWINDOW, WS_MAXIMIZEBOX, WS_OVERLAPPEDWINDOW, WS_POPUP, WS_THICKFRAME,
+    GetMessageTime, GetMessageW, GetSystemMetrics, GetWindowLongPtrW, GetWindowRect,
+    GetWindowThreadProcessId, IsIconic, IsWindowVisible, IsZoomed, KillTimer, LoadCursorW,
+    LoadIconW, MsgWaitForMultipleObjectsEx, PeekMessageW, PostMessageW, PostQuitMessage,
+    RegisterClassExW, SetCursor, SetCursorPos, SetForegroundWindow, SetLayeredWindowAttributes,
+    SetTimer, SetWindowLongPtrW, SetWindowPos, ShowWindow, SystemParametersInfoW, TranslateMessage,
+    CREATESTRUCTW, CW_USEDEFAULT, GWLP_USERDATA, HICON, HTBOTTOM, HTBOTTOMLEFT, HTBOTTOMRIGHT,
+    HTCAPTION, HTCLIENT, HTLEFT, HTRIGHT, HTTOP, HTTOPLEFT, HTTOPRIGHT, ICONINFO, IDC_ARROW,
+    IDC_HAND, IDC_IBEAM, LWA_ALPHA, MINMAXINFO, MSG, MWMO_INPUTAVAILABLE, NCCALCSIZE_PARAMS,
+    PM_REMOVE, QS_ALLINPUT, SIZE_MINIMIZED, SM_CXDOUBLECLK, SM_CXFRAME, SM_CXPADDEDBORDER,
+    SM_CXSCREEN, SM_CYDOUBLECLK, SM_CYFRAME, SM_CYSCREEN, SM_CYVIRTUALSCREEN, SM_REMOTESESSION,
+    SM_XVIRTUALSCREEN, SM_YVIRTUALSCREEN, SPI_GETCLIENTAREAANIMATION, SWP_FRAMECHANGED,
+    SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE, SWP_NOZORDER, SW_HIDE, SW_MAXIMIZE, SW_MINIMIZE,
+    SW_RESTORE, SW_SHOW, SW_SHOWNOACTIVATE, SW_SHOWNORMAL, SYSTEM_PARAMETERS_INFO_UPDATE_FLAGS,
+    WA_INACTIVE, WINDOW_EX_STYLE, WINDOW_STYLE, WM_ACTIVATE, WM_APP, WM_CAPTURECHANGED, WM_CHAR,
+    WM_CLOSE, WM_DESTROY, WM_DPICHANGED, WM_DROPFILES, WM_ENTERSIZEMOVE, WM_EXITSIZEMOVE,
+    WM_GETMINMAXINFO, WM_HOTKEY, WM_IME_CHAR, WM_IME_COMPOSITION, WM_IME_ENDCOMPOSITION,
+    WM_IME_STARTCOMPOSITION, WM_KEYDOWN, WM_LBUTTONDOWN, WM_LBUTTONUP, WM_MOUSEMOVE, WM_MOUSEWHEEL,
+    WM_NCCALCSIZE, WM_NCCREATE, WM_NCHITTEST, WM_NCMOUSEMOVE, WM_PAINT, WM_QUIT, WM_RBUTTONDOWN,
+    WM_RBUTTONUP, WM_SETCURSOR, WM_SIZE, WM_SYSKEYDOWN, WM_TIMER, WM_TOUCH, WNDCLASSEXW,
+    WS_EX_LAYERED, WS_EX_NOACTIVATE, WS_EX_TOOLWINDOW, WS_MAXIMIZEBOX, WS_OVERLAPPEDWINDOW,
+    WS_POPUP, WS_THICKFRAME,
 };
 // 只用于 d2d 后端选择（RDP 远程会话下强制软渲染），随该 feature 一起门控。
 #[cfg(feature = "d2d")]
@@ -98,6 +100,7 @@ thread_local! {
 }
 
 static TRACE_SHOW_START: OnceLock<Instant> = OnceLock::new();
+static INPUT_TRACE_PATH: OnceLock<Option<PathBuf>> = OnceLock::new();
 
 /// Write repeat-show diagnostics only when explicitly enabled by the environment.
 /// The trace is intentionally local to the UI thread and has no default overhead.
@@ -320,8 +323,10 @@ struct WindowState {
     frameless: bool,
     /// 是否已向系统申请鼠标离开通知（TrackMouseEvent）。离开后系统清此标志需重新申请。
     mouse_tracked: bool,
-    /// WM_CHAR 暂存的高代理项：补充平面字符（emoji 等）分两条 WM_CHAR 发来 UTF-16 代理对。
+    /// A pending high surrogate from WM_CHAR/WM_IME_CHAR or an IME result string.
     pending_surrogate: Option<u16>,
+    /// Whether the IME currently owns an active composition on this window.
+    ime_composing: bool,
     /// 窗口最小客户区尺寸（逻辑 dp，0=不限制）。WM_GETMINMAXINFO 据此换算物理像素下限。
     min_w: i32,
     min_h: i32,
@@ -418,6 +423,7 @@ impl WindowState {
             frameless: false,
             mouse_tracked: false,
             pending_surrogate: None,
+            ime_composing: false,
             min_w: 0,
             min_h: 0,
             in_size_move: false,
@@ -1525,11 +1531,20 @@ unsafe extern "system" fn wnd_proc(
             LRESULT(0)
         }
         WM_KEYDOWN | WM_SYSKEYDOWN => {
+            trace_keyboard_event(hwnd, "wm_keydown", false, true);
             handle_key(hwnd, wparam);
             LRESULT(0)
         }
         WM_CHAR => {
-            handle_char(hwnd, wparam);
+            handle_text_unit(hwnd, wparam.0 as u16, "wm_char");
+            LRESULT(0)
+        }
+        // Unicode windows may receive IME conversion results as WM_IME_CHAR rather
+        // than WM_IME_COMPOSITION/GCS_RESULTSTR. These are alternative delivery
+        // paths; routing this message directly prevents the custom text input from
+        // depending on DefWindowProc to translate it.
+        WM_IME_CHAR => {
+            handle_text_unit(hwnd, wparam.0 as u16, "wm_ime_char");
             LRESULT(0)
         }
         WM_CAPTURECHANGED => {
@@ -1581,6 +1596,7 @@ unsafe extern "system" fn wnd_proc(
             let op = state_from(hwnd)
                 .and_then(|s| s.hotkeys.as_mut())
                 .and_then(|hs| hs.dispatch(wparam.0));
+            trace_keyboard_event(hwnd, "wm_hotkey", false, op.is_some());
             // A hidden ToggleVisibility/Show must consume queued geometry before
             // ShowWindow so DComp/WM_SIZE see the compact client rect on the
             // first visible frame. Preserve the cursor request for show_and_activate.
@@ -1606,25 +1622,50 @@ unsafe extern "system" fn wnd_proc(
         // 自带的、随组合进度前进的光标成为唯一可见光标），再定位候选窗。
         WM_IME_STARTCOMPOSITION => {
             let repaint = state_from(hwnd)
-                .map(|s| s.handler.set_ime_composing(true))
+                .map(|s| {
+                    s.ime_composing = true;
+                    s.handler.set_ime_composing(true)
+                })
                 .unwrap_or(false);
+            trace_keyboard_event(hwnd, "wm_ime_startcomposition", false, false);
             if repaint {
                 let _ = InvalidateRect(Some(hwnd), None, false);
             }
             handle_ime_position(hwnd);
             DefWindowProcW(hwnd, msg, wparam, lparam)
         }
-        // 合成中：把候选窗重新定位到焦点控件的光标处，再交默认处理。重复定位到
-        // 同一点是幂等的；兼顾"候选窗在合成中才出现"的输入法。
+        // Keep the IME candidate window positioned while composition changes. A
+        // committed result is consumed below before DefWindowProc can translate it
+        // into another text message, avoiding duplicate characters.
         WM_IME_COMPOSITION => {
             handle_ime_position(hwnd);
+            if (lparam.0 as u32 & GCS_RESULTSTR.0) != 0 {
+                if let Some(units) = read_ime_result(hwnd) {
+                    trace_keyboard_event(
+                        hwnd,
+                        "wm_ime_composition_result",
+                        true,
+                        !units.is_empty(),
+                    );
+                    for unit in units {
+                        handle_text_unit(hwnd, unit, "wm_ime_composition_result");
+                    }
+                    return LRESULT(0);
+                }
+                trace_keyboard_event(hwnd, "wm_ime_composition_result_unavailable", false, false);
+            }
             DefWindowProcW(hwnd, msg, wparam, lparam)
         }
-        // 输入法结束合成（提交上屏或取消）：通知焦点控件退出组合态，恢复自绘光标。
+        // The IME has committed or cancelled the composition. Restore the custom
+        // caret only after the system composition window has finished.
         WM_IME_ENDCOMPOSITION => {
             let repaint = state_from(hwnd)
-                .map(|s| s.handler.set_ime_composing(false))
+                .map(|s| {
+                    s.ime_composing = false;
+                    s.handler.set_ime_composing(false)
+                })
                 .unwrap_or(false);
+            trace_keyboard_event(hwnd, "wm_ime_endcomposition", false, false);
             if repaint {
                 let _ = InvalidateRect(Some(hwnd), None, false);
             }
@@ -2224,6 +2265,7 @@ pub(crate) fn show_and_activate(hwnd: HWND) {
         if let Some(state) = state_from(hwnd) {
             state.handler.on_window_activated();
         }
+        trace_keyboard_event(hwnd, "show_focus_ready", false, GetFocus() == hwnd);
         // Present one settled visible frame before injecting focus/navigation.
         // This prevents a late request from resizing the surface immediately
         // after DWM samples the first transparent backbuffer.
@@ -2802,21 +2844,64 @@ fn accumulate_char(pending: &mut Option<u16>, unit: u16) -> Option<char> {
     char::from_u32(unit as u32)
 }
 
-/// WM_CHAR：已翻译的字符（含 IME/CJK 输入与 emoji 代理对）。控制字符跳过。
-unsafe fn handle_char(hwnd: HWND, wparam: WPARAM) {
-    let unit = wparam.0 as u16;
-    // 先在独立借用作用域内累积代理对并释放 state 借用，再分发——避免与
-    // dispatch_key_event 内部的 state_from 形成 &mut 别名（见其两段式说明）。
+/// Read the committed UTF-16 result from the IMM context attached to the window.
+/// The returned length is in UTF-16 code units because ImmGetCompositionStringW
+/// reports byte counts. `None` means that the context or API call was unavailable;
+/// an empty `Some` is a valid empty result and must still be consumed.
+#[allow(clippy::manual_is_multiple_of)]
+unsafe fn read_ime_result(hwnd: HWND) -> Option<Vec<u16>> {
+    let context = ImmGetContext(hwnd);
+    if context.is_invalid() {
+        return None;
+    }
+
+    let byte_len = ImmGetCompositionStringW(context, GCS_RESULTSTR, None, 0);
+    if byte_len < 0 {
+        let _ = ImmReleaseContext(hwnd, context);
+        return None;
+    }
+    let byte_len = byte_len as usize;
+    if byte_len % size_of::<u16>() != 0 {
+        let _ = ImmReleaseContext(hwnd, context);
+        return None;
+    }
+
+    let mut units = vec![0u16; byte_len / size_of::<u16>()];
+    let copied = ImmGetCompositionStringW(
+        context,
+        GCS_RESULTSTR,
+        Some(units.as_mut_ptr().cast::<c_void>()),
+        byte_len as u32,
+    );
+    let _ = ImmReleaseContext(hwnd, context);
+    if copied < 0 || copied as usize > byte_len || copied as usize % size_of::<u16>() != 0 {
+        return None;
+    }
+    units.truncate(copied as usize / size_of::<u16>());
+    Some(units)
+}
+
+/// Route one UTF-16 code unit from WM_CHAR, WM_IME_CHAR, or an IME result string.
+/// Keeping one accumulator for all three message paths guarantees identical Unicode
+/// behavior and prevents BMP/surrogate handling from diverging between IMEs.
+unsafe fn handle_text_unit(hwnd: HWND, unit: u16, message: &'static str) {
+    // Release the WindowState borrow before dispatch_key_event can re-enter state_from.
     let c = {
         let Some(state) = state_from(hwnd) else {
+            trace_keyboard_event(hwnd, message, false, false);
             return;
         };
         accumulate_char(&mut state.pending_surrogate, unit)
     };
-    let Some(c) = c else { return };
+    let Some(c) = c else {
+        trace_keyboard_event(hwnd, message, false, false);
+        return;
+    };
     if c.is_control() {
+        trace_keyboard_event(hwnd, message, false, false);
         return;
     }
+    trace_keyboard_event(hwnd, message, true, true);
     let ev = KeyEvent {
         key: Key::Char(c),
         pressed: true,
@@ -2824,6 +2909,54 @@ unsafe fn handle_char(hwnd: HWND, wparam: WPARAM) {
         ctrl: false,
     };
     dispatch_key_event(hwnd, ev);
+}
+
+/// Write opt-in keyboard diagnostics without recording text, paths, or clipboard data.
+/// The normal path returns before any OS queries or allocation.
+unsafe fn trace_keyboard_event(hwnd: HWND, message: &str, emitted: bool, routed: bool) {
+    let path = INPUT_TRACE_PATH
+        .get_or_init(|| std::env::var_os("FLUX_INPUT_TRACE_FILE").map(PathBuf::from))
+        .as_ref();
+    let Some(path) = path else { return };
+    if path.as_os_str().is_empty() {
+        return;
+    }
+
+    let foreground = GetForegroundWindow();
+    let focus = GetFocus();
+    let hwnd_thread = GetWindowThreadProcessId(hwnd, None);
+    let foreground_thread = if foreground.is_invalid() {
+        0
+    } else {
+        GetWindowThreadProcessId(foreground, None)
+    };
+    let focus_thread = if focus.is_invalid() {
+        0
+    } else {
+        GetWindowThreadProcessId(focus, None)
+    };
+    let layout = if hwnd_thread == 0 {
+        0
+    } else {
+        GetKeyboardLayout(hwnd_thread).0 as usize
+    };
+    let composing = state_from(hwnd).is_some_and(|state| state.ime_composing);
+    let line = format!(
+        "message={message} hwnd=0x{:x} foreground=0x{:x} focus=0x{:x} hwnd_thread={} foreground_thread={} focus_thread={} active_hkl=0x{:x} ime_composing={} emitted={} routed={}\n",
+        hwnd.0 as usize,
+        foreground.0 as usize,
+        focus.0 as usize,
+        hwnd_thread,
+        foreground_thread,
+        focus_thread,
+        layout,
+        composing,
+        emitted,
+        routed,
+    );
+    if let Ok(mut file) = OpenOptions::new().create(true).append(true).open(path) {
+        let _ = file.write_all(line.as_bytes());
+    }
 }
 
 /// 分发键盘事件（两段式：先借 state 取意图，释放后再调可能重入的 DestroyWindow）。
@@ -2873,6 +3006,37 @@ mod tests {
             "BMP 中文字符"
         );
         assert_eq!(pend, None, "BMP 字符不留挂起状态");
+    }
+
+    #[test]
+    fn unicode_message_paths_preserve_cjk_and_surrogates() {
+        // WM_CHAR, WM_IME_CHAR, and GCS_RESULTSTR all feed the same UTF-16
+        // accumulator. This keeps a committed CJK BMP character and a
+        // supplementary-plane character identical across delivery paths.
+        let mut pending_from_wm_char = None;
+        let mut pending_from_wm_ime_char = None;
+        let mut pending_from_result = None;
+        let units = [0x4E2D, 0xD83D, 0xDE00];
+        let mut wm_char = String::new();
+        let mut wm_ime_char = String::new();
+        let mut result = String::new();
+        for unit in units {
+            if let Some(c) = accumulate_char(&mut pending_from_wm_char, unit) {
+                wm_char.push(c);
+            }
+            if let Some(c) = accumulate_char(&mut pending_from_wm_ime_char, unit) {
+                wm_ime_char.push(c);
+            }
+            if let Some(c) = accumulate_char(&mut pending_from_result, unit) {
+                result.push(c);
+            }
+        }
+        assert_eq!(wm_char, "中😀");
+        assert_eq!(wm_ime_char, wm_char);
+        assert_eq!(result, wm_char);
+        assert_eq!(pending_from_wm_char, None);
+        assert_eq!(pending_from_wm_ime_char, None);
+        assert_eq!(pending_from_result, None);
     }
 
     #[test]

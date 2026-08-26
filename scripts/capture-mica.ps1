@@ -22,6 +22,7 @@ param(
     [switch]$QueryClearOnReopenSmoke,
     [switch]$QueryResponsivenessSmoke,
     [switch]$FocusToggleSmoke,
+    [switch]$ImeMessageSmoke,
     [switch]$DeactivationClickSmoke,
     [switch]$FolderLaunchSmoke,
     [switch]$CtrlRSmoke,
@@ -444,9 +445,17 @@ $existingEverythingGuideIds = @(
 $stdoutPath = Join-Path $OutputDirectory "launcher.stdout.log"
 $stderrPath = Join-Path $OutputDirectory "launcher.stderr.log"
 $launchTracePath = Join-Path $OutputDirectory "launch-trace.log"
-Remove-Item $launchTracePath -Force -ErrorAction SilentlyContinue
+$inputTracePath = Join-Path $OutputDirectory "input-trace.log"
+Remove-Item $launchTracePath, $inputTracePath -Force -ErrorAction SilentlyContinue
 $env:FLUX_LAUNCH_TRACE_FILE = $launchTracePath
 $env:FLUX_COMPACT_APP_PROBE_FILE = $compactAppProbePath
+if ($ImeMessageSmoke) {
+    $env:FLUX_INPUT_TRACE_FILE = $inputTracePath
+} else {
+    Remove-Item Env:FLUX_INPUT_TRACE_FILE -ErrorAction SilentlyContinue
+}
+$imeMessageProbe = !$ImeMessageSmoke
+$imeMessageDetails = $null
 $legacyFlowPluginRoot = Join-Path $env:APPDATA "FluxLauncher\Plugins\NativeFlowFixture"
 $legacyFlowPluginBackupRoot = Join-Path $env:TEMP ("FluxLauncher-NativeFlowFixture.compact-smoke-disabled-{0}" -f $PID)
 $legacyFlowPluginWasDisabled = $false
@@ -529,6 +538,71 @@ try {
     if (!$hiddenAfterFirstHotkey -or !$visibleAfterSecondHotkey) {
         throw "Alt+Space visibility regression: hidden=$hiddenAfterFirstHotkey visible=$visibleAfterSecondHotkey"
     }
+
+    if ($ImeMessageSmoke) {
+        # First-keystroke regression: after a real global hotkey show, the focused
+        # search control must accept a normal character without a mouse click.
+        $firstKeystrokeBefore = if (Test-Path $queryProbePath) { @(Get-Content $queryProbePath).Count } else { 0 }
+        [FluxWallpaper]::keybd_event(0x51, 0, 0, [UIntPtr]::Zero)
+        [FluxWallpaper]::keybd_event(0x51, 0, 2, [UIntPtr]::Zero)
+        Start-Sleep -Milliseconds 500
+        $firstKeystrokeLines = if (Test-Path $queryProbePath) {
+            @(Get-Content $queryProbePath | Select-Object -Skip $firstKeystrokeBefore)
+        } else {
+            @()
+        }
+        $firstKeystrokeProbe = @($firstKeystrokeLines | Where-Object { $_ -match "query=q" }).Count -gt 0
+        if (!$firstKeystrokeProbe) {
+            throw "First-keystroke focus smoke failed after global hotkey show."
+        }
+
+        # Clear the first character through the same focused keyboard path before
+        # exercising the two Unicode conversion-result delivery forms directly on
+        # the real launcher HWND. This is deterministic message-level coverage for
+        # custom controls; genuine Microsoft Pinyin composition still requires a
+        # runner with that IME and is reported as not covered below.
+        [FluxWallpaper]::keybd_event(0x11, 0, 0, [UIntPtr]::Zero)
+        [FluxWallpaper]::keybd_event(0x41, 0, 0, [UIntPtr]::Zero)
+        [FluxWallpaper]::keybd_event(0x41, 0, 2, [UIntPtr]::Zero)
+        [FluxWallpaper]::keybd_event(0x11, 0, 2, [UIntPtr]::Zero)
+        [FluxWallpaper]::keybd_event(0x08, 0, 0, [UIntPtr]::Zero)
+        [FluxWallpaper]::keybd_event(0x08, 0, 2, [UIntPtr]::Zero)
+        Start-Sleep -Milliseconds 250
+
+        $wmChar = 0x0102
+        $wmImeChar = 0x0286
+        $unicodeProbeBefore = if (Test-Path $queryProbePath) { @(Get-Content $queryProbePath).Count } else { 0 }
+        [FluxWallpaper]::SendMessage($launcherHandle, $wmChar, [UIntPtr]0x4E2D, [IntPtr]1) | Out-Null
+        Start-Sleep -Milliseconds 500
+        $unicodeCharLines = if (Test-Path $queryProbePath) {
+            @(Get-Content $queryProbePath | Select-Object -Skip $unicodeProbeBefore)
+        } else {
+            @()
+        }
+        $wmCharProbe = @($unicodeCharLines | Where-Object { $_ -match "query=中" }).Count -gt 0
+
+        $unicodeImeBefore = if (Test-Path $queryProbePath) { @(Get-Content $queryProbePath).Count } else { 0 }
+        [FluxWallpaper]::SendMessage($launcherHandle, $wmImeChar, [UIntPtr]0x6587, [IntPtr]1) | Out-Null
+        Start-Sleep -Milliseconds 500
+        $unicodeImeLines = if (Test-Path $queryProbePath) {
+            @(Get-Content $queryProbePath | Select-Object -Skip $unicodeImeBefore)
+        } else {
+            @()
+        }
+        $wmImeCharProbe = @($unicodeImeLines | Where-Object { $_ -match "query=文" }).Count -gt 0
+        $imeMessageProbe = $wmCharProbe -and $wmImeCharProbe
+        $imeMessageDetails = [ordered]@{
+            FirstKeystroke = $firstKeystrokeProbe
+            WMChar = $wmCharProbe
+            WMImeChar = $wmImeCharProbe
+            UnicodeProbeLines = @($firstKeystrokeLines + $unicodeCharLines + $unicodeImeLines).Count
+            GenuineImeCompositionCovered = $false
+        }
+        if (!$imeMessageProbe) {
+            throw "Unicode message routing smoke failed: WM_CHAR=$wmCharProbe WM_IME_CHAR=$wmImeCharProbe"
+        }
+    }
+
     $focusToggleProbe = $false
     $focusToggleVisibleAfterReopen = $false
     $focusToggleForegroundAfterReopen = $false
@@ -2227,6 +2301,10 @@ try {
         TabNavigationProbe = $TabNavigationCycles -gt 0
         EverythingSyntaxProbe = $true
         QueryResponsivenessProbe = (!$QueryResponsivenessSmoke) -or $queryResponsivenessProbe
+        FirstKeystrokeProbe = if ($ImeMessageSmoke) { $firstKeystrokeProbe } else { $true }
+        ImeMessageRoutingProbe = $imeMessageProbe
+        ImeMessageDetails = $imeMessageDetails
+        InputTraceCollected = $ImeMessageSmoke -and (Test-Path $inputTracePath)
         CommandPriorityProbe = (!$CommandPrioritySmoke) -or $commandPriorityProbe
         CompactApplicationProbe = (!$CommandPrioritySmoke) -or $compactAppProbe
         CompactApplicationProbeLine = $compactAppProbeLine
@@ -2339,6 +2417,7 @@ finally {
         Move-Item -LiteralPath $legacyFlowPluginBackupRoot -Destination $legacyFlowPluginRoot -Force -ErrorAction SilentlyContinue
     }
     Remove-Item Env:FLUX_LAUNCH_TRACE_FILE -ErrorAction SilentlyContinue
+    Remove-Item Env:FLUX_INPUT_TRACE_FILE -ErrorAction SilentlyContinue
     Remove-Item Env:FLUX_COMPACT_APP_PROBE_FILE -ErrorAction SilentlyContinue
     Remove-Item Env:FLUX_ICON_PROBE_FILE -ErrorAction SilentlyContinue
     Remove-Item Env:FLUX_QUERY_PROBE_FILE -ErrorAction SilentlyContinue

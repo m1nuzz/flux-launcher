@@ -139,6 +139,7 @@ jobs:
             CalculatorSmoke = $true
             CalculatorPolicySmoke = $true
             QueryResponsivenessSmoke = $true
+            ImeMessageSmoke = $true
           }
           if ("${{ inputs.force_translucent_fallback }}" -eq "true") {
             $captureParams.ForceTranslucentFallback = $true
