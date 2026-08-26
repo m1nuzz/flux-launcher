@@ -1,0 +1,206 @@
+name: "Bug report"
+description: Report a reproducible problem with Flux Launcher
+title: "BUG: "
+labels:
+  - bug
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for taking the time to report a problem with Flux Launcher.
+        Please do not include passwords, tokens, private file names, or other personal data in screenshots or logs.
+
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Before submitting
+      options:
+        - label: I have searched the existing issues and did not find a duplicate.
+          required: true
+        - label: I am using the latest available Flux Launcher release or have included my exact version below.
+          required: true
+        - label: I have removed passwords, tokens, private paths, and other sensitive data from attached logs.
+          required: true
+
+  - type: textarea
+    id: problem
+    attributes:
+      label: What happened?
+      description: Describe what you observed and what you expected to happen.
+      placeholder: Tell us what went wrong and what the expected behavior was.
+    validations:
+      required: true
+
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: Steps to reproduce
+      description: Provide the smallest exact sequence that reproduces the problem.
+      value: |
+        1. Start Flux Launcher.
+        2. Press ...
+        3. Type ...
+        4. Observe ...
+    validations:
+      required: true
+
+  - type: input
+    id: flux-version
+    attributes:
+      label: Flux Launcher version
+      description: Include the release tag or commit/build number if using a prerelease or locally built version.
+      placeholder: "Example: v0.1.112 or commit 1234567"
+    validations:
+      required: true
+
+  - type: input
+    id: windows-version
+    attributes:
+      label: Windows version and build
+      description: Run `winver` or `systeminfo` and provide the Windows edition, version, and OS build.
+      placeholder: "Example: Windows 11 24H2, OS Build 26100.4652"
+    validations:
+      required: true
+
+  - type: dropdown
+    id: architecture
+    attributes:
+      label: System architecture
+      options:
+        - x64
+        - ARM64
+        - Other
+      default: 0
+    validations:
+      required: true
+
+  - type: dropdown
+    id: installation
+    attributes:
+      label: Installation type
+      options:
+        - Installer
+        - Portable
+        - Built from source
+      default: 0
+    validations:
+      required: true
+
+  - type: dropdown
+    id: display-language
+    attributes:
+      label: Windows display language
+      description: What language is Windows using for its interface?
+      options:
+        - English
+        - Simplified Chinese
+        - Traditional Chinese
+        - Russian
+        - German
+        - French
+        - Spanish
+        - Other
+      default: 0
+    validations:
+      required: true
+
+  - type: input
+    id: keyboard-layouts
+    attributes:
+      label: Installed keyboard layouts and input languages
+      description: List the layouts installed in Windows, for example `English (US); Chinese (Simplified) - Microsoft Pinyin`.
+      placeholder: "Example: English (US); Chinese (Simplified) - Microsoft Pinyin"
+    validations:
+      required: true
+
+  - type: input
+    id: active-layout
+    attributes:
+      label: Active keyboard layout when the issue occurred
+      description: Which layout/input method was active at the exact moment of the failure?
+      placeholder: "Example: Chinese (Simplified) - Microsoft Pinyin"
+    validations:
+      required: true
+
+  - type: dropdown
+    id: keyboard-type
+    attributes:
+      label: Keyboard type
+      options:
+        - Physical USB keyboard
+        - Physical Bluetooth keyboard
+        - Laptop keyboard
+        - On-screen keyboard
+        - Remote Desktop or virtual machine keyboard
+        - Other
+      default: 0
+    validations:
+      required: true
+
+  - type: checkboxes
+    id: input-method-state
+    attributes:
+      label: Input method details
+      description: Select all that applied when the issue occurred.
+      options:
+        - label: A Chinese/Japanese/Korean IME was enabled.
+        - label: IME composition or candidate selection was active.
+        - label: The issue also occurs with an English/US layout.
+        - label: The issue occurs only after switching layouts.
+        - label: The issue occurs only when Flux is launched at startup or from the tray.
+
+  - type: input
+    id: hotkey
+    attributes:
+      label: Hotkey or key sequence used
+      description: Include the configured global hotkey and the exact keys that did or did not work.
+      placeholder: "Example: Alt+Space opens Flux, but letters are not accepted"
+    validations:
+      required: true
+
+  - type: textarea
+    id: keyboard-comparison
+    attributes:
+      label: Keyboard comparison
+      description: State whether the same keyboard and layout work in Notepad, Start Menu search, another native app, and Flux after restarting it.
+      placeholder: |
+        Notepad: works / does not work
+        Start Menu search: works / does not work
+        Flux after restart: works / does not work
+
+  - type: dropdown
+    id: input-scope
+    attributes:
+      label: What is affected?
+      multiple: true
+      options:
+        - Global hotkey does not open Flux
+        - Letters are not accepted in the search box
+        - Numbers or symbols are not accepted
+        - Enter or navigation keys do not work
+        - Input works in English but not in another layout
+        - Input stops after switching IME/layout
+        - Other
+    validations:
+      required: true
+
+  - type: textarea
+    id: logs
+    attributes:
+      label: Logs and diagnostics
+      description: Paste relevant log output or drag and drop sanitized files. Do not include secrets or private data.
+      render: text
+
+  - type: textarea
+    id: screenshots
+    attributes:
+      label: Screenshots or recordings
+      description: Add screenshots or a short recording if they help demonstrate the problem. Redact private information.
+
+  - type: checkboxes
+    id: terms
+    attributes:
+      label: Final checks
+      options:
+        - label: I can provide additional diagnostic details if requested.
+          required: true

@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Usage question or discussion
+    url: https://github.com/m1nuzz/flux-launcher/discussions
+    about: Ask usage questions and discuss ideas without opening a bug report.
+  - name: Security vulnerability
+    url: https://github.com/m1nuzz/flux-launcher/security/advisories/new
+    about: Report security vulnerabilities privately through a GitHub security advisory.

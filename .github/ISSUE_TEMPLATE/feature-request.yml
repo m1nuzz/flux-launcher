@@ -1,0 +1,64 @@
+name: "Feature request"
+description: Suggest an improvement or new feature for Flux Launcher
+title: "FEATURE: "
+labels:
+  - enhancement
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for helping improve Flux Launcher.
+        Please search existing issues first and remove private information from screenshots or examples.
+
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Before submitting
+      options:
+        - label: I have searched the existing issues and did not find a duplicate.
+          required: true
+
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem or use case
+      description: What problem would this feature solve, and who would benefit from it?
+      placeholder: Describe the workflow that is currently difficult or unavailable.
+    validations:
+      required: true
+
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed solution
+      description: Describe the behavior or interface you would like to see.
+      placeholder: Explain what Flux Launcher should do.
+    validations:
+      required: true
+
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered
+      description: Describe any workaround, alternative design, or behavior in Flow Launcher or another application.
+
+  - type: input
+    id: flux-version
+    attributes:
+      label: Flux Launcher version
+      description: Include the release tag or commit if this request depends on a specific version.
+      placeholder: "Example: v0.1.112"
+
+  - type: textarea
+    id: additional-context
+    attributes:
+      label: Additional context
+      description: Add examples, links, mockups, screenshots, or other context. Redact private information.
+
+  - type: checkboxes
+    id: terms
+    attributes:
+      label: Final checks
+      options:
+        - label: I understand that this is a feature request rather than a bug report.
+          required: true
