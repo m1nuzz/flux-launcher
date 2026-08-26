@@ -17,6 +17,7 @@ param(
     [switch]$CommandPrioritySmoke,
     [switch]$PowerShellSmoke,
     [switch]$CalculatorSmoke,
+    [switch]$CalculatorPolicySmoke,
     [switch]$ObsidianIconSmoke,
     [switch]$QueryClearOnReopenSmoke,
     [switch]$QueryResponsivenessSmoke,
@@ -737,6 +738,7 @@ try {
     $powerShellDedupeProbe = $false
     $powerShellIconProbe = $false
     $calculatorProbe = $false
+    $calculatorPolicyProbe = $false
     $resourceProfileProbe = !$ResourceProfileSmoke
     $resourceProfileSamples = @()
     $resourceProfileSummary = $null
@@ -859,63 +861,85 @@ try {
         $commandPriorityProbe = $true
     }
     if ($PowerShellSmoke) {
-        $shell.SendKeys("^a")
-        $shell.SendKeys("{BACKSPACE}")
-        $shell.SendKeys("powershell")
-        Start-Sleep -Seconds 2
-        Save-Screenshot "powershell-results.png"
-
         $powerShellRows = @()
-        $powerShellSnapshot = $null
-        $powerShellDeadline = (Get-Date).AddSeconds(3)
-        while ((Get-Date) -lt $powerShellDeadline) {
+        $powerShellDedupeProbe = $true
+        foreach ($powerShellQuery in @("powershell", "pwsh")) {
             if (Test-Path $queryProbePath) {
-                $candidateRows = @(Get-Content $queryProbePath | Where-Object {
-                    $_ -match "`tquery=powershell`tindex="
-                })
-                if ($candidateRows.Count -gt 0) {
-                    $powerShellSnapshot = ($candidateRows | ForEach-Object {
-                        if ($_ -match "^snapshot=(\d+)") { [uint64]$Matches[1] }
-                    } | Sort-Object -Descending | Select-Object -First 1)
-                    $powerShellRows = @($candidateRows | Where-Object {
-                        $_ -match "^snapshot=$powerShellSnapshot`t"
-                    })
-                    if ($powerShellRows.Count -gt 0) { break }
-                }
+                Clear-Content -Path $queryProbePath -ErrorAction SilentlyContinue
             }
-            Start-Sleep -Milliseconds 100
+            $shell.SendKeys("^a")
+            $shell.SendKeys("{BACKSPACE}")
+            $shell.SendKeys($powerShellQuery)
+            Start-Sleep -Seconds 2
+            Save-Screenshot ("{0}-results.png" -f $powerShellQuery)
+
+            $queryRows = @()
+            $querySnapshot = $null
+            $expectedQueryCount = $null
+            $queryDeadline = (Get-Date).AddSeconds(3)
+            while ((Get-Date) -lt $queryDeadline) {
+                if (Test-Path $queryProbePath) {
+                    $queryLines = @(Get-Content $queryProbePath)
+                    $queryHeaders = @($queryLines | Where-Object {
+                        $_ -match "^snapshot=(\d+)`tquery=$powerShellQuery`tcount=(\d+)$"
+                    })
+                    if ($queryHeaders.Count -gt 0) {
+                        $header = $queryHeaders | Select-Object -Last 1
+                        if ($header -match "^snapshot=(\d+)`tquery=$powerShellQuery`tcount=(\d+)$") {
+                            $querySnapshot = [uint64]$Matches[1]
+                            $expectedQueryCount = [int]$Matches[2]
+                            $queryRows = @($queryLines | Where-Object {
+                                $_ -match "^snapshot=$querySnapshot`tquery=$powerShellQuery`tindex="
+                            })
+                            if ($queryRows.Count -ge $expectedQueryCount) { break }
+                        }
+                    }
+                }
+                Start-Sleep -Milliseconds 100
+            }
+            $powerShellRows += $queryRows
+            $identityRows = @($queryRows | Where-Object {
+                $_ -match "`tsource=(ApplicationCatalog|BuiltIn|Everything)`t" -and
+                $_ -match "`tkind=(Application|Command)`t"
+            })
+            $identities = @($identityRows | ForEach-Object {
+                if ($_ -match "`tidentity=([^`t]*)") { $Matches[1] }
+            } | Where-Object { $_ -and $_.Length -gt 0 })
+            $duplicates = @($identities | Group-Object | Where-Object Count -gt 1)
+            $queryPassed =
+                $expectedQueryCount -ne $null -and
+                $identityRows.Count -gt 0 -and
+                $identities.Count -eq $identityRows.Count -and
+                $duplicates.Count -eq 0
+            $powerShellDedupeProbe = $powerShellDedupeProbe -and $queryPassed
+            Write-Host "PowerShell query '$powerShellQuery': rows=$($queryRows.Count) identity_rows=$($identityRows.Count) unique_identities=$($identities.Count) duplicate_identities=$($duplicates.Count)"
         }
-        $powerShellIdentityRows = @($powerShellRows | Where-Object {
-            $_ -match "`tsource=(ApplicationCatalog|BuiltIn)`t"
-        })
-        $powerShellIdentities = @($powerShellIdentityRows | ForEach-Object {
-            if ($_ -match "`tidentity=([^`t]*)") { $Matches[1] }
-        } | Where-Object { $_ -and $_.Length -gt 0 })
-        $duplicatePowerShellIdentities = @($powerShellIdentities | Group-Object | Where-Object Count -gt 1)
-        $powerShellDedupeProbe =
-            $powerShellIdentityRows.Count -gt 0 -and
-            $powerShellIdentities.Count -eq $powerShellIdentityRows.Count -and
-            $duplicatePowerShellIdentities.Count -eq 0
 
         $powerShellIconLines = @(Get-Content $iconProbePath -ErrorAction SilentlyContinue | Where-Object {
-            $_ -match "(?i)^title=(powershell|pwsh)(\s|`t)" -or
-            $_ -match "(?i)^title=powershell\s+"
-        })
-        $powerShellLoadedIconLines = @(Get-Content $iconProbePath -ErrorAction SilentlyContinue | Where-Object {
-            $_ -match "(?i)^target=.*(powershell|pwsh).*`tloaded=True$"
+            $_ -match "(?i)^title=.*(powershell|pwsh).*`ttarget="
         })
         $powerShellIconTargets = @($powerShellIconLines | ForEach-Object {
             if ($_ -match "`ticon_target=([^`t]*)") { $Matches[1] }
         } | Where-Object { $_ -and $_.Length -gt 0 } | Sort-Object -Unique)
+        $loadedPowerShellTargets = @(Get-Content $iconProbePath -ErrorAction SilentlyContinue | ForEach-Object {
+            if ($_ -match "(?i)^target=(.*)`tloaded=True$") { $Matches[1] }
+        } | Where-Object { $_ -and $_.Length -gt 0 } | Sort-Object -Unique)
+        $loadedPowerShellIconTargets = @($powerShellIconTargets | Where-Object {
+            $loadedPowerShellTargets -contains $_
+        })
+        $unloadedPowerShellIconTargets = @($powerShellIconTargets | Where-Object {
+            $loadedPowerShellTargets -notcontains $_
+        })
         $powerShellIconProbe =
             $powerShellIconTargets.Count -gt 0 -and
-            $powerShellLoadedIconLines.Count -gt 0
-        Write-Host "PowerShell probes: rows=$($powerShellRows.Count) unique_identities=$($powerShellIdentities.Count) duplicate_identities=$($duplicatePowerShellIdentities.Count) icon_targets=$($powerShellIconTargets.Count) loaded_icons=$($powerShellLoadedIconLines.Count)"
+            $unloadedPowerShellIconTargets.Count -eq 0 -and
+            $loadedPowerShellIconTargets.Count -eq $powerShellIconTargets.Count
+        Write-Host "PowerShell probes: rows=$($powerShellRows.Count) icon_targets=$($powerShellIconTargets.Count) loaded_icon_targets=$($loadedPowerShellIconTargets.Count) unloaded_icon_targets=$($unloadedPowerShellIconTargets.Count)"
         if (!$powerShellDedupeProbe) {
-            throw "PowerShell dedupe smoke failed: rows=$($powerShellRows.Count), identities=$($powerShellIdentities -join ', ')."
+            throw "PowerShell dedupe smoke failed: rows=$($powerShellRows.Count)."
         }
         if (!$powerShellIconProbe) {
-            throw "PowerShell icon smoke failed: no loaded icon for PowerShell result; targets=$($powerShellIconTargets -join ', ')."
+            throw "PowerShell icon smoke failed: no loaded icon matched a PowerShell result target; targets=$($powerShellIconTargets -join ', ')."
         }
     }
     if ($CalculatorSmoke) {
@@ -928,19 +952,78 @@ try {
         Save-Screenshot "calculator-1-plus-1.png"
 
         $calculatorProbe = $false
+        $calculatorSnapshot = $null
+        $calculatorExpectedCount = $null
+        $calculatorRows = @()
         $calculatorDeadline = (Get-Date).AddSeconds(3)
         while ((Get-Date) -lt $calculatorDeadline) {
             if (Test-Path $queryProbePath) {
-                $calculatorProbe = @(Get-Content $queryProbePath | Where-Object {
-                    $_ -match "`tquery=1\+1`tindex=0`tid=builtin:calculator`t"
-                }).Count -gt 0
+                $calculatorLines = @(Get-Content $queryProbePath)
+                $calculatorHeaders = @($calculatorLines | Where-Object {
+                    $_ -match "^snapshot=(\d+)`tquery=1\+1`tcount=(\d+)$"
+                })
+                if ($calculatorHeaders.Count -gt 0) {
+                    $calculatorHeader = $calculatorHeaders | Select-Object -Last 1
+                    if ($calculatorHeader -match "^snapshot=(\d+)`tquery=1\+1`tcount=(\d+)$") {
+                        $calculatorSnapshot = [uint64]$Matches[1]
+                        $calculatorExpectedCount = [int]$Matches[2]
+                        $calculatorRows = @($calculatorLines | Where-Object {
+                            $_ -match "^snapshot=$calculatorSnapshot`tquery=1\+1`tindex="
+                        })
+                        if ($calculatorRows.Count -ge $calculatorExpectedCount) {
+                            $calculatorProbe = $calculatorRows[0] -match "`tindex=0`tid=builtin:calculator`t"
+                            break
+                        }
+                    }
+                }
             }
-            if ($calculatorProbe) { break }
             Start-Sleep -Milliseconds 100
         }
-        Write-Host "Calculator ordering probe: passed=$calculatorProbe"
+        Write-Host "Calculator ordering probe: passed=$calculatorProbe snapshot=$calculatorSnapshot rows=$($calculatorRows.Count) expected=$calculatorExpectedCount"
         if (!$calculatorProbe) {
-            throw "Calculator ordering smoke failed: builtin:calculator was not the first merged result for 1+1."
+            throw "Calculator ordering smoke failed: the latest complete 1+1 snapshot did not put builtin:calculator at index 0."
+        }
+    }
+    if ($CalculatorPolicySmoke) {
+        if (Test-Path $queryProbePath) {
+            Clear-Content -Path $queryProbePath -ErrorAction SilentlyContinue
+        }
+        $shell.SendKeys("^a")
+        $shell.SendKeys("{BACKSPACE}")
+        $shell.SendKeys("2026-08")
+        Start-Sleep -Milliseconds 700
+        Save-Screenshot "calculator-date-like.png"
+
+        $calculatorPolicyDeadline = (Get-Date).AddSeconds(3)
+        $calculatorPolicySnapshot = $null
+        $calculatorPolicyExpectedCount = $null
+        $calculatorPolicyRows = @()
+        while ((Get-Date) -lt $calculatorPolicyDeadline) {
+            if (Test-Path $queryProbePath) {
+                $calculatorPolicyLines = @(Get-Content $queryProbePath)
+                $calculatorPolicyHeaders = @($calculatorPolicyLines | Where-Object {
+                    $_ -match "^snapshot=(\d+)`tquery=2026-08`tcount=(\d+)$"
+                })
+                if ($calculatorPolicyHeaders.Count -gt 0) {
+                    $calculatorPolicyHeader = $calculatorPolicyHeaders | Select-Object -Last 1
+                    if ($calculatorPolicyHeader -match "^snapshot=(\d+)`tquery=2026-08`tcount=(\d+)$") {
+                        $calculatorPolicySnapshot = [uint64]$Matches[1]
+                        $calculatorPolicyExpectedCount = [int]$Matches[2]
+                        $calculatorPolicyRows = @($calculatorPolicyLines | Where-Object {
+                            $_ -match "^snapshot=$calculatorPolicySnapshot`tquery=2026-08`tindex="
+                        })
+                        if ($calculatorPolicyRows.Count -ge $calculatorPolicyExpectedCount) {
+                            $calculatorPolicyProbe = $calculatorPolicyRows[0] -match "`tindex=0`tid=builtin:calculator`t"
+                            break
+                        }
+                    }
+                }
+            }
+            Start-Sleep -Milliseconds 100
+        }
+        Write-Host "Calculator date-like policy probe: passed=$calculatorPolicyProbe snapshot=$calculatorPolicySnapshot rows=$($calculatorPolicyRows.Count) expected=$calculatorPolicyExpectedCount"
+        if (!$calculatorPolicyProbe) {
+            throw "Calculator date-like policy smoke failed: latest complete 2026-08 snapshot did not put builtin:calculator at index 0."
         }
     }
     if ($ObsidianIconSmoke) {
@@ -2139,6 +2222,7 @@ try {
         PowerShellDedupeProbe = (!$PowerShellSmoke) -or $powerShellDedupeProbe
         PowerShellIconProbe = (!$PowerShellSmoke) -or $powerShellIconProbe
         CalculatorProbe = (!$CalculatorSmoke) -or $calculatorProbe
+        CalculatorPolicyProbe = (!$CalculatorPolicySmoke) -or $calculatorPolicyProbe
         ObsidianIconProbe = (!$ObsidianIconSmoke) -or $obsidianIconProbe
         QueryResponsivenessMaxMilliseconds = $queryResponsivenessMaxMilliseconds
         QueryResponsivenessSamples = @($queryResponsivenessSamples)

@@ -690,6 +690,32 @@ mod tests {
     }
 
     #[test]
+    fn calculator_date_like_queries_are_explicitly_covered_for_policy_review() {
+        let results = CalculatorProvider.query(&BuiltinQuery {
+            query: String::from("2026-08"),
+            google_enabled: false,
+            google_keyword: String::from("g"),
+            obsidian_enabled: false,
+            obsidian_keyword: String::from("ob"),
+        });
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].result.title, "= 2018");
+        assert_eq!(results[0].result.subtitle, "Calculator • 2026-08");
+    }
+
+    #[test]
+    fn calculator_subtraction_remains_supported() {
+        let results = CalculatorProvider.query(&BuiltinQuery {
+            query: String::from("1-1"),
+            google_enabled: false,
+            google_keyword: String::from("g"),
+            obsidian_enabled: false,
+            obsidian_keyword: String::from("ob"),
+        });
+        assert_eq!(results[0].result.title, "= 0");
+    }
+
+    #[test]
     fn calculator_rejects_invalid_or_unsafe_input() {
         assert!(evaluate_expression("1 / 0").is_err());
         assert!(evaluate_expression("1 +").is_err());

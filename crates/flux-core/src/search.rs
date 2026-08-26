@@ -692,6 +692,33 @@ mod tests {
     }
 
     #[test]
+    fn calculator_priority_is_visible_for_date_like_queries() {
+        let mut results = vec![
+            SearchResult {
+                id: String::from("application:calendar-entry"),
+                title: String::from("Calendar 2026-08"),
+                subtitle: String::from("Application • Start Menu"),
+                kind: ResultKind::Application,
+                source: ResultSource::ApplicationCatalog,
+                target: Some(String::from(r"C:\\Calendar.exe")),
+            },
+            SearchResult {
+                id: String::from("builtin:calculator"),
+                title: String::from("= 2018"),
+                subtitle: String::from("Calculator • 2026-08"),
+                kind: ResultKind::Placeholder,
+                source: ResultSource::Plugin,
+                target: None,
+            },
+        ];
+
+        rank_results_with_priorities("2026-08", &mut results, &[]);
+
+        assert_eq!(results[0].id, "builtin:calculator");
+        assert_eq!(results[1].id, "application:calendar-entry");
+    }
+
+    #[test]
     fn compact_queries_match_spaced_app_titles_and_filenames() {
         let mut results = vec![
             SearchResult {

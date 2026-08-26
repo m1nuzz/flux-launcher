@@ -391,11 +391,28 @@ fn merge_application_duplicates(results: Vec<SearchResult>) -> Vec<SearchResult>
             continue;
         };
 
+        let existing_is_exact_console = is_exact_console_result(&merged[existing_index]);
+        let result_is_exact_console = is_exact_console_result(&result);
         if application_source_rank(&result) < application_source_rank(&merged[existing_index]) {
+            let preserved_id = result_is_exact_console
+                .then(|| result.id.clone())
+                .or_else(|| existing_is_exact_console.then(|| merged[existing_index].id.clone()));
             merged[existing_index] = result;
+            if let Some(id) = preserved_id {
+                merged[existing_index].id = id;
+            }
+        } else if result_is_exact_console && !existing_is_exact_console {
+            merged[existing_index].id = result.id;
         }
     }
     merged
+}
+
+fn is_exact_console_result(result: &SearchResult) -> bool {
+    matches!(
+        result.id.as_str(),
+        "system:command-prompt" | "system:powershell"
+    )
 }
 
 fn application_source_rank(result: &SearchResult) -> u8 {
@@ -5137,12 +5154,12 @@ mod tests {
         launcher_window_geometry_with_sizes, merge_application_duplicates,
         normalize_built_in_executable_targets, normalize_everything_query, obsidian_icon_rgba,
         parse_dimension_input, parse_internet_shortcut_icon_location,
-        preserve_everything_file_order, quoted_result_path, relaunch_mode_for_auto_install,
-        resolve_bare_executable_path, resolve_shortcut_icon_path, should_claim_single_instance,
-        should_publish_initial_query_results, should_show_launcher, ProviderResults,
-        ResultIconView, ShellIconCache, COMPACT_WINDOW_HEIGHT, LAUNCHER_FONT_FAMILY,
-        MAX_LAUNCHER_HEIGHT, MAX_LAUNCHER_WIDTH, MAX_SHELL_ICON_CACHE_ENTRIES, MIN_LAUNCHER_HEIGHT,
-        MIN_LAUNCHER_WIDTH,
+        preserve_everything_file_order, quoted_result_path, rank_results_with_priorities,
+        relaunch_mode_for_auto_install, resolve_bare_executable_path, resolve_shortcut_icon_path,
+        should_claim_single_instance, should_publish_initial_query_results, should_show_launcher,
+        ProviderResults, ResultIconView, ShellIconCache, COMPACT_WINDOW_HEIGHT,
+        LAUNCHER_FONT_FAMILY, MAX_LAUNCHER_HEIGHT, MAX_LAUNCHER_WIDTH,
+        MAX_SHELL_ICON_CACHE_ENTRIES, MIN_LAUNCHER_HEIGHT, MIN_LAUNCHER_WIDTH,
     };
     use flux_core::{ResultKind, ResultSource, SearchResult};
     use windui::event::{Key, KeyEvent};
@@ -5412,6 +5429,35 @@ mod tests {
         assert_eq!(merged.len(), 2);
         assert!(merged.iter().any(|result| result.title == "PowerShell"));
         assert!(merged.iter().any(|result| result.title == "PowerShell 7"));
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn post_merge_exact_console_identity_survives_catalog_collision_and_ranks_first() {
+        let powershell_path =
+            resolve_bare_executable_path("powershell.exe").expect("PowerShell should resolve");
+        let system = SearchResult {
+            id: String::from("system:powershell"),
+            title: String::from("PowerShell"),
+            subtitle: String::from("Windows PowerShell"),
+            kind: ResultKind::Command,
+            source: ResultSource::BuiltIn,
+            target: Some(powershell_path.clone()),
+        };
+        let catalog = SearchResult {
+            id: canonical_application_id(&powershell_path).unwrap(),
+            title: String::from("Windows PowerShell"),
+            subtitle: String::from("Application • Start Menu"),
+            kind: ResultKind::Application,
+            source: ResultSource::ApplicationCatalog,
+            target: Some(powershell_path),
+        };
+
+        let mut merged = merge_application_duplicates(vec![system, catalog]);
+        rank_results_with_priorities("powershell", &mut merged, &[]);
+
+        assert_eq!(merged.len(), 1);
+        assert_eq!(merged[0].id, "system:powershell");
     }
 
     #[test]

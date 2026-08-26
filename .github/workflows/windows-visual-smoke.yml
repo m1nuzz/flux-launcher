@@ -137,6 +137,8 @@ jobs:
             ActionBarSmoke = $true
             PowerShellSmoke = $true
             CalculatorSmoke = $true
+            CalculatorPolicySmoke = $true
+            QueryResponsivenessSmoke = $true
           }
           if ("${{ inputs.force_translucent_fallback }}" -eq "true") {
             $captureParams.ForceTranslucentFallback = $true
