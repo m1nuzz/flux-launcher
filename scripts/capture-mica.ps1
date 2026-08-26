@@ -921,7 +921,9 @@ try {
     if ($CalculatorSmoke) {
         $shell.SendKeys("^a")
         $shell.SendKeys("{BACKSPACE}")
-        $shell.SendKeys("1+1")
+        # WScript.Shell.SendKeys treats plus as a Shift modifier; escape it
+        # so the application receives the literal expression `1+1`.
+        $shell.SendKeys("1{+}1")
         Start-Sleep -Milliseconds 700
         Save-Screenshot "calculator-1-plus-1.png"
 
