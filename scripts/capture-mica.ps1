@@ -581,7 +581,7 @@ try {
         } else {
             @()
         }
-        $wmCharProbe = @($unicodeCharLines | Where-Object { $_ -match "query=中" }).Count -gt 0
+        $wmCharProbe = @($unicodeCharLines | Where-Object { $_ -match "query=(?:q)?中(?:\s|$)" }).Count -gt 0
 
         $unicodeImeBefore = if (Test-Path $queryProbePath) { @(Get-Content $queryProbePath).Count } else { 0 }
         [FluxWallpaper]::SendMessage($launcherHandle, $wmImeChar, [UIntPtr]0x6587, [IntPtr]1) | Out-Null
@@ -591,7 +591,7 @@ try {
         } else {
             @()
         }
-        $wmImeCharProbe = @($unicodeImeLines | Where-Object { $_ -match "query=文" }).Count -gt 0
+        $wmImeCharProbe = @($unicodeImeLines | Where-Object { $_ -match "query=(?:q)?(?:文|中文)(?:\s|$)" }).Count -gt 0
         $imeMessageProbe = $wmCharProbe -and $wmImeCharProbe
         $imeMessageDetails = [ordered]@{
             FirstKeystroke = $firstKeystrokeProbe

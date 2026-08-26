@@ -310,7 +310,17 @@ fn trace_query_probe(query: &str, results: &[SearchResult]) {
     let normalized = query.trim().to_ascii_lowercase();
     if !matches!(
         normalized.as_str(),
-        "1+1" | "2026-08" | "powershell" | "pwsh" | "q" | "中" | "文" | "中文"
+        "1+1"
+            | "2026-08"
+            | "powershell"
+            | "pwsh"
+            | "q"
+            | "中"
+            | "文"
+            | "中文"
+            | "q中"
+            | "q文"
+            | "q中文"
     ) {
         return;
     }
