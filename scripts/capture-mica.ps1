@@ -1953,7 +1953,7 @@ try {
             } | ConvertTo-Json | Set-Content -Encoding utf8 (Join-Path $OutputDirectory "visual-discovery-geometry.json")
             $directSliderLeft = $settingsRect.Left + [int][Math]::Round(175 * $settingsScale)
             $directSliderRight = $directSliderLeft + [int][Math]::Round(180 * $settingsScale)
-            $directSliderY = $settingsRect.Top + [int][Math]::Round(310 * $settingsScale)
+            $directSliderY = $settingsRect.Top + [int][Math]::Round(410 * $settingsScale)
             $directPointClass = [FluxWallpaper]::WindowClassAtPoint($directSliderLeft, $directSliderY)
             Write-Host "Visual slider direct probe: left=$directSliderLeft right=$directSliderRight y=$directSliderY windowClass=$directPointClass"
             $directStateBefore = if (Test-Path $settingsStderrPath) { Get-Content $settingsStderrPath -Raw } else { "" }
