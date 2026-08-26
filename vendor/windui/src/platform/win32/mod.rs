@@ -2961,6 +2961,7 @@ unsafe fn trace_keyboard_event(hwnd: HWND, message: &str, emitted: bool, routed:
 
 /// 分发键盘事件（两段式：先借 state 取意图，释放后再调可能重入的 DestroyWindow）。
 unsafe fn dispatch_key_event(hwnd: HWND, ev: KeyEvent) {
+    let is_character = matches!(ev.key, Key::Char(_));
     let (repaint, close) = {
         let Some(state) = state_from(hwnd) else {
             return;
@@ -2968,6 +2969,11 @@ unsafe fn dispatch_key_event(hwnd: HWND, ev: KeyEvent) {
         let _guard = super::EventDispatchGuard::enter();
         (state.handler.on_key(ev), state.handler.wants_close())
     };
+    if is_character {
+        // For a focused TextInput, a character changes its signal and requests
+        // repaint. This remains opt-in and records no character value.
+        trace_keyboard_event(hwnd, "key_event_dispatch", repaint, true);
+    }
     if repaint {
         let _ = InvalidateRect(Some(hwnd), None, false);
     }

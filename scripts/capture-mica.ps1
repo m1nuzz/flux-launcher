@@ -574,6 +574,7 @@ try {
         $wmChar = 0x0102
         $wmImeChar = 0x0286
         $unicodeProbeBefore = if (Test-Path $queryProbePath) { @(Get-Content $queryProbePath).Count } else { 0 }
+        $unicodeTraceBefore = if (Test-Path $inputTracePath) { @(Get-Content $inputTracePath).Count } else { 0 }
         [FluxWallpaper]::SendMessage($launcherHandle, $wmChar, [UIntPtr]0x4E2D, [IntPtr]1) | Out-Null
         Start-Sleep -Milliseconds 500
         $unicodeCharLines = if (Test-Path $queryProbePath) {
@@ -581,9 +582,18 @@ try {
         } else {
             @()
         }
-        $wmCharProbe = @($unicodeCharLines | Where-Object { $_ -match "query=(?:q)?中(?:\s|$)" }).Count -gt 0
+        $unicodeCharTrace = if (Test-Path $inputTracePath) {
+            @(Get-Content $inputTracePath | Select-Object -Skip $unicodeTraceBefore)
+        } else {
+            @()
+        }
+        $wmCharProbe =
+            @($unicodeCharTrace | Where-Object { $_ -match "message=wm_char .*emitted=true .*routed=true" }).Count -gt 0 -and
+            @($unicodeCharTrace | Where-Object { $_ -match "message=key_event_dispatch .*emitted=true .*routed=true" }).Count -gt 0
+        $unicodeQueryProbeObserved = @($unicodeCharLines | Where-Object { $_ -match "query=(?:q)?中(?:\s|$)" }).Count -gt 0
 
         $unicodeImeBefore = if (Test-Path $queryProbePath) { @(Get-Content $queryProbePath).Count } else { 0 }
+        $unicodeImeTraceBefore = if (Test-Path $inputTracePath) { @(Get-Content $inputTracePath).Count } else { 0 }
         [FluxWallpaper]::SendMessage($launcherHandle, $wmImeChar, [UIntPtr]0x6587, [IntPtr]1) | Out-Null
         Start-Sleep -Milliseconds 500
         $unicodeImeLines = if (Test-Path $queryProbePath) {
@@ -591,13 +601,22 @@ try {
         } else {
             @()
         }
-        $wmImeCharProbe = @($unicodeImeLines | Where-Object { $_ -match "query=(?:q)?(?:文|中文)(?:\s|$)" }).Count -gt 0
+        $unicodeImeTrace = if (Test-Path $inputTracePath) {
+            @(Get-Content $inputTracePath | Select-Object -Skip $unicodeImeTraceBefore)
+        } else {
+            @()
+        }
+        $wmImeCharProbe =
+            @($unicodeImeTrace | Where-Object { $_ -match "message=wm_ime_char .*emitted=true .*routed=true" }).Count -gt 0 -and
+            @($unicodeImeTrace | Where-Object { $_ -match "message=key_event_dispatch .*emitted=true .*routed=true" }).Count -gt 0
+        $unicodeImeQueryProbeObserved = @($unicodeImeLines | Where-Object { $_ -match "query=(?:q)?(?:文|中文)(?:\s|$)" }).Count -gt 0
         $imeMessageProbe = $wmCharProbe -and $wmImeCharProbe
         $imeMessageDetails = [ordered]@{
             FirstKeystroke = $firstKeystrokeProbe
             WMChar = $wmCharProbe
             WMImeChar = $wmImeCharProbe
             UnicodeProbeLines = @($firstKeystrokeLines + $unicodeCharLines + $unicodeImeLines).Count
+            UnicodeQueryProbeObserved = $unicodeQueryProbeObserved -and $unicodeImeQueryProbeObserved
             GenuineImeCompositionCovered = $false
         }
         if (!$imeMessageProbe) {
