@@ -10,6 +10,7 @@ param(
     [switch]$TraySettingsAfterDeactivationSmoke,
     [switch]$VisualSettingsSmoke,
     [switch]$PointerInteractionSmoke,
+    [switch]$ResultMouseInteractionSmoke,
     [switch]$EverythingMissingSmoke,
     [switch]$RecycleBinSmoke,
     [switch]$CursorVisibilitySmoke,
@@ -168,6 +169,16 @@ public static class FluxWallpaper {
         CURSORINFO info = new CURSORINFO();
         info.cbSize = Marshal.SizeOf(typeof(CURSORINFO));
         return GetCursorInfo(out info) && (info.flags & 0x00000001) != 0;
+    }
+    [DllImport("user32.dll", SetLastError = true)]
+    public static extern IntPtr GetCursor();
+    [DllImport("user32.dll", SetLastError = true)]
+    public static extern IntPtr LoadCursor(IntPtr hInstance, IntPtr lpCursorName);
+    public static bool IsTextCursor() {
+        return GetCursor() == LoadCursor(IntPtr.Zero, new IntPtr(32513)); // IDC_IBEAM
+    }
+    public static bool IsArrowCursor() {
+        return GetCursor() == LoadCursor(IntPtr.Zero, new IntPtr(32512)); // IDC_ARROW
     }
 }
 '@
@@ -1142,6 +1153,13 @@ try {
     $queryResponsivenessSamples = @()
     $queryResponsivenessMaxMilliseconds = 0.0
     $queryResponsivenessProbe = $false
+    $resultRmbLaunchProbe = $false
+    $resultRmbDispatchObserved = $false
+    $resultRmbWindowHidden = $false
+    $resultNormalHoverTextCursor = $false
+    $resultNormalHoverCopyDisabledProbe = $false
+    $resultCtrlHoverTextCursor = $false
+    $resultCtrlCopyProbe = $false
     $commandPriorityProbe = $false
     $compactAppProbe = $false
     $compactAppProbeLine = $null
@@ -1502,6 +1520,75 @@ try {
     Start-Sleep -Seconds 2
     $queryMemory = Get-MemorySnapshot $process
     Save-Screenshot "everything-fallback.png"
+
+    if ($ResultMouseInteractionSmoke) {
+        # Reproduce the two reported interactions on a deterministic Start Menu
+        # shortcut. The current behavior is expected to fail this block: RichText
+        # owns the title's right-click and exposes a text cursor on plain hover.
+        $resultPointerQuery = "zq7launchprobe"
+        $shell.SendKeys("^a")
+        $shell.SendKeys("{BACKSPACE}")
+        $shell.SendKeys($resultPointerQuery)
+        Start-Sleep -Seconds 2
+        $resultPointerRect = New-Object FluxWallpaper+RECT
+        if (![FluxWallpaper]::GetWindowRect($launcherHandle, [ref]$resultPointerRect)) {
+            throw "Result mouse interaction smoke could not locate launcher rectangle."
+        }
+        $resultTitleX = $resultPointerRect.Left + 180
+        $resultTitleY = $resultPointerRect.Top + 84
+        [FluxWallpaper]::SetCursorPos($resultTitleX, $resultTitleY) | Out-Null
+        Start-Sleep -Milliseconds 450
+        $resultNormalHoverTextCursor = [FluxWallpaper]::IsTextCursor()
+        $resultNormalHoverCopyDisabledProbe = !$resultNormalHoverTextCursor
+        Save-Screenshot "result-pointer-normal-hover.png"
+
+        # Ctrl-hover is the explicit opt-in path for text selection/copying.
+        [FluxWallpaper]::keybd_event(0x11, 0, 0, [UIntPtr]::Zero)
+        [FluxWallpaper]::SetCursorPos($resultTitleX, $resultTitleY) | Out-Null
+        Start-Sleep -Milliseconds 350
+        $resultCtrlHoverTextCursor = [FluxWallpaper]::IsTextCursor()
+        $selectStartX = $resultPointerRect.Left + 145
+        $selectEndX = $resultPointerRect.Left + 300
+        [FluxWallpaper]::SetCursorPos($selectStartX, $resultTitleY) | Out-Null
+        [FluxWallpaper]::mouse_event(0x0002, 0, 0, 0, [UIntPtr]::Zero)
+        [FluxWallpaper]::SetCursorPos($selectEndX, $resultTitleY) | Out-Null
+        Start-Sleep -Milliseconds 250
+        [FluxWallpaper]::mouse_event(0x0004, 0, 0, 0, [UIntPtr]::Zero)
+        [FluxWallpaper]::keybd_event(0x11, 0, 2, [UIntPtr]::Zero)
+        $shell.SendKeys("^c")
+        Start-Sleep -Milliseconds 250
+        try {
+            $resultClipboardText = (Get-Clipboard -Raw -ErrorAction Stop).Trim()
+            $resultCtrlCopyProbe = $resultClipboardText.Length -gt 0 -and
+                $resultClipboardText.ToLowerInvariant().Contains("zq7")
+        } catch {
+            $resultClipboardText = ""
+            $resultCtrlCopyProbe = $false
+        }
+        Save-Screenshot "result-pointer-ctrl-selection.png"
+        $shell.SendKeys("{ESCAPE}")
+
+        # Right-click the title. It must follow the same launch path as Enter,
+        # not open RichText's copy menu or require a second activation.
+        $resultTraceBeforeCount = if (Test-Path $launchTracePath) { @(Get-Content $launchTracePath).Count } else { 0 }
+        [FluxWallpaper]::SetCursorPos($resultTitleX, $resultTitleY) | Out-Null
+        Start-Sleep -Milliseconds 250
+        [FluxWallpaper]::mouse_event(0x0008, 0, 0, 0, [UIntPtr]::Zero)
+        [FluxWallpaper]::mouse_event(0x0010, 0, 0, 0, [UIntPtr]::Zero)
+        Start-Sleep -Milliseconds 900
+        $resultTraceLines = if (Test-Path $launchTracePath) {
+            @(Get-Content $launchTracePath | Select-Object -Skip $resultTraceBeforeCount)
+        } else {
+            @()
+        }
+        $resultRmbDispatchObserved = [bool]($resultTraceLines | Where-Object { $_ -match "`tlaunch-dispatch$" } | Select-Object -First 1)
+        $resultRmbWindowHidden = ![FluxWallpaper]::IsWindowVisible($launcherHandle)
+        $resultRmbLaunchProbe = $resultRmbDispatchObserved -and $resultRmbWindowHidden
+        Save-Screenshot "result-pointer-right-click.png"
+        [FluxWallpaper]::SetCursorPos($resultTitleX, $resultTitleY) | Out-Null
+        [FluxWallpaper]::keybd_event(0x1B, 0, 0, [UIntPtr]::Zero)
+        [FluxWallpaper]::keybd_event(0x1B, 0, 2, [UIntPtr]::Zero)
+    }
 
     if ($ActionBarSmoke) {
         Start-Sleep -Milliseconds 300
@@ -2638,6 +2725,14 @@ try {
         PointerHoverProbe = [bool]$PointerInteractionSmoke
         PointerWheelProbe = [bool]$PointerInteractionSmoke
         PointerClickProbe = [bool]$PointerInteractionSmoke
+        ResultMouseInteractionSmoke = [bool]$ResultMouseInteractionSmoke
+        ResultRightClickDispatchObserved = $resultRmbDispatchObserved
+        ResultRightClickWindowHidden = $resultRmbWindowHidden
+        ResultRightClickLaunchProbe = (!$ResultMouseInteractionSmoke) -or $resultRmbLaunchProbe
+        ResultNormalHoverTextCursor = $resultNormalHoverTextCursor
+        ResultNormalHoverCopyDisabledProbe = (!$ResultMouseInteractionSmoke) -or $resultNormalHoverCopyDisabledProbe
+        ResultCtrlHoverTextCursor = $resultCtrlHoverTextCursor
+        ResultCtrlCopyProbe = (!$ResultMouseInteractionSmoke) -or $resultCtrlCopyProbe
         ScrollbarGapProbe = (!$ScrollbarGapSmoke) -or $scrollbarGapProbe
         ActionBarProbe = (!$ActionBarSmoke) -or $actionBarProbe
         ActionBarGeometry = $actionBarGeometry
@@ -2737,6 +2832,9 @@ try {
             HiddenIdleAfterDeactivation = $deactivationIdleMemory
         }
     } | ConvertTo-Json | Set-Content -Encoding utf8 (Join-Path $OutputDirectory "environment.json")
+    if ($ResultMouseInteractionSmoke -and (!$resultRmbLaunchProbe -or !$resultNormalHoverCopyDisabledProbe -or !$resultCtrlHoverTextCursor -or !$resultCtrlCopyProbe)) {
+        throw "Result mouse interaction smoke reproduced a failure: right_click_launch=$resultRmbLaunchProbe, normal_hover_copy_disabled=$resultNormalHoverCopyDisabledProbe, ctrl_hover_text_cursor=$resultCtrlHoverTextCursor, ctrl_copy=$resultCtrlCopyProbe."
+    }
 }
 finally {
     if (!$process.HasExited) {

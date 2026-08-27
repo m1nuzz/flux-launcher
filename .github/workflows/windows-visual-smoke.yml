@@ -33,6 +33,11 @@ on:
         required: false
         default: false
         type: boolean
+      result_mouse_interaction_smoke:
+        description: "Reproduce result right-click launch and Ctrl-dependent title selection"
+        required: false
+        default: false
+        type: boolean
       everything_missing_smoke:
         description: "Exercise the English Everything-not-installed Settings prompt without installing"
         required: false
@@ -180,6 +185,9 @@ jobs:
           }
           if ("${{ inputs.pointer_interaction_smoke }}" -eq "true") {
             $captureParams.PointerInteractionSmoke = $true
+          }
+          if ("${{ inputs.result_mouse_interaction_smoke }}" -eq "true") {
+            $captureParams.ResultMouseInteractionSmoke = $true
           }
           if ("${{ inputs.everything_missing_smoke }}" -eq "true") {
             $captureParams.EverythingMissingSmoke = $true
