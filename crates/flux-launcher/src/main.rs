@@ -2937,7 +2937,9 @@ fn main() {
         && std::env::var_os("FLUX_SMOKE_EVERYTHING_PROMPT").is_some()
     {
         eprintln!("Everything install prompt: visible at startup");
-        eprintln!("Everything install prompt style: glass-transparent panel_fill=none");
+        eprintln!(
+            "Everything install prompt style: glass-transparent panel_fill=none modal_scrim=none"
+        );
     }
     if let Some((x, y)) =
         monitor::centered_position(initial_monitor_preference, initial_width, initial_height)

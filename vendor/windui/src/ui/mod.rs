@@ -2152,7 +2152,7 @@ impl Element {
     }
 
     /// Fully transparent Acrylic-style modal panel for dialogs that should preserve the window blur.
-    /// Unlike `dialog_panel`, this does not use a theme surface role, panel fill, or outline.
+    /// Unlike `dialog_panel`, this does not use a theme surface role, panel fill, outline, or scrim.
     pub fn dialog_glass_panel(
         show: Signal<bool>,
         title: impl Into<String>,
@@ -2187,7 +2187,12 @@ impl Element {
             .child(header)
             .child(body)
             .child(footer);
-        Element::dialog(show, panel)
+        crate::app::register_modal(show);
+        Element::stack()
+            .fill()
+            .widget(containers::ModalScrim)
+            .visible_when(move || show.get())
+            .child(panel.align(Align::Center))
     }
 
     /// 弹性空白：主轴方向占据剩余空间，把其后的兄弟元素推到另一端（如底栏「左按钮 … 右按钮」）。
