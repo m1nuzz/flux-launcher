@@ -41,6 +41,12 @@ public static class FluxPromptSmokeNative {
     [DllImport("user32.dll", SetLastError = true)]
     public static extern bool SetForegroundWindow(IntPtr hWnd);
 
+    [DllImport("user32.dll", SetLastError = true)]
+    public static extern bool SetCursorPos(int x, int y);
+
+    [DllImport("user32.dll", SetLastError = true)]
+    public static extern void mouse_event(uint flags, uint dx, uint dy, uint data, UIntPtr extraInfo);
+
     public delegate bool EnumWindowsProc(IntPtr hWnd, IntPtr lParam);
 
     public static IntPtr FindWindowByProcessId(uint targetProcessId) {
@@ -112,6 +118,7 @@ $fluxConfigDirectory = Join-Path $appData "FluxLauncher"
 New-Item -ItemType Directory -Path $fluxConfigDirectory -Force | Out-Null
 $env:APPDATA = $appData
 $env:FLUX_SMOKE_EVERYTHING_MISSING = "1"
+$env:FLUX_SMOKE_EVERYTHING_PROMPT = "1"
 $env:FLUX_DISABLE_UPDATE_CHECKS = "1"
 $env:FLUX_DISABLE_EVERYTHING_PROMPT = "0"
 $env:WINDUI_D2D = "0"
@@ -141,6 +148,10 @@ $summary = [ordered]@{
     WindowWidth = 0
     WindowHeight = 0
     PromptGeometryProbe = $false
+    PromptContentProbe = $false
+    PromptDismissProbe = $false
+    PromptDismissedWindowWidth = 0
+    PromptDismissedWindowHeight = 0
     EverythingProcessCountBefore = 0
     EverythingProcessCountAfter = 0
     Error = $null
@@ -176,6 +187,29 @@ try {
     $summary.PromptGeometryProbe = $summary.WindowWidth -ge 400 -and $summary.WindowHeight -ge 180
     Save-DesktopScreenshot $screenshotPath
     Start-Sleep -Milliseconds 250
+    $stderr = if (Test-Path $stderrPath) { Get-Content $stderrPath -Raw } else { "" }
+    $summary.PromptContentProbe = $stderr -match "Everything install prompt: visible at startup"
+    if (!$summary.PromptContentProbe) {
+        throw "Everything install prompt telemetry was not observed; the screenshot must not be treated as prompt proof."
+    }
+
+    # Dismiss through the real prompt button without launching winget. The prompt's
+    # panel is centered inside the fixed 440x230 window; scale the safe click for DPI.
+    $windowScale = $summary.WindowWidth / 440.0
+    $notNowX = $rect.Left + [int][Math]::Round(177 * $windowScale)
+    $notNowY = $rect.Bottom - [int][Math]::Round(20 * $windowScale)
+    [FluxPromptSmokeNative]::SetCursorPos($notNowX, $notNowY) | Out-Null
+    [FluxPromptSmokeNative]::mouse_event(0x0002, 0, 0, 0, [UIntPtr]::Zero)
+    [FluxPromptSmokeNative]::mouse_event(0x0004, 0, 0, 0, [UIntPtr]::Zero)
+    Start-Sleep -Milliseconds 700
+    $dismissedRect = New-Object FluxPromptSmokeNative+RECT
+    if (![FluxPromptSmokeNative]::GetWindowRect($window, [ref]$dismissedRect)) {
+        throw "Everything install prompt smoke could not measure the window after Not now."
+    }
+    $summary.PromptDismissedWindowWidth = [FluxPromptSmokeNative]::RectWidth($dismissedRect)
+    $summary.PromptDismissedWindowHeight = [FluxPromptSmokeNative]::RectHeight($dismissedRect)
+    $summary.PromptDismissProbe = $summary.PromptDismissedWindowWidth -ge 400 -and $summary.PromptDismissedWindowHeight -le 100
+    Save-DesktopScreenshot (Join-Path $OutputDirectory "everything-install-prompt-dismissed.png")
     $summary.EverythingProcessCountAfter = @(Get-Process -Name "Everything" -ErrorAction SilentlyContinue).Count
     $summary | ConvertTo-Json -Depth 6 | Set-Content -LiteralPath $summaryPath -Encoding utf8
 
@@ -184,6 +218,9 @@ try {
     }
     if (!$summary.PromptGeometryProbe) {
         throw "Everything install prompt window was undersized: $($summary.WindowWidth)x$($summary.WindowHeight)."
+    }
+    if (!$summary.PromptDismissProbe) {
+        throw "Everything install prompt did not return to compact geometry after Not now: $($summary.PromptDismissedWindowWidth)x$($summary.PromptDismissedWindowHeight)."
     }
     if ($summary.EverythingProcessCountAfter -gt ($summary.EverythingProcessCountBefore + 1)) {
         throw "Everything install prompt created duplicate Everything processes: before=$($summary.EverythingProcessCountBefore) after=$($summary.EverythingProcessCountAfter)."
@@ -208,5 +245,6 @@ try {
         }
     }
     Remove-Item Env:FLUX_SMOKE_EVERYTHING_MISSING -ErrorAction SilentlyContinue
+    Remove-Item Env:FLUX_SMOKE_EVERYTHING_PROMPT -ErrorAction SilentlyContinue
     Remove-Item Env:FLUX_DISABLE_EVERYTHING_PROMPT -ErrorAction SilentlyContinue
 }

@@ -2928,6 +2928,11 @@ fn main() {
     let window_icon = tray_icon();
     let mut app =
         App::new("Flux Launcher", initial_width, initial_height).icon_rgba(16, 16, &window_icon);
+    if everything_prompt_visible_at_start
+        && std::env::var_os("FLUX_SMOKE_EVERYTHING_PROMPT").is_some()
+    {
+        eprintln!("Everything install prompt: visible at startup");
+    }
     if let Some((x, y)) =
         monitor::centered_position(initial_monitor_preference, initial_width, initial_height)
     {
