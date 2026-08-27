@@ -2157,8 +2157,8 @@ unsafe fn run_tray_actions(hwnd: HWND, actions: Vec<tray::TrayAction>) {
             tray::TrayAction::Show => {
                 // A deferred deactivation check may have been posted while the
                 // native tray popup was closing. Keep the guard through the show
-                // operation and give SetForegroundWindow one message-loop turn
-                // before normal hide-on-deactivate resumes.
+                // operation; the generation token invalidates checks posted before
+                // this tray action without delaying a later intentional outside click.
                 if let Some(state) = state_from(hwnd) {
                     state.tray_menu_active = true;
                     state.deactivation_generation = state.deactivation_generation.wrapping_add(1);
@@ -2166,8 +2166,6 @@ unsafe fn run_tray_actions(hwnd: HWND, actions: Vec<tray::TrayAction>) {
                 run_window_op(hwnd, Some(WindowOp::Show));
                 if let Some(state) = state_from(hwnd) {
                     state.tray_menu_active = false;
-                    state.suppress_deactivation_hide_until =
-                        Some(Instant::now() + Duration::from_millis(1000));
                 }
             }
             tray::TrayAction::Hide => run_window_op(hwnd, Some(WindowOp::Hide)),
