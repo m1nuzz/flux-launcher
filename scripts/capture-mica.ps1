@@ -7,6 +7,7 @@ param(
 
     [switch]$ForceTranslucentFallback,
     [switch]$TraySettingsSmoke,
+    [switch]$TraySettingsAfterDeactivationSmoke,
     [switch]$VisualSettingsSmoke,
     [switch]$PointerInteractionSmoke,
     [switch]$EverythingMissingSmoke,
@@ -632,6 +633,10 @@ try {
     $deactivationForegroundAfterClick = $false
     $deactivationCpuDelta = 0.0
     $deactivationIdleMemory = $null
+    $traySettingsAfterDeactivationProbe = $false
+    $traySettingsAfterDeactivationWindowFound = $false
+    $traySettingsAfterDeactivationWindowWidth = 0
+    $traySettingsAfterDeactivationWindowHeight = 0
     if ($FocusToggleSmoke) {
         $probeProcess.Refresh()
         $focusProbeHandle = $probeProcess.MainWindowHandle
@@ -760,6 +765,43 @@ try {
             [bool]$deactivationEvent
         if (!$deactivationClickProbe) {
             throw "Deactivation smoke failed: hidden=$deactivationHiddenAfterClick foreground_probe=$deactivationForegroundAfterClick callback=$([bool]$deactivationEvent)."
+        }
+        if ($TraySettingsAfterDeactivationSmoke) {
+            # This is the user's lifecycle: leave a query active, activate another
+            # top-level window so Flux hides, then request Settings through the
+            # resident single-instance handoff used by tray actions. A second
+            # process is only a deterministic way to invoke that handoff without
+            # brittle notification-area coordinate automation.
+            $settingsRequestProcess = Start-Process `
+                -FilePath $absoluteExecutable `
+                -ArgumentList @("--open-settings") `
+                -PassThru
+            try {
+                Wait-Process -Id $settingsRequestProcess.Id -Timeout 10
+            } catch {
+                Stop-Process -Id $settingsRequestProcess.Id -Force -ErrorAction SilentlyContinue
+                throw "Tray Settings deactivation smoke request process did not hand off within 10 seconds."
+            }
+            $settingsGeometryDeadline = (Get-Date).AddSeconds(3)
+            while ((Get-Date) -lt $settingsGeometryDeadline) {
+                if ([FluxWallpaper]::IsWindowVisible($launcherHandle)) {
+                    $settingsAfterDeactivationRect = New-Object FluxWallpaper+RECT
+                    if ([FluxWallpaper]::GetWindowRect($launcherHandle, [ref]$settingsAfterDeactivationRect)) {
+                        $traySettingsAfterDeactivationWindowWidth = [FluxWallpaper]::RectWidth($settingsAfterDeactivationRect)
+                        $traySettingsAfterDeactivationWindowHeight = [FluxWallpaper]::RectHeight($settingsAfterDeactivationRect)
+                        if ($traySettingsAfterDeactivationWindowWidth -ge 680 -and $traySettingsAfterDeactivationWindowHeight -ge 400) {
+                            $traySettingsAfterDeactivationWindowFound = $true
+                            break
+                        }
+                    }
+                }
+                Start-Sleep -Milliseconds 100
+            }
+            $traySettingsAfterDeactivationProbe = $traySettingsAfterDeactivationWindowFound
+            Write-Host "Settings after deactivation geometry: ${traySettingsAfterDeactivationWindowWidth}x${traySettingsAfterDeactivationWindowHeight} full=$traySettingsAfterDeactivationProbe"
+            if (!$traySettingsAfterDeactivationProbe) {
+                throw "Tray Settings after deactivation smoke reproduced compact/invalid window: ${traySettingsAfterDeactivationWindowWidth}x${traySettingsAfterDeactivationWindowHeight}."
+            }
         }
         if ($IdlePerformanceSmoke) {
             Start-Sleep -Milliseconds 1200
@@ -2391,6 +2433,9 @@ try {
         CursorVisibilityProbe = (!$CursorVisibilitySmoke) -or ($cursorVisibleOnActivation -and $cursorHiddenAfterTyping -and $cursorVisibleAfterMove)
         EverythingWingetInstallCommandProbe = "winget install -e --id voidtools.Everything"
         TraySettingsLifecycleProbe = (!$TraySettingsSmoke) -or ($settingsWindowFound -and ($settingsWindowHeight -ge 400) -and ($settingsWindowWidth -ge 680))
+        TraySettingsAfterDeactivationProbe = (!$TraySettingsAfterDeactivationSmoke) -or $traySettingsAfterDeactivationProbe
+        TraySettingsAfterDeactivationWindowWidth = $traySettingsAfterDeactivationWindowWidth
+        TraySettingsAfterDeactivationWindowHeight = $traySettingsAfterDeactivationWindowHeight
         KeyboardSelectionProbe = $true
         ActionModeProbe = $true
         EnterActionProbe = $true

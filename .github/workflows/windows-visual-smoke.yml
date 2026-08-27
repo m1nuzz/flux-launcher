@@ -73,6 +73,11 @@ on:
         required: false
         default: false
         type: boolean
+      tray_settings_after_deactivation_smoke:
+        description: "Verify Settings opens as a full panel after Flux is hidden by another window"
+        required: false
+        default: false
+        type: boolean
       visual_settings_smoke:
         description: "Open Visual Settings, measure the real preview HWND client geometry at DPI, verify realtime slider/reset IPC, stable Settings, and cleanup"
         required: false
@@ -179,6 +184,9 @@ jobs:
           }
           if ("${{ inputs.tray_settings_smoke }}" -eq "true") {
             $captureParams.TraySettingsSmoke = $true
+          }
+          if ("${{ inputs.tray_settings_after_deactivation_smoke }}" -eq "true") {
+            $captureParams.TraySettingsAfterDeactivationSmoke = $true
           }
           if ("${{ inputs.visual_settings_smoke }}" -eq "true") {
             $captureParams.VisualSettingsSmoke = $true
