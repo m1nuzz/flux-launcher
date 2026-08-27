@@ -915,8 +915,11 @@ unsafe fn run_windowed(
     // excluded from the normal Acrylic path, which needs transparent pixels
     // and DirectComposition to expose the system material.
     let translucent_fallback = cfg.backdrop != Backdrop::None && !backdrop_available;
+    // Both the native Acrylic path and the layered fallback need transparent
+    // presenter pixels; otherwise a transparent clear becomes an opaque black slab.
+    let transparent_presenter = backdrop_available || translucent_fallback;
     // 把 WindowState 装箱，指针随 CreateWindow 传入，在 WM_NCCREATE 挂到 HWND。
-    let mut state = Box::new(WindowState::new(handler, cfg.bg, backdrop_available));
+    let mut state = Box::new(WindowState::new(handler, cfg.bg, transparent_presenter));
     #[cfg(feature = "d2d")]
     {
         state.backdrop = cfg.backdrop;
@@ -995,9 +998,10 @@ unsafe fn run_windowed(
         }
     };
     if translucent_fallback {
-        // Keep the fallback close to the reference: neutral charcoal
-        // translucency without pretending to be a blurred desktop surface.
+        // Preserve the underlying desktop when system Acrylic is unavailable;
+        // do not replace it with a dark opaque rectangle.
         let _ = SetLayeredWindowAttributes(hwnd, COLORREF(0), 232, LWA_ALPHA);
+        eprintln!("[windui] layered transparent fallback active");
     }
     // 用实际窗口 DPI 设置内容缩放（可能与系统 DPI 不同，如多显示器）。
     let dpi = GetDpiForWindow(hwnd);
@@ -1049,7 +1053,10 @@ unsafe fn run_windowed(
             .as_deref()
             .is_some_and(|value| value != "0" && !value.is_empty());
         let env_disable = env_value.as_deref() == Some("0");
-        let want = !env_disable && (cfg.renderer.wants_gpu() || env_force);
+        // A no-DWM fallback uses the layered Skia presenter so premultiplied
+        // transparent pixels can reach the desktop; opaque HWND D2D would turn
+        // a transparent clear into a black rectangle.
+        let want = !env_disable && (cfg.renderer.wants_gpu() || env_force) && !translucent_fallback;
         if want {
             let mut rc = RECT::default();
             let _ = GetClientRect(hwnd, &mut rc);
