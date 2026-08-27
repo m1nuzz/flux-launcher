@@ -2151,6 +2151,47 @@ impl Element {
         Element::dialog(show, panel)
     }
 
+    /// Acrylic-style modal panel for dialogs that should preserve the window blur.
+    /// Unlike `dialog_panel`, this does not use the opaque theme surface role.
+    pub fn dialog_glass_panel(
+        show: Signal<bool>,
+        title: impl Into<String>,
+        width: i32,
+        on_close: impl FnMut(&mut EventCtx) + 'static,
+        body: Element,
+        footer: Element,
+    ) -> Self {
+        let th = crate::theme::current();
+        let header = Element::row()
+            .width_match()
+            .cross(Align::Center)
+            .child(
+                Element::label(title.into())
+                    .font_size(18.0)
+                    .font_weight(700)
+                    .fg_role(crate::style::Role::Text)
+                    .weight(1.0)
+                    .height(26),
+            )
+            .child(
+                Element::icon_button("\u{2715}")
+                    .size(28, 28)
+                    .fg_role(crate::style::Role::TextMuted)
+                    .on_click(on_close),
+            );
+        let panel = Element::col()
+            .width(width)
+            .bg(Color::rgba(255, 255, 255, 18))
+            .border(Color::rgba(255, 255, 255, 48), 1)
+            .corner(th.metrics.corner_lg)
+            .padding(20)
+            .spacing(16)
+            .child(header)
+            .child(body)
+            .child(footer);
+        Element::dialog(show, panel)
+    }
+
     /// 弹性空白：主轴方向占据剩余空间，把其后的兄弟元素推到另一端（如底栏「左按钮 … 右按钮」）。
     pub fn flex_spacer() -> Self {
         Element::stack().weight(1.0)

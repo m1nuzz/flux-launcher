@@ -138,6 +138,7 @@ $stderrPath = Join-Path $OutputDirectory "launcher.stderr.log"
 $summaryPath = Join-Path $OutputDirectory "everything-install-prompt-summary.json"
 $screenshotPath = Join-Path $OutputDirectory "everything-install-prompt.png"
 $process = $null
+$secondProcess = $null
 $summary = [ordered]@{
     PromptExpected = $true
     ProcessId = 0
@@ -149,9 +150,20 @@ $summary = [ordered]@{
     WindowHeight = 0
     PromptGeometryProbe = $false
     PromptContentProbe = $false
+    PromptGlassStyleProbe = $false
     PromptDismissProbe = $false
     PromptDismissedWindowWidth = 0
     PromptDismissedWindowHeight = 0
+    RefusalPersistedToSettings = $false
+    SecondLaunchProcessId = 0
+    SecondLaunchWindowHandle = "0"
+    SecondLaunchWindowVisible = $false
+    SecondLaunchForegroundMatchesFlux = $false
+    SecondLaunchWindowWidth = 0
+    SecondLaunchWindowHeight = 0
+    SecondLaunchPromptTelemetryAbsent = $false
+    SecondLaunchCompactGeometryProbe = $false
+    PromptSuppressedOnSecondLaunch = $false
     EverythingProcessCountBefore = 0
     EverythingProcessCountAfter = 0
     Error = $null
@@ -189,6 +201,7 @@ try {
     Start-Sleep -Milliseconds 250
     $stderr = if (Test-Path $stderrPath) { Get-Content $stderrPath -Raw } else { "" }
     $summary.PromptContentProbe = $stderr -match "Everything install prompt: visible at startup"
+    $summary.PromptGlassStyleProbe = $stderr -match "Everything install prompt style: glass"
     if (!$summary.PromptContentProbe) {
         throw "Everything install prompt telemetry was not observed; the screenshot must not be treated as prompt proof."
     }
@@ -210,6 +223,51 @@ try {
     $summary.PromptDismissedWindowHeight = [FluxPromptSmokeNative]::RectHeight($dismissedRect)
     $summary.PromptDismissProbe = $summary.PromptDismissedWindowWidth -ge 400 -and $summary.PromptDismissedWindowHeight -le 100
     Save-DesktopScreenshot (Join-Path $OutputDirectory "everything-install-prompt-dismissed.png")
+
+    $settingsPath = Join-Path $fluxConfigDirectory "settings.json"
+    $persistedSettings = Get-Content -LiteralPath $settingsPath -Raw | ConvertFrom-Json
+    $summary.RefusalPersistedToSettings = [bool]$persistedSettings.everything_install_prompt_seen
+    if (!$summary.RefusalPersistedToSettings) {
+        throw "Not now did not persist everything_install_prompt_seen=true in settings.json."
+    }
+
+    # Restart the real process with the same isolated APPDATA and missing fixture.
+    # The second launch must stay compact and must not emit the startup prompt probe.
+    Stop-Process -Id $process.Id -Force -ErrorAction SilentlyContinue
+    $process = $null
+    $secondStdoutPath = Join-Path $OutputDirectory "launcher-second.stdout.log"
+    $secondStderrPath = Join-Path $OutputDirectory "launcher-second.stderr.log"
+    $secondProcess = Start-Process -FilePath $Executable -PassThru -RedirectStandardOutput $secondStdoutPath -RedirectStandardError $secondStderrPath
+    $summary.SecondLaunchProcessId = $secondProcess.Id
+    $secondDeadline = (Get-Date).AddSeconds(10)
+    $secondWindow = [IntPtr]::Zero
+    while ((Get-Date) -lt $secondDeadline -and $secondWindow -eq [IntPtr]::Zero) {
+        $secondWindow = Get-WindowForProcess $secondProcess
+        if ($secondWindow -eq [IntPtr]::Zero) {
+            Start-Sleep -Milliseconds 50
+        }
+    }
+    if ($secondWindow -eq [IntPtr]::Zero) {
+        throw "Everything install prompt smoke could not find the Flux window on the second launch."
+    }
+    $summary.SecondLaunchWindowHandle = $secondWindow.ToInt64().ToString()
+    [FluxPromptSmokeNative]::SetForegroundWindow($secondWindow) | Out-Null
+    Start-Sleep -Milliseconds 350
+    $secondVisibleWindow = Get-WindowForProcess $secondProcess $true
+    $summary.SecondLaunchWindowVisible = $secondVisibleWindow -ne [IntPtr]::Zero
+    $summary.SecondLaunchForegroundMatchesFlux = [FluxPromptSmokeNative]::GetForegroundWindow().ToInt64().ToString() -eq $summary.SecondLaunchWindowHandle
+    $secondRect = New-Object FluxPromptSmokeNative+RECT
+    if (![FluxPromptSmokeNative]::GetWindowRect($secondWindow, [ref]$secondRect)) {
+        throw "Everything install prompt smoke could not measure the Flux window on the second launch."
+    }
+    $summary.SecondLaunchWindowWidth = [FluxPromptSmokeNative]::RectWidth($secondRect)
+    $summary.SecondLaunchWindowHeight = [FluxPromptSmokeNative]::RectHeight($secondRect)
+    $summary.SecondLaunchCompactGeometryProbe = $summary.SecondLaunchWindowWidth -ge 400 -and $summary.SecondLaunchWindowHeight -le 100
+    Save-DesktopScreenshot (Join-Path $OutputDirectory "everything-install-prompt-second-launch.png")
+    Start-Sleep -Milliseconds 250
+    $secondStderr = if (Test-Path $secondStderrPath) { Get-Content $secondStderrPath -Raw } else { "" }
+    $summary.SecondLaunchPromptTelemetryAbsent = $secondStderr -notmatch "Everything install prompt: visible at startup"
+    $summary.PromptSuppressedOnSecondLaunch = $summary.RefusalPersistedToSettings -and $summary.SecondLaunchPromptTelemetryAbsent -and $summary.SecondLaunchCompactGeometryProbe
     $summary.EverythingProcessCountAfter = @(Get-Process -Name "Everything" -ErrorAction SilentlyContinue).Count
     $summary | ConvertTo-Json -Depth 6 | Set-Content -LiteralPath $summaryPath -Encoding utf8
 
@@ -219,13 +277,22 @@ try {
     if (!$summary.PromptGeometryProbe) {
         throw "Everything install prompt window was undersized: $($summary.WindowWidth)x$($summary.WindowHeight)."
     }
+    if (!$summary.PromptGlassStyleProbe) {
+        throw "Everything install prompt did not report the modern glass style path."
+    }
     if (!$summary.PromptDismissProbe) {
         throw "Everything install prompt did not return to compact geometry after Not now: $($summary.PromptDismissedWindowWidth)x$($summary.PromptDismissedWindowHeight)."
+    }
+    if (!$summary.RefusalPersistedToSettings) {
+        throw "Everything install prompt refusal was not persisted."
+    }
+    if (!$summary.PromptSuppressedOnSecondLaunch) {
+        throw "Everything install prompt reappeared or expanded on the second launch: $($summary.SecondLaunchWindowWidth)x$($summary.SecondLaunchWindowHeight), telemetry_absent=$($summary.SecondLaunchPromptTelemetryAbsent)."
     }
     if ($summary.EverythingProcessCountAfter -gt ($summary.EverythingProcessCountBefore + 1)) {
         throw "Everything install prompt created duplicate Everything processes: before=$($summary.EverythingProcessCountBefore) after=$($summary.EverythingProcessCountAfter)."
     }
-    Write-Host "Everything install prompt smoke passed: visible ${($summary.WindowWidth)}x${($summary.WindowHeight)}, foreground=$($summary.ForegroundMatchesFlux), Everything process count remained idempotent."
+    Write-Host "Everything install prompt smoke passed: first launch ${($summary.WindowWidth)}x${($summary.WindowHeight)}, refusal persisted=$($summary.RefusalPersistedToSettings), second launch ${($summary.SecondLaunchWindowWidth)}x${($summary.SecondLaunchWindowHeight)} without prompt, Everything process count remained idempotent."
 } catch {
     $summary.Error = $_.Exception.Message
     $summary.EverythingProcessCountAfter = @(Get-Process -Name "Everything" -ErrorAction SilentlyContinue).Count
@@ -236,12 +303,14 @@ try {
     }
     throw
 } finally {
-    if ($null -ne $process) {
-        try {
-            if (!$process.HasExited) {
-                Stop-Process -Id $process.Id -Force -ErrorAction SilentlyContinue
+    foreach ($candidate in @($process, $secondProcess)) {
+        if ($null -ne $candidate) {
+            try {
+                if (!$candidate.HasExited) {
+                    Stop-Process -Id $candidate.Id -Force -ErrorAction SilentlyContinue
+                }
+            } catch {
             }
-        } catch {
         }
     }
     Remove-Item Env:FLUX_SMOKE_EVERYTHING_MISSING -ErrorAction SilentlyContinue

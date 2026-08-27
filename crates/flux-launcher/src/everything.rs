@@ -41,6 +41,9 @@ pub fn installation_state() -> InstallationState {
     if std::env::var_os("FLUX_SMOKE_EVERYTHING_MISSING").is_some() {
         return InstallationState::Missing;
     }
+    if std::env::var_os("FLUX_SMOKE_EVERYTHING_INSTALLED").is_some() {
+        return InstallationState::Installed(PathBuf::from("Everything.exe"));
+    }
     installed_executable()
         .map(InstallationState::Installed)
         .unwrap_or(InstallationState::Missing)

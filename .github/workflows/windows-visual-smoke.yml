@@ -43,6 +43,11 @@ on:
         required: false
         default: false
         type: boolean
+      everything_plugins_settings_smoke:
+        description: "Verify Everything controls and missing/installed states in Settings > Plugins without launching winget"
+        required: false
+        default: false
+        type: boolean
       recycle_bin_smoke:
         description: "Exercise Recycle Bin search and action mode without emptying it"
         required: false
@@ -138,6 +143,11 @@ jobs:
         shell: pwsh
         run: ./scripts/everything-install-prompt-smoke.ps1 -Executable ./target/x86_64-pc-windows-msvc/release/flux-launcher.exe -OutputDirectory ./artifacts/mica-smoke/everything-install-prompt
 
+      - name: Smoke Everything controls in Plugins settings
+        if: ${{ inputs.everything_plugins_settings_smoke == true }}
+        shell: pwsh
+        run: ./scripts/everything-plugins-settings-smoke.ps1 -Executable ./target/x86_64-pc-windows-msvc/release/flux-launcher.exe -OutputDirectory ./artifacts/mica-smoke/everything-plugins-settings
+
       - name: Capture desktop compositor output
         shell: pwsh
         env:
@@ -210,6 +220,14 @@ jobs:
           $captureParams.DeactivationClickSmoke = $true
           $captureParams.FolderLaunchSmoke = $true
           & ./scripts/capture-mica.ps1 @captureParams
+
+      - name: Upload Everything prompt and Plugins smoke artifacts
+        if: ${{ always() && (inputs.everything_install_prompt_smoke == true || inputs.everything_plugins_settings_smoke == true) }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: flux-launcher-everything-ui-smoke
+          path: artifacts/mica-smoke/everything-*
+          if-no-files-found: warn
 
       - name: Upload launcher binary
         if: ${{ always() }}

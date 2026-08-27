@@ -2518,7 +2518,7 @@ fn main() {
     );
     let everything_prompt_visible = signal(everything_prompt_visible_at_start);
     let everything_status = signal(if everything_installed.get() {
-        String::from("Everything detected; Flux will enable IPC automatically")
+        String::from("Everything is already installed; Flux will enable IPC automatically")
     } else {
         String::from("Everything is not installed. Install it with winget to enable file search.")
     });
@@ -2645,7 +2645,7 @@ fn main() {
     let settings_for_everything_prompt_close = Arc::clone(&shared_settings);
     let settings_for_everything_prompt_decline = Arc::clone(&shared_settings);
     let settings_for_everything_prompt_install = Arc::clone(&shared_settings);
-    let everything_install_prompt = Element::dialog_panel(
+    let everything_install_prompt = Element::dialog_glass_panel(
         everything_prompt_visible,
         "Install Everything",
         400,
@@ -2894,9 +2894,13 @@ fn main() {
     let settings_visible_for_interval = settings_visible;
     let settings_tab_for_interval = settings_tab;
     let everything_prompt_visible_for_interval = everything_prompt_visible;
+    let everything_installed_for_interval = everything_installed;
+    let everything_status_for_interval = everything_status;
     let visual_preview_generation_for_interval = visual_preview_generation;
     let visual_preview_smoke_for_interval =
         std::env::var_os("FLUX_SMOKE_VISUAL_SETTINGS").is_some();
+    let everything_plugins_smoke_for_interval =
+        std::env::var_os("FLUX_SMOKE_EVERYTHING_PLUGINS").is_some();
     let tray_settings_smoke_pending_for_interval = Rc::clone(&tray_settings_smoke_pending);
     let mut last_icon_generation = icon_refresh_generation.get();
     let mut last_launcher_width = launcher_width.get();
@@ -2908,6 +2912,7 @@ fn main() {
     let mut last_visual_preview_request: Option<(u16, u16)> = None;
     let mut last_visual_preview_generation = visual_preview_generation.get();
     let mut last_visual_control_state: Option<(u16, u16, u32, u32)> = None;
+    let mut everything_plugins_smoke_reported = false;
     let mut sequence = 0_u64;
 
     let settings_at_start = settings_visible.get();
@@ -2932,6 +2937,7 @@ fn main() {
         && std::env::var_os("FLUX_SMOKE_EVERYTHING_PROMPT").is_some()
     {
         eprintln!("Everything install prompt: visible at startup");
+        eprintln!("Everything install prompt style: glass");
     }
     if let Some((x, y)) =
         monitor::centered_position(initial_monitor_preference, initial_width, initial_height)
@@ -3147,7 +3153,7 @@ fn main() {
             Ok(InstallationState::Installed(_)) => {
                 everything_installed.set(true);
                 everything_status.set(String::from(
-                    "Everything detected; Flux is enabling local IPC automatically",
+                    "Everything is already installed; Flux is enabling local IPC automatically",
                 ));
             }
             Ok(InstallationState::Missing) => {
@@ -3876,6 +3882,10 @@ fn main() {
     let google_alias_for_apply = google_alias;
     let everything_status_for_apply = everything_status;
     let everything_installed_for_ui = everything_installed;
+    let settings_for_everything_toggle = Arc::clone(&shared_settings);
+    let auto_enable_everything_for_toggle = auto_enable_everything;
+    let everything_installed_for_toggle = everything_installed;
+    let everything_status_for_toggle = everything_status;
     let settings_for_priority_ui = Arc::clone(&shared_settings);
     let providers_for_priority_ui = Rc::clone(&provider_results);
     let query_for_priority_ui = query;
@@ -4249,46 +4259,6 @@ fn main() {
                                             }),
                                     ),
                             )
-                            .child(Element::field(
-                                "Everything",
-                                Element::checkbox(
-                                    "Auto-enable Everything when installed",
-                                    auto_enable_everything,
-                                ),
-                            ))
-                            .child(
-                                Element::label_signal(everything_status)
-                                    .font_size(11.0)
-                                    .fg(Color::rgba(235, 241, 255, 190))
-                                    .max_lines(2)
-                                    .truncate(Truncate::End)
-                                    .width_match(),
-                            )
-                            .child(
-                                Element::label("Command: winget install -e --id voidtools.Everything")
-                                    .font_size(10.0)
-                                    .fg(Color::rgba(235, 241, 255, 155))
-                                    .visible_when(move || !everything_installed_for_ui.get())
-                                    .width_match(),
-                            )
-                            .child(
-                                Element::button("Install Everything")
-                                    .visible_when(move || !everything_installed_for_ui.get())
-                                    .on_click(move |ctx| {
-                                        match everything::launch_winget_install() {
-                                            Ok(()) => {
-                                                everything_status.set(String::from(
-                                                    "winget install started. Restart Flux after Everything is installed.",
-                                                ));
-                                                ctx.toast_ok("winget install started");
-                                            }
-                                            Err(error) => {
-                                                everything_status.set(error.clone());
-                                                ctx.toast_ok(error);
-                                            }
-                                        }
-                                    }),
-                            ),
                     )
                     .child(
                         Element::row()
@@ -4406,7 +4376,7 @@ fn main() {
                                         Ok(InstallationState::Installed(_)) => {
                                             everything_installed.set(true);
                                             everything_status_for_apply.set(String::from(
-                                                "Everything detected; Flux will enable IPC automatically",
+                                                "Everything is already installed; Flux will enable IPC automatically",
                                             ));
                                         }
                                         Ok(InstallationState::Missing) => {
@@ -4465,6 +4435,95 @@ fn main() {
                     Element::col()
                         .width_match()
                         .spacing(12)
+                        .child(Element::label("Everything").font_size(17.0).fg(Color::WHITE))
+                        .child(
+                            Element::label("Everything provides fast indexed file and folder search. Configure its automatic use here, alongside the other plugins.")
+                                .font_size(11.0)
+                                .fg(Color::rgba(235, 241, 255, 180))
+                                .max_lines(3)
+                                .truncate(Truncate::End),
+                        )
+                        .child(Element::field(
+                            "Everything",
+                            Element::checkbox(
+                                "Auto-enable Everything when installed",
+                                auto_enable_everything,
+                            )
+                            .on_toggle(move |_| {
+                                let enabled = auto_enable_everything_for_toggle.get();
+                                if let Ok(mut settings) = settings_for_everything_toggle.write() {
+                                    settings.auto_enable_everything = enabled;
+                                    settings.normalize();
+                                    let _ = save_settings(&settings);
+                                }
+                                if !enabled {
+                                    everything_status_for_toggle.set(String::from(
+                                        "Everything auto-enable is disabled in Flux settings",
+                                    ));
+                                    return;
+                                }
+                                match everything::start_background_if_installed() {
+                                    Ok(InstallationState::Installed(_)) => {
+                                        everything_installed_for_toggle.set(true);
+                                        everything_status_for_toggle.set(String::from(
+                                            "Everything is already installed; Flux will enable IPC automatically",
+                                        ));
+                                    }
+                                    Ok(InstallationState::Missing) => {
+                                        everything_installed_for_toggle.set(false);
+                                        everything_status_for_toggle.set(String::from(
+                                            "Everything is not installed. Install it with winget to enable file search.",
+                                        ));
+                                    }
+                                    Err(error) => everything_status_for_toggle.set(error),
+                                }
+                            }),
+                        ))
+                        .child(
+                            Element::label("Everything is already installed")
+                                .font_size(12.0)
+                                .fg(Color::rgba(180, 255, 205, 235))
+                                .visible_when(move || everything_installed_for_ui.get()),
+                        )
+                        .child(
+                            Element::label("Everything is not installed")
+                                .font_size(12.0)
+                                .fg(Color::rgba(255, 225, 175, 235))
+                                .visible_when(move || !everything_installed_for_ui.get()),
+                        )
+                        .child(
+                            Element::label_signal(everything_status)
+                                .font_size(11.0)
+                                .fg(Color::rgba(235, 241, 255, 190))
+                                .max_lines(2)
+                                .truncate(Truncate::End)
+                                .width_match(),
+                        )
+                        .child(
+                            Element::label("Command: winget install -e --id voidtools.Everything")
+                                .font_size(10.0)
+                                .fg(Color::rgba(235, 241, 255, 155))
+                                .visible_when(move || !everything_installed_for_ui.get())
+                                .width_match(),
+                        )
+                        .child(
+                            Element::button("Install Everything")
+                                .visible_when(move || !everything_installed_for_ui.get())
+                                .on_click(move |ctx| {
+                                    match everything::launch_winget_install() {
+                                        Ok(()) => {
+                                            everything_status.set(String::from(
+                                                "winget install started. Restart Flux after Everything is installed.",
+                                            ));
+                                            ctx.toast_ok("winget install started");
+                                        }
+                                        Err(error) => {
+                                            everything_status.set(error.clone());
+                                            ctx.toast_ok(error);
+                                        }
+                                    }
+                                }),
+                        )
                         .child(Element::label("Native plugins").font_size(17.0).fg(Color::WHITE))
                         .child(
                             Element::label("Built-in providers run inside Flux. Community Rust DLL plugins run in one isolated shared worker spawned from this same flux-launcher.exe.")
@@ -4830,7 +4889,26 @@ fn main() {
             let settings_is_visible = settings_visible_for_interval.get();
             let prompt_is_visible = everything_prompt_visible_for_interval.get();
             let visual_tab_is_visible = settings_tab_for_interval.get() == 1;
+            let plugins_tab_is_visible = settings_tab_for_interval.get() == 3;
             let visual_preview_is_visible = settings_is_visible && visual_tab_is_visible;
+            if everything_plugins_smoke_for_interval
+                && settings_is_visible
+                && plugins_tab_is_visible
+                && !everything_plugins_smoke_reported
+            {
+                let installed = everything_installed_for_interval.get();
+                let auto_enable = auto_enable_everything_for_interval.get();
+                let status = everything_status_for_interval.get();
+                eprintln!(
+                    "Everything Plugins UI: tab_visible=true everything_section=true auto_enable_checkbox=true status_label=true install_button_label=Install_Everything already_installed_label=Everything_is_already_installed auto_enable={} installed={} install_button_visible={} already_installed_visible={} status={}",
+                    auto_enable,
+                    installed,
+                    !installed,
+                    installed,
+                    status.replace(' ', "_")
+                );
+                everything_plugins_smoke_reported = true;
+            }
             if settings_is_visible && !last_settings_visible {
                 if let Ok(settings) = settings_for_interval_geometry.read() {
                     request_monitor_position(
