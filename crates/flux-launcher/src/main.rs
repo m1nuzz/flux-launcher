@@ -2938,7 +2938,7 @@ fn main() {
     {
         eprintln!("Everything install prompt: visible at startup");
         eprintln!(
-            "Everything install prompt style: glass-transparent panel_fill=none modal_scrim=none"
+            "Everything install prompt style: glass-transparent panel_fill=none modal_scrim=none window_background=transparent"
         );
     }
     if let Some((x, y)) =
@@ -4874,9 +4874,9 @@ fn main() {
         .hide_on_close()
         .hide_on_deactivate()
         .focus_first_control_on_show()
-        // The Win32 backend keeps this transparent on local Acrylic-capable
-        // sessions and uses this dark color only for an honest RDP fallback.
-        .bg(Color::rgba(32, 33, 35, 255))
+        // Keep the HWND background transparent so Acrylic/DWM remains visible
+        // through the launcher and its install prompt instead of adding a solid slab.
+        .bg(Color::TRANSPARENT)
         .centered()
         .frameless()
         .resizable(false)

@@ -154,6 +154,7 @@ $summary = [ordered]@{
     PromptBorderlessStyleProbe = $false
     PromptTransparentPanelProbe = $false
     PromptNoModalScrimProbe = $false
+    PromptTransparentWindowProbe = $false
     PromptDismissProbe = $false
     PromptDismissedWindowWidth = 0
     PromptDismissedWindowHeight = 0
@@ -204,10 +205,11 @@ try {
     Start-Sleep -Milliseconds 250
     $stderr = if (Test-Path $stderrPath) { Get-Content $stderrPath -Raw } else { "" }
     $summary.PromptContentProbe = $stderr -match "Everything install prompt: visible at startup"
-    $summary.PromptGlassStyleProbe = $stderr -match "Everything install prompt style: glass-transparent panel_fill=none modal_scrim=none"
+    $summary.PromptGlassStyleProbe = $stderr -match "Everything install prompt style: glass-transparent panel_fill=none modal_scrim=none window_background=transparent"
     $summary.PromptBorderlessStyleProbe = $summary.PromptGlassStyleProbe
     $summary.PromptTransparentPanelProbe = $stderr -match "panel_fill=none"
     $summary.PromptNoModalScrimProbe = $stderr -match "modal_scrim=none"
+    $summary.PromptTransparentWindowProbe = $stderr -match "window_background=transparent"
     if (!$summary.PromptContentProbe) {
         throw "Everything install prompt telemetry was not observed; the screenshot must not be treated as prompt proof."
     }
@@ -293,7 +295,7 @@ try {
     if (!$summary.PromptGeometryProbe) {
         throw "Everything install prompt window was undersized: $($summary.WindowWidth)x$($summary.WindowHeight)."
     }
-    if (!$summary.PromptGlassStyleProbe -or !$summary.PromptBorderlessStyleProbe -or !$summary.PromptTransparentPanelProbe -or !$summary.PromptNoModalScrimProbe) {
+    if (!$summary.PromptGlassStyleProbe -or !$summary.PromptBorderlessStyleProbe -or !$summary.PromptTransparentPanelProbe -or !$summary.PromptNoModalScrimProbe -or !$summary.PromptTransparentWindowProbe) {
         throw "Everything install prompt did not report the modern transparent no-scrim style path."
     }
     if (!$summary.PromptDismissProbe) {
