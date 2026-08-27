@@ -909,6 +909,11 @@ try {
                 throw "Tray Settings after deactivation smoke reproduced compact/invalid window: ${traySettingsAfterDeactivationWindowWidth}x${traySettingsAfterDeactivationWindowHeight}."
             }
             Save-Screenshot "tray-settings-after-deactivation.png"
+            # Let the native Settings resize/deactivation guard settle before the
+            # next genuine outside click. The user can click another app while the
+            # panel is still painting, but the smoke must not mistake that internal
+            # 250 ms resize grace period for a product hide failure.
+            Start-Sleep -Milliseconds 350
             # Reproduce the user's second half exactly: click an empty area of the
             # other top-level window while Settings is open, then choose Settings
             # from the tray a second time and require another full panel.
