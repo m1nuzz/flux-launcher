@@ -840,6 +840,49 @@ try {
             if (!$traySettingsAfterDeactivationProbe) {
                 throw "Tray Settings after deactivation smoke reproduced compact/invalid window: ${traySettingsAfterDeactivationWindowWidth}x${traySettingsAfterDeactivationWindowHeight}."
             }
+            Save-Screenshot "tray-settings-after-deactivation.png"
+            # Return to the launcher's compact state through the real tray menu,
+            # then hide it so the existing Alt+Space restore assertion below still
+            # starts from the same hidden state as the normal deactivation smoke.
+            [FluxWallpaper]::SetCursorPos($trayMenuX, $trayMenuY) | Out-Null
+            if (![FluxWallpaper]::PostMessage($launcherHandle, $wmTrayIcon, [UIntPtr]::Zero, [IntPtr]$wmRButtonUp)) {
+                throw "Tray Settings deactivation smoke could not reopen the tray menu for cleanup."
+            }
+            $cleanupMenuDeadline = (Get-Date).AddSeconds(2)
+            $cleanupMenuReady = $false
+            while ((Get-Date) -lt $cleanupMenuDeadline) {
+                if ([FluxWallpaper]::WindowClassAtPoint($trayMenuX, $trayMenuY) -eq "#32768") {
+                    $cleanupMenuReady = $true
+                    break
+                }
+                Start-Sleep -Milliseconds 50
+            }
+            if (!$cleanupMenuReady) {
+                throw "Tray Settings deactivation smoke could not observe the cleanup popup menu."
+            }
+            $cleanupMenuHandle = [FluxWallpaper]::WindowHandleAtPoint($trayMenuX, $trayMenuY)
+            $cleanupMenuRect = New-Object FluxWallpaper+RECT
+            if ($cleanupMenuHandle -eq [IntPtr]::Zero -or
+                ![FluxWallpaper]::GetWindowRect($cleanupMenuHandle, [ref]$cleanupMenuRect)) {
+                throw "Tray Settings deactivation smoke could not read the cleanup popup menu rectangle."
+            }
+            $cleanupShowX = $cleanupMenuRect.Left + [int]([FluxWallpaper]::RectWidth($cleanupMenuRect) / 2)
+            $cleanupShowY = $cleanupMenuRect.Top + [int]([FluxWallpaper]::RectHeight($cleanupMenuRect) * 0.12)
+            [FluxWallpaper]::SetCursorPos($cleanupShowX, $cleanupShowY) | Out-Null
+            [FluxWallpaper]::mouse_event(0x0002, 0, 0, 0, [UIntPtr]::Zero)
+            [FluxWallpaper]::mouse_event(0x0004, 0, 0, 0, [UIntPtr]::Zero)
+            Start-Sleep -Milliseconds 500
+            if (![FluxWallpaper]::IsWindowVisible($launcherHandle)) {
+                throw "Tray Settings deactivation smoke cleanup could not show the launcher."
+            }
+            [FluxWallpaper]::keybd_event(0x12, 0, 0, [UIntPtr]::Zero)
+            [FluxWallpaper]::keybd_event(0x20, 0, 0, [UIntPtr]::Zero)
+            [FluxWallpaper]::keybd_event(0x20, 0, 2, [UIntPtr]::Zero)
+            [FluxWallpaper]::keybd_event(0x12, 0, 2, [UIntPtr]::Zero)
+            Start-Sleep -Milliseconds 500
+            if ([FluxWallpaper]::IsWindowVisible($launcherHandle)) {
+                throw "Tray Settings deactivation smoke cleanup could not hide the compact launcher."
+            }
         }
         if ($IdlePerformanceSmoke) {
             Start-Sleep -Milliseconds 1200
