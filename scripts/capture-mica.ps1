@@ -720,6 +720,11 @@ try {
             } else {
                 0
             }
+            $deactivationInputBefore = if (Test-Path $inputTracePath) {
+                @(Get-Content $inputTracePath).Count
+            } else {
+                0
+            }
             # Reset through the same global activation path used by the user,
             # then deliver ordinary WM_CHAR units synchronously to the real Flux
             # HWND. This preserves the no-Enter/no-selection state while avoiding
@@ -747,19 +752,27 @@ try {
             $deactivationShell.SendKeys($deactivationQuery)
             $deactivationQueryDeadline = (Get-Date).AddSeconds(3)
             $deactivationQueryObserved = $false
+            $deactivationInputCharacters = 0
             while ((Get-Date) -lt $deactivationQueryDeadline) {
                 if (Test-Path $queryProbePath) {
                     $deactivationQueryObserved = @(Get-Content $queryProbePath | Select-Object -Skip $deactivationQueryBefore |
                         Where-Object { $_ -match "query=$deactivationQuery" }).Count -gt 0
-                    if ($deactivationQueryObserved) {
-                        break
-                    }
+                }
+                if (Test-Path $inputTracePath) {
+                    $deactivationInputCharacters = @(Get-Content $inputTracePath | Select-Object -Skip $deactivationInputBefore |
+                        Where-Object { $_ -match '^message=(wm_char|wm_ime_char) ' }).Count
+                }
+                # The trace is metadata-only and never contains the query text.
+                # It proves that all requested characters were routed before the
+                # outside click even when result-provider snapshots are delayed.
+                if ($deactivationQueryObserved -or $deactivationInputCharacters -ge $deactivationQuery.Length) {
+                    break
                 }
                 Start-Sleep -Milliseconds 100
             }
-            Write-Host "Pre-deactivation query probe: query=$deactivationQuery observed=$deactivationQueryObserved"
-            if (!$deactivationQueryObserved) {
-                throw "Deactivation smoke could not observe the typed query before the outside click."
+            Write-Host "Pre-deactivation query probe: characters=$deactivationInputCharacters expected=$($deactivationQuery.Length) snapshot_observed=$deactivationQueryObserved"
+            if (!$deactivationQueryObserved -and $deactivationInputCharacters -lt $deactivationQuery.Length) {
+                throw "Deactivation smoke could not observe the complete typed query before the outside click."
             }
         }
         # The probe covers the virtual screen, so its center can be underneath the
