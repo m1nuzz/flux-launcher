@@ -711,6 +711,39 @@ try {
         if (![FluxWallpaper]::IsWindowVisible($launcherHandle)) {
             throw "Deactivation smoke expected Flux to be visible before the outside click."
         }
+        if ($TraySettingsAfterDeactivationSmoke) {
+            # Match the user's exact state: type a query, do not select a result,
+            # then click another top-level window before opening Settings from tray.
+            $deactivationQuery = "settings-tray-probe"
+            $deactivationQueryBefore = if (Test-Path $queryProbePath) {
+                @(Get-Content $queryProbePath).Count
+            } else {
+                0
+            }
+            $deactivationShell = New-Object -ComObject WScript.Shell
+            [FluxWallpaper]::SetForegroundWindow($launcherHandle) | Out-Null
+            $deactivationShell.AppActivate($process.Id) | Out-Null
+            Start-Sleep -Milliseconds 250
+            $deactivationShell.SendKeys("^a")
+            $deactivationShell.SendKeys("{BACKSPACE}")
+            $deactivationShell.SendKeys($deactivationQuery)
+            $deactivationQueryDeadline = (Get-Date).AddSeconds(3)
+            $deactivationQueryObserved = $false
+            while ((Get-Date) -lt $deactivationQueryDeadline) {
+                if (Test-Path $queryProbePath) {
+                    $deactivationQueryObserved = @(Get-Content $queryProbePath | Select-Object -Skip $deactivationQueryBefore |
+                        Where-Object { $_ -match "query=$deactivationQuery" }).Count -gt 0
+                    if ($deactivationQueryObserved) {
+                        break
+                    }
+                }
+                Start-Sleep -Milliseconds 100
+            }
+            Write-Host "Pre-deactivation query probe: query=$deactivationQuery observed=$deactivationQueryObserved"
+            if (!$deactivationQueryObserved) {
+                throw "Deactivation smoke could not observe the typed query before the outside click."
+            }
+        }
         # The probe covers the virtual screen, so its center can be underneath the
         # launcher itself. Select a point only after WindowFromPoint proves that the
         # actual top-level owner is the probe process and that it is outside Flux.
