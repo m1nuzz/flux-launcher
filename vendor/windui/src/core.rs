@@ -152,6 +152,11 @@ pub trait Widget {
     fn focusable(&self) -> bool {
         false
     }
+    /// Whether this focused widget must receive a key before the app-level
+    /// handler gets a chance to consume it.
+    fn handles_key_before_app(&self, _ev: &KeyEvent) -> bool {
+        false
+    }
     /// 本节点是否为**模态层根**（仅对话框遮罩）：可见时把 Tab 焦点环圈在其子树内，
     /// 使键盘无法走到被遮罩盖住、鼠标点都点不到的控件上（见 [`Tree::focusable_order`]）。
     ///
@@ -2304,6 +2309,16 @@ impl Tree {
             toast: o.toast,
             dialog: o.dialog,
         }
+    }
+
+    /// Whether the focused widget explicitly owns this key before the app
+    /// shortcut handler. This is intentionally a separate query from
+    /// `dispatch_key`, so command surfaces can preserve widget copy semantics.
+    pub fn focused_handles_key_before_app(&self, ev: &KeyEvent, focus: Option<NodeId>) -> bool {
+        focus
+            .and_then(|id| self.get(id))
+            .map(|node| node.widget.handles_key_before_app(ev))
+            .unwrap_or(false)
     }
 
     /// 分发键盘事件到焦点节点。

@@ -1153,11 +1153,6 @@ impl Element {
         self.config_rich(move |r| r.set_selection_requires_ctrl(on))
     }
 
-    /// Observe whether a Ctrl-gated RichText surface is active under the pointer.
-    pub fn on_selection_mode_change(self, f: impl Fn(bool) + 'static) -> Self {
-        self.config_rich(move |r| r.set_on_selection_mode_change(f))
-    }
-
     // ---- 图片 ----
 
     /// 图片控件：从文件路径加载（按字节嗅探格式，自适配已注册解码器）。

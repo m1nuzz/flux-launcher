@@ -1737,11 +1737,16 @@ impl AppHandler for UiHost {
         if self.menu.is_open() {
             return self.handle_menu_key(ev);
         }
-        if let Some(mut handler) = self.key_handler.take() {
-            let consumed = handler(ev);
-            self.key_handler = Some(handler);
-            if consumed {
-                return true;
+        if !self
+            .tree
+            .focused_handles_key_before_app(&ev, self.focus.current)
+        {
+            if let Some(mut handler) = self.key_handler.take() {
+                let consumed = handler(ev);
+                self.key_handler = Some(handler);
+                if consumed {
+                    return true;
+                }
             }
         }
         // Tab 由宿主独占用于焦点导航，并启用焦点环显示。焦点环跨节点变化（低频）→ 整窗。
