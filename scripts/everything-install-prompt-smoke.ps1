@@ -151,6 +151,8 @@ $summary = [ordered]@{
     PromptGeometryProbe = $false
     PromptContentProbe = $false
     PromptGlassStyleProbe = $false
+    PromptBorderlessStyleProbe = $false
+    PromptTransparentPanelProbe = $false
     PromptDismissProbe = $false
     PromptDismissedWindowWidth = 0
     PromptDismissedWindowHeight = 0
@@ -201,7 +203,9 @@ try {
     Start-Sleep -Milliseconds 250
     $stderr = if (Test-Path $stderrPath) { Get-Content $stderrPath -Raw } else { "" }
     $summary.PromptContentProbe = $stderr -match "Everything install prompt: visible at startup"
-    $summary.PromptGlassStyleProbe = $stderr -match "Everything install prompt style: glass"
+    $summary.PromptGlassStyleProbe = $stderr -match "Everything install prompt style: glass-transparent panel_fill=none"
+    $summary.PromptBorderlessStyleProbe = $summary.PromptGlassStyleProbe
+    $summary.PromptTransparentPanelProbe = $stderr -match "panel_fill=none"
     if (!$summary.PromptContentProbe) {
         throw "Everything install prompt telemetry was not observed; the screenshot must not be treated as prompt proof."
     }
@@ -287,8 +291,8 @@ try {
     if (!$summary.PromptGeometryProbe) {
         throw "Everything install prompt window was undersized: $($summary.WindowWidth)x$($summary.WindowHeight)."
     }
-    if (!$summary.PromptGlassStyleProbe) {
-        throw "Everything install prompt did not report the modern glass style path."
+    if (!$summary.PromptGlassStyleProbe -or !$summary.PromptBorderlessStyleProbe -or !$summary.PromptTransparentPanelProbe) {
+        throw "Everything install prompt did not report the modern transparent panel style path."
     }
     if (!$summary.PromptDismissProbe) {
         throw "Everything install prompt did not return to compact geometry after Not now: $($summary.PromptDismissedWindowWidth)x$($summary.PromptDismissedWindowHeight)."

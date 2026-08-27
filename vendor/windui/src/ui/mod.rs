@@ -2151,8 +2151,8 @@ impl Element {
         Element::dialog(show, panel)
     }
 
-    /// Acrylic-style modal panel for dialogs that should preserve the window blur.
-    /// Unlike `dialog_panel`, this does not use the opaque theme surface role.
+    /// Fully transparent Acrylic-style modal panel for dialogs that should preserve the window blur.
+    /// Unlike `dialog_panel`, this does not use a theme surface role, panel fill, or outline.
     pub fn dialog_glass_panel(
         show: Signal<bool>,
         title: impl Into<String>,
@@ -2181,8 +2181,6 @@ impl Element {
             );
         let panel = Element::col()
             .width(width)
-            .bg(Color::rgba(255, 255, 255, 18))
-            .border(Color::rgba(255, 255, 255, 48), 1)
             .corner(th.metrics.corner_lg)
             .padding(20)
             .spacing(16)
