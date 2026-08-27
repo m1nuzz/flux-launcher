@@ -2139,7 +2139,21 @@ unsafe fn run_tray_actions(hwnd: HWND, actions: Vec<tray::TrayAction>) {
         match action {
             // 显隐复用窗口操作通道：托盘与热键、事件路径的显隐语义必须一致
             // （例如 Show 需处理「窗口当前是最小化」的情形）。
-            tray::TrayAction::Show => run_window_op(hwnd, Some(WindowOp::Show)),
+            tray::TrayAction::Show => {
+                // A deferred deactivation check may have been posted while the
+                // native tray popup was closing. Keep the guard through the show
+                // operation and give SetForegroundWindow one message-loop turn
+                // before normal hide-on-deactivate resumes.
+                if let Some(state) = state_from(hwnd) {
+                    state.tray_menu_active = true;
+                }
+                run_window_op(hwnd, Some(WindowOp::Show));
+                if let Some(state) = state_from(hwnd) {
+                    state.tray_menu_active = false;
+                    state.suppress_deactivation_hide_until =
+                        Some(Instant::now() + Duration::from_millis(1000));
+                }
+            }
             tray::TrayAction::Hide => run_window_op(hwnd, Some(WindowOp::Hide)),
             // 不走 WindowOp：托盘「退出」是应用的唯一真实出口，**刻意绕过
             // `hide_on_close`**（否则开了关闭转隐藏的应用将永远退不掉）。
