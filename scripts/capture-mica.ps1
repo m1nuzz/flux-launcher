@@ -724,9 +724,15 @@ try {
             # then deliver ordinary WM_CHAR units synchronously to the real Flux
             # HWND. This preserves the no-Enter/no-selection state while avoiding
             # WScript.Shell focus races on the hosted Windows runner.
-            [FluxWallpaper]::SendMessage($launcherHandle, $wmHotkey, [UIntPtr]::Zero, [IntPtr]::Zero) | Out-Null
+            [FluxWallpaper]::keybd_event(0x12, 0, 0, [UIntPtr]::Zero)
+            [FluxWallpaper]::keybd_event(0x20, 0, 0, [UIntPtr]::Zero)
+            [FluxWallpaper]::keybd_event(0x20, 0, 2, [UIntPtr]::Zero)
+            [FluxWallpaper]::keybd_event(0x12, 0, 2, [UIntPtr]::Zero)
             Start-Sleep -Milliseconds 450
-            [FluxWallpaper]::SendMessage($launcherHandle, $wmHotkey, [UIntPtr]::Zero, [IntPtr]::Zero) | Out-Null
+            [FluxWallpaper]::keybd_event(0x12, 0, 0, [UIntPtr]::Zero)
+            [FluxWallpaper]::keybd_event(0x20, 0, 0, [UIntPtr]::Zero)
+            [FluxWallpaper]::keybd_event(0x20, 0, 2, [UIntPtr]::Zero)
+            [FluxWallpaper]::keybd_event(0x12, 0, 2, [UIntPtr]::Zero)
             Start-Sleep -Milliseconds 650
             if (![FluxWallpaper]::IsWindowVisible($launcherHandle)) {
                 throw "Deactivation smoke could not restore Flux before typing the active query."
