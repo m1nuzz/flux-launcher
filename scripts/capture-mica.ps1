@@ -774,6 +774,10 @@ try {
             if (!$deactivationQueryObserved -and $deactivationInputCharacters -lt $deactivationQuery.Length) {
                 throw "Deactivation smoke could not observe the complete typed query before the outside click."
             }
+            # Let result/layout updates settle before the outside click. This is the
+            # normal user path after typing and keeps the test outside the backend's
+            # short internal resize-transition suppression window.
+            Start-Sleep -Milliseconds 700
         }
         # The probe covers the virtual screen, so its center can be underneath the
         # launcher itself. Select a point only after WindowFromPoint proves that the
