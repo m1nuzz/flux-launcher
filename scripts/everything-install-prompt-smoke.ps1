@@ -234,11 +234,20 @@ try {
     # Restart the real process with the same isolated APPDATA and missing fixture.
     # The second launch must stay compact and must not emit the startup prompt probe.
     Stop-Process -Id $process.Id -Force -ErrorAction SilentlyContinue
+    $process.WaitForExit(5000)
+    if (!$process.HasExited) {
+        throw "Everything install prompt smoke could not fully stop the first Flux process before relaunch."
+    }
+    Start-Sleep -Milliseconds 300
     $process = $null
     $secondStdoutPath = Join-Path $OutputDirectory "launcher-second.stdout.log"
     $secondStderrPath = Join-Path $OutputDirectory "launcher-second.stderr.log"
     $secondProcess = Start-Process -FilePath $Executable -PassThru -RedirectStandardOutput $secondStdoutPath -RedirectStandardError $secondStderrPath
     $summary.SecondLaunchProcessId = $secondProcess.Id
+    Start-Sleep -Milliseconds 150
+    if ($secondProcess.HasExited) {
+        throw "Everything install prompt smoke second Flux process exited before it could create its own window."
+    }
     $secondDeadline = (Get-Date).AddSeconds(10)
     $secondWindow = [IntPtr]::Zero
     while ((Get-Date) -lt $secondDeadline -and $secondWindow -eq [IntPtr]::Zero) {
@@ -266,7 +275,7 @@ try {
     Save-DesktopScreenshot (Join-Path $OutputDirectory "everything-install-prompt-second-launch.png")
     Start-Sleep -Milliseconds 250
     $secondStderr = if (Test-Path $secondStderrPath) { Get-Content $secondStderrPath -Raw } else { "" }
-    $summary.SecondLaunchPromptTelemetryAbsent = $secondStderr -notmatch "Everything install prompt: visible at startup"
+    $summary.SecondLaunchPromptTelemetryAbsent = [bool]($secondStderr -notmatch "Everything install prompt: visible at startup")
     $summary.PromptSuppressedOnSecondLaunch = $summary.RefusalPersistedToSettings -and $summary.SecondLaunchPromptTelemetryAbsent -and $summary.SecondLaunchCompactGeometryProbe
     $summary.EverythingProcessCountAfter = @(Get-Process -Name "Everything" -ErrorAction SilentlyContinue).Count
     $summary | ConvertTo-Json -Depth 6 | Set-Content -LiteralPath $summaryPath -Encoding utf8
