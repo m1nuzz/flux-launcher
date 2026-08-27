@@ -344,6 +344,9 @@ struct WindowState {
     /// activation changes inside that loop as user deactivation while its action
     /// is about to show or hide this same HWND.
     tray_menu_active: bool,
+    /// Monotonic token for deferred deactivation checks. Showing the window
+    /// from tray invalidates checks posted before the popup action completed.
+    deactivation_generation: u32,
 }
 
 /// 触摸拖动判定状态。区分"点击"（按下抬起未越阈值）与"滑动滚动"（越阈值后拖动）。
@@ -434,6 +437,7 @@ impl WindowState {
             suppress_deactivation_hide: false,
             suppress_deactivation_hide_until: None,
             tray_menu_active: false,
+            deactivation_generation: 0,
         }
     }
 
@@ -1339,6 +1343,9 @@ unsafe extern "system" fn wnd_proc(
         }
         WM_ACTIVATE => {
             let became_inactive = (wparam.0 & 0xffff) == WA_INACTIVE as usize;
+            let deactivation_generation = state_from(hwnd)
+                .map(|state| state.deactivation_generation)
+                .unwrap_or(0);
             let should_hide = became_inactive
                 && IsWindowVisible(hwnd).as_bool()
                 && state_from(hwnd)
@@ -1358,16 +1365,23 @@ unsafe extern "system" fn wnd_proc(
                 // Recheck foreground ownership after this message returns. DWM can
                 // emit a transient WA_INACTIVE while SetWindowPos changes height;
                 // hiding immediately would clear a valid query during expansion.
-                let _ = PostMessageW(Some(hwnd), WM_APP_DEACTIVATION_CHECK, WPARAM(0), LPARAM(0));
+                let _ = PostMessageW(
+                    Some(hwnd),
+                    WM_APP_DEACTIVATION_CHECK,
+                    WPARAM(0),
+                    LPARAM(deactivation_generation as isize),
+                );
             }
             res
         }
         WM_APP_DEACTIVATION_CHECK => {
+            let check_generation = lparam.0 as u32;
             let should_hide = IsWindowVisible(hwnd).as_bool()
                 && GetForegroundWindow() != hwnd
                 && state_from(hwnd)
                     .map(|state| {
-                        state.handler.hide_on_deactivate()
+                        state.deactivation_generation == check_generation
+                            && state.handler.hide_on_deactivate()
                             && !state.suppress_deactivation_hide
                             && !state.tray_menu_active
                             && state
@@ -2101,6 +2115,7 @@ unsafe fn on_tray_message(hwnd: HWND, lparam: LPARAM) {
             // the selected action is still about to show this same HWND.
             if let Some(state) = state_from(hwnd) {
                 state.tray_menu_active = true;
+                state.deactivation_generation = state.deactivation_generation.wrapping_add(1);
             }
             // 弹菜单：**无借用**。菜单存续期间 wnd_proc 会被反复重入。
             let id = tray::track_menu(hwnd, menu);
@@ -2146,6 +2161,7 @@ unsafe fn run_tray_actions(hwnd: HWND, actions: Vec<tray::TrayAction>) {
                 // before normal hide-on-deactivate resumes.
                 if let Some(state) = state_from(hwnd) {
                     state.tray_menu_active = true;
+                    state.deactivation_generation = state.deactivation_generation.wrapping_add(1);
                 }
                 run_window_op(hwnd, Some(WindowOp::Show));
                 if let Some(state) = state_from(hwnd) {
