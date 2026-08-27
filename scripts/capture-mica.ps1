@@ -1593,7 +1593,9 @@ try {
         [FluxWallpaper]::SetCursorPos($resultTitleX, $resultTitleY) | Out-Null
         Start-Sleep -Milliseconds 350
         $resultCtrlHoverTextCursor = [FluxWallpaper]::IsTextCursor()
-        $selectStartX = $resultPointerRect.Left + 55
+        # Start inside the title glyphs, not the leading icon. Starting at
+        # left+55 hits the row anchor and legitimately launches the result.
+        $selectStartX = $resultPointerRect.Left + 82
         $selectEndX = $resultPointerRect.Left + 145
         [FluxWallpaper]::SetCursorPos($selectStartX, $resultTitleY) | Out-Null
         [FluxWallpaper]::mouse_event(0x0002, 0, 0, 0, [UIntPtr]::Zero)
