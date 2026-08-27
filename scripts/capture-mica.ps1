@@ -884,16 +884,21 @@ try {
             if ($trayMenuWidth -lt 80 -or $trayMenuHeight -lt 60) {
                 throw "Tray Settings deactivation smoke observed an invalid popup menu rectangle: ${trayMenuWidth}x${trayMenuHeight}."
             }
-            $settingsMenuRect = New-Object FluxWallpaper+RECT
-            if (![FluxWallpaper]::GetMenuItemRect($launcherHandle, $trayMenuHandle, 1, [ref]$settingsMenuRect)) {
-                throw "Tray Settings deactivation smoke could not read the native Settings item rectangle."
-            }
-            $settingsMenuClickX = [int](($settingsMenuRect.Left + $settingsMenuRect.Right) / 2)
-            $settingsMenuClickY = [int](($settingsMenuRect.Top + $settingsMenuRect.Bottom) / 2)
-            Write-Host "Tray popup rectangle: ${trayMenuWidth}x${trayMenuHeight}; Settings item=($settingsMenuClickX,$settingsMenuClickY)"
-            [FluxWallpaper]::SetCursorPos($settingsMenuClickX, $settingsMenuClickY) | Out-Null
-            [FluxWallpaper]::mouse_event(0x0002, 0, 0, 0, [UIntPtr]::Zero)
-            [FluxWallpaper]::mouse_event(0x0004, 0, 0, 0, [UIntPtr]::Zero)
+            Write-Host "Tray popup rectangle: ${trayMenuWidth}x${trayMenuHeight}; selecting Settings with focused Home/Down/Enter"
+            [FluxWallpaper]::SetForegroundWindow($trayMenuHandle) | Out-Null
+            [FluxWallpaper]::SetFocus($trayMenuHandle) | Out-Null
+            Start-Sleep -Milliseconds 150
+            [FluxWallpaper]::keybd_event(0x24, 0, 0, [UIntPtr]::Zero)
+            Start-Sleep -Milliseconds 60
+            [FluxWallpaper]::keybd_event(0x24, 0, 2, [UIntPtr]::Zero)
+            Start-Sleep -Milliseconds 100
+            [FluxWallpaper]::keybd_event(0x28, 0, 0, [UIntPtr]::Zero)
+            Start-Sleep -Milliseconds 60
+            [FluxWallpaper]::keybd_event(0x28, 0, 2, [UIntPtr]::Zero)
+            Start-Sleep -Milliseconds 100
+            [FluxWallpaper]::keybd_event(0x0D, 0, 0, [UIntPtr]::Zero)
+            Start-Sleep -Milliseconds 60
+            [FluxWallpaper]::keybd_event(0x0D, 0, 2, [UIntPtr]::Zero)
             $settingsGeometryDeadline = (Get-Date).AddSeconds(3)
             while ((Get-Date) -lt $settingsGeometryDeadline) {
                 if ([FluxWallpaper]::IsWindowVisible($launcherHandle)) {
@@ -958,15 +963,20 @@ try {
                 ![FluxWallpaper]::GetWindowRect($secondMenuHandle, [ref]$secondMenuRect)) {
                 throw "Tray Settings regression could not read the second popup menu rectangle."
             }
-            $secondSettingsMenuRect = New-Object FluxWallpaper+RECT
-            if (![FluxWallpaper]::GetMenuItemRect($launcherHandle, $secondMenuHandle, 1, [ref]$secondSettingsMenuRect)) {
-                throw "Tray Settings regression could not read the second native Settings item rectangle."
-            }
-            $secondSettingsX = [int](($secondSettingsMenuRect.Left + $secondSettingsMenuRect.Right) / 2)
-            $secondSettingsY = [int](($secondSettingsMenuRect.Top + $secondSettingsMenuRect.Bottom) / 2)
-            [FluxWallpaper]::SetCursorPos($secondSettingsX, $secondSettingsY) | Out-Null
-            [FluxWallpaper]::mouse_event(0x0002, 0, 0, 0, [UIntPtr]::Zero)
-            [FluxWallpaper]::mouse_event(0x0004, 0, 0, 0, [UIntPtr]::Zero)
+            [FluxWallpaper]::SetForegroundWindow($secondMenuHandle) | Out-Null
+            [FluxWallpaper]::SetFocus($secondMenuHandle) | Out-Null
+            Start-Sleep -Milliseconds 150
+            [FluxWallpaper]::keybd_event(0x24, 0, 0, [UIntPtr]::Zero)
+            Start-Sleep -Milliseconds 60
+            [FluxWallpaper]::keybd_event(0x24, 0, 2, [UIntPtr]::Zero)
+            Start-Sleep -Milliseconds 100
+            [FluxWallpaper]::keybd_event(0x28, 0, 0, [UIntPtr]::Zero)
+            Start-Sleep -Milliseconds 60
+            [FluxWallpaper]::keybd_event(0x28, 0, 2, [UIntPtr]::Zero)
+            Start-Sleep -Milliseconds 100
+            [FluxWallpaper]::keybd_event(0x0D, 0, 0, [UIntPtr]::Zero)
+            Start-Sleep -Milliseconds 60
+            [FluxWallpaper]::keybd_event(0x0D, 0, 2, [UIntPtr]::Zero)
             $secondSettingsDeadline = (Get-Date).AddSeconds(3)
             $secondSettingsWidth = 0
             $secondSettingsHeight = 0
