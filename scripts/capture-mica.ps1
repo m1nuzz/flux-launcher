@@ -453,7 +453,7 @@ $launchProbeShortcut.Arguments = "/c exit"
 $launchProbeShortcut.WorkingDirectory = $env:WINDIR
     $launchProbeShortcut.Description = "Zq7LaunchProbe deterministic process creation smoke fixture"
     $launchProbeShortcut.Save()
-    $resultPointerShortcut = $shortcutShell.CreateShortcut((Join-Path $wabFixtureRoot "ResultMouseProbe.lnk"))
+    $resultPointerShortcut = $shortcutShell.CreateShortcut((Join-Path $wabFixtureRoot "Result Mouse Probe.lnk"))
     $resultPointerShortcut.TargetPath = $absoluteExecutable
     $resultPointerShortcut.Arguments = '--folder-launch-smoke "{0}"' -f $folderFixtureRoot
     $resultPointerShortcut.WorkingDirectory = Split-Path -Parent $absoluteExecutable
@@ -1596,7 +1596,7 @@ try {
         # Start inside the title glyphs, not the leading icon. Starting at
         # left+55 hits the row anchor and legitimately launches the result.
         $selectStartX = $resultPointerRect.Left + 82
-        $selectEndX = $resultPointerRect.Left + 145
+        $selectEndX = $resultPointerRect.Left + 205
         [FluxWallpaper]::SetCursorPos($selectStartX, $resultTitleY) | Out-Null
         [FluxWallpaper]::mouse_event(0x0002, 0, 0, 0, [UIntPtr]::Zero)
         [FluxWallpaper]::SetCursorPos($selectEndX, $resultTitleY) | Out-Null
@@ -1608,8 +1608,13 @@ try {
         Start-Sleep -Milliseconds 250
         try {
             $resultClipboardText = (Get-Clipboard -Raw -ErrorAction Stop).Trim()
+            $normalizedResultClipboardText = [regex]::Replace(
+                $resultClipboardText.ToLowerInvariant(),
+                "\s+",
+                ""
+            )
             $resultCtrlCopyProbe = $resultClipboardText.Length -gt 0 -and
-                $resultClipboardText.ToLowerInvariant().Contains("resultmouseprobe")
+                $normalizedResultClipboardText.Contains("resultmouseprobe")
         } catch {
             $resultClipboardText = ""
             $resultCtrlCopyProbe = $false
