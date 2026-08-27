@@ -73,7 +73,7 @@ use windows::Win32::UI::WindowsAndMessaging::{
     SetTimer, SetWindowLongPtrW, SetWindowPos, ShowWindow, SystemParametersInfoW, TranslateMessage,
     CREATESTRUCTW, CW_USEDEFAULT, GWLP_USERDATA, HICON, HTBOTTOM, HTBOTTOMLEFT, HTBOTTOMRIGHT,
     HTCAPTION, HTCLIENT, HTLEFT, HTRIGHT, HTTOP, HTTOPLEFT, HTTOPRIGHT, ICONINFO, IDC_ARROW,
-    IDC_HAND, IDC_IBEAM, LWA_ALPHA, MINMAXINFO, MSG, MWMO_INPUTAVAILABLE, NCCALCSIZE_PARAMS,
+    IDC_HAND, IDC_IBEAM, LWA_COLORKEY, MINMAXINFO, MSG, MWMO_INPUTAVAILABLE, NCCALCSIZE_PARAMS,
     PM_REMOVE, QS_ALLINPUT, SIZE_MINIMIZED, SM_CXDOUBLECLK, SM_CXFRAME, SM_CXPADDEDBORDER,
     SM_CXSCREEN, SM_CYDOUBLECLK, SM_CYFRAME, SM_CYSCREEN, SM_CYVIRTUALSCREEN, SM_REMOTESESSION,
     SM_XVIRTUALSCREEN, SM_YVIRTUALSCREEN, SPI_GETCLIENTAREAANIMATION, SWP_FRAMECHANGED,
@@ -915,11 +915,17 @@ unsafe fn run_windowed(
     // excluded from the normal Acrylic path, which needs transparent pixels
     // and DirectComposition to expose the system material.
     let translucent_fallback = cfg.backdrop != Backdrop::None && !backdrop_available;
-    // Both the native Acrylic path and the layered fallback need transparent
-    // presenter pixels; otherwise a transparent clear becomes an opaque black slab.
-    let transparent_presenter = backdrop_available || translucent_fallback;
+    // Native Acrylic uses transparent presenter pixels. The no-DWM fallback
+    // uses a chroma-keyed Skia surface because WM_PAINT does not preserve alpha.
+    let transparent_presenter = backdrop_available;
+    let render_bg = if translucent_fallback {
+        // Must match the color key below and must not occur in normal content.
+        Color::rgb(1, 0, 1)
+    } else {
+        cfg.bg
+    };
     // 把 WindowState 装箱，指针随 CreateWindow 传入，在 WM_NCCREATE 挂到 HWND。
-    let mut state = Box::new(WindowState::new(handler, cfg.bg, transparent_presenter));
+    let mut state = Box::new(WindowState::new(handler, render_bg, transparent_presenter));
     #[cfg(feature = "d2d")]
     {
         state.backdrop = cfg.backdrop;
@@ -999,8 +1005,8 @@ unsafe fn run_windowed(
     };
     if translucent_fallback {
         // Preserve the underlying desktop when system Acrylic is unavailable;
-        // do not replace it with a dark opaque rectangle.
-        let _ = SetLayeredWindowAttributes(hwnd, COLORREF(0), 232, LWA_ALPHA);
+        // color-key the renderer's transparent canvas instead of drawing a slab.
+        let _ = SetLayeredWindowAttributes(hwnd, COLORREF(0x0001_0001), 0, LWA_COLORKEY);
         eprintln!("[windui] layered transparent fallback active");
     }
     // 用实际窗口 DPI 设置内容缩放（可能与系统 DPI 不同，如多显示器）。
