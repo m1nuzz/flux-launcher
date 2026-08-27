@@ -905,6 +905,77 @@ try {
                 throw "Tray Settings after deactivation smoke reproduced compact/invalid window: ${traySettingsAfterDeactivationWindowWidth}x${traySettingsAfterDeactivationWindowHeight}."
             }
             Save-Screenshot "tray-settings-after-deactivation.png"
+            # Reproduce the user's second half exactly: click an empty area of the
+            # other top-level window while Settings is open, then choose Settings
+            # from the tray a second time and require another full panel.
+            $secondDeactivationTraceBeforeCount = if (Test-Path $launchTracePath) {
+                @(Get-Content $launchTracePath).Count
+            } else {
+                0
+            }
+            [FluxWallpaper]::SetCursorPos($clickX, $clickY) | Out-Null
+            [FluxWallpaper]::mouse_event(0x0002, 0, 0, 0, [UIntPtr]::Zero)
+            [FluxWallpaper]::mouse_event(0x0004, 0, 0, 0, [UIntPtr]::Zero)
+            $secondDeactivationDeadline = (Get-Date).AddSeconds(2)
+            $secondDeactivationHidden = $false
+            while ((Get-Date) -lt $secondDeactivationDeadline) {
+                $secondDeactivationHidden = ![FluxWallpaper]::IsWindowVisible($launcherHandle)
+                if ($secondDeactivationHidden) { break }
+                Start-Sleep -Milliseconds 100
+            }
+            if (!$secondDeactivationHidden) {
+                throw "Tray Settings regression could not hide the first Settings panel after the second outside click."
+            }
+            [FluxWallpaper]::SetCursorPos($trayMenuX, $trayMenuY) | Out-Null
+            if (![FluxWallpaper]::PostMessage($launcherHandle, $wmTrayIcon, [UIntPtr]::Zero, [IntPtr]$wmRButtonUp)) {
+                throw "Tray Settings regression could not reopen the tray menu for the second Settings attempt."
+            }
+            $secondMenuDeadline = (Get-Date).AddSeconds(2)
+            $secondMenuReady = $false
+            while ((Get-Date) -lt $secondMenuDeadline) {
+                if ([FluxWallpaper]::WindowClassAtPoint($trayMenuX, $trayMenuY) -eq "#32768") {
+                    $secondMenuReady = $true
+                    break
+                }
+                Start-Sleep -Milliseconds 50
+            }
+            if (!$secondMenuReady) {
+                throw "Tray Settings regression could not observe the second native popup menu."
+            }
+            $secondMenuHandle = [FluxWallpaper]::WindowHandleAtPoint($trayMenuX, $trayMenuY)
+            $secondMenuRect = New-Object FluxWallpaper+RECT
+            if ($secondMenuHandle -eq [IntPtr]::Zero -or
+                ![FluxWallpaper]::GetWindowRect($secondMenuHandle, [ref]$secondMenuRect)) {
+                throw "Tray Settings regression could not read the second popup menu rectangle."
+            }
+            $secondSettingsX = $secondMenuRect.Left + [int]([FluxWallpaper]::RectWidth($secondMenuRect) / 2)
+            $secondSettingsY = $secondMenuRect.Top + [int]([FluxWallpaper]::RectHeight($secondMenuRect) * 0.25)
+            [FluxWallpaper]::SetCursorPos($secondSettingsX, $secondSettingsY) | Out-Null
+            [FluxWallpaper]::mouse_event(0x0002, 0, 0, 0, [UIntPtr]::Zero)
+            [FluxWallpaper]::mouse_event(0x0004, 0, 0, 0, [UIntPtr]::Zero)
+            $secondSettingsDeadline = (Get-Date).AddSeconds(3)
+            $secondSettingsWidth = 0
+            $secondSettingsHeight = 0
+            $secondSettingsFull = $false
+            while ((Get-Date) -lt $secondSettingsDeadline) {
+                if ([FluxWallpaper]::IsWindowVisible($launcherHandle)) {
+                    $secondSettingsRect = New-Object FluxWallpaper+RECT
+                    if ([FluxWallpaper]::GetWindowRect($launcherHandle, [ref]$secondSettingsRect)) {
+                        $secondSettingsWidth = [FluxWallpaper]::RectWidth($secondSettingsRect)
+                        $secondSettingsHeight = [FluxWallpaper]::RectHeight($secondSettingsRect)
+                        if ($secondSettingsWidth -ge 680 -and $secondSettingsHeight -ge 400) {
+                            $secondSettingsFull = $true
+                            break
+                        }
+                    }
+                }
+                Start-Sleep -Milliseconds 100
+            }
+            Write-Host "Settings second tray attempt geometry: ${secondSettingsWidth}x${secondSettingsHeight} full=$secondSettingsFull"
+            if (!$secondSettingsFull) {
+                throw "Tray Settings regression reproduced on the second attempt: ${secondSettingsWidth}x${secondSettingsHeight}."
+            }
+            Save-Screenshot "tray-settings-second-attempt.png"
             # Return to the launcher's compact state through the real tray menu,
             # then hide it so the existing Alt+Space restore assertion below still
             # starts from the same hidden state as the normal deactivation smoke.
