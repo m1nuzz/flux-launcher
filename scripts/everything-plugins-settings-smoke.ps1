@@ -210,7 +210,7 @@ function Invoke-PluginStateSmoke([string]$Name, [bool]$InstalledFixture, [string
             throw "Plugins Settings window was not visible and foreground for $Name."
         }
         if ($result.WindowWidth -lt 600 -or $result.WindowHeight -lt 400) {
-            throw "Plugins Settings window was undersized for $Name: $($result.WindowWidth)x$($result.WindowHeight)."
+            throw "Plugins Settings window was undersized for ${Name}: $($result.WindowWidth)x$($result.WindowHeight)."
         }
         if (!$InstalledFixture) {
             if (!$result.AutoEnable -or $result.Installed -or !$result.InstallButtonVisible -or $result.AlreadyInstalledVisible) {
