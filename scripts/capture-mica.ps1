@@ -88,6 +88,8 @@ public static class FluxWallpaper {
     [DllImport("user32.dll", SetLastError = true)]
     public static extern IntPtr SendMessage(IntPtr hwnd, uint message, UIntPtr wParam, IntPtr lParam);
     [DllImport("user32.dll", SetLastError = true)]
+    public static extern bool PostMessage(IntPtr hwnd, uint message, UIntPtr wParam, IntPtr lParam);
+    [DllImport("user32.dll", SetLastError = true)]
     public static extern IntPtr GetForegroundWindow();
     [DllImport("user32.dll", SetLastError = true)]
     public static extern IntPtr WindowFromPoint(POINT point);
@@ -768,20 +770,38 @@ try {
         }
         if ($TraySettingsAfterDeactivationSmoke) {
             # This is the user's lifecycle: leave a query active, activate another
-            # top-level window so Flux hides, then request Settings through the
-            # resident single-instance handoff used by tray actions. A second
-            # process is only a deterministic way to invoke that handoff without
-            # brittle notification-area coordinate automation.
-            $settingsRequestProcess = Start-Process `
-                -FilePath $absoluteExecutable `
-                -ArgumentList @("--open-settings") `
-                -PassThru
-            try {
-                Wait-Process -Id $settingsRequestProcess.Id -Timeout 10
-            } catch {
-                Stop-Process -Id $settingsRequestProcess.Id -Force -ErrorAction SilentlyContinue
-                throw "Tray Settings deactivation smoke request process did not hand off within 10 seconds."
+            # top-level window so Flux hides, then use the real Win32 tray menu to
+            # choose Settings. Posting the tray callback avoids brittle taskbar
+            # notification-area coordinates while still exercising TrayMenuItem,
+            # TrackPopupMenu, the Settings callback, and native show/resize order.
+            $wmTrayIcon = 0x8001
+            $wmRButtonUp = 0x0205
+            $trayMenuX = $clickX
+            $trayMenuY = $clickY
+            [FluxWallpaper]::SetCursorPos($trayMenuX, $trayMenuY) | Out-Null
+            if (![FluxWallpaper]::PostMessage($launcherHandle, $wmTrayIcon, [UIntPtr]::Zero, [IntPtr]$wmRButtonUp)) {
+                throw "Tray Settings deactivation smoke could not post the real tray-menu callback."
             }
+            $trayMenuDeadline = (Get-Date).AddSeconds(2)
+            $trayMenuReady = $false
+            while ((Get-Date) -lt $trayMenuDeadline) {
+                if ([FluxWallpaper]::WindowClassAtPoint($trayMenuX, $trayMenuY) -eq "#32768") {
+                    $trayMenuReady = $true
+                    break
+                }
+                Start-Sleep -Milliseconds 50
+            }
+            if (!$trayMenuReady) {
+                throw "Tray Settings deactivation smoke could not observe the native popup menu."
+            }
+            # Tray menu order is Show, separator, Settings. Home selects Show and
+            # one Down skips the separator and selects Settings, matching a user.
+            [FluxWallpaper]::keybd_event(0x24, 0, 0, [UIntPtr]::Zero)
+            [FluxWallpaper]::keybd_event(0x24, 0, 2, [UIntPtr]::Zero)
+            [FluxWallpaper]::keybd_event(0x28, 0, 0, [UIntPtr]::Zero)
+            [FluxWallpaper]::keybd_event(0x28, 0, 2, [UIntPtr]::Zero)
+            [FluxWallpaper]::keybd_event(0x0D, 0, 0, [UIntPtr]::Zero)
+            [FluxWallpaper]::keybd_event(0x0D, 0, 2, [UIntPtr]::Zero)
             $settingsGeometryDeadline = (Get-Date).AddSeconds(3)
             while ((Get-Date) -lt $settingsGeometryDeadline) {
                 if ([FluxWallpaper]::IsWindowVisible($launcherHandle)) {
