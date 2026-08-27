@@ -1619,6 +1619,12 @@ try {
         [FluxWallpaper]::SetCursorPos($selectEndX, $resultTitleY) | Out-Null
         Start-Sleep -Milliseconds 250
         [FluxWallpaper]::mouse_event(0x0004, 0, 0, 0, [UIntPtr]::Zero)
+        [FluxWallpaper]::SetForegroundWindow($launcherHandle) | Out-Null
+        [FluxWallpaper]::SetFocus($launcherHandle) | Out-Null
+        Start-Sleep -Milliseconds 200
+        if ([FluxWallpaper]::GetForegroundWindow() -ne $launcherHandle) {
+            throw "Result mouse interaction smoke lost launcher focus before Ctrl+C."
+        }
         # Deliver Ctrl+C as real keyboard input to the focused launcher window;
         # direct WM_KEYDOWN bypasses the normal foreground/input route.
         [FluxWallpaper]::keybd_event(0x43, 0, 0, [UIntPtr]::Zero)
