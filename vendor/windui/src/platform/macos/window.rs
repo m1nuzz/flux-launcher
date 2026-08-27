@@ -635,6 +635,7 @@ impl ContentView {
             kind,
             pos,
             button,
+            mods: crate::event::Mods::default(),
             click_count,
         });
     }

@@ -3704,6 +3704,7 @@ mod tests {
             kind: PointerKind::Down,
             pos: center,
             button: MouseButton::Left,
+            mods: crate::event::Mods::default(),
             click_count: 3,
         };
         tree.dispatch_pointer(down, &mut h, &mut cap);
@@ -4007,6 +4008,7 @@ mod tests {
             kind: PointerKind::Down,
             pos: center,
             button: MouseButton::Right,
+            mods: crate::event::Mods::default(),
             click_count: 1,
         };
         let res = tree.dispatch_pointer(down, &mut h, &mut cap);
@@ -4045,6 +4047,7 @@ mod tests {
             kind: PointerKind::Down,
             pos: Point::new(100, 100),
             button: MouseButton::Right,
+            mods: crate::event::Mods::default(),
             click_count: 1,
         };
         let res = tree.dispatch_pointer(down, &mut h, &mut cap);
@@ -4076,6 +4079,7 @@ mod tests {
             kind: PointerKind::Down,
             pos: Point::new(100, 100),
             button: MouseButton::Right,
+            mods: crate::event::Mods::default(),
             click_count: 1,
         };
         let res = tree.dispatch_pointer(down, &mut h, &mut cap);
@@ -4108,6 +4112,7 @@ mod tests {
             kind: PointerKind::Down,
             pos,
             button: MouseButton::Right,
+            mods: crate::event::Mods::default(),
             click_count: 1,
         };
         let res = tree.dispatch_pointer(down, &mut h, &mut cap);
@@ -4129,6 +4134,7 @@ mod tests {
             kind: PointerKind::Down,
             pos: center,
             button: MouseButton::Left,
+            mods: crate::event::Mods::default(),
             click_count: 2,
         };
         tree.dispatch_pointer(down, &mut h, &mut cap);

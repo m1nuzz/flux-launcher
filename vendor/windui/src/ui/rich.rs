@@ -1283,10 +1283,15 @@ pub struct RichText {
     /// 拖选锚点碎片（Down 只记录、不落选区——拖出锚点碎片才成选区，
     /// 按下即选中单字不符合通用划选手感）。
     drag_anchor: Cell<Option<usize>>,
-    /// 指针悬停在正文文字上（I 形光标；span/折叠头的手型优先）。
+    /// Pointer is over a text fragment that can be selected.
     hover_text: Cell<bool>,
-    /// 指针悬停在「… 展开」标记上（手型光标）。
+    /// Pointer is over any text fragment, including a Ctrl-gated result title.
+    hover_fragment: Cell<bool>,
+    /// Pointer is over the "... expand" marker (hand cursor).
     hover_exp: Cell<bool>,
+    /// If enabled, plain pointer clicks remain available to the parent while
+    /// text selection/copy is enabled only while Ctrl is held.
+    selection_requires_ctrl: bool,
     /// 是否内建右键「复制全部」菜单（默认开；`Element::copy_menu(false)` 关闭，
     /// 以便应用挂自己的 `on_context_menu`）。
     copy_menu: bool,
@@ -1317,7 +1322,9 @@ impl RichText {
             selecting: Cell::new(false),
             drag_anchor: Cell::new(None),
             hover_text: Cell::new(false),
+            hover_fragment: Cell::new(false),
             hover_exp: Cell::new(false),
+            selection_requires_ctrl: false,
             copy_menu: true,
             sect_anims: RefCell::new(Vec::new()),
             doc_sig: None,
@@ -1338,9 +1345,15 @@ impl RichText {
     pub fn set_on_span_click(&mut self, f: SpanClickFn) {
         self.on_span_click = Some(f);
     }
-    /// 内建右键复制菜单开关（供 `Element::copy_menu`）。
+    /// Built-in right-click copy menu switch (used by `Element::copy_menu`).
     pub fn set_copy_menu(&mut self, on: bool) {
         self.copy_menu = on;
+    }
+
+    /// Require Ctrl before this rich text accepts text selection gestures.
+    /// Plain pointer events are then left for the parent result row to handle.
+    pub fn set_selection_requires_ctrl(&mut self, on: bool) {
+        self.selection_requires_ctrl = on;
     }
 
     fn layout_key(&self, wrap_w: Option<i32>, style: &Style, th: &Theme, scale: f32) -> LayoutKey {
@@ -1822,8 +1835,9 @@ impl Widget for RichText {
         let Event::Pointer(p) = ev else { return false };
         match p.kind {
             PointerKind::Move | PointerKind::Enter => {
-                // 拖拽划选中：更新延伸点（capture 保证界外 Move 也送达）。
-                // 未拖出锚点碎片前不产生选区；拖回锚点碎片则选区消失。
+                // Drag selection updates the extension point (capture also sends
+                // moves outside the widget). A Ctrl-gated title only advertises
+                // text selection while Ctrl is held.
                 if self.selecting.get() {
                     if let (Some(anchor), Some(i)) = (self.drag_anchor.get(), self.frag_near(p.pos))
                     {
@@ -1846,7 +1860,10 @@ impl Widget for RichText {
                     self.hover_header.set(over);
                 }
                 self.hover_exp.set(self.expander_at(p.pos).is_some());
-                self.hover_text.set(self.over_frag(p.pos));
+                let over_fragment = self.over_frag(p.pos);
+                self.hover_fragment.set(over_fragment);
+                self.hover_text
+                    .set(over_fragment && (!self.selection_requires_ctrl || p.mods.ctrl));
                 false
             }
             PointerKind::Leave => {
@@ -1854,14 +1871,15 @@ impl Widget for RichText {
                     ctx.mark_dirty();
                 }
                 self.hover_header.set(None);
+                self.hover_fragment.set(false);
                 self.hover_text.set(false);
                 self.hover_exp.set(false);
                 false
             }
             PointerKind::Down if p.button == MouseButton::Right => {
-                // 内建右键复制：先聚焦（菜单项以 SendKey 回投焦点节点），再弹菜单。
-                // 右键不清选区——「划选 → 右键 → 复制」是主路径。
-                if !self.copy_menu {
+                // A Ctrl-gated result title leaves right-click activation to its
+                // parent row; ordinary rich text keeps its existing copy menu.
+                if (self.selection_requires_ctrl && !p.mods.ctrl) || !self.copy_menu {
                     return false;
                 }
                 ctx.request_focus();
@@ -1883,7 +1901,10 @@ impl Widget for RichText {
                 true
             }
             PointerKind::Down if p.button == MouseButton::Left => {
-                // 任何左键按下先清旧选区（与编辑器习惯一致）。
+                if self.selection_requires_ctrl && !p.mods.ctrl {
+                    return false;
+                }
+                // Any left press first clears an old selection (editor behavior).
                 if self.sel.take().is_some() {
                     ctx.mark_dirty();
                 }
@@ -1997,6 +2018,7 @@ impl Widget for RichText {
         self.pressed_header.set(None);
         self.hover_span.set(None);
         self.hover_header.set(None);
+        self.hover_fragment.set(false);
         self.hover_text.set(false);
         self.hover_exp.set(false);
     }
@@ -2012,8 +2034,13 @@ impl Widget for RichText {
             || self.hover_exp.get()
         {
             CursorShape::Hand
+        } else if self.selection_requires_ctrl && self.hover_fragment.get() {
+            if self.hover_text.get() {
+                CursorShape::Text
+            } else {
+                CursorShape::Hand
+            }
         } else if self.hover_text.get() {
-            // 正文可划选，I 形光标提示。
             CursorShape::Text
         } else {
             CursorShape::Arrow
@@ -2653,8 +2680,73 @@ mod tests {
             kind: PointerKind::Down,
             pos,
             button: MouseButton::Left,
+            mods: crate::event::Mods::default(),
             click_count: count,
         }
+    }
+
+    #[test]
+    fn ctrl_gated_selection_keeps_plain_click_available() {
+        let doc = RichDoc::new().para("result title");
+        let (mut tree, node) = build(
+            Element::rich(doc)
+                .selection_requires_ctrl(true)
+                .copy_menu(false)
+                .width(200),
+            300,
+            300,
+        );
+        let bounds = tree.abs_bounds(node);
+        let point = Point::new(bounds.x + 5, bounds.y + bounds.h / 2);
+        let (mut hover, mut capture) = (None, None);
+
+        tree.dispatch_pointer(
+            PointerEvent::single(PointerKind::Move, point, MouseButton::Left),
+            &mut hover,
+            &mut capture,
+        );
+        assert_eq!(tree.cursor_at(node), CursorShape::Hand);
+        let plain_down = tree.dispatch_pointer(
+            PointerEvent::single(PointerKind::Down, point, MouseButton::Left),
+            &mut hover,
+            &mut capture,
+        );
+        assert!(
+            !plain_down.consumed,
+            "plain click must remain available to the parent row"
+        );
+
+        let ctrl = crate::event::Mods {
+            ctrl: true,
+            ..Default::default()
+        };
+        tree.dispatch_pointer(
+            PointerEvent {
+                kind: PointerKind::Move,
+                pos: point,
+                button: MouseButton::Left,
+                mods: ctrl,
+                click_count: 1,
+            },
+            &mut hover,
+            &mut capture,
+        );
+        assert_eq!(tree.cursor_at(node), CursorShape::Text);
+        let ctrl_down = tree.dispatch_pointer(
+            PointerEvent {
+                kind: PointerKind::Down,
+                pos: point,
+                button: MouseButton::Left,
+                mods: ctrl,
+                click_count: 1,
+            },
+            &mut hover,
+            &mut capture,
+        );
+        assert!(
+            ctrl_down.consumed,
+            "Ctrl must enable RichText selection handling"
+        );
     }
 
     #[test]

@@ -759,7 +759,9 @@ impl Widget for ResultRowAnchor {
                 ctx.mark_dirty();
                 true
             }
-            PointerKind::Up if pointer.button == MouseButton::Left => {
+            PointerKind::Up
+                if pointer.button == MouseButton::Left || pointer.button == MouseButton::Right =>
+            {
                 let was_pressed = self.pressed;
                 self.pressed = false;
                 let inside = ctx.bounds().contains(pointer.pos);
@@ -770,6 +772,13 @@ impl Widget for ResultRowAnchor {
                         callback(ctx);
                     }
                 }
+                true
+            }
+            PointerKind::Down if pointer.button == MouseButton::Right => {
+                self.select_self();
+                self.pressed = true;
+                ctx.capture();
+                ctx.mark_dirty();
                 true
             }
             _ => false,
@@ -787,6 +796,10 @@ impl Widget for ResultRowAnchor {
 
     fn cursor(&self) -> windui::event::CursorShape {
         windui::event::CursorShape::Hand
+    }
+
+    fn wants_right_click(&self) -> bool {
+        true
     }
 
     fn paint(
@@ -2276,6 +2289,8 @@ fn result_row(
                 .spacing(1)
                 .child(
                     Element::rich_signal(title_doc_signal)
+                        .selection_requires_ctrl(true)
+                        .copy_menu(false)
                         .font_family(LAUNCHER_FONT_FAMILY)
                         .font_size(14.0)
                         .max_lines(1)

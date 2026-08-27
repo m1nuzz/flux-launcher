@@ -91,7 +91,9 @@ use windows::Win32::UI::WindowsAndMessaging::{
 // 只用于 d2d 后端选择（RDP 远程会话下强制软渲染），随该 feature 一起门控。
 #[cfg(feature = "d2d")]
 use super::{AppHandler, Backdrop, WindowConfig};
-use crate::event::{CursorShape, Key, KeyEvent, MouseButton, PointerEvent, PointerKind, WindowOp};
+use crate::event::{
+    CursorShape, Key, KeyEvent, Mods, MouseButton, PointerEvent, PointerKind, WindowOp,
+};
 use crate::geometry::{Color, Point, Size};
 
 thread_local! {
@@ -2461,6 +2463,12 @@ unsafe fn handle_pointer(hwnd: HWND, kind: PointerKind, button: MouseButton, lpa
             kind,
             pos: Point::new(x, y),
             button,
+            mods: Mods {
+                ctrl: (GetKeyState(VK_CONTROL.0 as i32) as u16 & 0x8000) != 0,
+                alt: false,
+                shift: (GetKeyState(VK_SHIFT.0 as i32) as u16 & 0x8000) != 0,
+                meta: false,
+            },
             click_count,
         },
     );

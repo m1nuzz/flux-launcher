@@ -1769,6 +1769,7 @@ mod tests {
             kind: PointerKind::Down,
             pos: at,
             button: MouseButton::Left,
+            mods: crate::event::Mods::default(),
             click_count: 2,
         };
         // 单击（Down cc=1 + Up）不激活。

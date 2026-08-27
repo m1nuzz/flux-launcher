@@ -1146,6 +1146,13 @@ impl Element {
         self.config_rich(move |r| r.set_copy_menu(on))
     }
 
+    /// Require Ctrl before this rich text accepts selection gestures. Plain
+    /// pointer clicks are then available to the parent interactive element.
+    #[track_caller]
+    pub fn selection_requires_ctrl(self, on: bool) -> Self {
+        self.config_rich(move |r| r.set_selection_requires_ctrl(on))
+    }
+
     // ---- 图片 ----
 
     /// 图片控件：从文件路径加载（按字节嗅探格式，自适配已注册解码器）。
