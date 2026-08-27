@@ -38,6 +38,11 @@ on:
         required: false
         default: false
         type: boolean
+      everything_install_prompt_smoke:
+        description: "Measure first-run Everything installation prompt visibility, foreground activation, and window geometry"
+        required: false
+        default: false
+        type: boolean
       recycle_bin_smoke:
         description: "Exercise Recycle Bin search and action mode without emptying it"
         required: false
@@ -127,6 +132,11 @@ jobs:
       - name: Enable DWM effects and collect preflight diagnostics
         shell: pwsh
         run: ./scripts/enable-dwm-smoke.ps1 -OutputDirectory ./artifacts/mica-smoke
+
+      - name: Smoke first-run Everything installation prompt
+        if: ${{ inputs.everything_install_prompt_smoke == true }}
+        shell: pwsh
+        run: ./scripts/everything-install-prompt-smoke.ps1 -Executable ./target/x86_64-pc-windows-msvc/release/flux-launcher.exe -OutputDirectory ./artifacts/mica-smoke/everything-install-prompt
 
       - name: Capture desktop compositor output
         shell: pwsh
