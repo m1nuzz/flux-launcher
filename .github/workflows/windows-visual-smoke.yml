@@ -202,6 +202,15 @@ jobs:
           $captureParams.FolderLaunchSmoke = $true
           & ./scripts/capture-mica.ps1 @captureParams
 
+      - name: Collect lifecycle trace
+        if: ${{ always() }}
+        shell: pwsh
+        run: |
+          $tracePath = Join-Path $env:TEMP "flux-launcher-show-trace.log"
+          if (Test-Path $tracePath) {
+            Copy-Item $tracePath ./artifacts/mica-smoke/launcher-show-trace.log -Force
+          }
+
       - name: Upload launcher binary
         if: ${{ always() }}
         uses: actions/upload-artifact@v4
