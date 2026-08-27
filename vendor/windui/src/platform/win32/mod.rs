@@ -1376,14 +1376,6 @@ unsafe extern "system" fn wnd_proc(
         }
         WM_APP_DEACTIVATION_CHECK => {
             let check_generation = lparam.0 as u32;
-            trace_show_event(
-                hwnd,
-                "deactivation.check",
-                &format!(
-                    "phase=before_hide check_generation={check_generation} foreground={:?}",
-                    GetForegroundWindow()
-                ),
-            );
             let should_hide = IsWindowVisible(hwnd).as_bool()
                 && GetForegroundWindow() != hwnd
                 && state_from(hwnd)
@@ -1406,11 +1398,6 @@ unsafe extern "system" fn wnd_proc(
                 }
                 set_interval_timers(hwnd, false);
                 let _ = ShowWindow(hwnd, SW_HIDE);
-                trace_show_event(
-                    hwnd,
-                    "deactivation.after_hide",
-                    "phase=after_show_window_hide",
-                );
                 apply_window_geometry_requests(hwnd);
             }
             LRESULT(0)
@@ -2064,10 +2051,8 @@ unsafe fn run_window_op(hwnd: HWND, op: Option<WindowOp>) {
         }
         Some(WindowOp::Show) => show_and_activate(hwnd),
         Some(WindowOp::Hide) => {
-            trace_show_event(hwnd, "window_op.hide", "phase=before_show_window_hide");
             set_interval_timers(hwnd, false);
             let _ = ShowWindow(hwnd, SW_HIDE);
-            trace_show_event(hwnd, "window_op.hide.after", "phase=after_show_window_hide");
             if let Some(state) = state_from(hwnd) {
                 state.handler.on_window_hide();
             }
@@ -2077,18 +2062,8 @@ unsafe fn run_window_op(hwnd: HWND, op: Option<WindowOp>) {
         }
         Some(WindowOp::ToggleVisibility) => {
             if IsWindowVisible(hwnd).as_bool() {
-                trace_show_event(
-                    hwnd,
-                    "window_op.toggle_hide",
-                    "phase=before_show_window_hide",
-                );
                 set_interval_timers(hwnd, false);
                 let _ = ShowWindow(hwnd, SW_HIDE);
-                trace_show_event(
-                    hwnd,
-                    "window_op.toggle_hide.after",
-                    "phase=after_show_window_hide",
-                );
                 if let Some(state) = state_from(hwnd) {
                     state.handler.on_window_hide();
                 }

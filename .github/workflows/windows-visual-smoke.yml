@@ -134,7 +134,6 @@ jobs:
           WINDUI_D2D: "1"
           FLUX_DISABLE_UPDATE_CHECKS: "1"
           FLUX_DISABLE_EVERYTHING_PROMPT: "1"
-          FLUX_TRACE_SHOW: "1"
         run: |
           $captureParams = @{
             Executable = "./target/x86_64-pc-windows-msvc/release/flux-launcher.exe"
@@ -201,15 +200,6 @@ jobs:
           $captureParams.DeactivationClickSmoke = $true
           $captureParams.FolderLaunchSmoke = $true
           & ./scripts/capture-mica.ps1 @captureParams
-
-      - name: Collect lifecycle trace
-        if: ${{ always() }}
-        shell: pwsh
-        run: |
-          $tracePath = Join-Path $env:TEMP "flux-launcher-show-trace.log"
-          if (Test-Path $tracePath) {
-            Copy-Item $tracePath ./artifacts/mica-smoke/launcher-show-trace.log -Force
-          }
 
       - name: Upload launcher binary
         if: ${{ always() }}
