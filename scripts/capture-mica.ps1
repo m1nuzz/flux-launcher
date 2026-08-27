@@ -934,15 +934,32 @@ try {
             }
             $secondClickX = [int]$secondOutsidePoint.X
             $secondClickY = [int]$secondOutsidePoint.Y
-            Write-Host "Second outside click x=$secondClickX y=$secondClickY"
+            $secondOwnerBeforeClick = [FluxWallpaper]::WindowProcessIdAtPoint($secondClickX, $secondClickY)
+            $secondWindowBeforeClick = [FluxWallpaper]::WindowHandleAtPoint($secondClickX, $secondClickY)
+            $secondForegroundBeforeClick = [FluxWallpaper]::GetForegroundWindow()
+            Write-Host "Expanded Settings rect=$($settingsAfterDeactivationRect.Left),$($settingsAfterDeactivationRect.Top)-$($settingsAfterDeactivationRect.Right),$($settingsAfterDeactivationRect.Bottom) launcher_hwnd=$launcherHandle probe_hwnd=$deactivationProbeHandle"
+            Write-Host "Second outside click x=$secondClickX y=$secondClickY owner_pid=$secondOwnerBeforeClick owner_hwnd=$secondWindowBeforeClick foreground_before=$secondForegroundBeforeClick visible_before=$([FluxWallpaper]::IsWindowVisible($launcherHandle))"
             [FluxWallpaper]::SetCursorPos($secondClickX, $secondClickY) | Out-Null
             [FluxWallpaper]::mouse_event(0x0002, 0, 0, 0, [UIntPtr]::Zero)
             [FluxWallpaper]::mouse_event(0x0004, 0, 0, 0, [UIntPtr]::Zero)
             $secondDeactivationDeadline = (Get-Date).AddSeconds(2)
             $secondDeactivationHidden = $false
+            $secondDeactivationSample = 0
             while ((Get-Date) -lt $secondDeactivationDeadline) {
                 $secondDeactivationHidden = ![FluxWallpaper]::IsWindowVisible($launcherHandle)
+                $secondDeactivationForeground = [FluxWallpaper]::GetForegroundWindow()
+                $secondDeactivationOwner = [FluxWallpaper]::WindowProcessIdAtPoint($secondClickX, $secondClickY)
+                $secondDeactivationWindow = [FluxWallpaper]::WindowHandleAtPoint($secondClickX, $secondClickY)
+                $secondDeactivationTraceCount = if (Test-Path $launchTracePath) {
+                    @(Get-Content $launchTracePath).Count
+                } else {
+                    0
+                }
+                if ($secondDeactivationSample -eq 0 -or $secondDeactivationHidden -or ($secondDeactivationSample % 5) -eq 0) {
+                    Write-Host "Second outside sample=$secondDeactivationSample visible=$(!$secondDeactivationHidden) foreground=$secondDeactivationForeground owner_pid=$secondDeactivationOwner owner_hwnd=$secondDeactivationWindow trace_lines=$secondDeactivationTraceCount"
+                }
                 if ($secondDeactivationHidden) { break }
+                $secondDeactivationSample++
                 Start-Sleep -Milliseconds 100
             }
             if (!$secondDeactivationHidden) {
