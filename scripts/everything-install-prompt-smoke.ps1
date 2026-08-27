@@ -275,7 +275,8 @@ try {
     Save-DesktopScreenshot (Join-Path $OutputDirectory "everything-install-prompt-second-launch.png")
     Start-Sleep -Milliseconds 250
     $secondStderr = if (Test-Path $secondStderrPath) { Get-Content $secondStderrPath -Raw } else { "" }
-    $summary.SecondLaunchPromptTelemetryAbsent = -not [regex]::IsMatch([string]$secondStderr, "Everything install prompt: visible at startup")
+    $secondStderrText = if ($null -eq $secondStderr) { "" } else { [string]$secondStderr }
+    $summary.SecondLaunchPromptTelemetryAbsent = -not [regex]::IsMatch($secondStderrText, "Everything install prompt: visible at startup")
     $summary.PromptSuppressedOnSecondLaunch = $summary.RefusalPersistedToSettings -and $summary.SecondLaunchPromptTelemetryAbsent -and $summary.SecondLaunchCompactGeometryProbe
     $summary.EverythingProcessCountAfter = @(Get-Process -Name "Everything" -ErrorAction SilentlyContinue).Count
     $summary | ConvertTo-Json -Depth 6 | Set-Content -LiteralPath $summaryPath -Encoding utf8
