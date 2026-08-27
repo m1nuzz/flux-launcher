@@ -95,6 +95,9 @@ public static class FluxWallpaper {
     public static extern IntPtr WindowFromPoint(POINT point);
     [DllImport("user32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
     public static extern int GetClassName(IntPtr hWnd, char[] className, int maxCount);
+    public static IntPtr WindowHandleAtPoint(int x, int y) {
+        return WindowFromPoint(new POINT { X = x, Y = y });
+    }
     public static string WindowClassAtPoint(int x, int y) {
         IntPtr hwnd = WindowFromPoint(new POINT { X = x, Y = y });
         if (hwnd == IntPtr.Zero) return "<none>";
@@ -794,14 +797,22 @@ try {
             if (!$trayMenuReady) {
                 throw "Tray Settings deactivation smoke could not observe the native popup menu."
             }
-            # Tray menu order is Show, separator, Settings. Home selects Show and
-            # one Down skips the separator and selects Settings, matching a user.
-            [FluxWallpaper]::keybd_event(0x24, 0, 0, [UIntPtr]::Zero)
-            [FluxWallpaper]::keybd_event(0x24, 0, 2, [UIntPtr]::Zero)
-            [FluxWallpaper]::keybd_event(0x28, 0, 0, [UIntPtr]::Zero)
-            [FluxWallpaper]::keybd_event(0x28, 0, 2, [UIntPtr]::Zero)
-            [FluxWallpaper]::keybd_event(0x0D, 0, 0, [UIntPtr]::Zero)
-            [FluxWallpaper]::keybd_event(0x0D, 0, 2, [UIntPtr]::Zero)
+            # Tray menu order is Show, separator, Settings. Send the keys to
+            # the popup HWND itself; this avoids depending on which process the
+            # hosted runner currently considers the keyboard foreground owner.
+            $trayMenuHandle = [FluxWallpaper]::WindowHandleAtPoint($trayMenuX, $trayMenuY)
+            if ($trayMenuHandle -eq [IntPtr]::Zero) {
+                throw "Tray Settings deactivation smoke could not resolve the popup menu HWND."
+            }
+            $wmKeyDown = 0x0100
+            $wmKeyUp = 0x0101
+            foreach ($key in @(0x24, 0x28, 0x0D)) {
+                if (![FluxWallpaper]::PostMessage($trayMenuHandle, $wmKeyDown, [UIntPtr]$key, [IntPtr]::Zero) -or
+                    ![FluxWallpaper]::PostMessage($trayMenuHandle, $wmKeyUp, [UIntPtr]$key, [IntPtr]::Zero)) {
+                    throw "Tray Settings deactivation smoke could not post virtual key $key to the popup menu."
+                }
+                Start-Sleep -Milliseconds 80
+            }
             $settingsGeometryDeadline = (Get-Date).AddSeconds(3)
             while ((Get-Date) -lt $settingsGeometryDeadline) {
                 if ([FluxWallpaper]::IsWindowVisible($launcherHandle)) {
