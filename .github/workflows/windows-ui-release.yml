@@ -177,7 +177,9 @@ jobs:
           make_latest: ${{ inputs.release_channel == 'stable' }}
           generate_release_notes: false
           body: |
-            Flux Launcher Windows 11 x64 stable release.
+            Flux Launcher Windows 11 x64 release.
+
+            This is a beta build for testing the Settings tray lifecycle fix. It is not a stable release and is not intended for WinGet or normal automatic updates.
 
             ## What's changed
 
@@ -191,7 +193,7 @@ jobs:
             - Windows UI smoke specifically verifies that Settings opens as a full `720x520` panel after deactivation and that hidden idle CPU remains within the existing budget.
             - The release includes only the user-facing installer and portable executable. CI screenshots, DWM diagnostics, smoke logs, and test fixtures remain workflow artifacts.
 
-            This stable release is intended for normal automatic updates and WinGet distribution.
+            Stable releases are intended for normal automatic updates and WinGet distribution; this beta is for manual testing only.
           files: |
             ./artifacts/windows-ui-release/package/FluxLauncher-Setup.exe
             ./artifacts/windows-ui-release/package/FluxLauncher-Portable.exe
