@@ -1860,6 +1860,10 @@ impl Widget for RichText {
                 // moves outside the widget). A Ctrl-gated title only advertises
                 // text selection while Ctrl is held.
                 if self.selecting.get() {
+                    // Keep the application-level copy route owned by this
+                    // RichText for the whole Ctrl-drag, even when the pointer
+                    // ends just beyond the last glyph.
+                    self.update_selection_mode(self.selection_requires_ctrl && p.mods.ctrl);
                     if let (Some(anchor), Some(i)) = (self.drag_anchor.get(), self.frag_near(p.pos))
                     {
                         let new = (i != anchor).then_some((anchor, i));
