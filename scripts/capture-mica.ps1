@@ -740,15 +740,11 @@ try {
             [FluxWallpaper]::SetForegroundWindow($launcherHandle) | Out-Null
             [FluxWallpaper]::SetFocus($launcherHandle) | Out-Null
             Start-Sleep -Milliseconds 200
-            $wmCharForDeactivation = 0x0102
-            foreach ($character in $deactivationQuery.ToCharArray()) {
-                [FluxWallpaper]::SendMessage(
-                    $launcherHandle,
-                    $wmCharForDeactivation,
-                    [UIntPtr]([int][char]$character),
-                    [IntPtr]1
-                ) | Out-Null
-            }
+            $deactivationShell = New-Object -ComObject WScript.Shell
+            $deactivationShell.AppActivate($process.Id) | Out-Null
+            $deactivationShell.SendKeys("^a")
+            $deactivationShell.SendKeys("{BACKSPACE}")
+            $deactivationShell.SendKeys($deactivationQuery)
             $deactivationQueryDeadline = (Get-Date).AddSeconds(3)
             $deactivationQueryObserved = $false
             while ((Get-Date) -lt $deactivationQueryDeadline) {
