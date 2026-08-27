@@ -797,22 +797,29 @@ try {
             if (!$trayMenuReady) {
                 throw "Tray Settings deactivation smoke could not observe the native popup menu."
             }
-            # Tray menu order is Show, separator, Settings. Send the keys to
-            # the popup HWND itself; this avoids depending on which process the
-            # hosted runner currently considers the keyboard foreground owner.
+            # Use the real popup HWND and its measured native rectangle rather
+            # than assuming keyboard focus belongs to the menu on the hosted VM.
+            # The menu order is Show launcher, Settings, separator, Game Mode,
+            # separator, Exit; the second row is therefore the Settings item.
             $trayMenuHandle = [FluxWallpaper]::WindowHandleAtPoint($trayMenuX, $trayMenuY)
             if ($trayMenuHandle -eq [IntPtr]::Zero) {
                 throw "Tray Settings deactivation smoke could not resolve the popup menu HWND."
             }
-            $wmKeyDown = 0x0100
-            $wmKeyUp = 0x0101
-            foreach ($key in @(0x24, 0x28, 0x0D)) {
-                if (![FluxWallpaper]::PostMessage($trayMenuHandle, $wmKeyDown, [UIntPtr]$key, [IntPtr]::Zero) -or
-                    ![FluxWallpaper]::PostMessage($trayMenuHandle, $wmKeyUp, [UIntPtr]$key, [IntPtr]::Zero)) {
-                    throw "Tray Settings deactivation smoke could not post virtual key $key to the popup menu."
-                }
-                Start-Sleep -Milliseconds 80
+            $trayMenuRect = New-Object FluxWallpaper+RECT
+            if (![FluxWallpaper]::GetWindowRect($trayMenuHandle, [ref]$trayMenuRect)) {
+                throw "Tray Settings deactivation smoke could not read the popup menu rectangle."
             }
+            $trayMenuWidth = [FluxWallpaper]::RectWidth($trayMenuRect)
+            $trayMenuHeight = [FluxWallpaper]::RectHeight($trayMenuRect)
+            if ($trayMenuWidth -lt 80 -or $trayMenuHeight -lt 60) {
+                throw "Tray Settings deactivation smoke observed an invalid popup menu rectangle: ${trayMenuWidth}x${trayMenuHeight}."
+            }
+            $settingsMenuClickX = $trayMenuRect.Left + [int]($trayMenuWidth / 2)
+            $settingsMenuClickY = $trayMenuRect.Top + [int]($trayMenuHeight * 0.25)
+            Write-Host "Tray popup rectangle: ${trayMenuWidth}x${trayMenuHeight}; Settings click=($settingsMenuClickX,$settingsMenuClickY)"
+            [FluxWallpaper]::SetCursorPos($settingsMenuClickX, $settingsMenuClickY) | Out-Null
+            [FluxWallpaper]::mouse_event(0x0002, 0, 0, 0, [UIntPtr]::Zero)
+            [FluxWallpaper]::mouse_event(0x0004, 0, 0, 0, [UIntPtr]::Zero)
             $settingsGeometryDeadline = (Get-Date).AddSeconds(3)
             while ((Get-Date) -lt $settingsGeometryDeadline) {
                 if ([FluxWallpaper]::IsWindowVisible($launcherHandle)) {
