@@ -1799,7 +1799,9 @@ impl Widget for RichText {
             }
             // Ctrl+C：有选区复制选区、无则复制全文；Ctrl+Shift+C：强制复制全文。
             // 内建右键菜单经 SendKey 回投到此（VK_C=0x43）。
-            if k.ctrl && k.key == Key::Other(0x43) {
+            if k.ctrl
+                && (k.key == Key::Other(0x43) || matches!(k.key, Key::Char('c') | Key::Char('C')))
+            {
                 let text = if k.shift {
                     self.doc.plain_text()
                 } else {
@@ -1809,7 +1811,9 @@ impl Widget for RichText {
                 return true;
             }
             // Ctrl+A：全选（VK_A=0x41）。
-            if k.ctrl && k.key == Key::Other(0x41) {
+            if k.ctrl
+                && (k.key == Key::Other(0x41) || matches!(k.key, Key::Char('a') | Key::Char('A')))
+            {
                 let n = self
                     .cache
                     .borrow()
@@ -2863,6 +2867,25 @@ mod tests {
             &*clip.borrow(),
             "result",
             "Ctrl-drag should copy the title selection"
+        );
+        clip.borrow_mut().clear();
+        let copied_char = tree.dispatch_key(
+            crate::event::KeyEvent {
+                key: Key::Char('c'),
+                pressed: true,
+                shift: false,
+                ctrl: true,
+            },
+            Some(node),
+        );
+        assert!(
+            copied_char.consumed,
+            "RichText must consume character-form Ctrl+C"
+        );
+        assert_eq!(
+            &*clip.borrow(),
+            "result",
+            "character-form Ctrl+C should copy the selection"
         );
     }
 
