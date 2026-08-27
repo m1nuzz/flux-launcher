@@ -217,10 +217,10 @@ try {
     }
 
     # Dismiss through the real prompt button without launching winget. The prompt's
-    # panel is centered inside the fixed 440x230 window; scale the safe click for DPI.
+    # panel is centered inside the fixed 440x242 window; scale the safe click for DPI.
     $windowScale = $summary.WindowWidth / 440.0
     $notNowX = $rect.Left + [int][Math]::Round(177 * $windowScale)
-    $notNowY = $rect.Bottom - [int][Math]::Round(20 * $windowScale)
+    $notNowY = $rect.Bottom - [int][Math]::Round(32 * $windowScale)
     [FluxPromptSmokeNative]::SetCursorPos($notNowX, $notNowY) | Out-Null
     [FluxPromptSmokeNative]::mouse_event(0x0002, 0, 0, 0, [UIntPtr]::Zero)
     [FluxPromptSmokeNative]::mouse_event(0x0004, 0, 0, 0, [UIntPtr]::Zero)

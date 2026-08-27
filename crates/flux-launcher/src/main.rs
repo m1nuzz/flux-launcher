@@ -54,7 +54,7 @@ const CURRENT_VERSION: &str = env!("CARGO_PKG_VERSION");
 const SINGLE_INSTANCE_ID: &str = "m1nuzz.flux-launcher";
 const SETTINGS_WINDOW_WIDTH: i32 = 720;
 const EVERYTHING_PROMPT_WINDOW_WIDTH: i32 = 440;
-const EVERYTHING_PROMPT_WINDOW_HEIGHT: i32 = 230;
+const EVERYTHING_PROMPT_WINDOW_HEIGHT: i32 = 242;
 // The empty launcher is a compact search strip; the results state keeps the user-configured height.
 const COMPACT_WINDOW_HEIGHT: i32 = 56;
 const VISUAL_SLIDER_WIDTH: i32 = 200;
@@ -2708,7 +2708,8 @@ fn main() {
                         }
                     }
                 }),
-            ),
+            )
+            .padding_edges(0, 0, 0, 12),
     );
 
     let confirmation_for_close = recycle_bin_confirmation;
