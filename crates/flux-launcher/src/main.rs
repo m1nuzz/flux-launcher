@@ -53,6 +53,8 @@ use windui::render::{Canvas, Paint};
 const CURRENT_VERSION: &str = env!("CARGO_PKG_VERSION");
 const SINGLE_INSTANCE_ID: &str = "m1nuzz.flux-launcher";
 const SETTINGS_WINDOW_WIDTH: i32 = 720;
+const EVERYTHING_PROMPT_WINDOW_WIDTH: i32 = 440;
+const EVERYTHING_PROMPT_WINDOW_HEIGHT: i32 = 230;
 // The empty launcher is a compact search strip; the results state keeps the user-configured height.
 const COMPACT_WINDOW_HEIGHT: i32 = 56;
 const VISUAL_SLIDER_WIDTH: i32 = 200;
@@ -149,6 +151,34 @@ fn launcher_window_geometry_with_sizes(
     } else {
         (launcher_width, COMPACT_WINDOW_HEIGHT)
     }
+}
+
+fn launcher_window_geometry_with_prompt(
+    settings_visible: bool,
+    prompt_visible: bool,
+    show_results: bool,
+    launcher_width: i32,
+    launcher_height: i32,
+) -> (i32, i32) {
+    if settings_visible {
+        (SETTINGS_WINDOW_WIDTH, SETTINGS_WINDOW_HEIGHT)
+    } else if prompt_visible {
+        (
+            EVERYTHING_PROMPT_WINDOW_WIDTH,
+            EVERYTHING_PROMPT_WINDOW_HEIGHT,
+        )
+    } else {
+        launcher_window_geometry_with_sizes(false, show_results, launcher_width, launcher_height)
+    }
+}
+
+fn should_show_everything_install_prompt(
+    everything_installed: bool,
+    auto_enable_everything: bool,
+    prompt_seen: bool,
+    prompt_disabled: bool,
+) -> bool {
+    auto_enable_everything && !everything_installed && !prompt_seen && !prompt_disabled
 }
 
 fn visual_preview_position(
@@ -2476,7 +2506,17 @@ fn main() {
     let monitor_preference = signal(monitor_preference_index(initial_monitor_preference));
     let initial_everything_state = everything::installation_state();
     let everything_installed = signal(initial_everything_state.is_installed());
-    let everything_prompt_visible = signal(false);
+    let everything_prompt_disabled = std::env::var("FLUX_DISABLE_EVERYTHING_PROMPT")
+        .ok()
+        .as_deref()
+        == Some("1");
+    let everything_prompt_visible_at_start = should_show_everything_install_prompt(
+        initial_everything_state.is_installed(),
+        settings.auto_enable_everything,
+        settings.everything_install_prompt_seen,
+        everything_prompt_disabled,
+    );
+    let everything_prompt_visible = signal(everything_prompt_visible_at_start);
     let everything_status = signal(if everything_installed.get() {
         String::from("Everything detected; Flux will enable IPC automatically")
     } else {
@@ -2853,6 +2893,7 @@ fn main() {
     let history_mode_for_interval = history_mode;
     let settings_visible_for_interval = settings_visible;
     let settings_tab_for_interval = settings_tab;
+    let everything_prompt_visible_for_interval = everything_prompt_visible;
     let visual_preview_generation_for_interval = visual_preview_generation;
     let visual_preview_smoke_for_interval =
         std::env::var_os("FLUX_SMOKE_VISUAL_SETTINGS").is_some();
@@ -2861,6 +2902,7 @@ fn main() {
     let mut last_launcher_width = launcher_width.get();
     let mut last_launcher_height = launcher_height.get();
     let mut last_settings_visible = settings_visible.get();
+    let mut last_everything_prompt_visible = everything_prompt_visible.get();
     let mut last_query = String::new();
     let mut visual_preview_process: Option<visual_preview::PreviewProcess> = None;
     let mut last_visual_preview_request: Option<(u16, u16)> = None;
@@ -2871,11 +2913,15 @@ fn main() {
     let settings_at_start = settings_visible.get();
     let initial_height = if settings_at_start {
         SETTINGS_WINDOW_HEIGHT
+    } else if everything_prompt_visible_at_start {
+        EVERYTHING_PROMPT_WINDOW_HEIGHT
     } else {
         COMPACT_WINDOW_HEIGHT
     };
     let initial_width = if settings_at_start {
         SETTINGS_WINDOW_WIDTH
+    } else if everything_prompt_visible_at_start {
+        EVERYTHING_PROMPT_WINDOW_WIDTH
     } else {
         launcher_width.get() as i32
     };
@@ -3113,16 +3159,6 @@ fn main() {
         everything_status.set(String::from(
             "Everything auto-enable is disabled in Flux settings",
         ));
-    }
-    if settings.auto_enable_everything
-        && !everything_installed.get()
-        && !settings.everything_install_prompt_seen
-        && std::env::var("FLUX_DISABLE_EVERYTHING_PROMPT")
-            .ok()
-            .as_deref()
-            != Some("1")
-    {
-        everything_prompt_visible.set(true);
     }
 
     let query_for_plugins = query;
@@ -4787,6 +4823,7 @@ fn main() {
             let current_width = width_for_interval.get();
             let current_height = height_for_interval.get();
             let settings_is_visible = settings_visible_for_interval.get();
+            let prompt_is_visible = everything_prompt_visible_for_interval.get();
             let visual_tab_is_visible = settings_tab_for_interval.get() == 1;
             let visual_preview_is_visible = settings_is_visible && visual_tab_is_visible;
             if settings_is_visible && !last_settings_visible {
@@ -4799,6 +4836,25 @@ fn main() {
                     );
                 }
                 size_for_interval.set(SETTINGS_WINDOW_WIDTH, SETTINGS_WINDOW_HEIGHT);
+            }
+            if prompt_is_visible != last_everything_prompt_visible {
+                last_everything_prompt_visible = prompt_is_visible;
+                let (prompt_width, prompt_height) = launcher_window_geometry_with_prompt(
+                    settings_is_visible,
+                    prompt_is_visible,
+                    show_results_for_interval.get(),
+                    width_for_interval.get() as i32,
+                    height_for_interval.get() as i32,
+                );
+                if let Ok(settings) = settings_for_interval_geometry.read() {
+                    request_monitor_position(
+                        &position_for_interval,
+                        settings.monitor_preference,
+                        prompt_width,
+                        prompt_height,
+                    );
+                }
+                size_for_interval.set(prompt_width, prompt_height);
             }
             if visual_preview_is_visible {
                 let preference = settings_for_interval_geometry
@@ -5032,8 +5088,9 @@ fn main() {
             // Query cleanup also happens when hide-on-deactivate hides the
             // launcher. Do not let that asynchronous query transition resize
             // an already-open Settings panel back to the compact search strip.
-            let (target_width, target_height) = launcher_window_geometry_with_sizes(
+            let (target_width, target_height) = launcher_window_geometry_with_prompt(
                 settings_visible_for_interval.get(),
+                everything_prompt_visible_for_interval.get(),
                 has_query,
                 launcher_width.get() as i32,
                 launcher_height.get() as i32,
@@ -5838,5 +5895,51 @@ mod tests {
             launcher_window_geometry_with_sizes(true, false, 420, 56),
             (super::SETTINGS_WINDOW_WIDTH, super::SETTINGS_WINDOW_HEIGHT)
         );
+    }
+
+    #[test]
+    fn missing_everything_prompt_uses_visible_dialog_geometry() {
+        assert_eq!(
+            super::launcher_window_geometry_with_prompt(false, true, false, 420, 382),
+            (
+                super::EVERYTHING_PROMPT_WINDOW_WIDTH,
+                super::EVERYTHING_PROMPT_WINDOW_HEIGHT
+            )
+        );
+        assert_eq!(
+            super::launcher_window_geometry_with_prompt(true, true, false, 420, 382),
+            (super::SETTINGS_WINDOW_WIDTH, super::SETTINGS_WINDOW_HEIGHT)
+        );
+    }
+
+    #[test]
+    fn missing_everything_prompt_does_not_override_normal_launcher_geometry() {
+        assert_eq!(
+            super::launcher_window_geometry_with_prompt(false, false, true, 640, 520),
+            (640, 520)
+        );
+        assert_eq!(
+            super::launcher_window_geometry_with_prompt(false, false, false, 640, 520),
+            (640, COMPACT_WINDOW_HEIGHT)
+        );
+    }
+
+    #[test]
+    fn everything_prompt_requires_missing_auto_enabled_and_unseen_state() {
+        assert!(super::should_show_everything_install_prompt(
+            false, true, false, false
+        ));
+        assert!(!super::should_show_everything_install_prompt(
+            true, true, false, false
+        ));
+        assert!(!super::should_show_everything_install_prompt(
+            false, false, false, false
+        ));
+        assert!(!super::should_show_everything_install_prompt(
+            false, true, true, false
+        ));
+        assert!(!super::should_show_everything_install_prompt(
+            false, true, false, true
+        ));
     }
 }
