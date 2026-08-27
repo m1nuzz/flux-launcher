@@ -720,13 +720,26 @@ try {
             } else {
                 0
             }
-            $deactivationShell = New-Object -ComObject WScript.Shell
-            [FluxWallpaper]::SetForegroundWindow($launcherHandle) | Out-Null
-            $deactivationShell.AppActivate($process.Id) | Out-Null
-            Start-Sleep -Milliseconds 250
-            $deactivationShell.SendKeys("^a")
-            $deactivationShell.SendKeys("{BACKSPACE}")
-            $deactivationShell.SendKeys($deactivationQuery)
+            # Reset through the same global activation path used by the user,
+            # then deliver ordinary WM_CHAR units synchronously to the real Flux
+            # HWND. This preserves the no-Enter/no-selection state while avoiding
+            # WScript.Shell focus races on the hosted Windows runner.
+            [FluxWallpaper]::SendMessage($launcherHandle, $wmHotkey, [UIntPtr]::Zero, [IntPtr]::Zero) | Out-Null
+            Start-Sleep -Milliseconds 450
+            [FluxWallpaper]::SendMessage($launcherHandle, $wmHotkey, [UIntPtr]::Zero, [IntPtr]::Zero) | Out-Null
+            Start-Sleep -Milliseconds 650
+            if (![FluxWallpaper]::IsWindowVisible($launcherHandle)) {
+                throw "Deactivation smoke could not restore Flux before typing the active query."
+            }
+            $wmCharForDeactivation = 0x0102
+            foreach ($character in $deactivationQuery.ToCharArray()) {
+                [FluxWallpaper]::SendMessage(
+                    $launcherHandle,
+                    $wmCharForDeactivation,
+                    [UIntPtr]([int][char]$character),
+                    [IntPtr]::One
+                ) | Out-Null
+            }
             $deactivationQueryDeadline = (Get-Date).AddSeconds(3)
             $deactivationQueryObserved = $false
             while ((Get-Date) -lt $deactivationQueryDeadline) {
