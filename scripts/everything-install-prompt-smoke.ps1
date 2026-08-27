@@ -121,7 +121,7 @@ $env:FLUX_SMOKE_EVERYTHING_MISSING = "1"
 $env:FLUX_SMOKE_EVERYTHING_PROMPT = "1"
 $env:FLUX_DISABLE_UPDATE_CHECKS = "1"
 $env:FLUX_DISABLE_EVERYTHING_PROMPT = "0"
-$env:WINDUI_D2D = "0"
+$env:WINDUI_D2D = "1"
 
 @'
 {
@@ -155,6 +155,7 @@ $summary = [ordered]@{
     PromptTransparentPanelProbe = $false
     PromptNoModalScrimProbe = $false
     PromptTransparentWindowProbe = $false
+    PromptD2DProbe = $false
     PromptDismissProbe = $false
     PromptDismissedWindowWidth = 0
     PromptDismissedWindowHeight = 0
@@ -210,6 +211,7 @@ try {
     $summary.PromptTransparentPanelProbe = $stderr -match "panel_fill=none"
     $summary.PromptNoModalScrimProbe = $stderr -match "modal_scrim=none"
     $summary.PromptTransparentWindowProbe = $stderr -match "window_background=transparent"
+    $summary.PromptD2DProbe = $stderr -match "\[windui\] D2D backend active"
     if (!$summary.PromptContentProbe) {
         throw "Everything install prompt telemetry was not observed; the screenshot must not be treated as prompt proof."
     }
@@ -295,7 +297,7 @@ try {
     if (!$summary.PromptGeometryProbe) {
         throw "Everything install prompt window was undersized: $($summary.WindowWidth)x$($summary.WindowHeight)."
     }
-    if (!$summary.PromptGlassStyleProbe -or !$summary.PromptBorderlessStyleProbe -or !$summary.PromptTransparentPanelProbe -or !$summary.PromptNoModalScrimProbe -or !$summary.PromptTransparentWindowProbe) {
+    if (!$summary.PromptGlassStyleProbe -or !$summary.PromptBorderlessStyleProbe -or !$summary.PromptTransparentPanelProbe -or !$summary.PromptNoModalScrimProbe -or !$summary.PromptTransparentWindowProbe -or !$summary.PromptD2DProbe) {
         throw "Everything install prompt did not report the modern transparent no-scrim style path."
     }
     if (!$summary.PromptDismissProbe) {
