@@ -1158,8 +1158,12 @@ try {
     $resultRmbWindowHidden = $false
     $resultNormalHoverTextCursor = $false
     $resultNormalHoverCopyDisabledProbe = $false
+    $resultNormalClickLaunchProbe = $false
+    $resultNormalClickDispatchObserved = $false
+    $resultNormalClickWindowHidden = $false
     $resultCtrlHoverTextCursor = $false
     $resultCtrlCopyProbe = $false
+    $resultCtrlSelectionWindowVisible = $false
     $commandPriorityProbe = $false
     $compactAppProbe = $false
     $compactAppProbeLine = $null
@@ -1534,21 +1538,50 @@ try {
         if (![FluxWallpaper]::GetWindowRect($launcherHandle, [ref]$resultPointerRect)) {
             throw "Result mouse interaction smoke could not locate launcher rectangle."
         }
-        $resultTitleX = $resultPointerRect.Left + 180
-        $resultTitleY = $resultPointerRect.Top + 84
+        $resultTitleX = $resultPointerRect.Left + 80
+        $resultTitleY = $resultPointerRect.Top + 75
         [FluxWallpaper]::SetCursorPos($resultTitleX, $resultTitleY) | Out-Null
         Start-Sleep -Milliseconds 450
         $resultNormalHoverTextCursor = [FluxWallpaper]::IsTextCursor()
         $resultNormalHoverCopyDisabledProbe = !$resultNormalHoverTextCursor
         Save-Screenshot "result-pointer-normal-hover.png"
 
+        # A plain click on the title must launch the result. RichText currently
+        # consumes this gesture as a text-selection start, so this is expected to
+        # fail in the pre-fix baseline.
+        $normalClickTraceBeforeCount = if (Test-Path $launchTracePath) { @(Get-Content $launchTracePath).Count } else { 0 }
+        [FluxWallpaper]::mouse_event(0x0002, 0, 0, 0, [UIntPtr]::Zero)
+        [FluxWallpaper]::mouse_event(0x0004, 0, 0, 0, [UIntPtr]::Zero)
+        Start-Sleep -Milliseconds 900
+        $normalClickTraceLines = if (Test-Path $launchTracePath) {
+            @(Get-Content $launchTracePath | Select-Object -Skip $normalClickTraceBeforeCount)
+        } else {
+            @()
+        }
+        $resultNormalClickDispatchObserved = [bool]($normalClickTraceLines | Where-Object { $_ -match "`tlaunch-dispatch$" } | Select-Object -First 1)
+        $resultNormalClickWindowHidden = ![FluxWallpaper]::IsWindowVisible($launcherHandle)
+        $resultNormalClickLaunchProbe = $resultNormalClickDispatchObserved -and $resultNormalClickWindowHidden
+        Save-Screenshot "result-pointer-normal-click.png"
+        if ($resultNormalClickWindowHidden) {
+            [FluxWallpaper]::keybd_event(0x12, 0, 0, [UIntPtr]::Zero)
+            [FluxWallpaper]::keybd_event(0x20, 0, 0, [UIntPtr]::Zero)
+            [FluxWallpaper]::keybd_event(0x20, 0, 2, [UIntPtr]::Zero)
+            [FluxWallpaper]::keybd_event(0x12, 0, 2, [UIntPtr]::Zero)
+            Start-Sleep -Milliseconds 800
+        }
+        [FluxWallpaper]::SetForegroundWindow($launcherHandle) | Out-Null
+        $shell.SendKeys("^a")
+        $shell.SendKeys("{BACKSPACE}")
+        $shell.SendKeys($resultPointerQuery)
+        Start-Sleep -Seconds 2
+
         # Ctrl-hover is the explicit opt-in path for text selection/copying.
         [FluxWallpaper]::keybd_event(0x11, 0, 0, [UIntPtr]::Zero)
         [FluxWallpaper]::SetCursorPos($resultTitleX, $resultTitleY) | Out-Null
         Start-Sleep -Milliseconds 350
         $resultCtrlHoverTextCursor = [FluxWallpaper]::IsTextCursor()
-        $selectStartX = $resultPointerRect.Left + 145
-        $selectEndX = $resultPointerRect.Left + 300
+        $selectStartX = $resultPointerRect.Left + 55
+        $selectEndX = $resultPointerRect.Left + 145
         [FluxWallpaper]::SetCursorPos($selectStartX, $resultTitleY) | Out-Null
         [FluxWallpaper]::mouse_event(0x0002, 0, 0, 0, [UIntPtr]::Zero)
         [FluxWallpaper]::SetCursorPos($selectEndX, $resultTitleY) | Out-Null
@@ -1566,7 +1599,21 @@ try {
             $resultCtrlCopyProbe = $false
         }
         Save-Screenshot "result-pointer-ctrl-selection.png"
-        $shell.SendKeys("{ESCAPE}")
+        $resultCtrlSelectionWindowVisible = [FluxWallpaper]::IsWindowVisible($launcherHandle)
+        if (!$resultCtrlSelectionWindowVisible) {
+            # Keep the two reproductions independent if the baseline selection
+            # path unexpectedly hides Flux before the RMB probe begins.
+            [FluxWallpaper]::keybd_event(0x12, 0, 0, [UIntPtr]::Zero)
+            [FluxWallpaper]::keybd_event(0x20, 0, 0, [UIntPtr]::Zero)
+            [FluxWallpaper]::keybd_event(0x20, 0, 2, [UIntPtr]::Zero)
+            [FluxWallpaper]::keybd_event(0x12, 0, 2, [UIntPtr]::Zero)
+            Start-Sleep -Milliseconds 800
+        }
+        [FluxWallpaper]::SetForegroundWindow($launcherHandle) | Out-Null
+        $shell.SendKeys("^a")
+        $shell.SendKeys("{BACKSPACE}")
+        $shell.SendKeys($resultPointerQuery)
+        Start-Sleep -Seconds 2
 
         # Right-click the title. It must follow the same launch path as Enter,
         # not open RichText's copy menu or require a second activation.
@@ -2731,7 +2778,11 @@ try {
         ResultRightClickLaunchProbe = (!$ResultMouseInteractionSmoke) -or $resultRmbLaunchProbe
         ResultNormalHoverTextCursor = $resultNormalHoverTextCursor
         ResultNormalHoverCopyDisabledProbe = (!$ResultMouseInteractionSmoke) -or $resultNormalHoverCopyDisabledProbe
+        ResultNormalClickDispatchObserved = $resultNormalClickDispatchObserved
+        ResultNormalClickWindowHidden = $resultNormalClickWindowHidden
+        ResultNormalClickLaunchProbe = (!$ResultMouseInteractionSmoke) -or $resultNormalClickLaunchProbe
         ResultCtrlHoverTextCursor = $resultCtrlHoverTextCursor
+        ResultCtrlSelectionWindowVisible = $resultCtrlSelectionWindowVisible
         ResultCtrlCopyProbe = (!$ResultMouseInteractionSmoke) -or $resultCtrlCopyProbe
         ScrollbarGapProbe = (!$ScrollbarGapSmoke) -or $scrollbarGapProbe
         ActionBarProbe = (!$ActionBarSmoke) -or $actionBarProbe
@@ -2832,8 +2883,8 @@ try {
             HiddenIdleAfterDeactivation = $deactivationIdleMemory
         }
     } | ConvertTo-Json | Set-Content -Encoding utf8 (Join-Path $OutputDirectory "environment.json")
-    if ($ResultMouseInteractionSmoke -and (!$resultRmbLaunchProbe -or !$resultNormalHoverCopyDisabledProbe -or !$resultCtrlHoverTextCursor -or !$resultCtrlCopyProbe)) {
-        throw "Result mouse interaction smoke reproduced a failure: right_click_launch=$resultRmbLaunchProbe, normal_hover_copy_disabled=$resultNormalHoverCopyDisabledProbe, ctrl_hover_text_cursor=$resultCtrlHoverTextCursor, ctrl_copy=$resultCtrlCopyProbe."
+    if ($ResultMouseInteractionSmoke -and (!$resultRmbLaunchProbe -or !$resultNormalClickLaunchProbe -or !$resultCtrlCopyProbe)) {
+        throw "Result mouse interaction smoke reproduced a failure: right_click_launch=$resultRmbLaunchProbe, normal_click_launch=$resultNormalClickLaunchProbe, ctrl_copy=$resultCtrlCopyProbe."
     }
 }
 finally {
