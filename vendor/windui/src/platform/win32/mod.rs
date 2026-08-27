@@ -2183,8 +2183,10 @@ pub(crate) fn show_and_activate(hwnd: HWND) {
         if let Some(state) = state_from(hwnd) {
             state.handler.on_window_show();
         }
-        // Drain geometry once while hidden, without consuming cursor requests.
-        // This settles compact dimensions before the first visible Present.
+        // The Settings tray callback queues its full dimensions before requesting
+        // ShowWindow, while on_window_show queues them once more. Drain both
+        // stages here, while the HWND is still hidden, so a stale compact search
+        // size can never become the first visible Settings frame.
         apply_window_geometry_requests(hwnd);
         trace_show_event(
             hwnd,
