@@ -39,9 +39,11 @@ impl UiHost {
         // 模态层进出时移交焦点。必须在下面的归一化之前——归一化只会把落在框外的
         // 旧焦点抹成 None，抹完就分不清"本该还给谁"了。
         self.sync_modal_focus();
-        // 若当前焦点已不在可聚焦集合中（结构变更），归一化为无焦点。
+        // A pointer request may focus a non-Tab widget such as selectable
+        // RichText. Keep it after relayout while the target remains valid;
+        // only removed, hidden, or disabled targets lose focus here.
         if let Some(f) = self.focus.current {
-            if !self.focus.order.contains(&f) {
+            if !self.tree.focus_target_valid(f) {
                 self.tree.set_focused(None, Some(f));
                 self.focus.current = None;
             }
@@ -118,7 +120,7 @@ mod tests {
     use crate::app::{App, UiHost};
     use crate::event::Key;
     use crate::geometry::Size;
-    use crate::ui::Element;
+    use crate::ui::{Element, RichDoc};
 
     /// 点控件外的空白应清空焦点（网页 blur 语义）：否则聚焦边框会一直亮到
     /// 下一个可聚焦控件接手为止。同时校验两条不该误清的边界。
@@ -169,6 +171,56 @@ mod tests {
 
         click(&mut handler, blank);
         assert!(handler.focus.current.is_none(), "点空白应清空焦点");
+    }
+
+    /// Pointer focus on selectable static RichText is not part of the Tab ring,
+    /// but must survive the relayout triggered by pointer capture release.
+    #[test]
+    fn non_tab_rich_text_focus_survives_relayout() {
+        use crate::event::{Mods, MouseButton, PointerEvent, PointerKind};
+        use crate::geometry::Point;
+        use crate::platform::AppHandler;
+        use crate::render::PixmapTarget;
+        use tiny_skia::Pixmap;
+
+        let app = App::new("t", 300, 120).content(
+            Element::col()
+                .padding(10)
+                .child(
+                    Element::rich(RichDoc::new().para("result title"))
+                        .selection_requires_ctrl(true)
+                        .width(200),
+                )
+                .child(Element::flex_spacer()),
+        );
+        let mut handler = app.into_handler_for_test();
+        handler.set_scale(1.0);
+        let mut pm = Pixmap::new(300, 120).unwrap();
+        handler.render(&mut PixmapTarget { pixmap: &mut pm }, Size::new(300, 120));
+
+        let point = Point::new(20, 25);
+        let pointer = |kind| PointerEvent {
+            kind,
+            pos: point,
+            button: MouseButton::Left,
+            mods: Mods {
+                ctrl: true,
+                ..Mods::default()
+            },
+            click_count: 1,
+        };
+        handler.on_pointer(pointer(PointerKind::Down));
+        handler.on_pointer(pointer(PointerKind::Move));
+        handler.on_pointer(pointer(PointerKind::Up));
+        let focused = handler.focus.current;
+        assert!(
+            focused.is_some(),
+            "Ctrl-drag should focus the selectable title"
+        );
+
+        // Pointer Up requests a relayout; the non-Tab focus must remain valid.
+        handler.render(&mut PixmapTarget { pixmap: &mut pm }, Size::new(300, 120));
+        assert_eq!(handler.focus.current, focused);
     }
 
     /// 对话框弹出时焦点应进入框内、关闭后还给来处（同 `<dialog>.showModal()`）。

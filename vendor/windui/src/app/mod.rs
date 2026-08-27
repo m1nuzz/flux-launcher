@@ -1737,19 +1737,10 @@ impl AppHandler for UiHost {
         if self.menu.is_open() {
             return self.handle_menu_key(ev);
         }
-        let focused_claims_key = self
+        if !self
             .tree
-            .focused_handles_key_before_app(&ev, self.focus.current);
-        if ev.ctrl
-            && ev.pressed
-            && matches!(ev.key, Key::Other(0x43) | Key::Char('c') | Key::Char('C'))
+            .focused_handles_key_before_app(&ev, self.focus.current)
         {
-            eprintln!(
-                "[windui] Ctrl+C focus={:?} pre_app_claim={}",
-                self.focus.current, focused_claims_key
-            );
-        }
-        if !focused_claims_key {
             if let Some(mut handler) = self.key_handler.take() {
                 let consumed = handler(ev);
                 self.key_handler = Some(handler);

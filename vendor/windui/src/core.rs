@@ -2311,6 +2311,24 @@ impl Tree {
         }
     }
 
+    /// Whether a requested focus target still exists and is effectively
+    /// visible/enabled through its ancestor chain. This deliberately does not
+    /// require Tab focusability: pointer interaction may focus static widgets
+    /// such as selectable RichText.
+    pub fn focus_target_valid(&self, id: NodeId) -> bool {
+        let mut current = Some(id);
+        while let Some(node_id) = current {
+            let Some(node) = self.get(node_id) else {
+                return false;
+            };
+            if !node.effective_visible() || !node.own_enabled() {
+                return false;
+            }
+            current = node.parent;
+        }
+        true
+    }
+
     /// Whether the focused widget explicitly owns this key before the app
     /// shortcut handler. This is intentionally a separate query from
     /// `dispatch_key`, so command surfaces can preserve widget copy semantics.
