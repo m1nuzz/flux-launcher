@@ -179,18 +179,21 @@ jobs:
           body: |
             Flux Launcher Windows 11 x64 release.
 
-            This is a beta build for testing the Settings tray lifecycle fix. It is not a stable release and is not intended for WinGet or normal automatic updates.
+            This is a beta build for manual testing. It is not a stable release and is not intended for WinGet or normal automatic updates.
 
             ## What's changed
 
-            - Fixed the Settings tray reactivation path after Flux is hidden by clicking another window. Settings now applies its full position and `720x520` dimensions before the first visible frame, so the compact search strip cannot appear instead of the Settings panel.
-            - Added a real Windows tray-menu regression smoke covering the complete sequence: active query, outside-window deactivation, native tray `Settings` selection, full-panel geometry, cleanup, and launcher restoration.
-            - Preserved the existing native Windows UI, global hotkey, single-instance, Everything, native Flow plugin, calculator, icon, installer, updater, and uninstall behavior.
+            - Moved all Everything settings to the Plugins tab, including the auto-enable option, an `Install Everything` action when Everything is missing, and an already-installed status when it is detected.
+            - Fixed the first-run Everything prompt so it opens at a visible full size instead of the compact `420x56` launcher strip.
+            - A `Not now` decision is persisted in settings. Flux will not automatically show the installation prompt again on later launches.
+            - Updated the Everything prompt to use the current transparent Acrylic/glass path without the legacy panel fill or modal scrim, and added extra bottom spacing below the action buttons.
+            - Preserved the existing Everything detection, IPC search, background startup guard, winget install action, native Windows UI, global hotkey, single-instance, native Flow plugin, calculator, icon, installer, updater, and uninstall behavior.
 
             ## Validation
 
+            - Dedicated Windows smoke verifies real prompt content and controls, `440x242` geometry, transparent style markers, safe `Not now` dismissal, persisted refusal, and a second launch with no prompt and a compact `420x56` window.
+            - The same smoke verifies that Everything is not launched or duplicated during the missing-install scenario.
             - The release workflow runs the full Windows build, native tests, plugin pipe smoke, icon smoke, single-instance/Everything smoke, UI/lifecycle smoke, installer/uninstall smoke, and updater smoke before publishing.
-            - Windows UI smoke specifically verifies that Settings opens as a full `720x520` panel after deactivation and that hidden idle CPU remains within the existing budget.
             - The release includes only the user-facing installer and portable executable. CI screenshots, DWM diagnostics, smoke logs, and test fixtures remain workflow artifacts.
 
             Stable releases are intended for normal automatic updates and WinGet distribution; this beta is for manual testing only.
