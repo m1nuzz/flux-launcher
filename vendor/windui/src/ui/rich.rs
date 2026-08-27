@@ -1593,8 +1593,7 @@ impl RichText {
 
 impl Widget for RichText {
     fn handles_key_before_app(&self, ev: &KeyEvent) -> bool {
-        self.selection_requires_ctrl
-            && ev.pressed
+        ev.pressed
             && ev.ctrl
             && (matches!(ev.key, Key::Other(0x41) | Key::Other(0x43))
                 || matches!(
