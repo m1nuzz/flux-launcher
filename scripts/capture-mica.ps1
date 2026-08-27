@@ -1582,6 +1582,14 @@ try {
         }
         [FluxWallpaper]::SetForegroundWindow($launcherHandle) | Out-Null
         Start-Sleep -Milliseconds 200
+        $foregroundDeadline = (Get-Date).AddSeconds(3)
+        while ([FluxWallpaper]::GetForegroundWindow() -ne $launcherHandle -and (Get-Date) -lt $foregroundDeadline) {
+            [FluxWallpaper]::SetForegroundWindow($launcherHandle) | Out-Null
+            Start-Sleep -Milliseconds 150
+        }
+        if ([FluxWallpaper]::GetForegroundWindow() -ne $launcherHandle) {
+            throw "Result mouse interaction smoke could not focus launcher before Ctrl selection."
+        }
         $shell.SendKeys("^a")
         $shell.SendKeys("{BACKSPACE}")
         $shell.SendKeys($resultPointerQuery)
@@ -1589,6 +1597,15 @@ try {
 
         # Ctrl-hover is the explicit opt-in path for text selection/copying.
         [FluxWallpaper]::SetForegroundWindow($launcherHandle) | Out-Null
+        Start-Sleep -Milliseconds 200
+        $foregroundDeadline = (Get-Date).AddSeconds(3)
+        while ([FluxWallpaper]::GetForegroundWindow() -ne $launcherHandle -and (Get-Date) -lt $foregroundDeadline) {
+            [FluxWallpaper]::SetForegroundWindow($launcherHandle) | Out-Null
+            Start-Sleep -Milliseconds 150
+        }
+        if ([FluxWallpaper]::GetForegroundWindow() -ne $launcherHandle) {
+            throw "Result mouse interaction smoke lost launcher focus before Ctrl hover."
+        }
         [FluxWallpaper]::keybd_event(0x11, 0, 0, [UIntPtr]::Zero)
         [FluxWallpaper]::SetCursorPos($resultTitleX, $resultTitleY) | Out-Null
         Start-Sleep -Milliseconds 350
