@@ -1640,7 +1640,7 @@ try {
                 ""
             )
             $resultCtrlCopyProbe = $resultClipboardText.Length -gt 0 -and
-                $normalizedResultClipboardText.Contains("resultmouseprobe")
+                $normalizedResultClipboardText -eq "resultmouseprobe"
         } catch {
             $resultClipboardText = ""
             $resultCtrlCopyProbe = $false
