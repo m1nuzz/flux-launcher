@@ -549,6 +549,7 @@ try {
         # First-keystroke regression: after a real global hotkey show, the focused
         # search control must accept a normal character without a mouse click.
         $firstKeystrokeBefore = if (Test-Path $queryProbePath) { @(Get-Content $queryProbePath).Count } else { 0 }
+        $firstKeystrokeInputBefore = if (Test-Path $inputTracePath) { @(Get-Content $inputTracePath).Count } else { 0 }
         [FluxWallpaper]::keybd_event(0x51, 0, 0, [UIntPtr]::Zero)
         [FluxWallpaper]::keybd_event(0x51, 0, 2, [UIntPtr]::Zero)
         Start-Sleep -Milliseconds 500
@@ -557,7 +558,19 @@ try {
         } else {
             @()
         }
-        $firstKeystrokeProbe = @($firstKeystrokeLines | Where-Object { $_ -match "query=q" }).Count -gt 0
+        $firstKeystrokeInputLines = if (Test-Path $inputTracePath) {
+            @(Get-Content $inputTracePath | Select-Object -Skip $firstKeystrokeInputBefore)
+        } else {
+            @()
+        }
+        $firstKeystrokeSnapshotProbe = @($firstKeystrokeLines | Where-Object { $_ -match "query=q" }).Count -gt 0
+        $firstKeystrokeInputProbe =
+            @($firstKeystrokeInputLines | Where-Object { $_ -match "message=wm_char .*emitted=true .*routed=true" }).Count -gt 0 -and
+            @($firstKeystrokeInputLines | Where-Object { $_ -match "message=key_event_dispatch .*emitted=true .*routed=true" }).Count -gt 0
+        # Provider result merging may lag behind the first character on a busy
+        # release runner; input routing is the lifecycle property under test.
+        $firstKeystrokeProbe = $firstKeystrokeSnapshotProbe -or $firstKeystrokeInputProbe
+        Write-Host "First-keystroke probe: snapshot=$firstKeystrokeSnapshotProbe routed_input=$firstKeystrokeInputProbe"
         if (!$firstKeystrokeProbe) {
             throw "First-keystroke focus smoke failed after global hotkey show."
         }

@@ -88,6 +88,9 @@ jobs:
           # Force the GPU path when the runner supports it; Flux still checks
           # SM_REMOTESESSION and DwmIsCompositionEnabled before using transparency.
           WINDUI_D2D: "1"
+          # Keep background update traffic out of deterministic desktop capture;
+          # the dedicated updater smoke below tests update behavior separately.
+          FLUX_DISABLE_UPDATE_CHECKS: "1"
           # Keep first-run onboarding out of deterministic desktop capture.
           FLUX_DISABLE_EVERYTHING_PROMPT: "1"
         run: |
