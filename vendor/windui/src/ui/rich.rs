@@ -1292,6 +1292,10 @@ pub struct RichText {
     /// If enabled, plain pointer clicks remain available to the parent while
     /// text selection/copy is enabled only while Ctrl is held.
     selection_requires_ctrl: bool,
+    /// Optional observer for the active Ctrl-gated selection surface. This lets
+    /// an application-level shortcut defer to the focused RichText copy path.
+    on_selection_mode_change: Option<Box<dyn Fn(bool)>>,
+    selection_mode_active: Cell<bool>,
     /// 是否内建右键「复制全部」菜单（默认开；`Element::copy_menu(false)` 关闭，
     /// 以便应用挂自己的 `on_context_menu`）。
     copy_menu: bool,
@@ -1325,6 +1329,8 @@ impl RichText {
             hover_fragment: Cell::new(false),
             hover_exp: Cell::new(false),
             selection_requires_ctrl: false,
+            on_selection_mode_change: None,
+            selection_mode_active: Cell::new(false),
             copy_menu: true,
             sect_anims: RefCell::new(Vec::new()),
             doc_sig: None,
@@ -1354,6 +1360,21 @@ impl RichText {
     /// Plain pointer events are then left for the parent result row to handle.
     pub fn set_selection_requires_ctrl(&mut self, on: bool) {
         self.selection_requires_ctrl = on;
+    }
+
+    /// Observe whether this RichText is currently the Ctrl-gated title surface.
+    /// The callback is intentionally edge-triggered to avoid signal churn on
+    /// every pointer move within the same text fragment.
+    pub fn set_on_selection_mode_change(&mut self, f: impl Fn(bool) + 'static) {
+        self.on_selection_mode_change = Some(Box::new(f));
+    }
+
+    fn update_selection_mode(&mut self, active: bool) {
+        if self.selection_mode_active.replace(active) != active {
+            if let Some(callback) = self.on_selection_mode_change.as_ref() {
+                callback(active);
+            }
+        }
     }
 
     fn layout_key(&self, wrap_w: Option<i32>, style: &Style, th: &Theme, scale: f32) -> LayoutKey {
@@ -1864,6 +1885,9 @@ impl Widget for RichText {
                 self.hover_fragment.set(over_fragment);
                 self.hover_text
                     .set(over_fragment && (!self.selection_requires_ctrl || p.mods.ctrl));
+                self.update_selection_mode(
+                    self.selection_requires_ctrl && over_fragment && p.mods.ctrl,
+                );
                 false
             }
             PointerKind::Leave => {
@@ -1874,6 +1898,7 @@ impl Widget for RichText {
                 self.hover_fragment.set(false);
                 self.hover_text.set(false);
                 self.hover_exp.set(false);
+                self.update_selection_mode(false);
                 false
             }
             PointerKind::Down if p.button == MouseButton::Right => {
@@ -2021,6 +2046,7 @@ impl Widget for RichText {
         self.hover_fragment.set(false);
         self.hover_text.set(false);
         self.hover_exp.set(false);
+        self.update_selection_mode(false);
     }
 
     fn focusable(&self) -> bool {
@@ -2688,9 +2714,12 @@ mod tests {
     #[test]
     fn ctrl_gated_selection_keeps_plain_click_available() {
         let doc = RichDoc::new().para("result title");
+        let selection_mode = std::rc::Rc::new(std::cell::Cell::new(false));
+        let selection_mode_observer = selection_mode.clone();
         let (mut tree, node) = build(
             Element::rich(doc)
                 .selection_requires_ctrl(true)
+                .on_selection_mode_change(move |active| selection_mode_observer.set(active))
                 .copy_menu(false)
                 .width(200),
             300,
@@ -2706,6 +2735,10 @@ mod tests {
             &mut capture,
         );
         assert_eq!(tree.cursor_at(node), CursorShape::Hand);
+        assert!(
+            !selection_mode.get(),
+            "plain hover must not activate title copy mode"
+        );
         let plain_down = tree.dispatch_pointer(
             PointerEvent::single(PointerKind::Down, point, MouseButton::Left),
             &mut hover,
@@ -2714,6 +2747,15 @@ mod tests {
         assert!(
             !plain_down.consumed,
             "plain click must remain available to the parent row"
+        );
+        let plain_right_down = tree.dispatch_pointer(
+            PointerEvent::single(PointerKind::Down, point, MouseButton::Right),
+            &mut hover,
+            &mut capture,
+        );
+        assert!(
+            !plain_right_down.consumed,
+            "plain right-click must remain available to the parent row"
         );
 
         let ctrl = crate::event::Mods {
@@ -2732,6 +2774,10 @@ mod tests {
             &mut capture,
         );
         assert_eq!(tree.cursor_at(node), CursorShape::Text);
+        assert!(
+            selection_mode.get(),
+            "Ctrl hover must activate title copy mode"
+        );
         let ctrl_down = tree.dispatch_pointer(
             PointerEvent {
                 kind: PointerKind::Down,
@@ -2746,6 +2792,73 @@ mod tests {
         assert!(
             ctrl_down.consumed,
             "Ctrl must enable RichText selection handling"
+        );
+        tree.dispatch_pointer(
+            PointerEvent::single(PointerKind::Leave, point, MouseButton::Left),
+            &mut hover,
+            &mut capture,
+        );
+        assert!(!selection_mode.get(), "leaving title must clear copy mode");
+    }
+
+    #[test]
+    fn ctrl_gated_drag_copies_focused_selection() {
+        let doc = RichDoc::new().para("result title");
+        let (mut tree, node) = build(
+            Element::rich(doc)
+                .selection_requires_ctrl(true)
+                .copy_menu(false)
+                .width(200),
+            300,
+            300,
+        );
+        let clip = std::rc::Rc::new(std::cell::RefCell::new(String::new()));
+        tree.clipboard = Some(Box::new(TestClip(clip.clone())));
+        let ctrl = crate::event::Mods {
+            ctrl: true,
+            ..Default::default()
+        };
+        let pt = |x| crate::geometry::Point::new(x, 7);
+        let mut hover = None;
+        let mut capture = None;
+        for event in [
+            PointerEvent {
+                kind: PointerKind::Move,
+                pos: pt(4),
+                button: MouseButton::Left,
+                mods: ctrl,
+                click_count: 1,
+            },
+            PointerEvent {
+                kind: PointerKind::Down,
+                pos: pt(4),
+                button: MouseButton::Left,
+                mods: ctrl,
+                click_count: 1,
+            },
+            PointerEvent {
+                kind: PointerKind::Move,
+                pos: pt(20),
+                button: MouseButton::Left,
+                mods: ctrl,
+                click_count: 1,
+            },
+            PointerEvent {
+                kind: PointerKind::Up,
+                pos: pt(20),
+                button: MouseButton::Left,
+                mods: ctrl,
+                click_count: 1,
+            },
+        ] {
+            tree.dispatch_pointer(event, &mut hover, &mut capture);
+        }
+        let copied = tree.dispatch_key(ctrl_key(0x43, false), Some(node));
+        assert!(copied.consumed, "focused RichText must consume Ctrl+C");
+        assert_eq!(
+            &*clip.borrow(),
+            "result",
+            "Ctrl-drag should copy the title selection"
         );
     }
 

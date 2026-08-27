@@ -1569,14 +1569,19 @@ try {
         $resultNormalClickWindowHidden = ![FluxWallpaper]::IsWindowVisible($launcherHandle)
         $resultNormalClickLaunchProbe = $resultNormalClickDispatchObserved -and $resultNormalClickWindowHidden
         Save-Screenshot "result-pointer-normal-click.png"
-        if ($resultNormalClickWindowHidden) {
-            [FluxWallpaper]::keybd_event(0x12, 0, 0, [UIntPtr]::Zero)
-            [FluxWallpaper]::keybd_event(0x20, 0, 0, [UIntPtr]::Zero)
-            [FluxWallpaper]::keybd_event(0x20, 0, 2, [UIntPtr]::Zero)
-            [FluxWallpaper]::keybd_event(0x12, 0, 2, [UIntPtr]::Zero)
-            Start-Sleep -Milliseconds 800
+        # Restore through the same bounded WM_HOTKEY path used by the stable
+        # Enter smoke. A synthetic Alt+Space can be swallowed while Explorer
+        # becomes foreground after the result launch.
+        $restoreDeadline = (Get-Date).AddSeconds(5)
+        while (![FluxWallpaper]::IsWindowVisible($launcherHandle) -and (Get-Date) -lt $restoreDeadline) {
+            [FluxWallpaper]::SendMessage($launcherHandle, $wmHotkey, [UIntPtr]::Zero, [IntPtr]::Zero) | Out-Null
+            Start-Sleep -Milliseconds 650
+        }
+        if (![FluxWallpaper]::IsWindowVisible($launcherHandle)) {
+            throw "Result mouse interaction smoke could not restore launcher after normal click."
         }
         [FluxWallpaper]::SetForegroundWindow($launcherHandle) | Out-Null
+        Start-Sleep -Milliseconds 200
         $shell.SendKeys("^a")
         $shell.SendKeys("{BACKSPACE}")
         $shell.SendKeys($resultPointerQuery)
@@ -1610,15 +1615,19 @@ try {
         Save-Screenshot "result-pointer-ctrl-selection.png"
         $resultCtrlSelectionWindowVisible = [FluxWallpaper]::IsWindowVisible($launcherHandle)
         if (!$resultCtrlSelectionWindowVisible) {
-            # Keep the two reproductions independent if the baseline selection
-            # path unexpectedly hides Flux before the RMB probe begins.
-            [FluxWallpaper]::keybd_event(0x12, 0, 0, [UIntPtr]::Zero)
-            [FluxWallpaper]::keybd_event(0x20, 0, 0, [UIntPtr]::Zero)
-            [FluxWallpaper]::keybd_event(0x20, 0, 2, [UIntPtr]::Zero)
-            [FluxWallpaper]::keybd_event(0x12, 0, 2, [UIntPtr]::Zero)
-            Start-Sleep -Milliseconds 800
+            # Keep the two reproductions independent if the selection probe
+            # leaves Flux hidden before the RMB probe begins.
+            $restoreDeadline = (Get-Date).AddSeconds(5)
+            while (![FluxWallpaper]::IsWindowVisible($launcherHandle) -and (Get-Date) -lt $restoreDeadline) {
+                [FluxWallpaper]::SendMessage($launcherHandle, $wmHotkey, [UIntPtr]::Zero, [IntPtr]::Zero) | Out-Null
+                Start-Sleep -Milliseconds 650
+            }
+            if (![FluxWallpaper]::IsWindowVisible($launcherHandle)) {
+                throw "Result mouse interaction smoke could not restore launcher after Ctrl selection."
+            }
         }
         [FluxWallpaper]::SetForegroundWindow($launcherHandle) | Out-Null
+        Start-Sleep -Milliseconds 200
         $shell.SendKeys("^a")
         $shell.SendKeys("{BACKSPACE}")
         $shell.SendKeys($resultPointerQuery)

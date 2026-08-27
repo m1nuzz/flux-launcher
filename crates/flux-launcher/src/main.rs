@@ -2216,6 +2216,7 @@ fn result_row(
     recycle_bin_confirmation: Signal<bool>,
     settings_visible: Signal<bool>,
     window_size_slot: Rc<RefCell<Option<WindowSizeHandle>>>,
+    title_selection_active: Signal<bool>,
 ) -> Element {
     let id = result.id;
     let target = result.target;
@@ -2290,6 +2291,7 @@ fn result_row(
                 .child(
                     Element::rich_signal(title_doc_signal)
                         .selection_requires_ctrl(true)
+                        .on_selection_mode_change(move |active| title_selection_active.set(active))
                         .copy_menu(false)
                         .font_family(LAUNCHER_FONT_FAMILY)
                         .font_size(14.0)
@@ -2443,6 +2445,9 @@ fn main() {
     let selected_id = signal(String::new());
     let selected_index = signal(0_usize);
     let selection_touched = signal(false);
+    // True only while the pointer is over a Ctrl-enabled result title. The
+    // app-level Ctrl+C handler uses this to defer to focused RichText.
+    let title_selection_active = signal(false);
     let action_mode = signal(false);
     let action_index = signal(0_usize);
     let recycle_bin_confirmation = signal(false);
@@ -2561,6 +2566,7 @@ fn main() {
     let icon_refresh_generation = signal(SHELL_ICON_COMPLETION_GENERATION.load(Ordering::Acquire));
     let settings_visible_for_rows = settings_visible;
     let window_size_slot_for_rows = Rc::clone(&action_window_slot);
+    let title_selection_active_for_rows = title_selection_active;
     let inline_completion = signal(String::new());
 
     let search_box = Element::text_input(query, "Search")
@@ -2639,6 +2645,7 @@ fn main() {
             recycle_bin_confirmation,
             settings_visible_for_rows,
             Rc::clone(&window_size_slot_for_rows),
+            title_selection_active_for_rows,
         )
     })
     .width_match()
@@ -3390,6 +3397,7 @@ fn main() {
     let cursor_visibility_for_keys = cursor_visibility.clone();
     let size_for_keys = window_size.clone();
     let show_results_for_keys = show_results;
+    let title_selection_active_for_keys = title_selection_active;
     let settings_for_game_hotkey = Arc::clone(&shared_settings);
     let game_mode_for_hotkey = game_mode;
     let game_mode_status_for_hotkey = game_mode_status;
@@ -3438,6 +3446,13 @@ fn main() {
                 Key::Other(0x43) | Key::Char('c') | Key::Char('C')
             )
         {
+            // A Ctrl-gated result title owns copy while active under the
+            // pointer. Returning false lets focused RichText copy its title
+            // selection; the legacy path-copy shortcut remains unchanged
+            // everywhere else.
+            if title_selection_active_for_keys.get() {
+                return false;
+            }
             if let Some(result) = selected_result(
                 &results_for_keys.get(),
                 &selected_id_for_keys.get(),
