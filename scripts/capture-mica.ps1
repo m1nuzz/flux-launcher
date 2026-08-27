@@ -451,10 +451,17 @@ $launchProbeShortcut = $shortcutShell.CreateShortcut((Join-Path $wabFixtureRoot 
 $launchProbeShortcut.TargetPath = Join-Path $env:WINDIR "System32\cmd.exe"
 $launchProbeShortcut.Arguments = "/c exit"
 $launchProbeShortcut.WorkingDirectory = $env:WINDIR
-$launchProbeShortcut.Description = "Zq7LaunchProbe deterministic process creation smoke fixture"
-$launchProbeShortcut.Save()
+    $launchProbeShortcut.Description = "Zq7LaunchProbe deterministic process creation smoke fixture"
+    $launchProbeShortcut.Save()
+    $resultPointerShortcut = $shortcutShell.CreateShortcut((Join-Path $wabFixtureRoot "ResultMouseProbe.lnk"))
+    $resultPointerShortcut.TargetPath = $absoluteExecutable
+    $resultPointerShortcut.Arguments = '--folder-launch-smoke "{0}"' -f $folderFixtureRoot
+    $resultPointerShortcut.WorkingDirectory = Split-Path -Parent $absoluteExecutable
+    $resultPointerShortcut.Description = "Result mouse interaction windowless launch smoke fixture"
+    $resultPointerShortcut.Save()
 
-$existingEverythingGuideIds = @(
+    $existingEverythingGuideIds = @(
+
     Get-Process | Where-Object {
         $_.MainWindowTitle -like "Command Line Options - Everything*"
     } | Select-Object -ExpandProperty Id
@@ -1529,7 +1536,7 @@ try {
         # Reproduce the two reported interactions on a deterministic Start Menu
         # shortcut. The current behavior is expected to fail this block: RichText
         # owns the title's right-click and exposes a text cursor on plain hover.
-        $resultPointerQuery = "zq7launchprobe"
+        $resultPointerQuery = "resultmouseprobe"
         $shell.SendKeys("^a")
         $shell.SendKeys("{BACKSPACE}")
         $shell.SendKeys($resultPointerQuery)
@@ -1576,6 +1583,7 @@ try {
         Start-Sleep -Seconds 2
 
         # Ctrl-hover is the explicit opt-in path for text selection/copying.
+        [FluxWallpaper]::SetForegroundWindow($launcherHandle) | Out-Null
         [FluxWallpaper]::keybd_event(0x11, 0, 0, [UIntPtr]::Zero)
         [FluxWallpaper]::SetCursorPos($resultTitleX, $resultTitleY) | Out-Null
         Start-Sleep -Milliseconds 350
@@ -1587,13 +1595,14 @@ try {
         [FluxWallpaper]::SetCursorPos($selectEndX, $resultTitleY) | Out-Null
         Start-Sleep -Milliseconds 250
         [FluxWallpaper]::mouse_event(0x0004, 0, 0, 0, [UIntPtr]::Zero)
+        [FluxWallpaper]::SendMessage($launcherHandle, $wmKeyDown, [UIntPtr]::new(0x43), [IntPtr]::Zero) | Out-Null
+        Start-Sleep -Milliseconds 250
         [FluxWallpaper]::keybd_event(0x11, 0, 2, [UIntPtr]::Zero)
-        $shell.SendKeys("^c")
         Start-Sleep -Milliseconds 250
         try {
             $resultClipboardText = (Get-Clipboard -Raw -ErrorAction Stop).Trim()
             $resultCtrlCopyProbe = $resultClipboardText.Length -gt 0 -and
-                $resultClipboardText.ToLowerInvariant().Contains("zq7")
+                $resultClipboardText.ToLowerInvariant().Contains("resultmouseprobe")
         } catch {
             $resultClipboardText = ""
             $resultCtrlCopyProbe = $false
@@ -1614,6 +1623,12 @@ try {
         $shell.SendKeys("{BACKSPACE}")
         $shell.SendKeys($resultPointerQuery)
         Start-Sleep -Seconds 2
+        $resultPointerRect = New-Object FluxWallpaper+RECT
+        if (![FluxWallpaper]::GetWindowRect($launcherHandle, [ref]$resultPointerRect)) {
+            throw "Result mouse interaction smoke could not relocate launcher after Ctrl selection."
+        }
+        $resultTitleX = $resultPointerRect.Left + 80
+        $resultTitleY = $resultPointerRect.Top + 75
 
         # Right-click the title. It must follow the same launch path as Enter,
         # not open RichText's copy menu or require a second activation.
