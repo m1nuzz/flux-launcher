@@ -5029,14 +5029,16 @@ fn main() {
             let has_query = !next_query.trim().is_empty();
             history_mode_for_interval.set(false);
             show_results_for_interval.set(has_query);
-            size_for_interval.set(
+            // Query cleanup also happens when hide-on-deactivate hides the
+            // launcher. Do not let that asynchronous query transition resize
+            // an already-open Settings panel back to the compact search strip.
+            let (target_width, target_height) = launcher_window_geometry_with_sizes(
+                settings_visible_for_interval.get(),
+                has_query,
                 launcher_width.get() as i32,
-                if has_query {
-                    launcher_height.get() as i32
-                } else {
-                    COMPACT_WINDOW_HEIGHT
-                },
+                launcher_height.get() as i32,
             );
+            size_for_interval.set(target_width, target_height);
             sequence = sequence.wrapping_add(1);
             sequence_for_interval.set(sequence);
             model.set_query(&next_query);
@@ -5825,6 +5827,16 @@ mod tests {
         assert_eq!(
             launcher_window_geometry(false, false),
             (super::DEFAULT_LAUNCHER_WIDTH as i32, COMPACT_WINDOW_HEIGHT)
+        );
+    }
+
+    #[test]
+    fn query_cleanup_keeps_open_settings_at_full_geometry() {
+        // hide-on-deactivate clears the query asynchronously. The following
+        // query transition must not resize the already-open Settings panel.
+        assert_eq!(
+            launcher_window_geometry_with_sizes(true, false, 420, 56),
+            (super::SETTINGS_WINDOW_WIDTH, super::SETTINGS_WINDOW_HEIGHT)
         );
     }
 }
