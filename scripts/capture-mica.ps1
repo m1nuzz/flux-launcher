@@ -737,6 +737,9 @@ try {
             if (![FluxWallpaper]::IsWindowVisible($launcherHandle)) {
                 throw "Deactivation smoke could not restore Flux before typing the active query."
             }
+            [FluxWallpaper]::SetForegroundWindow($launcherHandle) | Out-Null
+            [FluxWallpaper]::SetFocus($launcherHandle) | Out-Null
+            Start-Sleep -Milliseconds 200
             $wmCharForDeactivation = 0x0102
             foreach ($character in $deactivationQuery.ToCharArray()) {
                 [FluxWallpaper]::SendMessage(
