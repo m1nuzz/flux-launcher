@@ -1602,7 +1602,10 @@ try {
         [FluxWallpaper]::SetCursorPos($selectEndX, $resultTitleY) | Out-Null
         Start-Sleep -Milliseconds 250
         [FluxWallpaper]::mouse_event(0x0004, 0, 0, 0, [UIntPtr]::Zero)
-        [FluxWallpaper]::SendMessage($launcherHandle, $wmKeyDown, [UIntPtr]::new(0x43), [IntPtr]::Zero) | Out-Null
+        # Deliver Ctrl+C as real keyboard input to the focused launcher window;
+        # direct WM_KEYDOWN bypasses the normal foreground/input route.
+        [FluxWallpaper]::keybd_event(0x43, 0, 0, [UIntPtr]::Zero)
+        [FluxWallpaper]::keybd_event(0x43, 0, 2, [UIntPtr]::Zero)
         Start-Sleep -Milliseconds 250
         [FluxWallpaper]::keybd_event(0x11, 0, 2, [UIntPtr]::Zero)
         Start-Sleep -Milliseconds 250
@@ -2814,6 +2817,7 @@ try {
         ResultNormalClickLaunchProbe = (!$ResultMouseInteractionSmoke) -or $resultNormalClickLaunchProbe
         ResultCtrlHoverTextCursor = $resultCtrlHoverTextCursor
         ResultCtrlSelectionWindowVisible = $resultCtrlSelectionWindowVisible
+        ResultCtrlClipboardText = $resultClipboardText
         ResultCtrlCopyProbe = (!$ResultMouseInteractionSmoke) -or $resultCtrlCopyProbe
         ScrollbarGapProbe = (!$ScrollbarGapSmoke) -or $scrollbarGapProbe
         ActionBarProbe = (!$ActionBarSmoke) -or $actionBarProbe
