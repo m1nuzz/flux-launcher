@@ -156,8 +156,6 @@ $summary = [ordered]@{
     PromptNoModalScrimProbe = $false
     PromptTransparentWindowProbe = $false
     PromptD2DProbe = $false
-    PromptLayeredTransparentFallbackProbe = $false
-    PromptRendererProbe = $false
     PromptDismissProbe = $false
     PromptDismissedWindowWidth = 0
     PromptDismissedWindowHeight = 0
@@ -213,9 +211,7 @@ try {
     $summary.PromptTransparentPanelProbe = $stderr -match "panel_fill=none"
     $summary.PromptNoModalScrimProbe = $stderr -match "modal_scrim=none"
     $summary.PromptTransparentWindowProbe = $stderr -match "window_background=transparent"
-    $summary.PromptD2DProbe = $stderr -match "\[windui\] D2D backend active \(composition=true\)"
-    $summary.PromptLayeredTransparentFallbackProbe = $stderr -match "\[windui\] layered transparent fallback active"
-    $summary.PromptRendererProbe = $summary.PromptD2DProbe -or $summary.PromptLayeredTransparentFallbackProbe
+    $summary.PromptD2DProbe = $stderr -match "\[windui\] D2D backend active"
     if (!$summary.PromptContentProbe) {
         throw "Everything install prompt telemetry was not observed; the screenshot must not be treated as prompt proof."
     }
@@ -301,8 +297,8 @@ try {
     if (!$summary.PromptGeometryProbe) {
         throw "Everything install prompt window was undersized: $($summary.WindowWidth)x$($summary.WindowHeight)."
     }
-    if (!$summary.PromptGlassStyleProbe -or !$summary.PromptBorderlessStyleProbe -or !$summary.PromptTransparentPanelProbe -or !$summary.PromptNoModalScrimProbe -or !$summary.PromptTransparentWindowProbe -or !$summary.PromptRendererProbe) {
-        throw "Everything install prompt did not report a transparent Acrylic/D2D or layered fallback renderer path."
+    if (!$summary.PromptGlassStyleProbe -or !$summary.PromptBorderlessStyleProbe -or !$summary.PromptTransparentPanelProbe -or !$summary.PromptNoModalScrimProbe -or !$summary.PromptTransparentWindowProbe -or !$summary.PromptD2DProbe) {
+        throw "Everything install prompt did not report the modern transparent no-scrim style path."
     }
     if (!$summary.PromptDismissProbe) {
         throw "Everything install prompt did not return to compact geometry after Not now: $($summary.PromptDismissedWindowWidth)x$($summary.PromptDismissedWindowHeight)."
