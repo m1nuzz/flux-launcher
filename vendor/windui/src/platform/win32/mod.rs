@@ -340,6 +340,10 @@ struct WindowState {
     suppress_deactivation_hide: bool,
     /// Grace period for an asynchronous WA_INACTIVE emitted after SetWindowPos.
     suppress_deactivation_hide_until: Option<Instant>,
+    /// A native tray popup runs a nested message loop. Do not treat transient
+    /// activation changes inside that loop as user deactivation while its action
+    /// is about to show or hide this same HWND.
+    tray_menu_active: bool,
 }
 
 /// 触摸拖动判定状态。区分"点击"（按下抬起未越阈值）与"滑动滚动"（越阈值后拖动）。
@@ -429,6 +433,7 @@ impl WindowState {
             in_size_move: false,
             suppress_deactivation_hide: false,
             suppress_deactivation_hide_until: None,
+            tray_menu_active: false,
         }
     }
 
@@ -1340,6 +1345,7 @@ unsafe extern "system" fn wnd_proc(
                     .map(|state| {
                         state.handler.hide_on_deactivate()
                             && !state.suppress_deactivation_hide
+                            && !state.tray_menu_active
                             && state
                                 .suppress_deactivation_hide_until
                                 .is_none_or(|until| Instant::now() >= until)
@@ -1363,6 +1369,7 @@ unsafe extern "system" fn wnd_proc(
                     .map(|state| {
                         state.handler.hide_on_deactivate()
                             && !state.suppress_deactivation_hide
+                            && !state.tray_menu_active
                             && state
                                 .suppress_deactivation_hide_until
                                 .is_none_or(|until| Instant::now() >= until)
@@ -2089,9 +2096,18 @@ unsafe fn on_tray_message(hwnd: HWND, lparam: LPARAM) {
             else {
                 return;
             };
+            // Mark the modal tray-menu interval before entering TrackPopupMenu.
+            // The popup pumps messages and can produce transient WA_INACTIVE while
+            // the selected action is still about to show this same HWND.
+            if let Some(state) = state_from(hwnd) {
+                state.tray_menu_active = true;
+            }
             // 弹菜单：**无借用**。菜单存续期间 wnd_proc 会被反复重入。
             let id = tray::track_menu(hwnd, menu);
             if id == 0 {
+                if let Some(state) = state_from(hwnd) {
+                    state.tray_menu_active = false;
+                }
                 return; // 用户取消
             }
             // 跑选中项：重借取意图，借用随语句释放。
@@ -2103,8 +2119,12 @@ unsafe fn on_tray_message(hwnd: HWND, lparam: LPARAM) {
                 .and_then(|s| s.tray.as_mut())
                 .map(|ts| ts.run_item(id))
                 .unwrap_or_default();
-            // 执行意图：已无借用。
+            // 执行意图：已无借用。 Keep the guard through ShowWindow and
+            // SetForegroundWindow, which may synchronously dispatch activation.
             run_tray_actions(hwnd, actions);
+            if let Some(state) = state_from(hwnd) {
+                state.tray_menu_active = false;
+            }
         }
         tray::TrayEvent::Other => {}
     }
