@@ -917,7 +917,25 @@ try {
             } else {
                 0
             }
-            [FluxWallpaper]::SetCursorPos($clickX, $clickY) | Out-Null
+            $secondOutsidePoint = $null
+            foreach ($candidate in $candidatePoints) {
+                $insideSettings = $candidate.X -ge $settingsAfterDeactivationRect.Left -and
+                    $candidate.X -lt $settingsAfterDeactivationRect.Right -and
+                    $candidate.Y -ge $settingsAfterDeactivationRect.Top -and
+                    $candidate.Y -lt $settingsAfterDeactivationRect.Bottom
+                $ownerProcessId = [FluxWallpaper]::WindowProcessIdAtPoint($candidate.X, $candidate.Y)
+                if (!$insideSettings -and $ownerProcessId -eq $probeProcessId) {
+                    $secondOutsidePoint = $candidate
+                    break
+                }
+            }
+            if ($null -eq $secondOutsidePoint) {
+                throw "Tray Settings regression could not find a probe-owned point outside the expanded Settings panel."
+            }
+            $secondClickX = [int]$secondOutsidePoint.X
+            $secondClickY = [int]$secondOutsidePoint.Y
+            Write-Host "Second outside click x=$secondClickX y=$secondClickY"
+            [FluxWallpaper]::SetCursorPos($secondClickX, $secondClickY) | Out-Null
             [FluxWallpaper]::mouse_event(0x0002, 0, 0, 0, [UIntPtr]::Zero)
             [FluxWallpaper]::mouse_event(0x0004, 0, 0, 0, [UIntPtr]::Zero)
             $secondDeactivationDeadline = (Get-Date).AddSeconds(2)
