@@ -82,6 +82,13 @@ jobs:
         shell: pwsh
         run: ./scripts/enable-dwm-smoke.ps1 -OutputDirectory ./artifacts/windows-ui-release
 
+      - name: Smoke startup window visibility and Everything process guard
+        shell: pwsh
+        env:
+          FLUX_DISABLE_UPDATE_CHECKS: "1"
+          FLUX_DISABLE_EVERYTHING_PROMPT: "1"
+        run: ./scripts/startup-console-smoke.ps1 -Executable ./target/x86_64-pc-windows-msvc/release/flux-launcher.exe -WorkDirectory ./artifacts/windows-ui-release/startup-console
+
       - name: Capture UI states and verify exact native visual preview HWND
         shell: pwsh
         env:

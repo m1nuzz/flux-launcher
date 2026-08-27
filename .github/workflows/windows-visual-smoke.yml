@@ -83,6 +83,11 @@ on:
         required: false
         default: false
         type: boolean
+      startup_console_smoke:
+        description: "Detect visible console windows during first and repeated Flux startup and verify Everything process idempotence"
+        required: false
+        default: false
+        type: boolean
       resource_profile_smoke:
         description: "Run a bounded repeated-query process resource profile and record memory/CPU samples"
         required: false
@@ -127,6 +132,14 @@ jobs:
       - name: Enable DWM effects and collect preflight diagnostics
         shell: pwsh
         run: ./scripts/enable-dwm-smoke.ps1 -OutputDirectory ./artifacts/mica-smoke
+
+      - name: Smoke startup window visibility and Everything process guard
+        if: ${{ inputs.startup_console_smoke == true }}
+        shell: pwsh
+        env:
+          FLUX_DISABLE_UPDATE_CHECKS: "1"
+          FLUX_DISABLE_EVERYTHING_PROMPT: "1"
+        run: ./scripts/startup-console-smoke.ps1 -Executable ./target/x86_64-pc-windows-msvc/release/flux-launcher.exe -WorkDirectory ./artifacts/mica-smoke/startup-console
 
       - name: Capture desktop compositor output
         shell: pwsh
