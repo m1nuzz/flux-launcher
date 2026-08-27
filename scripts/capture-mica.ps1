@@ -807,6 +807,13 @@ try {
         }
         $clickX = [int]$outsidePoint.X
         $clickY = [int]$outsidePoint.Y
+        if ($TraySettingsAfterDeactivationSmoke) {
+            # The exact scenario must transfer foreground to the other top-level
+            # window before the click; this avoids a runner-specific SetCursorPos
+            # race after WScript keyboard injection.
+            [FluxWallpaper]::SetForegroundWindow($deactivationProbeHandle) | Out-Null
+            Start-Sleep -Milliseconds 250
+        }
         [FluxWallpaper]::SetCursorPos($clickX, $clickY) | Out-Null
         [FluxWallpaper]::mouse_event(0x0002, 0, 0, 0, [UIntPtr]::Zero)
         [FluxWallpaper]::mouse_event(0x0004, 0, 0, 0, [UIntPtr]::Zero)
