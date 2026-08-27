@@ -1,3 +1,5 @@
+#[cfg(windows)]
+use std::os::windows::process::CommandExt;
 use std::path::PathBuf;
 #[cfg(windows)]
 use std::process::Command;
@@ -19,6 +21,8 @@ use windui::prelude::Sender;
 
 const MAX_RESULTS: u32 = 16;
 const QUERY_TIMEOUT: Duration = Duration::from_millis(350);
+#[cfg(windows)]
+const CREATE_NO_WINDOW: u32 = 0x0800_0000;
 pub const WINGET_PACKAGE_ID: &str = "voidtools.Everything";
 
 fn startup_args() -> [&'static str; 1] {
@@ -69,6 +73,7 @@ fn should_start_everything(ipc_available: bool, process_running: bool) -> bool {
 #[cfg(windows)]
 fn everything_process_running() -> bool {
     let Ok(output) = Command::new("tasklist")
+        .creation_flags(CREATE_NO_WINDOW)
         .args(["/FI", "IMAGENAME eq Everything.exe", "/FO", "CSV", "/NH"])
         .output()
     else {
@@ -106,7 +111,11 @@ pub fn start_background_if_installed() -> Result<InstallationState, String> {
         }
 
         everything_start_requested().store(true, Ordering::Release);
-        if let Err(error) = Command::new(path).args(startup_args()).spawn() {
+        if let Err(error) = Command::new(path)
+            .creation_flags(CREATE_NO_WINDOW)
+            .args(startup_args())
+            .spawn()
+        {
             everything_start_requested().store(false, Ordering::Release);
             return Err(format!(
                 "Unable to start Everything in the background: {error}"
@@ -152,7 +161,11 @@ fn installed_executable() -> Option<PathBuf> {
         .into_iter()
         .find(|path| path.is_file())
         .or_else(|| {
-            let output = Command::new("where").arg("Everything.exe").output().ok()?;
+            let output = Command::new("where")
+                .creation_flags(CREATE_NO_WINDOW)
+                .arg("Everything.exe")
+                .output()
+                .ok()?;
             if !output.status.success() {
                 return None;
             }
