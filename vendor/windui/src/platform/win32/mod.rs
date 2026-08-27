@@ -821,9 +821,9 @@ unsafe fn apply_acrylic_policy(hwnd: HWND) {
     let mut policy = AccentPolicy {
         state: ACCENT_ENABLE_ACRYLICBLURBEHIND,
         flags: 0,
-        // A restrained dark tint keeps text readable while allowing the desktop
-        // and adjacent windows to contribute to the translucent material.
-        gradient_color: 0x66101828,
+        // Use only a light tint: the system Acrylic blur remains visible instead
+        // of turning the launcher into a dark solid-looking rectangle.
+        gradient_color: 0x20101828,
         animation_id: 0,
     };
     let mut data = WindowCompositionAttributeData {
