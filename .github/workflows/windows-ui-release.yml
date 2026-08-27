@@ -178,15 +178,14 @@ jobs:
 
             ## What's changed
 
-            - Improved the Windows visual smoke launch assertion so an asynchronous `process-created` trace event is matched to the latest `launch-dispatch` event instead of a stale line-count offset.
-            - Added structured GitHub issue forms for bug reports and feature requests. Bug reports now collect Windows version/build, Flux version, keyboard layouts and IME details, reproduction steps, focus/hotkey context, and sanitized diagnostics.
-            - Carried forward the verified v0.1.112 functionality: safe built-in calculator ranking (`1+1` → `= 2`), PowerShell path/argument-aware deduplication, native PowerShell icons, shell-icon worker COM initialization, and Windows regression coverage.
+            - Fixed the Settings tray reactivation path after Flux is hidden by clicking another window. Settings now applies its full position and `720x520` dimensions before the first visible frame, so the compact search strip cannot appear instead of the Settings panel.
+            - Added a real Windows tray-menu regression smoke covering the complete sequence: active query, outside-window deactivation, native tray `Settings` selection, full-panel geometry, cleanup, and launcher restoration.
+            - Preserved the existing native Windows UI, global hotkey, single-instance, Everything, native Flow plugin, calculator, icon, installer, updater, and uninstall behavior.
 
             ## Validation
 
-            - The preceding Windows visual smoke and normal CI checks completed successfully on the verified source commit.
-            - The release workflow runs the full Windows build, native tests, plugin pipe smoke, icon smoke, single-instance/Everything smoke, UI smoke, installer/uninstall smoke, and updater smoke before publishing.
-            - The Chinese keyboard/IME issue is documented and under investigation; this release does not claim to contain a Chinese IME fix.
+            - The release workflow runs the full Windows build, native tests, plugin pipe smoke, icon smoke, single-instance/Everything smoke, UI/lifecycle smoke, installer/uninstall smoke, and updater smoke before publishing.
+            - Windows UI smoke specifically verifies that Settings opens as a full `720x520` panel after deactivation and that hidden idle CPU remains within the existing budget.
             - The release includes only the user-facing installer and portable executable. CI screenshots, DWM diagnostics, smoke logs, and test fixtures remain workflow artifacts.
 
             Beta releases are for testing and are ignored by the stable updater. Stable releases are the versions intended for WinGet and normal automatic updates.
