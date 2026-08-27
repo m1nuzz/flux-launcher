@@ -743,7 +743,7 @@ try {
                     $launcherHandle,
                     $wmCharForDeactivation,
                     [UIntPtr]([int][char]$character),
-                    [IntPtr]::One
+                    [IntPtr]1
                 ) | Out-Null
             }
             $deactivationQueryDeadline = (Get-Date).AddSeconds(3)
