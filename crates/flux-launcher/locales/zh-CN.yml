@@ -1,0 +1,199 @@
+---
+tray:
+  show: 显示启动器
+  settings: 设置
+  game_mode: 游戏模式
+  exit: 退出
+search:
+  placeholder: 搜索
+action_bar:
+  open: 打开
+  run_as_admin: 以管理员身份运行
+  open_file_location: 打开文件位置
+everything:
+  detected_enable_ipc: 已检测到 Everything；Flux 将自动启用本地 IPC
+  not_installed_winget: 未安装 Everything。请使用 winget 安装以启用文件搜索。
+  install: 安装 Everything
+  prompt_install_question: 未安装 Everything。是否立即安装以获得快速索引的文件与文件夹搜索？
+  prompt_winget_command: 'Flux 将运行官方 winget 命令：winget install -e --id voidtools.Everything'
+  not_now: 暂不
+  install_started: 已通过 winget 开始安装 Everything。
+  install_started_toast: 已开始安装 Everything
+  auto_enable_disabled: 已在 Flux 设置中禁用 Everything 自动启用
+  ipc_available: Everything IPC 可用
+  ipc_unavailable: 已安装 Everything，但其本地 IPC 不可用
+  detected_enabling_ipc: 已检测到 Everything；Flux 正在自动启用本地 IPC
+  winget_started_restart: winget 安装已开始。安装完成后请重启 Flux。
+  winget_started_toast: winget 安装已开始
+  unavailable: Everything 不可用
+  result_count: "%{count} 个 Everything 结果"
+  query_failed: 'Everything 查询失败：%{error}'
+recycle_bin:
+  title: 清空回收站
+  warning: 这将永久删除回收站中的所有项目。
+  irreversible: 此操作无法撤销。
+  emptied: 回收站已清空
+  empty_failed: 无法清空回收站
+common:
+  cancel: 取消
+settings:
+  query_history_hint: '查询历史：按 Ctrl+H 可回溯已提交的搜索'
+  clear_history: 清空历史
+  history_cleared: 查询历史已清空
+  smooth_caret: 平滑光标
+  smooth_caret_desc: 动画化搜索光标移动
+  caret_duration: 光标时长（毫秒）
+  native_plugins_hint: '原生 Flow 插件：%APPDATA%\FluxLauncher\Plugins 或 FLUX_PLUGIN_DIR'
+  apply: 应用设置
+  applied: 已应用设置
+  startup_failed: "启动设置失败：%{error}"
+  title: 设置
+  apply_immediate: 更改立即生效并自动保存
+  tab:
+    general: 常规
+    visual: 外观
+    priorities: 优先级
+    plugins: 插件
+  back: 返回
+  activation_key: 激活热键
+  record_key: 录制按键
+  press_desired_key: 请按下所需的激活按键
+  record_hint: 点击"录制按键"后，按下单个按键或组合键
+  modifier:
+    ctrl: Ctrl
+    alt: Alt
+    shift: Shift
+    windows: Win
+  fullscreen_protection: 全屏保护
+  fullscreen_protection_desc: 当其他应用处于全屏时忽略激活
+  game_mode: 游戏模式
+  game_mode_desc: 压制启动器直到手动禁用
+  keyboard_layout: 键盘布局
+  keyboard_layout_desc: 开始输入时切换到英文布局，隐藏时恢复之前的布局
+  query_on_activation: 激活时的查询
+  query_on_activation_desc: 通过全局热键打开时清空之前的查询
+  windows_startup: Windows 启动
+  windows_startup_desc: 随 Windows 自动启动 Flux
+  language: 语言
+  language_options:
+    follow_system: 跟随系统
+    english: English
+    chinese: 简体中文
+  open_launcher_on: 打开启动器于
+  monitor:
+    primary: 主显示器
+    cursor: 鼠标光标所在的显示器
+    foreground: 前台窗口所在的显示器
+  updates: 更新
+  updates_desc: 自动检查稳定的 GitHub 版本
+  hours_between_checks: 小时检查一次
+  update_action: 更新操作
+  update_action_desc: 自动安装稳定更新
+  check_updates: 检查更新
+  install_now: 立即安装
+  everything: Everything
+  everything_desc: 安装后自动启用 Everything
+  everything_command: '命令：winget install -e --id voidtools.Everything'
+  lock_failed: 无法锁定 Flux 设置
+  plugins:
+    title: 原生插件
+    description: 内置 provider 在 Flux 内部运行。社区 Rust DLL 插件在同一份 flux-launcher.exe 派生出的隔离共享 worker 中运行。
+    folder: '社区插件文件夹：%{path}'
+    config_hint: 配置内置的原生 Rust 插件，无需 Python 或 C# 运行时。
+    obsidian: Obsidian
+    obsidian_desc: 启用 Obsidian 笔记库搜索
+    action_keyword: 动作关键词
+    obsidian_hint: 使用配置的关键词搜索笔记与库文件，例如：ob meeting。使用 `ob create project` 创建新笔记。
+    google: Google 搜索
+    google_desc: 启用 Google 网页搜索
+    google_hint: 使用配置的关键词搜索网页，例如：g space exploration。结果将在默认浏览器中打开。
+  priorities:
+    title: 显式应用程序优先级
+    description: 只有通过"设为优先级"显式添加的应用程序才会显示在此处。排名 1 最先被搜索。
+  visual:
+    title: 外观
+    preview_desc: 实时预览是一个独立的原生 windui 窗口。其客户区会实时直接调整大小；设置窗口在拖动时保持居中且稳定。
+    selection_color: 选中颜色
+    use_system_accent: 可用时使用 Windows 11 系统强调色
+    accent_hint: Windows 强调色从当前用户配置文件中读取；自定义颜色作为安全回退。
+    preview_hint: 当此"外观"选项卡处于活动状态时，精确的原生预览窗口会在设置旁打开。
+    launcher_width: 启动器宽度
+    results_height: 结果高度
+    reset: 重置
+    dip: DIP
+    safe_range: "安全范围：%{min}–%{max} 逻辑像素（DIP）"
+    native_preview_hint: 原生预览使用请求的确切逻辑客户区尺寸。物理 GetClientRect 像素随预览显示器 DPI 缩放；应用会保存这些值。
+    apply: 应用尺寸
+    save_failed: 无法保存外观尺寸
+    applied: 已应用外观尺寸
+    client_area: "当前启动器客户区：%{width} × %{height} 逻辑像素（DIP）"
+updater:
+  checking_github: 正在检查稳定的 GitHub 版本...
+  checked_automatically: 稳定更新会自动检查
+  installing_restarting: 正在安装稳定版 %{version}；Flux Launcher 即将重启
+  installing: 正在安装稳定版 %{version}
+  install_failed: 稳定版 %{version} 更新失败：%{error}
+  install_failed_toast: 更新安装失败：%{error}
+  available: 稳定版 %{version} 可用
+  preparing: 正在准备安装稳定版 %{version}...
+  already_installing: 已有更新正在安装中
+  up_to_date: Flux %{version} 已是最新
+  check_failed: 稳定更新检查失败：%{error}
+  preparing_download: 正在准备下载稳定版 %{version}...
+  checking_toast: 正在检查稳定更新
+  downloading_progress: "正在下载稳定版 %{version}：%{percent}% — %{received} / %{total}（剩余 %{remaining}）"
+  downloading_received: "正在下载稳定版 %{version}：已接收 %{received}"
+applications:
+  result_count: "%{count} 个应用程序结果"
+plugins:
+  no_native_flow: 未安装原生 Flow 插件
+  flow_not_respond: "%{count} 个原生 Flow 插件未响应"
+  flow_result_count: "%{count} 个 Flow 插件结果"
+  host_restarted: '原生插件宿主已重启（尝试 %{attempt}）：%{error}'
+  no_native_host: 未安装原生 Rust 插件宿主
+  native_result_count: "%{count} 个原生插件结果"
+builtin:
+  calculator:
+    result: "= %{value}"
+    subtitle: "计算器 • %{expression}"
+  google:
+    title: "在 Google 中搜索：%{query}"
+    subtitle: 在默认浏览器中打开 Google 搜索
+  obsidian:
+    file_subtitle: "Obsidian • %{vault} • %{path}"
+    create_note: "创建笔记：%{name}"
+    vault_subtitle: "Obsidian • %{vault}"
+action:
+  open: 打开
+  copy_name: 复制名称
+  set_priority: 设为优先级（置顶）
+  run_as_admin: 以管理员身份运行
+  open_file_location: 打开文件位置
+  copy_path: 复制路径
+  plugin_run: 运行插件操作
+  plugin_open_url: 打开网页结果
+  plugin_open_path: 打开路径
+  plugin_copy_text: 复制文本
+game_mode:
+  on: 游戏模式：已开启
+  off: 游戏模式：已关闭
+priorities:
+  moved_up: 优先级已上移
+  moved_down: 优先级已下移
+  removed: 已移除优先级
+  remove: 移除
+  empty: 尚无显式优先级。选择一个应用程序，按向右键，然后选择"设为优先级"。
+visual_preview:
+  title: Flux Launcher
+  description: 这是实际的启动器预览窗口。其客户区直接调整大小，而非缩放进模拟卡片。
+  units_hint: 控件使用逻辑客户区单位（DIP）；Windows 会在预览显示器 DPI 下将它们映射为物理像素。
+  result_preview: 预览结果
+  result_preview_sub: 原生 windui 表面
+  result_exact: 宽度与高度完全精确
+  result_exact_sub: 从本窗口客户区测量
+  result_acrylic: Acrylic/Mica 保持活动
+  result_acrylic_sub: 设置窗口保持独立
+status:
+  ready: 就绪
+  searching: 正在搜索应用程序、Everything 与原生 Flow 插件...
+
