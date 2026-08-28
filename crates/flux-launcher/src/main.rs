@@ -28,6 +28,18 @@ use std::sync::{
 };
 use std::thread;
 use std::time::Duration;
+#[cfg(windows)]
+use windows::core::BOOL;
+#[cfg(windows)]
+use windows::Win32::Foundation::HANDLE;
+#[cfg(windows)]
+use windows::Win32::System::DataExchange::{
+    CloseClipboard, EmptyClipboard, OpenClipboard, SetClipboardData,
+};
+#[cfg(windows)]
+use windows::Win32::System::Memory::{GlobalAlloc, GlobalLock, GlobalUnlock, GMEM_MOVEABLE};
+#[cfg(windows)]
+use windows::Win32::UI::Shell::DROPFILES;
 
 use applications::{
     canonical_application_id, canonical_application_key, resolve_bare_executable_path,
@@ -949,6 +961,42 @@ fn quoted_result_path(result: &SearchResult) -> Option<String> {
         .and_then(|value| value.strip_suffix('"'))
         .unwrap_or(target);
     Some(format!("\"{target}\""))
+}
+
+#[cfg(windows)]
+fn copy_result_file(result: &SearchResult) -> bool {
+    let Some(path) = result.target.as_deref() else {
+        return false;
+    };
+    let path: Vec<u16> = path.encode_utf16().chain([0]).collect();
+    let header = std::mem::size_of::<DROPFILES>();
+    let bytes = header + path.len() * 2 + 2;
+    unsafe {
+        let Ok(hmem) = GlobalAlloc(GMEM_MOVEABLE, bytes) else {
+            return false;
+        };
+        let ptr = GlobalLock(hmem) as *mut u8;
+        if ptr.is_null() {
+            return false;
+        }
+        std::ptr::write_bytes(ptr, 0, bytes);
+        let drop = ptr as *mut DROPFILES;
+        (*drop).pFiles = header as u32;
+        (*drop).fWide = BOOL(1);
+        std::ptr::copy_nonoverlapping(path.as_ptr() as *const u8, ptr.add(header), path.len() * 2);
+        let _ = GlobalUnlock(hmem);
+        if OpenClipboard(None).is_err() {
+            return false;
+        }
+        let ok = EmptyClipboard().is_ok() && SetClipboardData(15, Some(HANDLE(hmem.0))).is_ok();
+        let _ = CloseClipboard();
+        ok
+    }
+}
+
+#[cfg(not(windows))]
+fn copy_result_file(_result: &SearchResult) -> bool {
+    false
 }
 
 fn copy_result_path(result: &SearchResult) -> bool {
@@ -3461,6 +3509,25 @@ fn main() {
             cursor_visibility_for_keys.hide();
         }
         if event.ctrl
+            && event.shift
+            && matches!(
+                event.key,
+                Key::Other(0x43) | Key::Char('c') | Key::Char('C')
+            )
+        {
+            if let Some(result) = selected_result(
+                &results_for_keys.get(),
+                &selected_id_for_keys.get(),
+                selected_index_for_keys.get(),
+            ) {
+                if copy_result_file(&result) {
+                    return true;
+                }
+            }
+            return false;
+        }
+        if event.ctrl
+            && !event.shift
             && matches!(
                 event.key,
                 Key::Other(0x43) | Key::Char('c') | Key::Char('C')

@@ -1170,6 +1170,7 @@ try {
     $resultNormalClickWindowHidden = $false
     $resultCtrlHoverTextCursor = $false
     $resultCtrlCopyProbe = $false
+    $resultCtrlShiftCopyProbe = $false
     $resultCtrlSelectionWindowVisible = $false
     $commandPriorityProbe = $false
     $compactAppProbe = $false
@@ -2204,6 +2205,19 @@ try {
         if (!$ctrlCProbe) {
             throw "Ctrl+C did not copy the selected result path in quotes."
         }
+        [FluxWallpaper]::SetForegroundWindow($launcherHandle) | Out-Null
+        $shell.SendKeys("^+c")
+        Start-Sleep -Milliseconds 450
+        try {
+            $dropPaths = @((Get-Clipboard -Format FileDropList -ErrorAction Stop) | ForEach-Object { $_.ToString() })
+            Write-Host "Ctrl+Shift+C file drop list: $($dropPaths -join '; ')"
+            $resultCtrlShiftCopyProbe = $dropPaths.Count -gt 0 -and (($dropPaths -join ';') -match '\\.(exe|lnk)$')
+        } catch {
+            $resultCtrlShiftCopyProbe = $false
+        }
+        if (!$resultCtrlShiftCopyProbe) {
+            throw "Ctrl+Shift+C did not copy a Windows file object."
+        }
     }
     if ($CtrlRSmoke) {
         $shell.SendKeys("^a")
@@ -2887,6 +2901,7 @@ try {
         QueryClearOnReopenProbe = (!$QueryClearOnReopenSmoke) -or $queryClearOnReopenProbe
         CtrlRProbe = (!$CtrlRSmoke) -or $ctrlRProbe
         CtrlCProbe = (!$CtrlCSmoke) -or $ctrlCProbe
+        CtrlShiftCopyProbe = (!$CtrlCSmoke) -or $resultCtrlShiftCopyProbe
         TabNavigationProbe = $TabNavigationCycles -gt 0
         EverythingSyntaxProbe = $true
         QueryResponsivenessProbe = (!$QueryResponsivenessSmoke) -or $queryResponsivenessProbe
@@ -2980,8 +2995,8 @@ try {
             HiddenIdleAfterDeactivation = $deactivationIdleMemory
         }
     } | ConvertTo-Json | Set-Content -Encoding utf8 (Join-Path $OutputDirectory "environment.json")
-    if ($ResultMouseInteractionSmoke -and (!$resultRmbActionMenuVisible -or $resultRmbLaunchProbe -or !$resultNormalClickLaunchProbe -or !$resultCtrlCopyProbe -or !$resultRightArrowMiddleCaretProbe)) {
-        throw "Result mouse interaction smoke failed: right_click_action_menu=$resultRmbActionMenuVisible, right_click_launch=$resultRmbLaunchProbe, normal_click_launch=$resultNormalClickLaunchProbe, ctrl_copy=$resultCtrlCopyProbe, right_arrow_middle_caret=$resultRightArrowMiddleCaretProbe."
+    if ($ResultMouseInteractionSmoke -and (!$resultRmbActionMenuVisible -or $resultRmbLaunchProbe -or !$resultNormalClickLaunchProbe -or !$resultCtrlCopyProbe -or !$resultCtrlShiftCopyProbe -or !$resultRightArrowMiddleCaretProbe)) {
+        throw "Result mouse interaction smoke failed: right_click_action_menu=$resultRmbActionMenuVisible, right_click_launch=$resultRmbLaunchProbe, normal_click_launch=$resultNormalClickLaunchProbe, ctrl_copy=$resultCtrlCopyProbe, ctrl_shift_copy=$resultCtrlShiftCopyProbe, right_arrow_middle_caret=$resultRightArrowMiddleCaretProbe."
     }
 }
 finally {
