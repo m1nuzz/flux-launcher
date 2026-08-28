@@ -2228,6 +2228,7 @@ try {
             Write-Host "Ctrl+Shift+C file drop list: $($dropPaths -join '; ')"
             $resultCtrlShiftCopyProbe = $dropPaths.Count -gt 0 -and (($dropPaths -join ';') -match '\.(exe|lnk)$')
         } catch {
+            Write-Host "Ctrl+Shift+C clipboard read failed: $($_.Exception.Message)"
             $resultCtrlShiftCopyProbe = $false
         }
         if (!$resultCtrlShiftCopyProbe) {
