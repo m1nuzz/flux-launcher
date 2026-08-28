@@ -1552,12 +1552,12 @@ try {
         if (![FluxWallpaper]::GetWindowRect($launcherHandle, [ref]$caretFocusRect)) {
             throw "Unable to locate launcher before caret focus probe."
         }
-        [FluxWallpaper]::SetCursorPos($caretFocusRect.Left + 220, $caretFocusRect.Top + 28) | Out-Null
+        # `resultmouseprobe` is roughly 160 DIP wide; click inside its middle,
+        # not at a fixed right-side coordinate that can land at the end.
+        [FluxWallpaper]::SetCursorPos($caretFocusRect.Left + 115, $caretFocusRect.Top + 28) | Out-Null
         [FluxWallpaper]::mouse_event(0x0002, 0, 0, 0, [UIntPtr]::Zero)
         [FluxWallpaper]::mouse_event(0x0004, 0, 0, 0, [UIntPtr]::Zero)
         Start-Sleep -Milliseconds 250
-        $shell.SendKeys("{LEFT}")
-        Start-Sleep -Milliseconds 150
         $shell.SendKeys("{RIGHT}")
         Start-Sleep -Milliseconds 500
         $caretMiddleRect = New-Object FluxWallpaper+RECT
