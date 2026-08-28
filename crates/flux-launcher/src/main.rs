@@ -558,7 +558,8 @@ enum ActionKind {
     Open,
     RunAsAdmin,
     OpenLocation,
-    CopyPath,
+    CopyFile,
+    CopyFolderPath,
     CopyName,
     SetPriority,
     RunPlugin(PluginAction),
@@ -584,7 +585,7 @@ fn actions_for_result(
     result: &SearchResult,
     plugin_actions: &HashMap<String, PluginAction>,
 ) -> Vec<ActionItem> {
-    let mut actions = Vec::with_capacity(4);
+    let mut actions = Vec::with_capacity(6);
     if matches!(result.id.as_str(), "empty-recycle-bin" | "open-recycle-bin") {
         return actions;
     }
@@ -624,10 +625,32 @@ fn actions_for_result(
             label: String::from("Open file location"),
             kind: ActionKind::OpenLocation,
         });
+        let is_folder = matches!(result.kind, ResultKind::File)
+            && result
+                .target
+                .as_deref()
+                .map(|target| std::path::Path::new(target.trim().trim_matches('"')).is_dir())
+                .unwrap_or(false);
         actions.push(ActionItem {
-            id: format!("{}:copy-path", result.id),
-            label: String::from("Copy file/folder path"),
-            kind: ActionKind::CopyPath,
+            id: format!(
+                "{}:{}",
+                result.id,
+                if is_folder {
+                    "copy-folder-path"
+                } else {
+                    "copy-file"
+                }
+            ),
+            label: String::from(if is_folder {
+                "Copy folder path"
+            } else {
+                "Copy file"
+            }),
+            kind: if is_folder {
+                ActionKind::CopyFolderPath
+            } else {
+                ActionKind::CopyFile
+            },
         });
     }
     if let Some(invocation) = plugin_actions.get(&result.id).cloned() {
@@ -1042,7 +1065,8 @@ fn execute_result_action(result: &SearchResult, action: &ActionKind) -> bool {
                 false
             }
         }
-        ActionKind::CopyPath => copy_result_path(result),
+        ActionKind::CopyFile => copy_result_file(result),
+        ActionKind::CopyFolderPath => copy_result_path(result),
         ActionKind::CopyName => {
             windui::platform::Clipboard.set_text(&result.title);
             true
@@ -5834,14 +5858,32 @@ mod tests {
                 "Open",
                 "Run as admin",
                 "Open file location",
-                "Copy file/folder path",
+                "Copy file",
             ]
         );
         assert!(matches!(actions[0].kind, super::ActionKind::SetPriority));
         assert!(matches!(actions[1].kind, super::ActionKind::Open));
         assert!(matches!(actions[2].kind, super::ActionKind::RunAsAdmin));
         assert!(matches!(actions[3].kind, super::ActionKind::OpenLocation));
-        assert!(matches!(actions[4].kind, super::ActionKind::CopyPath));
+        assert_eq!(labels[4], "Copy file");
+        assert!(matches!(actions[4].kind, super::ActionKind::CopyFile));
+    }
+
+    #[test]
+    fn file_results_offer_copy_folder_path_for_existing_directories() {
+        let folder = std::env::temp_dir();
+        let result = SearchResult {
+            id: String::from("file:folder-probe"),
+            title: String::from("Folder probe"),
+            subtitle: String::from("Everything"),
+            kind: ResultKind::File,
+            source: ResultSource::Everything,
+            target: Some(folder.to_string_lossy().into_owned()),
+        };
+        let actions = actions_for_result(&result, &std::collections::HashMap::new());
+        let copy = actions.last().expect("folder copy action");
+        assert_eq!(copy.label, "Copy folder path");
+        assert!(matches!(copy.kind, super::ActionKind::CopyFolderPath));
     }
 
     #[test]
