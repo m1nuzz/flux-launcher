@@ -54,6 +54,19 @@ use windui::event::{Event, Key, KeyEvent, MouseButton, PointerKind};
 use windui::prelude::*;
 use windui::render::{Canvas, Paint};
 
+#[cfg(windows)]
+use windows::core::BOOL;
+#[cfg(windows)]
+use windows::Win32::Foundation::HANDLE;
+#[cfg(windows)]
+use windows::Win32::System::DataExchange::{
+    CloseClipboard, EmptyClipboard, OpenClipboard, SetClipboardData,
+};
+#[cfg(windows)]
+use windows::Win32::System::Memory::{GlobalAlloc, GlobalLock, GlobalUnlock, GMEM_MOVEABLE};
+#[cfg(windows)]
+use windows::Win32::UI::Shell::DROPFILES;
+
 const CURRENT_VERSION: &str = env!("CARGO_PKG_VERSION");
 const SINGLE_INSTANCE_ID: &str = "m1nuzz.flux-launcher";
 const SETTINGS_WINDOW_WIDTH: i32 = 720;
@@ -497,7 +510,8 @@ enum ActionKind {
     Open,
     RunAsAdmin,
     OpenLocation,
-    CopyPath,
+    CopyFile,
+    CopyFolderPath,
     CopyName,
     SetPriority,
     RunPlugin(PluginAction),
@@ -523,7 +537,7 @@ fn actions_for_result(
     result: &SearchResult,
     plugin_actions: &HashMap<String, PluginAction>,
 ) -> Vec<ActionItem> {
-    let mut actions = Vec::with_capacity(4);
+    let mut actions = Vec::with_capacity(6);
     if matches!(result.id.as_str(), "empty-recycle-bin" | "open-recycle-bin") {
         return actions;
     }
@@ -563,13 +577,33 @@ fn actions_for_result(
             label: t!("action.open_file_location").into_owned(),
             kind: ActionKind::OpenLocation,
         });
-        if !matches!(result.kind, ResultKind::Application) {
-            actions.push(ActionItem {
-                id: format!("{}:copy-path", result.id),
-                label: t!("action.copy_path").into_owned(),
-                kind: ActionKind::CopyPath,
-            });
-        }
+        let is_folder = matches!(result.kind, ResultKind::File)
+            && result
+                .target
+                .as_deref()
+                .map(|target| std::path::Path::new(target.trim().trim_matches('"')).is_dir())
+                .unwrap_or(false);
+        actions.push(ActionItem {
+            id: format!(
+                "{}:{}",
+                result.id,
+                if is_folder {
+                    "copy-folder-path"
+                } else {
+                    "copy-file"
+                }
+            ),
+            label: if is_folder {
+                t!("action.copy_folder_path").into_owned()
+            } else {
+                t!("action.copy_file").into_owned()
+            },
+            kind: if is_folder {
+                ActionKind::CopyFolderPath
+            } else {
+                ActionKind::CopyFile
+            },
+        });
     }
     if let Some(invocation) = plugin_actions.get(&result.id).cloned() {
         actions.push(ActionItem {
@@ -768,9 +802,114 @@ impl Widget for ResultRowAnchor {
     }
 }
 
-/// 稳定的结果行图标，从轻量级回退开始，在后台图标工作器完成后
-/// 替换为缓存的 Windows Shell 图像。将此小部件保留在现有行内
-/// 可以避免重建动态结果列表，否则会重置行的本地交互状态并可能干扰滚动。
+/// A reactive action-menu row that reuses the result-list interaction contract.
+/// It owns selection/hover state and asks the nearest scroll container to reveal the
+/// selected row after keyboard or pointer navigation, while leaving the surrounding
+/// action-menu layout and styling unchanged.
+struct ActionRowAnchor {
+    item_index: usize,
+    action_index: Signal<usize>,
+    scroll_pending: Signal<bool>,
+    last_pointer: Option<(i32, i32)>,
+    pressed: bool,
+    on_click: Option<ClickFn>,
+}
+impl Widget for ActionRowAnchor {
+    fn on_update(&mut self, ctx: &mut EventCtx) {
+        if self.action_index.get() == self.item_index && self.scroll_pending.get() {
+            let row_id = ctx.id();
+            let _ = ctx.tree_mut().scroll_into_view(row_id);
+            self.scroll_pending.set(false);
+        }
+    }
+    fn on_event(&mut self, ctx: &mut EventCtx, event: &Event) -> bool {
+        let Event::Pointer(pointer) = event else {
+            return false;
+        };
+        match pointer.kind {
+            PointerKind::Enter => {
+                self.last_pointer = Some((pointer.pos.x, pointer.pos.y));
+                ctx.mark_dirty();
+                true
+            }
+            PointerKind::Move => {
+                let position = (pointer.pos.x, pointer.pos.y);
+                if hover_position_changed(&mut self.last_pointer, position) {
+                    self.action_index.set(self.item_index);
+                    self.scroll_pending.set(true);
+                    ctx.mark_dirty();
+                }
+                true
+            }
+            PointerKind::Leave => {
+                self.last_pointer = None;
+                ctx.mark_dirty();
+                true
+            }
+            PointerKind::Down if pointer.button == MouseButton::Left => {
+                self.action_index.set(self.item_index);
+                self.scroll_pending.set(true);
+                self.pressed = true;
+                ctx.request_focus();
+                ctx.capture();
+                ctx.mark_dirty();
+                true
+            }
+            PointerKind::Up if pointer.button == MouseButton::Left => {
+                let was_pressed = self.pressed;
+                self.pressed = false;
+                let inside = ctx.bounds().contains(pointer.pos);
+                ctx.release_capture();
+                ctx.mark_dirty();
+                if was_pressed && inside {
+                    if let Some(callback) = self.on_click.as_mut() {
+                        callback(ctx);
+                    }
+                }
+                true
+            }
+            _ => false,
+        }
+    }
+    fn take_click(&mut self, callback: ClickFn) {
+        self.on_click = Some(callback);
+    }
+    fn reset_interaction(&mut self) {
+        self.pressed = false;
+        self.last_pointer = None;
+    }
+    fn cursor(&self) -> windui::event::CursorShape {
+        windui::event::CursorShape::Hand
+    }
+    fn paint(
+        &self,
+        bounds: windui::geometry::Rect,
+        _content: windui::geometry::Rect,
+        _focused: bool,
+        _enabled: bool,
+        canvas: &mut dyn Canvas,
+        _style: &windui::style::Style,
+    ) {
+        let selected = self.action_index.get() == self.item_index;
+        let color = if selected {
+            Color::rgba(76, 139, 245, 92)
+        } else {
+            Color::rgba(255, 255, 255, 14)
+        };
+        canvas.fill_round_rect(
+            bounds.x as f32,
+            bounds.y as f32,
+            bounds.w as f32,
+            bounds.h as f32,
+            9.0,
+            &Paint::fill(color),
+        );
+    }
+}
+/// A stable result-row icon that starts with a lightweight fallback and swaps to the
+/// cached Windows Shell image when the background icon worker completes. Keeping this
+/// widget inside the existing row avoids rebuilding the dynamic result list, which
+/// would otherwise reset row-local interaction state and can disturb scrolling.
 struct ResultIconView {
     target: Option<String>,
     fallback: String,
@@ -882,6 +1021,44 @@ fn quoted_result_path(result: &SearchResult) -> Option<String> {
     Some(format!("\"{target}\""))
 }
 
+/// Copy the result path as a drag-drop file list (CF_HDROP) so it can be pasted
+/// into Explorer or other drop targets.
+#[cfg(windows)]
+fn copy_result_file(result: &SearchResult) -> bool {
+    let Some(path) = result.target.as_deref() else {
+        return false;
+    };
+    let path: Vec<u16> = path.encode_utf16().chain([0]).collect();
+    let header = std::mem::size_of::<DROPFILES>();
+    let bytes = header + path.len() * 2 + 2;
+    unsafe {
+        let Ok(hmem) = GlobalAlloc(GMEM_MOVEABLE, bytes) else {
+            return false;
+        };
+        let ptr = GlobalLock(hmem) as *mut u8;
+        if ptr.is_null() {
+            return false;
+        }
+        std::ptr::write_bytes(ptr, 0, bytes);
+        let drop = ptr as *mut DROPFILES;
+        (*drop).pFiles = header as u32;
+        (*drop).fWide = BOOL(1);
+        std::ptr::copy_nonoverlapping(path.as_ptr() as *const u8, ptr.add(header), path.len() * 2);
+        let _ = GlobalUnlock(hmem);
+        if OpenClipboard(None).is_err() {
+            return false;
+        }
+        let ok = EmptyClipboard().is_ok() && SetClipboardData(15, Some(HANDLE(hmem.0))).is_ok();
+        let _ = CloseClipboard();
+        ok
+    }
+}
+
+#[cfg(not(windows))]
+fn copy_result_file(_result: &SearchResult) -> bool {
+    false
+}
+
 fn copy_result_path(result: &SearchResult) -> bool {
     let Some(path) = quoted_result_path(result) else {
         return false;
@@ -913,7 +1090,8 @@ fn execute_result_action(result: &SearchResult, action: &ActionKind) -> bool {
                 false
             }
         }
-        ActionKind::CopyPath => copy_result_path(result),
+        ActionKind::CopyFile => copy_result_file(result),
+        ActionKind::CopyFolderPath => copy_result_path(result),
         ActionKind::CopyName => {
             windui::platform::Clipboard.set_text(&result.title);
             true
@@ -2835,6 +3013,7 @@ fn main() {
     let priorities_for_action_list = priorities;
     let providers_for_action_list = Rc::clone(&provider_results);
     let query_for_action_list = query;
+    let action_scroll_pending = signal(false);
     let action_list = Element::list_signal(
         action_items_for_rows,
         |item| item.id.clone(),
@@ -2853,6 +3032,19 @@ fn main() {
                 .map(|index| index == action_index_for_rows.get())
                 .unwrap_or(false);
             Element::row()
+                .widget(ActionRowAnchor {
+                    item_index: action_items_for_rows
+                        .get()
+                        .iter()
+                        .position(|candidate| candidate.id == item_id)
+                        .unwrap_or_default(),
+                    action_index: action_index_for_rows,
+                    scroll_pending: action_scroll_pending,
+                    last_pointer: None,
+                    pressed: false,
+                    on_click: None,
+                })
+                .reactive()
                 .width_match()
                 .height(36)
                 .padding_xy(10, 4)
@@ -3414,6 +3606,7 @@ fn main() {
     let action_mode_for_keys = action_mode;
     let action_index_for_keys = action_index;
     let action_items_for_keys = action_items;
+    let action_scroll_pending_for_keys = action_scroll_pending;
     let recycle_bin_confirmation_for_keys = recycle_bin_confirmation;
     let plugin_actions_for_keys = Rc::clone(&plugin_actions);
     let inline_completion_for_keys = inline_completion;
@@ -3629,12 +3822,12 @@ fn main() {
                             .checked_sub(1)
                             .unwrap_or(count - 1),
                     );
-                    action_items_for_keys.set(action_items_for_keys.get());
+                    action_scroll_pending_for_keys.set(true);
                     return true;
                 }
                 Key::Down => {
                     action_index_for_keys.set((action_index_for_keys.get() + 1) % count);
-                    action_items_for_keys.set(action_items_for_keys.get());
+                    action_scroll_pending_for_keys.set(true);
                     return true;
                 }
                 Key::Left | Key::Escape => {
@@ -5755,6 +5948,56 @@ mod tests {
         let resolved = icon_target_for_path("powershell.exe").to_ascii_lowercase();
         assert!(resolved.ends_with(r"\powershell.exe"));
         assert!(resolved.contains(r"\windowspowershell\"));
+    }
+
+    #[test]
+    fn application_results_offer_priority_and_launch_actions_in_order() {
+        let result = SearchResult {
+            id: String::from("app:probe"),
+            title: String::from("Result Mouse Probe"),
+            subtitle: String::from("Application • Start Menu"),
+            kind: ResultKind::Application,
+            source: ResultSource::ApplicationCatalog,
+            target: Some(String::from(r"C:\ResultMouseProbe.lnk")),
+        };
+        let actions = actions_for_result(&result, &std::collections::HashMap::new());
+        let labels: Vec<_> = actions.iter().map(|action| action.label.as_str()).collect();
+        assert_eq!(
+            labels,
+            vec![
+                "Set as priority (move to top)",
+                "Open",
+                "Run as admin",
+                "Open file location",
+                "Copy file",
+            ]
+        );
+        assert!(matches!(actions[0].kind, super::ActionKind::SetPriority));
+        assert!(matches!(actions[1].kind, super::ActionKind::Open));
+        assert!(matches!(actions[2].kind, super::ActionKind::RunAsAdmin));
+        assert!(matches!(actions[3].kind, super::ActionKind::OpenLocation));
+        assert_eq!(labels[4], "Copy file");
+        assert!(matches!(actions[4].kind, super::ActionKind::CopyFile));
+    }
+
+    #[test]
+    fn file_results_offer_copy_folder_path_for_existing_directories() {
+        let folder = std::env::temp_dir();
+        let result = SearchResult {
+            id: String::from("file:folder-probe"),
+            title: String::from("Folder probe"),
+            subtitle: String::from("Everything"),
+            kind: ResultKind::File,
+            source: ResultSource::Everything,
+            target: Some(folder.to_string_lossy().into_owned()),
+        };
+        let actions = actions_for_result(&result, &std::collections::HashMap::new());
+        let copy = actions
+            .iter()
+            .find(|action| matches!(action.kind, super::ActionKind::CopyFolderPath))
+            .expect("folder copy action");
+        assert_eq!(copy.label, "Copy folder path");
+        assert!(matches!(copy.kind, super::ActionKind::CopyFolderPath));
     }
 
     #[test]

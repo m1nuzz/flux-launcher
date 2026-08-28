@@ -169,7 +169,8 @@ action:
   set_priority: Set as priority (move to top)
   run_as_admin: Run as admin
   open_file_location: Open file location
-  copy_path: Copy path
+  copy_file: Copy file
+  copy_folder_path: Copy folder path
   plugin_run: Run plugin action
   plugin_open_url: Open web result
   plugin_open_path: Open path

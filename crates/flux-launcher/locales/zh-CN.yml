@@ -169,7 +169,8 @@ action:
   set_priority: 设为优先级（置顶）
   run_as_admin: 以管理员身份运行
   open_file_location: 打开文件位置
-  copy_path: 复制路径
+  copy_file: 复制文件
+  copy_folder_path: 复制文件夹路径
   plugin_run: 运行插件操作
   plugin_open_url: 打开网页结果
   plugin_open_path: 打开路径
