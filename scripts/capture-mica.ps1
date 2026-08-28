@@ -2156,7 +2156,6 @@ try {
     while (![FluxWallpaper]::IsWindowVisible($launcherHandle) -and (Get-Date) -lt $restoreDeadline) {
         [FluxWallpaper]::ShowWindow($launcherHandle, [FluxWallpaper]::SW_SHOW) | Out-Null
         [FluxWallpaper]::SetForegroundWindow($launcherHandle) | Out-Null
-        [FluxWallpaper]::SendMessage($launcherHandle, $wmHotkey, [UIntPtr]::Zero, [IntPtr]::Zero) | Out-Null
         Start-Sleep -Milliseconds 650
     }
     if (![FluxWallpaper]::IsWindowVisible($launcherHandle)) {
