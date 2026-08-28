@@ -3527,17 +3527,11 @@ fn main() {
                 Key::Other(0x43) | Key::Char('c') | Key::Char('C')
             )
         {
-            eprintln!(
-                "Ctrl+Shift+C dispatch: event_shift={} physical_shift={}",
-                event.shift,
-                shift_key_is_down()
-            );
             if let Some(result) = selected_result(
                 &results_for_keys.get(),
                 &selected_id_for_keys.get(),
                 selected_index_for_keys.get(),
             ) {
-                eprintln!("Ctrl+Shift+C target={:?}", result.target);
                 if copy_result_file(&result) {
                     return true;
                 }
