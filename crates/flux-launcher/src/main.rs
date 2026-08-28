@@ -873,6 +873,110 @@ impl Widget for ResultRowAnchor {
     }
 }
 
+/// A reactive action-menu row that reuses the result-list interaction contract.
+/// It owns selection/hover state and asks the nearest scroll container to reveal the
+/// selected row after keyboard or pointer navigation, while leaving the surrounding
+/// action-menu layout and styling unchanged.
+struct ActionRowAnchor {
+    item_index: usize,
+    action_index: Signal<usize>,
+    scroll_pending: Signal<bool>,
+    last_pointer: Option<(i32, i32)>,
+    pressed: bool,
+    on_click: Option<ClickFn>,
+}
+impl Widget for ActionRowAnchor {
+    fn on_update(&mut self, ctx: &mut EventCtx) {
+        if self.action_index.get() == self.item_index && self.scroll_pending.get() {
+            let row_id = ctx.id();
+            let _ = ctx.tree_mut().scroll_into_view(row_id);
+            self.scroll_pending.set(false);
+        }
+    }
+    fn on_event(&mut self, ctx: &mut EventCtx, event: &Event) -> bool {
+        let Event::Pointer(pointer) = event else {
+            return false;
+        };
+        match pointer.kind {
+            PointerKind::Enter => {
+                self.last_pointer = Some((pointer.pos.x, pointer.pos.y));
+                ctx.mark_dirty();
+                true
+            }
+            PointerKind::Move => {
+                let position = (pointer.pos.x, pointer.pos.y);
+                if hover_position_changed(&mut self.last_pointer, position) {
+                    self.action_index.set(self.item_index);
+                    self.scroll_pending.set(true);
+                    ctx.mark_dirty();
+                }
+                true
+            }
+            PointerKind::Leave => {
+                self.last_pointer = None;
+                ctx.mark_dirty();
+                true
+            }
+            PointerKind::Down if pointer.button == MouseButton::Left => {
+                self.action_index.set(self.item_index);
+                self.scroll_pending.set(true);
+                self.pressed = true;
+                ctx.request_focus();
+                ctx.capture();
+                ctx.mark_dirty();
+                true
+            }
+            PointerKind::Up if pointer.button == MouseButton::Left => {
+                let was_pressed = self.pressed;
+                self.pressed = false;
+                let inside = ctx.bounds().contains(pointer.pos);
+                ctx.release_capture();
+                ctx.mark_dirty();
+                if was_pressed && inside {
+                    if let Some(callback) = self.on_click.as_mut() {
+                        callback(ctx);
+                    }
+                }
+                true
+            }
+            _ => false,
+        }
+    }
+    fn take_click(&mut self, callback: ClickFn) {
+        self.on_click = Some(callback);
+    }
+    fn reset_interaction(&mut self) {
+        self.pressed = false;
+        self.last_pointer = None;
+    }
+    fn cursor(&self) -> windui::event::CursorShape {
+        windui::event::CursorShape::Hand
+    }
+    fn paint(
+        &self,
+        bounds: windui::geometry::Rect,
+        _content: windui::geometry::Rect,
+        _focused: bool,
+        _enabled: bool,
+        canvas: &mut dyn Canvas,
+        _style: &windui::style::Style,
+    ) {
+        let selected = self.action_index.get() == self.item_index;
+        let color = if selected {
+            Color::rgba(76, 139, 245, 92)
+        } else {
+            Color::rgba(255, 255, 255, 14)
+        };
+        canvas.fill_round_rect(
+            bounds.x as f32,
+            bounds.y as f32,
+            bounds.w as f32,
+            bounds.h as f32,
+            9.0,
+            &Paint::fill(color),
+        );
+    }
+}
 /// A stable result-row icon that starts with a lightweight fallback and swaps to the
 /// cached Windows Shell image when the background icon worker completes. Keeping this
 /// widget inside the existing row avoids rebuilding the dynamic result list, which
@@ -2888,6 +2992,7 @@ fn main() {
     let priorities_for_action_list = priorities;
     let providers_for_action_list = Rc::clone(&provider_results);
     let query_for_action_list = query;
+    let action_scroll_pending = signal(false);
     let action_list = Element::list_signal(
         action_items_for_rows,
         |item| item.id.clone(),
@@ -2906,6 +3011,19 @@ fn main() {
                 .map(|index| index == action_index_for_rows.get())
                 .unwrap_or(false);
             Element::row()
+                .widget(ActionRowAnchor {
+                    item_index: action_items_for_rows
+                        .get()
+                        .iter()
+                        .position(|candidate| candidate.id == item_id)
+                        .unwrap_or_default(),
+                    action_index: action_index_for_rows,
+                    scroll_pending: action_scroll_pending,
+                    last_pointer: None,
+                    pressed: false,
+                    on_click: None,
+                })
+                .reactive()
                 .width_match()
                 .height(36)
                 .padding_xy(10, 4)
@@ -3486,6 +3604,7 @@ fn main() {
     let action_mode_for_keys = action_mode;
     let action_index_for_keys = action_index;
     let action_items_for_keys = action_items;
+    let action_scroll_pending_for_keys = action_scroll_pending;
     let recycle_bin_confirmation_for_keys = recycle_bin_confirmation;
     let plugin_actions_for_keys = Rc::clone(&plugin_actions);
     let inline_completion_for_keys = inline_completion;
@@ -3721,12 +3840,12 @@ fn main() {
                             .checked_sub(1)
                             .unwrap_or(count - 1),
                     );
-                    action_items_for_keys.set(action_items_for_keys.get());
+                    action_scroll_pending_for_keys.set(true);
                     return true;
                 }
                 Key::Down => {
                     action_index_for_keys.set((action_index_for_keys.get() + 1) % count);
-                    action_items_for_keys.set(action_items_for_keys.get());
+                    action_scroll_pending_for_keys.set(true);
                     return true;
                 }
                 Key::Left | Key::Escape => {
