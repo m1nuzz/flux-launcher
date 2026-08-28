@@ -2233,7 +2233,7 @@ try {
         [FluxWallpaper]::keybd_event(0x11, 0, 2, [UIntPtr]::Zero)
         Start-Sleep -Milliseconds 450
         try {
-            $dropPaths = @([System.Windows.Forms.Clipboard]::GetFileDropList() | ForEach-Object { $_.ToString() })
+            $dropPaths = @((Get-Clipboard -Format FileDropList -ErrorAction Stop) | ForEach-Object { $_.ToString() })
             Write-Host "Ctrl+Shift+C file drop list: $($dropPaths -join '; ')"
             $resultCtrlShiftCopyProbe = $dropPaths.Count -gt 0 -and ($dropPaths | Where-Object { [System.IO.Path]::IsPathFullyQualified($_) }).Count -gt 0
         } catch {
