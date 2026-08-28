@@ -613,7 +613,7 @@ fn actions_for_result(
         if !matches!(result.kind, ResultKind::Application) {
             actions.push(ActionItem {
                 id: format!("{}:copy-path", result.id),
-                label: String::from("Copy path"),
+                label: String::from("Copy file/folder path"),
                 kind: ActionKind::CopyPath,
             });
         }
@@ -2585,8 +2585,10 @@ fn main() {
     let settings_visible_for_rows = settings_visible;
     let window_size_slot_for_rows = Rc::clone(&action_window_slot);
     let inline_completion = signal(String::new());
+    let query_caret_position = signal(query.with(|text| text.chars().count()));
 
     let search_box = Element::text_input(query, "Search")
+        .cursor_position(query_caret_position)
         .leading_icon('⌕')
         .transparent_surface()
         .smooth_caret(settings.smooth_caret, settings.smooth_caret_duration_ms)
@@ -3393,6 +3395,7 @@ fn main() {
     let activation_shift_for_keys = activation_shift;
     let activation_meta_for_keys = activation_meta;
     let query_for_keys = query;
+    let query_caret_position_for_keys = query_caret_position;
     let results_for_keys = results;
     let selected_id_for_keys = selected_id;
     let selected_index_for_keys = selected_index;
@@ -3737,6 +3740,9 @@ fn main() {
                 true
             }
             Key::Right => {
+                if query_caret_position_for_keys.get() != query_for_keys.get().chars().count() {
+                    return false;
+                }
                 if let Some(result) = selected_result(
                     &current_results,
                     &selected_id_for_keys.get(),

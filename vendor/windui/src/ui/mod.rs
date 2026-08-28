@@ -1440,6 +1440,23 @@ impl Element {
         Self::base(Layout::None).widget(TextInput::new(text, placeholder.into()))
     }
 
+    /// Mirror the text input caret position in character indices.
+    #[track_caller]
+    pub fn cursor_position(mut self, signal: Signal<usize>) -> Self {
+        match self
+            .widget
+            .as_any_mut()
+            .and_then(|a| a.downcast_mut::<TextInput>())
+        {
+            Some(input) => input.set_cursor_position_signal(signal),
+            None => debug_assert!(
+                false,
+                "cursor_position() can only be used with Element::text_input(..)"
+            ),
+        }
+        self
+    }
+
     /// 配置内含的 TextInput。`password()/multiline()/wrap()` 是 text_input 专属修饰符；
     /// 链到其他控件属误用——debug 构建下 panic 提示，release 下静默忽略（无类型分裂代价）。
     #[track_caller]

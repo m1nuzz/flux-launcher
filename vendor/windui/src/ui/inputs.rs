@@ -758,8 +758,9 @@ pub struct TextInput {
     config: TextConfig,
     cursor: usize,         // 字符索引
     anchor: Option<usize>, // 选区锚点（Some 且 != cursor 时有选区）
-    scroll_x: Cell<i32>,   // 水平滚动偏移（逻辑 px），paint 时按光标更新
-    scroll_y: Cell<i32>,   // 垂直滚动偏移（逻辑 px，多行用），paint 时按光标更新
+    cursor_position: Option<Signal<usize>>,
+    scroll_x: Cell<i32>, // 水平滚动偏移（逻辑 px），paint 时按光标更新
+    scroll_y: Cell<i32>, // 垂直滚动偏移（逻辑 px，多行用），paint 时按光标更新
     /// 上下移动时保持的目标列像素（粘性 goal column）；水平移动/编辑后清空。
     goal_x: Cell<Option<i32>>,
     layout: RefCell<TextLayout>, // paint 重建的视觉行缓存
@@ -792,6 +793,7 @@ impl TextInput {
             config: TextConfig::default(),
             cursor,
             anchor: None,
+            cursor_position: None,
             scroll_x: Cell::new(0),
             scroll_y: Cell::new(0),
             goal_x: Cell::new(None),
@@ -808,6 +810,16 @@ impl TextInput {
         }
     }
 
+    /// Connect a signal that mirrors the logical caret position in characters.
+    pub fn set_cursor_position_signal(&mut self, signal: Signal<usize>) {
+        signal.set(self.cursor);
+        self.cursor_position = Some(signal);
+    }
+    fn sync_cursor_position(&self) {
+        if let Some(signal) = self.cursor_position {
+            signal.set(self.cursor);
+        }
+    }
     /// 可变访问配置（供 Builder 配置）。
     pub fn config_mut(&mut self) -> &mut TextConfig {
         &mut self.config
@@ -848,6 +860,7 @@ impl TextInput {
         if self.cursor > n {
             self.cursor = n;
         }
+        self.sync_cursor_position();
     }
     /// 规范化选区为 [start, end)；无选区返回 None。
     /// cursor/anchor 在此夹紧到当前字符数——外部经 Rc<RefCell<String>> 改写文本后
@@ -871,6 +884,7 @@ impl TextInput {
                 t.replace_range(bs..be, "");
             });
             self.cursor = s;
+            self.sync_cursor_position();
             self.anchor = None;
             self.goal_x.set(None);
             ctx.mark_dirty();
@@ -891,6 +905,7 @@ impl TextInput {
             s.insert(byte, c);
         });
         self.cursor += 1;
+        self.sync_cursor_position();
         self.anchor = None;
         self.goal_x.set(None);
         ctx.mark_dirty();
@@ -907,6 +922,7 @@ impl TextInput {
             s.replace_range(start..end, "");
         });
         self.cursor -= 1;
+        self.sync_cursor_position();
         self.goal_x.set(None);
         ctx.mark_dirty();
     }
@@ -935,6 +951,7 @@ impl TextInput {
             self.anchor = None;
         }
         self.cursor = target.min(self.char_count());
+        self.sync_cursor_position();
         self.goal_x.set(None);
         ctx.mark_dirty();
     }
@@ -944,11 +961,13 @@ impl TextInput {
         let (s, e) = word_run(&chars, idx);
         self.anchor = Some(s.min(chars.len()));
         self.cursor = e.min(chars.len());
+        self.sync_cursor_position();
     }
     /// 全选。
     fn select_all(&mut self) {
         self.anchor = Some(0);
         self.cursor = self.char_count();
+        self.sync_cursor_position();
     }
     /// 构建右键上下文菜单项。动作经合成 Ctrl+X/C/V/A 回送到本控件，故无需感知"菜单"。
     fn context_menu_items(&self) -> Vec<MenuItem> {
