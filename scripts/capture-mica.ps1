@@ -3021,11 +3021,14 @@ try {
         }
     } | ConvertTo-Json | Set-Content -Encoding utf8 (Join-Path $OutputDirectory "environment.json")
     if ($ResultMouseInteractionSmoke) {
-        $resultMouseInteractionGate = [bool]$resultRmbActionMenuVisible -and
-            -not [bool]$resultRmbLaunchProbe -and
-            [bool]$resultNormalClickLaunchProbe -and
-            [bool]$resultCtrlCopyProbe -and
+        $resultMouseInteractionChecks = [bool[]]@(
+            [bool]$resultRmbActionMenuVisible,
+            -not [bool]$resultRmbLaunchProbe,
+            [bool]$resultNormalClickLaunchProbe,
+            [bool]$resultCtrlCopyProbe,
             [bool]$resultCtrlShiftCopyProbe
+        )
+        $resultMouseInteractionGate = $resultMouseInteractionChecks -notcontains $false
         if (-not $resultMouseInteractionGate) {
             throw "Result mouse interaction smoke failed: right_click_action_menu=$([bool]$resultRmbActionMenuVisible), right_click_launch=$([bool]$resultRmbLaunchProbe), normal_click_launch=$([bool]$resultNormalClickLaunchProbe), ctrl_copy=$([bool]$resultCtrlCopyProbe), ctrl_shift_copy=$([bool]$resultCtrlShiftCopyProbe)."
         }
