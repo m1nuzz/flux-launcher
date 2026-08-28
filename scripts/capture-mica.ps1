@@ -1672,8 +1672,8 @@ try {
         $resultTitleX = $resultPointerRect.Left + 80
         $resultTitleY = $resultPointerRect.Top + 75
 
-        # Right-click the title. It must follow the same launch path as Enter,
-        # not open RichText's copy menu or require a second activation.
+        # Right-click the title must open the same in-window action list as
+        # Right-arrow. It must not launch the result or show RichText copy UI.
         $resultTraceBeforeCount = if (Test-Path $launchTracePath) { @(Get-Content $launchTracePath).Count } else { 0 }
         [FluxWallpaper]::SetCursorPos($resultTitleX, $resultTitleY) | Out-Null
         Start-Sleep -Milliseconds 250
@@ -1686,9 +1686,18 @@ try {
             @()
         }
         $resultRmbDispatchObserved = [bool]($resultTraceLines | Where-Object { $_ -match "`tlaunch-dispatch$" } | Select-Object -First 1)
-        $resultRmbWindowHidden = ![FluxWallpaper]::IsWindowVisible($launcherHandle)
-        $resultRmbLaunchProbe = $resultRmbDispatchObserved -and $resultRmbWindowHidden
-        Save-Screenshot "result-pointer-right-click.png"
+        $resultRmbWindowVisible = [FluxWallpaper]::IsWindowVisible($launcherHandle)
+        $resultRmbRect = New-Object FluxWallpaper+RECT
+        $resultRmbWindowHeight = if ([FluxWallpaper]::GetWindowRect($launcherHandle, [ref]$resultRmbRect)) {
+            [FluxWallpaper]::RectHeight($resultRmbRect)
+        } else {
+            0
+        }
+        $resultRmbActionMenuVisible = $resultRmbWindowVisible -and
+            $resultRmbWindowHeight -ge 240 -and
+            !$resultRmbDispatchObserved
+        $resultRmbLaunchProbe = $resultRmbDispatchObserved -and !$resultRmbWindowVisible
+        Save-Screenshot "result-pointer-right-click-menu.png"
         [FluxWallpaper]::SetCursorPos($resultTitleX, $resultTitleY) | Out-Null
         [FluxWallpaper]::keybd_event(0x1B, 0, 0, [UIntPtr]::Zero)
         [FluxWallpaper]::keybd_event(0x1B, 0, 2, [UIntPtr]::Zero)
@@ -2831,8 +2840,11 @@ try {
         PointerClickProbe = [bool]$PointerInteractionSmoke
         ResultMouseInteractionSmoke = [bool]$ResultMouseInteractionSmoke
         ResultRightClickDispatchObserved = $resultRmbDispatchObserved
+        ResultRightClickWindowVisible = $resultRmbWindowVisible
+        ResultRightClickWindowHeight = $resultRmbWindowHeight
+        ResultRightClickActionMenuVisible = (!$ResultMouseInteractionSmoke) -or $resultRmbActionMenuVisible
         ResultRightClickWindowHidden = $resultRmbWindowHidden
-        ResultRightClickLaunchProbe = (!$ResultMouseInteractionSmoke) -or $resultRmbLaunchProbe
+        ResultRightClickLaunchProbe = $resultRmbLaunchProbe
         ResultNormalHoverTextCursor = $resultNormalHoverTextCursor
         ResultNormalHoverCopyDisabledProbe = (!$ResultMouseInteractionSmoke) -or $resultNormalHoverCopyDisabledProbe
         ResultNormalClickDispatchObserved = $resultNormalClickDispatchObserved
@@ -2941,8 +2953,8 @@ try {
             HiddenIdleAfterDeactivation = $deactivationIdleMemory
         }
     } | ConvertTo-Json | Set-Content -Encoding utf8 (Join-Path $OutputDirectory "environment.json")
-    if ($ResultMouseInteractionSmoke -and (!$resultRmbLaunchProbe -or !$resultNormalClickLaunchProbe -or !$resultCtrlCopyProbe)) {
-        throw "Result mouse interaction smoke reproduced a failure: right_click_launch=$resultRmbLaunchProbe, normal_click_launch=$resultNormalClickLaunchProbe, ctrl_copy=$resultCtrlCopyProbe."
+    if ($ResultMouseInteractionSmoke -and (!$resultRmbActionMenuVisible -or $resultRmbLaunchProbe -or !$resultNormalClickLaunchProbe -or !$resultCtrlCopyProbe)) {
+        throw "Result mouse interaction smoke failed: right_click_action_menu=$resultRmbActionMenuVisible, right_click_launch=$resultRmbLaunchProbe, normal_click_launch=$resultNormalClickLaunchProbe, ctrl_copy=$resultCtrlCopyProbe."
     }
 }
 finally {
