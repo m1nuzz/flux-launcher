@@ -1558,6 +1558,7 @@ try {
         }
         $resultRightArrowMiddleCaretActionMenu = $caretMiddleWindowVisible -and $caretMiddleWindowHeight -ge 240
         $resultRightArrowMiddleCaretProbe = $caretMiddleWindowVisible -and !$resultRightArrowMiddleCaretActionMenu
+        Write-Host "Right Arrow caret-middle probe: visible=$caretMiddleWindowVisible height=$caretMiddleWindowHeight action_menu=$resultRightArrowMiddleCaretActionMenu passed=$resultRightArrowMiddleCaretProbe"
         Save-Screenshot "result-keyboard-caret-middle.png"
         if ($resultRightArrowMiddleCaretActionMenu) {
             [FluxWallpaper]::keybd_event(0x1B, 0, 0, [UIntPtr]::Zero)
