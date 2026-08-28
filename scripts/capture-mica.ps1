@@ -2221,7 +2221,7 @@ try {
         try {
             $dropPaths = @((Get-Clipboard -Format FileDropList -ErrorAction Stop) | ForEach-Object { $_.ToString() })
             Write-Host "Ctrl+Shift+C file drop list: $($dropPaths -join '; ')"
-            $resultCtrlShiftCopyProbe = $dropPaths.Count -gt 0 -and (($dropPaths -join ';') -match '\\.(exe|lnk)$')
+            $resultCtrlShiftCopyProbe = $dropPaths.Count -gt 0 -and (($dropPaths -join ';') -match '\.(exe|lnk)$')
         } catch {
             $resultCtrlShiftCopyProbe = $false
         }
