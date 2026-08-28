@@ -202,7 +202,11 @@ fn preview_content(size_label: Signal<String>) -> Element {
             Element::row()
                 .width_match()
                 .spacing(10)
-                .child(Element::label("Flux Launcher").font_size(22.0).fg(Color::WHITE))
+                .child(
+                    Element::label(t!("visual_preview.title"))
+                        .font_size(22.0)
+                        .fg(Color::WHITE),
+                )
                 .child(
                     Element::label_signal(size_label)
                         .font_size(12.0)
@@ -219,10 +223,14 @@ fn preview_content(size_label: Signal<String>) -> Element {
                 .cross(Align::Center)
                 .corner(8.0)
                 .bg(Color::rgba(255, 255, 255, 24))
-                .child(Element::label("Search").font_size(15.0).fg(Color::rgba(255, 255, 255, 220))),
+                .child(
+                    Element::label(t!("search.placeholder"))
+                        .font_size(15.0)
+                        .fg(Color::rgba(255, 255, 255, 220)),
+                ),
         )
         .child(
-            Element::label("This is the actual launcher preview window. Its client area is resized directly, not scaled into a mock card.")
+            Element::label(t!("visual_preview.description"))
                 .font_size(11.0)
                 .fg(Color::rgba(235, 241, 255, 170))
                 .max_lines(2)
@@ -232,21 +240,26 @@ fn preview_content(size_label: Signal<String>) -> Element {
             Element::col()
                 .width_match()
                 .spacing(6)
-                .child(preview_result("Preview result", "Native windui surface"))
                 .child(preview_result(
-                    "Width and height are exact",
-                    "Measured from this window client area",
+                    t!("visual_preview.result_preview").into_owned(),
+                    t!("visual_preview.result_preview_sub").into_owned(),
                 ))
                 .child(preview_result(
-                    "Acrylic/Mica remains active",
-                    "The Settings window stays separate",
+                    t!("visual_preview.result_exact").into_owned(),
+                    t!("visual_preview.result_exact_sub").into_owned(),
+                ))
+                .child(preview_result(
+                    t!("visual_preview.result_acrylic").into_owned(),
+                    t!("visual_preview.result_acrylic_sub").into_owned(),
                 )),
         )
-        .child(Element::label_signal(size_label).font_size(12.0).fg(Color::rgba(
-            235, 241, 255, 160,
-        )))
         .child(
-            Element::label("The controls use logical client units (DIP); Windows maps them to physical pixels at the preview monitor DPI.")
+            Element::label_signal(size_label)
+                .font_size(12.0)
+                .fg(Color::rgba(235, 241, 255, 160)),
+        )
+        .child(
+            Element::label(t!("visual_preview.units_hint"))
                 .font_size(10.0)
                 .fg(Color::rgba(235, 241, 255, 135))
                 .max_lines(2)
@@ -254,7 +267,7 @@ fn preview_content(size_label: Signal<String>) -> Element {
         )
 }
 
-fn preview_result(title: &str, subtitle: &str) -> Element {
+fn preview_result(title: String, subtitle: String) -> Element {
     Element::col()
         .width_match()
         .padding_xy(12, 8)

@@ -88,6 +88,17 @@ pub enum MonitorPreference {
     Foreground,
 }
 
+#[derive(Clone, Copy, Debug, Default, Deserialize, PartialEq, Eq, Serialize)]
+pub enum Language {
+    #[serde(rename = "system")]
+    #[default]
+    System,
+    #[serde(rename = "en")]
+    English,
+    #[serde(rename = "zh-CN")]
+    SimplifiedChinese,
+}
+
 #[derive(Clone, Debug, Deserialize, PartialEq, Eq, Serialize)]
 pub struct PriorityEntry {
     pub id: String,
@@ -141,6 +152,8 @@ pub struct Settings {
     pub google_alias: String,
     #[serde(default)]
     pub monitor_preference: MonitorPreference,
+    #[serde(default)]
+    pub language: Language,
     #[serde(default = "default_caret_duration")]
     pub smooth_caret_duration_ms: u16,
     #[serde(default)]
@@ -174,6 +187,7 @@ impl Default for Settings {
             google_enabled: true,
             google_alias: default_google_alias(),
             monitor_preference: MonitorPreference::default(),
+            language: Language::default(),
             smooth_caret_duration_ms: DEFAULT_CARET_DURATION_MS,
             query_history: Vec::new(),
             priority_entries: Vec::new(),
@@ -383,6 +397,7 @@ mod tests {
         assert!(settings.google_enabled);
         assert_eq!(settings.google_alias, "g");
         assert_eq!(settings.monitor_preference, MonitorPreference::Cursor);
+        assert_eq!(settings.language, Language::System);
         assert_eq!(settings.smooth_caret_duration_ms, DEFAULT_CARET_DURATION_MS);
     }
 
@@ -418,6 +433,7 @@ mod tests {
             google_enabled: false,
             google_alias: String::from("search"),
             monitor_preference: MonitorPreference::Foreground,
+            language: Language::SimplifiedChinese,
             smooth_caret_duration_ms: 120,
             query_history: vec![String::from("steam"), String::from("ext:zip")],
             priority_entries: vec![PriorityEntry {
