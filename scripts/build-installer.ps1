@@ -4,7 +4,7 @@ param(
     [string]$AppVersion,
     [string]$BuildDir = "target/x86_64-pc-windows-msvc/release",
     [string]$OutputDirectory = "artifacts/FluxLauncher-Windows11-x64",
-    [string]$InnoCompiler = "C:\Program Files (x86)\Inno Setup 6\ISCC.exe"
+    [string]$InnoCompiler = ""
 )
 
 $ErrorActionPreference = "Stop"
@@ -14,8 +14,23 @@ $outputPath = Join-Path $repoRoot $OutputDirectory
 $portableName = "FluxLauncher-Portable.exe"
 $installerName = "FluxLauncher-Setup.exe"
 
-if (-not (Test-Path $InnoCompiler)) {
-    throw "Inno Setup compiler was not found at $InnoCompiler"
+# Resolve the Inno Setup compiler automatically when no explicit path was given.
+if (-not $InnoCompiler) {
+    $candidates = @(
+        "C:\Program Files (x86)\Inno Setup 6\ISCC.exe",
+        "C:\Program Files\Inno Setup 6\ISCC.exe",
+        (Join-Path $env:LOCALAPPDATA "Programs\Inno Setup 6\ISCC.exe")
+    )
+    $InnoCompiler = $candidates | Where-Object { Test-Path $_ } | Select-Object -First 1
+    if (-not $InnoCompiler) {
+        $command = Get-Command ISCC.exe -ErrorAction SilentlyContinue
+        if ($command) {
+            $InnoCompiler = $command.Source
+        }
+    }
+}
+if (-not $InnoCompiler -or -not (Test-Path $InnoCompiler)) {
+    throw "Inno Setup compiler was not found. Install Inno Setup 6 (https://jrsoftware.org/isinfo.php) or pass -InnoCompiler explicitly."
 }
 $launcher = Join-Path $buildPath "flux-launcher.exe"
 if (-not (Test-Path $launcher)) {
