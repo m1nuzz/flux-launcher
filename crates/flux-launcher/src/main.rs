@@ -662,6 +662,12 @@ struct ResultRowAnchor {
     query: Signal<String>,
     scroll_pending: Signal<bool>,
     selection_color: Signal<Color>,
+    action_items: Signal<Vec<ActionItem>>,
+    action_index: Signal<usize>,
+    action_mode: Signal<bool>,
+    launcher_width: Signal<u16>,
+    action_window_slot: Rc<RefCell<Option<WindowSizeHandle>>>,
+    actions: Vec<ActionItem>,
     on_click: Option<ClickFn>,
     pressed: bool,
     last_pointer: Option<(i32, i32)>,
@@ -759,9 +765,7 @@ impl Widget for ResultRowAnchor {
                 ctx.mark_dirty();
                 true
             }
-            PointerKind::Up
-                if pointer.button == MouseButton::Left || pointer.button == MouseButton::Right =>
-            {
+            PointerKind::Up if pointer.button == MouseButton::Left => {
                 let was_pressed = self.pressed;
                 self.pressed = false;
                 let inside = ctx.bounds().contains(pointer.pos);
@@ -776,8 +780,14 @@ impl Widget for ResultRowAnchor {
             }
             PointerKind::Down if pointer.button == MouseButton::Right => {
                 self.select_self();
-                self.pressed = true;
-                ctx.capture();
+                if !self.actions.is_empty() {
+                    self.action_items.set(self.actions.clone());
+                    self.action_index.set(0);
+                    self.action_mode.set(true);
+                    if let Some(handle) = self.action_window_slot.borrow().as_ref() {
+                        handle.set(i32::from(self.launcher_width.get()), ACTION_WINDOW_HEIGHT);
+                    }
+                }
                 ctx.mark_dirty();
                 true
             }
@@ -2207,6 +2217,10 @@ fn result_row(
     rows_refresh: Signal<Vec<SearchResult>>,
     icon_refresh_generation: Signal<u64>,
     plugin_actions: Rc<RefCell<HashMap<String, PluginAction>>>,
+    action_items: Signal<Vec<ActionItem>>,
+    action_index: Signal<usize>,
+    action_mode: Signal<bool>,
+    launcher_width: Signal<u16>,
     query: Signal<String>,
     scroll_pending: Signal<bool>,
     selection_color: Signal<Color>,
@@ -2217,6 +2231,7 @@ fn result_row(
     settings_visible: Signal<bool>,
     window_size_slot: Rc<RefCell<Option<WindowSizeHandle>>>,
 ) -> Element {
+    let result_for_actions = result.clone();
     let id = result.id;
     let target = result.target;
     let title = result.title;
@@ -2230,6 +2245,7 @@ fn result_row(
     };
     let icon =
         bundled_icon_rgba(&id).or_else(|| icon_target.as_deref().and_then(request_shell_icon));
+    let actions = actions_for_result(&result_for_actions, &plugin_actions.borrow());
     trace_result_icon_probe(
         &title,
         target.as_deref(),
@@ -2268,6 +2284,12 @@ fn result_row(
             query,
             scroll_pending,
             selection_color,
+            action_items,
+            action_index,
+            action_mode,
+            launcher_width,
+            action_window_slot: Rc::clone(&window_size_slot),
+            actions,
             on_click: None,
             pressed: false,
             last_pointer: None,
@@ -2556,6 +2578,7 @@ fn main() {
     let action_index_for_rows = action_index;
     let action_mode_for_rows = action_mode;
     let action_window_slot_for_rows = Rc::clone(&action_window_slot);
+    let launcher_width_for_rows = launcher_width;
     let query_for_rows = query;
     let scroll_request_for_rows = signal(false);
     let icon_refresh_generation = signal(SHELL_ICON_COMPLETION_GENERATION.load(Ordering::Acquire));
@@ -2630,6 +2653,10 @@ fn main() {
             result_source,
             icon_refresh_generation,
             Rc::clone(&actions_for_rows),
+            action_items_for_rows,
+            action_index_for_rows,
+            action_mode_for_rows,
+            launcher_width_for_rows,
             query_for_rows,
             scroll_request_for_rows,
             selection_color,
@@ -5704,6 +5731,33 @@ mod tests {
         let resolved = icon_target_for_path("powershell.exe").to_ascii_lowercase();
         assert!(resolved.ends_with(r"\powershell.exe"));
         assert!(resolved.contains(r"\windowspowershell\"));
+    }
+
+    #[test]
+    fn application_results_offer_priority_and_launch_actions_in_order() {
+        let result = SearchResult {
+            id: String::from("app:probe"),
+            title: String::from("Result Mouse Probe"),
+            subtitle: String::from("Application • Start Menu"),
+            kind: ResultKind::Application,
+            source: ResultSource::ApplicationCatalog,
+            target: Some(String::from(r"C:\ResultMouseProbe.lnk")),
+        };
+        let actions = actions_for_result(&result, &std::collections::HashMap::new());
+        let labels: Vec<_> = actions.iter().map(|action| action.label.as_str()).collect();
+        assert_eq!(
+            labels,
+            vec![
+                "Set as priority (move to top)",
+                "Open",
+                "Run as admin",
+                "Open file location",
+            ]
+        );
+        assert!(matches!(actions[0].kind, super::ActionKind::SetPriority));
+        assert!(matches!(actions[1].kind, super::ActionKind::Open));
+        assert!(matches!(actions[2].kind, super::ActionKind::RunAsAdmin));
+        assert!(matches!(actions[3].kind, super::ActionKind::OpenLocation));
     }
 
     #[test]
