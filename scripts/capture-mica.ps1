@@ -81,6 +81,9 @@ public static class FluxWallpaper {
     [DllImport("user32.dll", SetLastError = true)]
     public static extern bool SetForegroundWindow(IntPtr hwnd);
     [DllImport("user32.dll", SetLastError = true)]
+    public static extern bool ShowWindow(IntPtr hwnd, int command);
+    public const int SW_SHOW = 5;
+    [DllImport("user32.dll", SetLastError = true)]
     public static extern IntPtr SetFocus(IntPtr hwnd);
     [DllImport("user32.dll", SetLastError = true)]
     public static extern bool IsWindowVisible(IntPtr hwnd);
@@ -2151,6 +2154,7 @@ try {
     }
     $restoreDeadline = (Get-Date).AddSeconds(5)
     while (![FluxWallpaper]::IsWindowVisible($launcherHandle) -and (Get-Date) -lt $restoreDeadline) {
+        [FluxWallpaper]::ShowWindow($launcherHandle, [FluxWallpaper]::SW_SHOW) | Out-Null
         [FluxWallpaper]::SetForegroundWindow($launcherHandle) | Out-Null
         [FluxWallpaper]::SendMessage($launcherHandle, $wmHotkey, [UIntPtr]::Zero, [IntPtr]::Zero) | Out-Null
         Start-Sleep -Milliseconds 650
