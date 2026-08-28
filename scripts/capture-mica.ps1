@@ -2222,23 +2222,25 @@ try {
         if (!$ctrlCProbe) {
             throw "Ctrl+C did not copy the selected result path in quotes."
         }
-        [FluxWallpaper]::SetForegroundWindow($launcherHandle) | Out-Null
-        [FluxWallpaper]::keybd_event(0x11, 0, 0, [UIntPtr]::Zero)
-        [FluxWallpaper]::keybd_event(0x10, 0, 0, [UIntPtr]::Zero)
-        Start-Sleep -Milliseconds 120
-        [FluxWallpaper]::keybd_event(0x43, 0, 0, [UIntPtr]::Zero)
-        Start-Sleep -Milliseconds 120
-        [FluxWallpaper]::keybd_event(0x43, 0, 2, [UIntPtr]::Zero)
-        [FluxWallpaper]::keybd_event(0x10, 0, 2, [UIntPtr]::Zero)
-        [FluxWallpaper]::keybd_event(0x11, 0, 2, [UIntPtr]::Zero)
-        Start-Sleep -Milliseconds 450
-        try {
-            $dropPaths = @((Get-Clipboard -Format FileDropList -ErrorAction Stop) | ForEach-Object { $_.ToString() })
-            Write-Host "Ctrl+Shift+C file drop list: $($dropPaths -join '; ')"
-            $resultCtrlShiftCopyProbe = $dropPaths.Count -gt 0 -and ($dropPaths | Where-Object { [System.IO.Path]::IsPathFullyQualified($_) }).Count -gt 0
-        } catch {
-            Write-Host "Ctrl+Shift+C clipboard read failed: $($_.Exception.Message)"
-            $resultCtrlShiftCopyProbe = $false
+        $resultCtrlShiftCopyProbe = $false
+        for ($copyAttempt = 1; $copyAttempt -le 3 -and !$resultCtrlShiftCopyProbe; $copyAttempt++) {
+            [FluxWallpaper]::SetForegroundWindow($launcherHandle) | Out-Null
+            [FluxWallpaper]::keybd_event(0x11, 0, 0, [UIntPtr]::Zero)
+            [FluxWallpaper]::keybd_event(0x10, 0, 0, [UIntPtr]::Zero)
+            Start-Sleep -Milliseconds 120
+            [FluxWallpaper]::keybd_event(0x43, 0, 0, [UIntPtr]::Zero)
+            Start-Sleep -Milliseconds 120
+            [FluxWallpaper]::keybd_event(0x43, 0, 2, [UIntPtr]::Zero)
+            [FluxWallpaper]::keybd_event(0x10, 0, 2, [UIntPtr]::Zero)
+            [FluxWallpaper]::keybd_event(0x11, 0, 2, [UIntPtr]::Zero)
+            Start-Sleep -Milliseconds 450
+            try {
+                $dropPaths = @((Get-Clipboard -Format FileDropList -ErrorAction Stop) | ForEach-Object { $_.ToString() })
+                Write-Host "Ctrl+Shift+C file drop list attempt ${copyAttempt}: $($dropPaths -join '; ')"
+                $resultCtrlShiftCopyProbe = $dropPaths.Count -gt 0 -and ($dropPaths | Where-Object { [System.IO.Path]::IsPathFullyQualified($_) }).Count -gt 0
+            } catch {
+                Write-Host "Ctrl+Shift+C clipboard read failed attempt ${copyAttempt}: $($_.Exception.Message)"
+            }
         }
         if (!$resultCtrlShiftCopyProbe) {
             throw "Ctrl+Shift+C did not copy a Windows file object."
