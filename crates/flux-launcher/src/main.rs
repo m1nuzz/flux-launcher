@@ -39,6 +39,8 @@ use windows::Win32::System::DataExchange::{
 #[cfg(windows)]
 use windows::Win32::System::Memory::{GlobalAlloc, GlobalLock, GlobalUnlock, GMEM_MOVEABLE};
 #[cfg(windows)]
+use windows::Win32::UI::Input::KeyboardAndMouse::{GetAsyncKeyState, VK_SHIFT};
+#[cfg(windows)]
 use windows::Win32::UI::Shell::DROPFILES;
 
 use applications::{
@@ -961,6 +963,16 @@ fn quoted_result_path(result: &SearchResult) -> Option<String> {
         .and_then(|value| value.strip_suffix('"'))
         .unwrap_or(target);
     Some(format!("\"{target}\""))
+}
+
+#[cfg(windows)]
+fn shift_key_is_down() -> bool {
+    unsafe { (GetAsyncKeyState(VK_SHIFT.0 as i32) as u16 & 0x8000) != 0 }
+}
+
+#[cfg(not(windows))]
+fn shift_key_is_down() -> bool {
+    false
 }
 
 #[cfg(windows)]
@@ -3509,7 +3521,7 @@ fn main() {
             cursor_visibility_for_keys.hide();
         }
         if event.ctrl
-            && event.shift
+            && (event.shift || shift_key_is_down())
             && matches!(
                 event.key,
                 Key::Other(0x43) | Key::Char('c') | Key::Char('C')
@@ -3528,6 +3540,7 @@ fn main() {
         }
         if event.ctrl
             && !event.shift
+            && !shift_key_is_down()
             && matches!(
                 event.key,
                 Key::Other(0x43) | Key::Char('c') | Key::Char('C')
