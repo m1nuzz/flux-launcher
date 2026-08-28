@@ -3020,8 +3020,15 @@ try {
             HiddenIdleAfterDeactivation = $deactivationIdleMemory
         }
     } | ConvertTo-Json | Set-Content -Encoding utf8 (Join-Path $OutputDirectory "environment.json")
-    if ($ResultMouseInteractionSmoke -and (!$resultRmbActionMenuVisible -or $resultRmbLaunchProbe -or !$resultNormalClickLaunchProbe -or !$resultCtrlCopyProbe -or !$resultCtrlShiftCopyProbe)) {
-        throw "Result mouse interaction smoke failed: right_click_action_menu=$resultRmbActionMenuVisible, right_click_launch=$resultRmbLaunchProbe, normal_click_launch=$resultNormalClickLaunchProbe, ctrl_copy=$resultCtrlCopyProbe, ctrl_shift_copy=$resultCtrlShiftCopyProbe."
+    if ($ResultMouseInteractionSmoke) {
+        $resultMouseInteractionGate = [bool]$resultRmbActionMenuVisible -and
+            -not [bool]$resultRmbLaunchProbe -and
+            [bool]$resultNormalClickLaunchProbe -and
+            [bool]$resultCtrlCopyProbe -and
+            [bool]$resultCtrlShiftCopyProbe
+        if (-not $resultMouseInteractionGate) {
+            throw "Result mouse interaction smoke failed: right_click_action_menu=$([bool]$resultRmbActionMenuVisible), right_click_launch=$([bool]$resultRmbLaunchProbe), normal_click_launch=$([bool]$resultNormalClickLaunchProbe), ctrl_copy=$([bool]$resultCtrlCopyProbe), ctrl_shift_copy=$([bool]$resultCtrlShiftCopyProbe)."
+        }
     }
 }
 finally {
