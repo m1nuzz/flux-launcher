@@ -610,13 +610,11 @@ fn actions_for_result(
             label: String::from("Open file location"),
             kind: ActionKind::OpenLocation,
         });
-        if !matches!(result.kind, ResultKind::Application) {
-            actions.push(ActionItem {
-                id: format!("{}:copy-path", result.id),
-                label: String::from("Copy file/folder path"),
-                kind: ActionKind::CopyPath,
-            });
-        }
+        actions.push(ActionItem {
+            id: format!("{}:copy-path", result.id),
+            label: String::from("Copy file/folder path"),
+            kind: ActionKind::CopyPath,
+        });
     }
     if let Some(invocation) = plugin_actions.get(&result.id).cloned() {
         actions.push(ActionItem {
@@ -5756,12 +5754,14 @@ mod tests {
                 "Open",
                 "Run as admin",
                 "Open file location",
+                "Copy file/folder path",
             ]
         );
         assert!(matches!(actions[0].kind, super::ActionKind::SetPriority));
         assert!(matches!(actions[1].kind, super::ActionKind::Open));
         assert!(matches!(actions[2].kind, super::ActionKind::RunAsAdmin));
         assert!(matches!(actions[3].kind, super::ActionKind::OpenLocation));
+        assert!(matches!(actions[4].kind, super::ActionKind::CopyPath));
     }
 
     #[test]
