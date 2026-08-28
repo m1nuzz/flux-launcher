@@ -2912,7 +2912,8 @@ try {
         ResultRightClickWindowHidden = $resultRmbWindowHidden
         ResultRightClickLaunchProbe = $resultRmbLaunchProbe
         ResultRightArrowMiddleCaretActionMenu = $resultRightArrowMiddleCaretActionMenu
-        ResultRightArrowMiddleCaretProbe = (!$ResultMouseInteractionSmoke) -or $resultRightArrowMiddleCaretProbe
+        # This synthetic caret probe is diagnostic-only; manual behavior is verified separately.
+        ResultRightArrowMiddleCaretProbe = $resultRightArrowMiddleCaretProbe
         ResultNormalHoverTextCursor = $resultNormalHoverTextCursor
         ResultNormalHoverCopyDisabledProbe = (!$ResultMouseInteractionSmoke) -or $resultNormalHoverCopyDisabledProbe
         ResultNormalClickDispatchObserved = $resultNormalClickDispatchObserved
