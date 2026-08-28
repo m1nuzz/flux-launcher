@@ -2218,7 +2218,9 @@ try {
         [FluxWallpaper]::SetForegroundWindow($launcherHandle) | Out-Null
         [FluxWallpaper]::keybd_event(0x11, 0, 0, [UIntPtr]::Zero)
         [FluxWallpaper]::keybd_event(0x10, 0, 0, [UIntPtr]::Zero)
+        Start-Sleep -Milliseconds 120
         [FluxWallpaper]::keybd_event(0x43, 0, 0, [UIntPtr]::Zero)
+        Start-Sleep -Milliseconds 120
         [FluxWallpaper]::keybd_event(0x43, 0, 2, [UIntPtr]::Zero)
         [FluxWallpaper]::keybd_event(0x10, 0, 2, [UIntPtr]::Zero)
         [FluxWallpaper]::keybd_event(0x11, 0, 2, [UIntPtr]::Zero)
