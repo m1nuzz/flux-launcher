@@ -8,9 +8,20 @@ The launcher is a tray-resident application. It must use the real Windows DWM Ac
 
 ## Repository language and ownership
 
-All Flux-owned source comments, documentation, release notes, and user-facing application strings must be written in English. Do not add Chinese symbols or Chinese comments to Flux-owned code. Conversation with the project owner may use Russian.
+All Flux-owned source comments, documentation, and release notes must be written in English. Do not add Chinese symbols or Chinese comments to Flux-owned code. User-facing application strings must be externalized through the rust-i18n `t!` macro as described in the Internationalization section below; do not embed visible text directly in UI code. Conversation with the project owner may use Russian.
 
 Use concise English commit messages. Do not commit Manus-internal scratch notes, generated planning files, temporary screenshots, or unrelated artifacts. User-facing documentation may be committed when it is part of the requested product change.
+
+## Internationalization (i18n)
+
+Flux uses the `rust-i18n` framework for every user-facing string. Translation files live in `crates/flux-launcher/locales/`, with `en.yml` as the fallback locale and `zh-CN.yml` for Simplified Chinese. The framework is initialized at the top of `crates/flux-launcher/src/main.rs` with `i18n!("locales", fallback = "en")`.
+
+- Every user-facing string in the launcher UI must be read through the `t!` macro. Do not hardcode visible text in UI code; constants, colors, internal identifiers, and stderr diagnostics are excluded.
+- Adding or changing a visible string requires updating both `en.yml` and `zh-CN.yml` in the same change so the two locale files stay key-consistent.
+- Missing translations must fall back to `en`; never render a raw key or panic for a missing locale.
+- On startup, detect the system language with `sys-locale` and apply it through `rust_i18n::set_locale`; unsupported or unknown languages fall back to `en`.
+- The `locales` path in `i18n!` resolves relative to the flux-launcher crate manifest (`CARGO_MANIFEST_DIR`). Do not move the directory to the workspace root without updating the macro path accordingly.
+- Settings field names, version strings, and other internal identifiers are not translated.
 
 ## Required working process
 
