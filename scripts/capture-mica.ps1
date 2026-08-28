@@ -2216,7 +2216,12 @@ try {
             throw "Ctrl+C did not copy the selected result path in quotes."
         }
         [FluxWallpaper]::SetForegroundWindow($launcherHandle) | Out-Null
-        $shell.SendKeys("^+c")
+        [FluxWallpaper]::keybd_event(0x11, 0, 0, [UIntPtr]::Zero)
+        [FluxWallpaper]::keybd_event(0x10, 0, 0, [UIntPtr]::Zero)
+        [FluxWallpaper]::keybd_event(0x43, 0, 0, [UIntPtr]::Zero)
+        [FluxWallpaper]::keybd_event(0x43, 0, 2, [UIntPtr]::Zero)
+        [FluxWallpaper]::keybd_event(0x10, 0, 2, [UIntPtr]::Zero)
+        [FluxWallpaper]::keybd_event(0x11, 0, 2, [UIntPtr]::Zero)
         Start-Sleep -Milliseconds 450
         try {
             $dropPaths = @((Get-Clipboard -Format FileDropList -ErrorAction Stop) | ForEach-Object { $_.ToString() })
