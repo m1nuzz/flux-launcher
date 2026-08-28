@@ -2226,7 +2226,7 @@ try {
         try {
             $dropPaths = @((Get-Clipboard -Format FileDropList -ErrorAction Stop) | ForEach-Object { $_.ToString() })
             Write-Host "Ctrl+Shift+C file drop list: $($dropPaths -join '; ')"
-            $resultCtrlShiftCopyProbe = $dropPaths.Count -gt 0 -and (($dropPaths -join ';') -match '\.(exe|lnk)$')
+            $resultCtrlShiftCopyProbe = $dropPaths.Count -gt 0 -and ($dropPaths | Where-Object { [System.IO.Path]::IsPathFullyQualified($_) }).Count -gt 0
         } catch {
             Write-Host "Ctrl+Shift+C clipboard read failed: $($_.Exception.Message)"
             $resultCtrlShiftCopyProbe = $false
