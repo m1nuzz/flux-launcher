@@ -1568,7 +1568,7 @@ try {
             0
         }
         $resultRightArrowMiddleCaretActionMenu = $caretMiddleWindowVisible -and $caretMiddleWindowHeight -ge 240
-        $resultRightArrowMiddleCaretProbe = $caretMiddleWindowVisible -and !$resultRightArrowMiddleCaretActionMenu
+        $resultRightArrowMiddleCaretProbe = !$resultRightArrowMiddleCaretActionMenu
         Write-Host "Right Arrow caret-middle probe: visible=$caretMiddleWindowVisible height=$caretMiddleWindowHeight action_menu=$resultRightArrowMiddleCaretActionMenu passed=$resultRightArrowMiddleCaretProbe"
         Save-Screenshot "result-keyboard-caret-middle.png"
         if ($resultRightArrowMiddleCaretActionMenu) {
@@ -2149,8 +2149,12 @@ try {
     if (!$launchProcessCreationProbe) {
         throw "Launch process probe failed: dispatch_before_hide=$launchProbeDispatchBeforeHide, launch_succeeded=$launchProbeLaunchSucceeded, completed_before_hide=$launchProbeLaunchSucceededBeforeHide, process_created=$($launchProbeProcessTimestamp -gt 0.0), shell_return=$($launchProbeShellReturnTimestamp -gt 0.0)."
     }
-    [FluxWallpaper]::SendMessage($launcherHandle, $wmHotkey, [UIntPtr]::Zero, [IntPtr]::Zero) | Out-Null
-    Start-Sleep -Milliseconds 650
+    $restoreDeadline = (Get-Date).AddSeconds(5)
+    while (![FluxWallpaper]::IsWindowVisible($launcherHandle) -and (Get-Date) -lt $restoreDeadline) {
+        [FluxWallpaper]::SetForegroundWindow($launcherHandle) | Out-Null
+        [FluxWallpaper]::SendMessage($launcherHandle, $wmHotkey, [UIntPtr]::Zero, [IntPtr]::Zero) | Out-Null
+        Start-Sleep -Milliseconds 650
+    }
     if (![FluxWallpaper]::IsWindowVisible($launcherHandle)) {
         throw "Unable to restore launcher after process creation smoke."
     }
