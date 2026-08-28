@@ -1544,9 +1544,10 @@ try {
         Start-Sleep -Seconds 2
 
         # With the query input focused, Right Arrow must move the caret when it
-        # is not at the end. The existing action-menu shortcut is expected to
-        # fail this pre-fix probe by opening the action list after Home+Right.
-        $shell.SendKeys("{HOME}")
+        # Move one character left from the end, then press Right. This models a
+        # real middle-caret edit without relying on Home, which is also a list
+        # navigation key in older launcher routing.
+        $shell.SendKeys("{LEFT}")
         Start-Sleep -Milliseconds 150
         $shell.SendKeys("{RIGHT}")
         Start-Sleep -Milliseconds 500
