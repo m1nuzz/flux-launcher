@@ -3717,7 +3717,7 @@ fn main() {
             return true;
         }
         match event.key {
-            Key::Up | Key::Down | Key::Home | Key::End => {
+            Key::Up | Key::Down => {
                 let count = current_results.len();
                 let next = match event.key {
                     Key::Up => selected_index_for_keys
@@ -3725,8 +3725,6 @@ fn main() {
                         .checked_sub(1)
                         .unwrap_or(count - 1),
                     Key::Down => (selected_index_for_keys.get() + 1) % count,
-                    Key::Home => 0,
-                    Key::End => count - 1,
                     _ => 0,
                 };
                 selection_touched_for_keys.set(true);
