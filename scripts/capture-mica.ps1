@@ -1544,9 +1544,18 @@ try {
         Start-Sleep -Seconds 2
 
         # With the query input focused, Right Arrow must move the caret when it
-        # Move one character left from the end, then press Right. This models a
-        # real middle-caret edit without relying on Home, which is also a list
-        # navigation key in older launcher routing.
+        # is not at the end. Reassert focus by clicking the search field before
+        # sending the navigation keys; otherwise SendKeys can target the runner
+        # or a stale result widget after asynchronous result publication.
+        [FluxWallpaper]::SetForegroundWindow($launcherHandle) | Out-Null
+        $caretFocusRect = New-Object FluxWallpaper+RECT
+        if (![FluxWallpaper]::GetWindowRect($launcherHandle, [ref]$caretFocusRect)) {
+            throw "Unable to locate launcher before caret focus probe."
+        }
+        [FluxWallpaper]::SetCursorPos($caretFocusRect.Left + 220, $caretFocusRect.Top + 28) | Out-Null
+        [FluxWallpaper]::mouse_event(0x0002, 0, 0, 0, [UIntPtr]::Zero)
+        [FluxWallpaper]::mouse_event(0x0004, 0, 0, 0, [UIntPtr]::Zero)
+        Start-Sleep -Milliseconds 250
         $shell.SendKeys("{LEFT}")
         Start-Sleep -Milliseconds 150
         $shell.SendKeys("{RIGHT}")
