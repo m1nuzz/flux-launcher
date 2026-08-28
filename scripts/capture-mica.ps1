@@ -1541,6 +1541,30 @@ try {
         $shell.SendKeys("{BACKSPACE}")
         $shell.SendKeys($resultPointerQuery)
         Start-Sleep -Seconds 2
+
+        # With the query input focused, Right Arrow must move the caret when it
+        # is not at the end. The existing action-menu shortcut is expected to
+        # fail this pre-fix probe by opening the action list after Home+Right.
+        $shell.SendKeys("{HOME}")
+        Start-Sleep -Milliseconds 150
+        $shell.SendKeys("{RIGHT}")
+        Start-Sleep -Milliseconds 500
+        $caretMiddleRect = New-Object FluxWallpaper+RECT
+        $caretMiddleWindowVisible = [FluxWallpaper]::IsWindowVisible($launcherHandle)
+        $caretMiddleWindowHeight = if ([FluxWallpaper]::GetWindowRect($launcherHandle, [ref]$caretMiddleRect)) {
+            [FluxWallpaper]::RectHeight($caretMiddleRect)
+        } else {
+            0
+        }
+        $resultRightArrowMiddleCaretActionMenu = $caretMiddleWindowVisible -and $caretMiddleWindowHeight -ge 240
+        $resultRightArrowMiddleCaretProbe = $caretMiddleWindowVisible -and !$resultRightArrowMiddleCaretActionMenu
+        Save-Screenshot "result-keyboard-caret-middle.png"
+        if ($resultRightArrowMiddleCaretActionMenu) {
+            [FluxWallpaper]::keybd_event(0x1B, 0, 0, [UIntPtr]::Zero)
+            [FluxWallpaper]::keybd_event(0x1B, 0, 2, [UIntPtr]::Zero)
+            Start-Sleep -Milliseconds 250
+        }
+
         $resultPointerRect = New-Object FluxWallpaper+RECT
         if (![FluxWallpaper]::GetWindowRect($launcherHandle, [ref]$resultPointerRect)) {
             throw "Result mouse interaction smoke could not locate launcher rectangle."
@@ -2845,6 +2869,8 @@ try {
         ResultRightClickActionMenuVisible = (!$ResultMouseInteractionSmoke) -or $resultRmbActionMenuVisible
         ResultRightClickWindowHidden = $resultRmbWindowHidden
         ResultRightClickLaunchProbe = $resultRmbLaunchProbe
+        ResultRightArrowMiddleCaretActionMenu = $resultRightArrowMiddleCaretActionMenu
+        ResultRightArrowMiddleCaretProbe = (!$ResultMouseInteractionSmoke) -or $resultRightArrowMiddleCaretProbe
         ResultNormalHoverTextCursor = $resultNormalHoverTextCursor
         ResultNormalHoverCopyDisabledProbe = (!$ResultMouseInteractionSmoke) -or $resultNormalHoverCopyDisabledProbe
         ResultNormalClickDispatchObserved = $resultNormalClickDispatchObserved
@@ -2953,8 +2979,8 @@ try {
             HiddenIdleAfterDeactivation = $deactivationIdleMemory
         }
     } | ConvertTo-Json | Set-Content -Encoding utf8 (Join-Path $OutputDirectory "environment.json")
-    if ($ResultMouseInteractionSmoke -and (!$resultRmbActionMenuVisible -or $resultRmbLaunchProbe -or !$resultNormalClickLaunchProbe -or !$resultCtrlCopyProbe)) {
-        throw "Result mouse interaction smoke failed: right_click_action_menu=$resultRmbActionMenuVisible, right_click_launch=$resultRmbLaunchProbe, normal_click_launch=$resultNormalClickLaunchProbe, ctrl_copy=$resultCtrlCopyProbe."
+    if ($ResultMouseInteractionSmoke -and (!$resultRmbActionMenuVisible -or $resultRmbLaunchProbe -or !$resultNormalClickLaunchProbe -or !$resultCtrlCopyProbe -or !$resultRightArrowMiddleCaretProbe)) {
+        throw "Result mouse interaction smoke failed: right_click_action_menu=$resultRmbActionMenuVisible, right_click_launch=$resultRmbLaunchProbe, normal_click_launch=$resultNormalClickLaunchProbe, ctrl_copy=$resultCtrlCopyProbe, right_arrow_middle_caret=$resultRightArrowMiddleCaretProbe."
     }
 }
 finally {
