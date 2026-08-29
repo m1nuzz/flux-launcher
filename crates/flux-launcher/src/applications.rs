@@ -55,7 +55,8 @@ impl ApplicationWorker {
                         continue;
                     };
                     let results = catalog.search(&request.query);
-                    let status = format!("{} application result(s)", results.len());
+                    let status =
+                        t!("applications.result_count", count = results.len()).into_owned();
                     let _ = output.send(ApplicationResponse {
                         sequence: request.sequence,
                         query: request.query,

@@ -20,6 +20,8 @@ toml = "0.8"
 semver = "1"
 sha2 = "0.10"
 ureq = { version = "2.12", default-features = false, features = ["tls"] }
+rust-i18n = "4.2.1"
+sys-locale = "0.3.2"
 
 [target.'cfg(windows)'.dependencies]
 everything-ipc = "0.1.4"

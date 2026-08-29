@@ -18,7 +18,7 @@ pub use search::{
     ResultSource, SearchModel, SearchResult,
 };
 pub use settings::{
-    HotkeyConfig, MonitorPreference, PriorityEntry, Settings, DEFAULT_LAUNCHER_HEIGHT,
+    HotkeyConfig, Language, MonitorPreference, PriorityEntry, Settings, DEFAULT_LAUNCHER_HEIGHT,
     DEFAULT_LAUNCHER_WIDTH, MAX_LAUNCHER_HEIGHT, MAX_LAUNCHER_WIDTH, MIN_LAUNCHER_HEIGHT,
     MIN_LAUNCHER_WIDTH,
 };

@@ -1,0 +1,200 @@
+---
+tray:
+  show: Show launcher
+  settings: Settings
+  game_mode: Game Mode
+  exit: Exit
+search:
+  placeholder: Search
+action_bar:
+  open: Open
+  run_as_admin: Run as admin
+  open_file_location: Open file location
+everything:
+  detected_enable_ipc: Everything detected; Flux will enable IPC automatically
+  not_installed_winget: Everything is not installed. Install it with winget to enable file search.
+  install: Install Everything
+  prompt_install_question: Everything is not installed. Install it now for fast indexed file and folder search?
+  prompt_winget_command: 'Flux will run the official winget command: winget install -e --id voidtools.Everything'
+  not_now: Not now
+  install_started: Everything installation started with winget.
+  install_started_toast: Everything installation started
+  auto_enable_disabled: Everything auto-enable is disabled in Flux settings
+  ipc_available: Everything IPC is available
+  ipc_unavailable: Everything is installed but its local IPC is unavailable
+  detected_enabling_ipc: Everything detected; Flux is enabling local IPC automatically
+  winget_started_restart: winget install started. Restart Flux after Everything is installed.
+  winget_started_toast: winget install started
+  unavailable: Everything is not available
+  result_count: "%{count} Everything result(s)"
+  query_failed: 'Everything query failed: %{error}'
+recycle_bin:
+  title: Empty Recycle Bin
+  warning: This permanently deletes all items in the Recycle Bin.
+  irreversible: This action cannot be undone.
+  emptied: Recycle Bin emptied
+  empty_failed: Could not empty the Recycle Bin
+common:
+  cancel: Cancel
+settings:
+  query_history_hint: 'Query history: Ctrl+H recalls committed searches'
+  clear_history: Clear history
+  history_cleared: Query history cleared
+  smooth_caret: Smooth Caret
+  smooth_caret_desc: Animate search caret movement
+  caret_duration: Caret duration (ms)
+  native_plugins_hint: 'Native Flow plugins: %APPDATA%\FluxLauncher\Plugins or FLUX_PLUGIN_DIR'
+  apply: Apply settings
+  applied: Settings applied
+  startup_failed: "Startup setting failed: %{error}"
+  title: Settings
+  apply_immediate: Changes apply immediately and are saved atomically
+  tab:
+    general: General
+    visual: Visual
+    priorities: Priorities
+    plugins: Plugins
+  back: Back
+  activation_key: Activation key
+  record_key: Record key
+  press_desired_key: Press the desired activation key
+  record_hint: Click Record key, then press one key or a key combination
+  modifier:
+    ctrl: Ctrl
+    alt: Alt
+    shift: Shift
+    windows: Windows
+  fullscreen_protection: Fullscreen protection
+  fullscreen_protection_desc: Ignore activation while another app is fullscreen
+  game_mode: Game Mode
+  game_mode_desc: Suppress the launcher until manually disabled
+  keyboard_layout: Keyboard layout
+  keyboard_layout_desc: Start typing in English and restore the previous layout on hide
+  query_on_activation: Query on activation
+  query_on_activation_desc: Clear the previous query when opened with the global hotkey
+  windows_startup: Windows startup
+  windows_startup_desc: Start Flux automatically with Windows
+  language: Language
+  language_options:
+    follow_system: Follow system
+    english: English
+    chinese: 简体中文
+  open_launcher_on: Open launcher on
+  monitor:
+    primary: Primary display
+    cursor: Display with the mouse cursor
+    foreground: Display with the focused window
+  updates: Updates
+  updates_desc: Check stable GitHub releases automatically
+  hours_between_checks: hours between checks
+  update_action: Update action
+  update_action_desc: Install stable updates automatically
+  check_updates: Check for updates
+  install_now: Install now
+  everything: Everything
+  everything_desc: Auto-enable Everything when installed
+  everything_command: 'Command: winget install -e --id voidtools.Everything'
+  lock_failed: Could not lock Flux settings
+  plugins:
+    title: Native plugins
+    description: Built-in providers run inside Flux. Community Rust DLL plugins run in one isolated shared worker spawned from this same flux-launcher.exe.
+    folder: 'Community plugin folder: %{path}'
+    config_hint: Configure built-in native Rust plugins without Python or C# runtimes.
+    obsidian: Obsidian
+    obsidian_desc: Enable Obsidian vault search
+    action_keyword: Action keyword
+    obsidian_hint: 'Search notes and vault files with the configured keyword, for example: ob meeting. Use `ob create project` to create a new note.'
+    google: Google Search
+    google_desc: Enable Google web search
+    google_hint: 'Search the web with the configured keyword, for example: g space exploration. The result opens in your default browser.'
+  priorities:
+    title: Explicit application priorities
+    description: Only applications explicitly added with Set as priority appear here. Rank 1 is searched first.
+  visual:
+    title: Visual appearance
+    preview_desc: The live preview is a separate native windui window. Its client area is resized directly in realtime; the Settings window stays centered and stable while dragging.
+    selection_color: Selection color
+    use_system_accent: Use the Windows 11 system accent color when available
+    accent_hint: Windows accent is read from the current user profile; the custom color is used as a safe fallback.
+    preview_hint: The exact native preview window opens beside Settings when this Visual tab is active.
+    launcher_width: Launcher width
+    results_height: Results height
+    reset: Reset
+    dip: DIP
+    safe_range: "Safe range: %{min}–%{max} logical px (DIP)"
+    native_preview_hint: The native preview uses the exact requested logical client dimensions. Physical GetClientRect pixels scale with the preview monitor DPI; Apply saves the values.
+    apply: Apply dimensions
+    save_failed: Could not save visual dimensions
+    applied: Visual dimensions applied
+    client_area: "Current launcher client area: %{width} × %{height} logical px (DIP)"
+updater:
+  checking_github: Checking stable GitHub releases...
+  checked_automatically: Stable updates are checked automatically
+  installing_restarting: Installing stable %{version}; Flux Launcher is restarting
+  installing: Installing stable %{version}
+  install_failed: 'Stable %{version} update failed: %{error}'
+  install_failed_toast: 'Update install failed: %{error}'
+  available: Stable %{version} is available
+  preparing: Preparing stable %{version} for installation...
+  already_installing: An update is already being installed
+  up_to_date: Flux %{version} is up to date
+  check_failed: 'Stable update check failed: %{error}'
+  preparing_download: Preparing stable %{version} for download...
+  checking_toast: Checking stable updates
+  downloading_progress: "Downloading stable %{version}: %{percent}% — %{received} / %{total} (%{remaining} remaining)"
+  downloading_received: "Downloading stable %{version}: %{received} received"
+applications:
+  result_count: "%{count} application result(s)"
+plugins:
+  no_native_flow: No native Flow plugins installed
+  flow_not_respond: "%{count} native Flow plugin(s) did not respond"
+  flow_result_count: "%{count} Flow plugin result(s)"
+  host_restarted: 'Native plugin host restarted (attempt %{attempt}): %{error}'
+  no_native_host: No native Rust plugin host installed
+  native_result_count: "%{count} native plugin result(s)"
+builtin:
+  calculator:
+    result: "= %{value}"
+    subtitle: "Calculator • %{expression}"
+  google:
+    title: "Search Google: %{query}"
+    subtitle: Open the Google search in the default browser
+  obsidian:
+    file_subtitle: "Obsidian • %{vault} • %{path}"
+    create_note: "Create note: %{name}"
+    vault_subtitle: "Obsidian • %{vault}"
+action:
+  open: Open
+  copy_name: Copy name
+  set_priority: Set as priority (move to top)
+  run_as_admin: Run as admin
+  open_file_location: Open file location
+  copy_file: Copy file
+  copy_folder_path: Copy folder path
+  plugin_run: Run plugin action
+  plugin_open_url: Open web result
+  plugin_open_path: Open path
+  plugin_copy_text: Copy text
+game_mode:
+  on: 'Game Mode: On'
+  off: 'Game Mode: Off'
+priorities:
+  moved_up: Priority moved up
+  moved_down: Priority moved down
+  removed: Priority removed
+  remove: Remove
+  empty: No explicit priorities yet. Select an application, press Right, then choose Set as priority.
+visual_preview:
+  title: Flux Launcher
+  description: This is the actual launcher preview window. Its client area is resized directly, not scaled into a mock card.
+  units_hint: The controls use logical client units (DIP); Windows maps them to physical pixels at the preview monitor DPI.
+  result_preview: Preview result
+  result_preview_sub: Native windui surface
+  result_exact: Width and height are exact
+  result_exact_sub: Measured from this window client area
+  result_acrylic: Acrylic/Mica remains active
+  result_acrylic_sub: The Settings window stays separate
+status:
+  ready: Ready
+  searching: Searching applications, Everything and native Flow plugins...
+

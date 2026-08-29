@@ -241,7 +241,7 @@ fn query_everything(
             sequence: request.sequence,
             query: request.query,
             results: Vec::new(),
-            status: String::from("Everything is not available"),
+            status: t!("everything.unavailable").into_owned(),
             available: false,
         };
     };
@@ -275,7 +275,7 @@ fn query_everything(
             EverythingResponse {
                 sequence: request.sequence,
                 query: request.query,
-                status: format!("{} Everything result(s)", results.len()),
+                status: t!("everything.result_count", count = results.len()).into_owned(),
                 results,
                 available: true,
             }
@@ -286,7 +286,7 @@ fn query_everything(
                 sequence: request.sequence,
                 query: request.query,
                 results: Vec::new(),
-                status: format!("Everything query failed: {error}"),
+                status: t!("everything.query_failed", error = error).into_owned(),
                 available: false,
             }
         }

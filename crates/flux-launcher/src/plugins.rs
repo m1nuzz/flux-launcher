@@ -189,7 +189,7 @@ fn query_plugins(plugins: &[PluginDescriptor], request: PluginRequest) -> Plugin
             sequence: request.sequence,
             query: request.query,
             results,
-            status: String::from("No native Flow plugins installed"),
+            status: t!("plugins.no_native_flow").into_owned(),
             available: false,
             actions,
         };
@@ -227,9 +227,9 @@ fn query_plugins(plugins: &[PluginDescriptor], request: PluginRequest) -> Plugin
     }
 
     let status = if results.is_empty() && failures > 0 {
-        format!("{failures} native Flow plugin(s) did not respond")
+        t!("plugins.flow_not_respond", count = failures).into_owned()
     } else {
-        format!("{} Flow plugin result(s)", results.len())
+        t!("plugins.flow_result_count", count = results.len()).into_owned()
     };
     PluginQueryResponse {
         sequence: request.sequence,
@@ -505,10 +505,12 @@ impl NativePluginWorker {
                                 sequence: request.sequence,
                                 query: request.query,
                                 results: Vec::new(),
-                                status: format!(
-                                    "Native plugin host restarted (attempt {}): {error}",
-                                    restart_count
-                                ),
+                                status: t!(
+                                    "plugins.host_restarted",
+                                    attempt = restart_count,
+                                    error = error
+                                )
+                                .into_owned(),
                                 available: false,
                                 actions: HashMap::new(),
                             }
@@ -517,7 +519,7 @@ impl NativePluginWorker {
                             sequence: request.sequence,
                             query: request.query,
                             results: Vec::new(),
-                            status: String::from("No native Rust plugin host installed"),
+                            status: t!("plugins.no_native_host").into_owned(),
                             available: false,
                             actions: HashMap::new(),
                         },
@@ -743,7 +745,7 @@ fn parse_native_response(
         });
     }
     let status = if payload.errors.is_empty() {
-        format!("{} native plugin result(s)", results.len())
+        t!("plugins.native_result_count", count = results.len()).into_owned()
     } else {
         payload.errors.join("; ")
     };

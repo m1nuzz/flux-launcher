@@ -73,8 +73,8 @@ impl BuiltinProvider for CalculatorProvider {
         vec![BuiltinResult {
             result: SearchResult {
                 id: String::from("builtin:calculator"),
-                title: format!("= {formatted}"),
-                subtitle: format!("Calculator • {expression}"),
+                title: t!("builtin.calculator.result", value = formatted).into_owned(),
+                subtitle: t!("builtin.calculator.subtitle", expression = expression).into_owned(),
                 kind: ResultKind::Placeholder,
                 source: ResultSource::Plugin,
                 target: None,
@@ -272,8 +272,8 @@ impl BuiltinProvider for GoogleProvider {
         vec![BuiltinResult {
             result: SearchResult {
                 id: String::from("builtin:google-search"),
-                title: format!("Search Google: {search}"),
-                subtitle: String::from("Open the Google search in the default browser"),
+                title: t!("builtin.google.title", query = search).into_owned(),
+                subtitle: t!("builtin.google.subtitle").into_owned(),
                 kind: ResultKind::Placeholder,
                 source: ResultSource::Plugin,
                 target: None,
@@ -597,7 +597,12 @@ fn file_result(file: VaultFile) -> BuiltinResult {
                 file.relative_path.to_ascii_lowercase()
             ),
             title,
-            subtitle: format!("Obsidian • {} • {}", file.vault_name, file.relative_path),
+            subtitle: t!(
+                "builtin.obsidian.file_subtitle",
+                vault = file.vault_name,
+                path = file.relative_path
+            )
+            .into_owned(),
             kind: ResultKind::Placeholder,
             source: ResultSource::Plugin,
             target: None,
@@ -616,8 +621,8 @@ fn create_note_results(note_name: &str, vaults: &[Vault]) -> Vec<BuiltinResult> 
         .map(|vault| BuiltinResult {
             result: SearchResult {
                 id: format!("builtin:obsidian:create:{}", vault.id),
-                title: format!("Create note: {note_name}"),
-                subtitle: format!("Obsidian • {}", vault.name),
+                title: t!("builtin.obsidian.create_note", name = note_name).into_owned(),
+                subtitle: t!("builtin.obsidian.vault_subtitle", vault = vault.name).into_owned(),
                 kind: ResultKind::Placeholder,
                 source: ResultSource::Plugin,
                 target: None,
