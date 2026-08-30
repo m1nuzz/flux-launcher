@@ -558,7 +558,8 @@ enum ActionKind {
     Open,
     RunAsAdmin,
     OpenLocation,
-    CopyPath,
+    CopyFile,
+    CopyFolderPath,
     CopyName,
     SetPriority,
     RunPlugin(PluginAction),
@@ -584,7 +585,7 @@ fn actions_for_result(
     result: &SearchResult,
     plugin_actions: &HashMap<String, PluginAction>,
 ) -> Vec<ActionItem> {
-    let mut actions = Vec::with_capacity(4);
+    let mut actions = Vec::with_capacity(6);
     if matches!(result.id.as_str(), "empty-recycle-bin" | "open-recycle-bin") {
         return actions;
     }
@@ -625,9 +626,14 @@ fn actions_for_result(
             kind: ActionKind::OpenLocation,
         });
         actions.push(ActionItem {
-            id: format!("{}:copy-path", result.id),
-            label: String::from("Copy file/folder path"),
-            kind: ActionKind::CopyPath,
+            id: format!("{}:copy-file", result.id),
+            label: String::from("Copy file"),
+            kind: ActionKind::CopyFile,
+        });
+        actions.push(ActionItem {
+            id: format!("{}:copy-folder-path", result.id),
+            label: String::from("Copy folder path"),
+            kind: ActionKind::CopyFolderPath,
         });
     }
     if let Some(invocation) = plugin_actions.get(&result.id).cloned() {
@@ -676,6 +682,7 @@ struct ResultRowAnchor {
     selection_color: Signal<Color>,
     action_items: Signal<Vec<ActionItem>>,
     action_index: Signal<usize>,
+    action_scroll_pending: Signal<bool>,
     action_mode: Signal<bool>,
     launcher_width: Signal<u16>,
     action_window_slot: Rc<RefCell<Option<WindowSizeHandle>>>,
@@ -795,6 +802,7 @@ impl Widget for ResultRowAnchor {
                 if !self.actions.is_empty() {
                     self.action_items.set(self.actions.clone());
                     self.action_index.set(0);
+                    self.action_scroll_pending.set(true);
                     self.action_mode.set(true);
                     if let Some(handle) = self.action_window_slot.borrow().as_ref() {
                         handle.set(i32::from(self.launcher_width.get()), ACTION_WINDOW_HEIGHT);
@@ -845,6 +853,110 @@ impl Widget for ResultRowAnchor {
             bounds.w as f32,
             bounds.h as f32,
             10.0,
+            &Paint::fill(color),
+        );
+    }
+}
+
+/// A reactive action-menu row that paints its own selection state and asks the
+/// nearest scroll container to reveal the selected row after keyboard or pointer
+/// navigation. It mirrors the result-list interaction contract so the submenu
+/// scrolls exactly like the search results when the actions overflow the viewport.
+struct ActionRowAnchor {
+    item_index: usize,
+    action_index: Signal<usize>,
+    scroll_pending: Signal<bool>,
+    last_pointer: Option<(i32, i32)>,
+    pressed: bool,
+    on_click: Option<ClickFn>,
+}
+impl Widget for ActionRowAnchor {
+    fn on_update(&mut self, ctx: &mut EventCtx) {
+        if self.action_index.get() == self.item_index && self.scroll_pending.get() {
+            let row_id = ctx.id();
+            let _ = ctx.tree_mut().scroll_into_view(row_id);
+            self.scroll_pending.set(false);
+        }
+    }
+    fn on_event(&mut self, ctx: &mut EventCtx, event: &Event) -> bool {
+        let Event::Pointer(pointer) = event else {
+            return false;
+        };
+        match pointer.kind {
+            PointerKind::Enter => {
+                self.last_pointer = Some((pointer.pos.x, pointer.pos.y));
+                ctx.mark_dirty();
+                true
+            }
+            PointerKind::Move => {
+                let position = (pointer.pos.x, pointer.pos.y);
+                if hover_position_changed(&mut self.last_pointer, position) {
+                    self.action_index.set(self.item_index);
+                    self.scroll_pending.set(true);
+                    ctx.mark_dirty();
+                }
+                true
+            }
+            PointerKind::Leave => {
+                self.last_pointer = None;
+                ctx.mark_dirty();
+                true
+            }
+            PointerKind::Down if pointer.button == MouseButton::Left => {
+                self.action_index.set(self.item_index);
+                self.scroll_pending.set(true);
+                self.pressed = true;
+                ctx.capture();
+                ctx.mark_dirty();
+                true
+            }
+            PointerKind::Up if pointer.button == MouseButton::Left => {
+                let was_pressed = self.pressed;
+                self.pressed = false;
+                let inside = ctx.bounds().contains(pointer.pos);
+                ctx.release_capture();
+                ctx.mark_dirty();
+                if was_pressed && inside {
+                    if let Some(callback) = self.on_click.as_mut() {
+                        callback(ctx);
+                    }
+                }
+                true
+            }
+            _ => false,
+        }
+    }
+    fn take_click(&mut self, callback: ClickFn) {
+        self.on_click = Some(callback);
+    }
+    fn reset_interaction(&mut self) {
+        self.pressed = false;
+        self.last_pointer = None;
+    }
+    fn cursor(&self) -> windui::event::CursorShape {
+        windui::event::CursorShape::Hand
+    }
+    fn paint(
+        &self,
+        bounds: windui::geometry::Rect,
+        _content: windui::geometry::Rect,
+        _focused: bool,
+        _enabled: bool,
+        canvas: &mut dyn Canvas,
+        _style: &windui::style::Style,
+    ) {
+        let selected = self.action_index.get() == self.item_index;
+        let color = if selected {
+            Color::rgba(76, 139, 245, 92)
+        } else {
+            Color::rgba(255, 255, 255, 14)
+        };
+        canvas.fill_round_rect(
+            bounds.x as f32,
+            bounds.y as f32,
+            bounds.w as f32,
+            bounds.h as f32,
+            9.0,
             &Paint::fill(color),
         );
     }
@@ -1042,7 +1154,8 @@ fn execute_result_action(result: &SearchResult, action: &ActionKind) -> bool {
                 false
             }
         }
-        ActionKind::CopyPath => copy_result_path(result),
+        ActionKind::CopyFile => copy_result_file(result),
+        ActionKind::CopyFolderPath => copy_result_path(result),
         ActionKind::CopyName => {
             windui::platform::Clipboard.set_text(&result.title);
             true
@@ -2277,6 +2390,7 @@ fn result_row(
     plugin_actions: Rc<RefCell<HashMap<String, PluginAction>>>,
     action_items: Signal<Vec<ActionItem>>,
     action_index: Signal<usize>,
+    action_scroll_pending: Signal<bool>,
     action_mode: Signal<bool>,
     launcher_width: Signal<u16>,
     query: Signal<String>,
@@ -2344,6 +2458,7 @@ fn result_row(
             selection_color,
             action_items,
             action_index,
+            action_scroll_pending,
             action_mode,
             launcher_width,
             action_window_slot: Rc::clone(&window_size_slot),
@@ -2525,6 +2640,7 @@ fn main() {
     let selection_touched = signal(false);
     let action_mode = signal(false);
     let action_index = signal(0_usize);
+    let action_scroll_pending = signal(false);
     let recycle_bin_confirmation = signal(false);
     let action_items = signal(Vec::<ActionItem>::new());
     let action_window_slot = Rc::new(RefCell::new(None::<WindowSizeHandle>));
@@ -2715,6 +2831,7 @@ fn main() {
             Rc::clone(&actions_for_rows),
             action_items_for_rows,
             action_index_for_rows,
+            action_scroll_pending,
             action_mode_for_rows,
             launcher_width_for_rows,
             query_for_rows,
@@ -2875,22 +2992,24 @@ fn main() {
             let priorities_for_item_action = priorities_for_action_list;
             let providers_for_item_action = Rc::clone(&providers_for_action_list);
             let query_for_item_action = query_for_action_list;
-            let is_selected = action_items_for_rows
-                .get()
-                .iter()
-                .position(|candidate| candidate.id == item_id)
-                .map(|index| index == action_index_for_rows.get())
-                .unwrap_or(false);
             Element::row()
+                .widget(ActionRowAnchor {
+                    item_index: action_items_for_rows
+                        .get()
+                        .iter()
+                        .position(|candidate| candidate.id == item_id)
+                        .unwrap_or_default(),
+                    action_index: action_index_for_rows,
+                    scroll_pending: action_scroll_pending,
+                    last_pointer: None,
+                    pressed: false,
+                    on_click: None,
+                })
+                .reactive()
                 .width_match()
                 .height(36)
                 .padding_xy(10, 4)
                 .corner(9.0)
-                .bg(if is_selected {
-                    Color::rgba(76, 139, 245, 92)
-                } else {
-                    Color::rgba(255, 255, 255, 14)
-                })
                 .child(
                     Element::label(item_label)
                         .font_size(13.0)
@@ -3462,6 +3581,7 @@ fn main() {
     let action_mode_for_keys = action_mode;
     let action_index_for_keys = action_index;
     let action_items_for_keys = action_items;
+    let action_scroll_pending_for_keys = action_scroll_pending;
     let recycle_bin_confirmation_for_keys = recycle_bin_confirmation;
     let plugin_actions_for_keys = Rc::clone(&plugin_actions);
     let inline_completion_for_keys = inline_completion;
@@ -3703,12 +3823,12 @@ fn main() {
                             .checked_sub(1)
                             .unwrap_or(count - 1),
                     );
-                    action_items_for_keys.set(action_items_for_keys.get());
+                    action_scroll_pending_for_keys.set(true);
                     return true;
                 }
                 Key::Down => {
                     action_index_for_keys.set((action_index_for_keys.get() + 1) % count);
-                    action_items_for_keys.set(action_items_for_keys.get());
+                    action_scroll_pending_for_keys.set(true);
                     return true;
                 }
                 Key::Left | Key::Escape => {
@@ -3834,6 +3954,7 @@ fn main() {
                     if !actions.is_empty() {
                         action_items_for_keys.set(actions);
                         action_index_for_keys.set(0);
+                        action_scroll_pending_for_keys.set(true);
                         action_mode_for_keys.set(true);
                         show_results_for_keys.set(true);
                         size_for_keys.set(i32::from(launcher_width.get()), ACTION_WINDOW_HEIGHT);
@@ -5840,14 +5961,16 @@ mod tests {
                 "Open",
                 "Run as admin",
                 "Open file location",
-                "Copy file/folder path",
+                "Copy file",
+                "Copy folder path",
             ]
         );
         assert!(matches!(actions[0].kind, super::ActionKind::SetPriority));
         assert!(matches!(actions[1].kind, super::ActionKind::Open));
         assert!(matches!(actions[2].kind, super::ActionKind::RunAsAdmin));
         assert!(matches!(actions[3].kind, super::ActionKind::OpenLocation));
-        assert!(matches!(actions[4].kind, super::ActionKind::CopyPath));
+        assert!(matches!(actions[4].kind, super::ActionKind::CopyFile));
+        assert!(matches!(actions[5].kind, super::ActionKind::CopyFolderPath));
     }
 
     #[test]
