@@ -2488,8 +2488,6 @@ fn result_row(
                         .copy_menu(false)
                         .font_family(LAUNCHER_FONT_FAMILY)
                         .font_size(14.0)
-                        .max_lines(1)
-                        .truncate(Truncate::End)
                         .width_match(),
                 )
                 .child(
