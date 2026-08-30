@@ -2548,6 +2548,18 @@ fn result_row(
 }
 
 fn main() {
+    #[cfg(windows)]
+    {
+        // Monitor coordinates are queried before windui creates the HWND. Set
+        // per-monitor awareness first so Windows does not virtualize the
+        // 4K/mixed-DPI work area used for the initial center position.
+        use windows::Win32::UI::HiDpi::{
+            SetProcessDpiAwarenessContext, DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2,
+        };
+        unsafe {
+            let _ = SetProcessDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2);
+        }
+    }
     let mut args = std::env::args_os();
     let _executable = args.next();
     let mode = args.next();

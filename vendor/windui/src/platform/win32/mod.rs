@@ -1001,6 +1001,14 @@ unsafe fn run_windowed(
         // translucency without pretending to be a blurred desktop surface.
         let _ = SetLayeredWindowAttributes(hwnd, COLORREF(0), 232, LWA_ALPHA);
     }
+    // Move to an explicitly selected monitor before querying the window DPI.
+    // A newly created window otherwise inherits the DPI of Windows' default
+    // placement monitor, which can differ from the target monitor on a mixed-
+    // DPI desktop. Resizing after that would leave the first visible frame
+    // offset from the requested center.
+    if let Some((x, y)) = cfg.initial_position {
+        let _ = SetWindowPos(hwnd, None, x, y, 0, 0, SWP_NOZORDER | SWP_NOSIZE);
+    }
     // 用实际窗口 DPI 设置内容缩放（可能与系统 DPI 不同，如多显示器）。
     let dpi = GetDpiForWindow(hwnd);
     let scale = if dpi == 0 { 1.0 } else { dpi as f32 / 96.0 };
@@ -1078,15 +1086,13 @@ unsafe fn run_windowed(
         }
     }
 
-    // Apply an explicit initial position before the first ShowWindow. This is used by
-    // launcher monitor preferences; the legacy primary-screen centering remains the fallback.
+    // The explicit position is applied before the DPI query above. Keep the
+    // legacy primary-screen centering as the fallback when no position was set.
     let mut rc = RECT::default();
     let _ = GetWindowRect(hwnd, &mut rc);
     let win_w = rc.right - rc.left;
     let win_h = rc.bottom - rc.top;
-    if let Some((x, y)) = cfg.initial_position {
-        let _ = SetWindowPos(hwnd, None, x, y, 0, 0, SWP_NOZORDER | SWP_NOSIZE);
-    } else if cfg.centered {
+    if cfg.initial_position.is_none() && cfg.centered {
         let screen_w = GetSystemMetrics(SM_CXSCREEN);
         let screen_h = GetSystemMetrics(SM_CYSCREEN);
         let x = (screen_w - win_w) / 2;

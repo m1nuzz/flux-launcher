@@ -6,6 +6,7 @@ members = [
     "crates/flux-plugin-sdk",
     "crates/flux-plugin-example",
 ]
+default-members = ["crates/flux-launcher"]
 resolver = "2"
 
 [workspace.package]
