@@ -2554,7 +2554,7 @@ fn main() {
         // per-monitor awareness first so Windows does not virtualize the
         // 4K/mixed-DPI work area used for the initial center position.
         use windows::Win32::UI::HiDpi::{
-            DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2, SetProcessDpiAwarenessContext,
+            SetProcessDpiAwarenessContext, DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2,
         };
         unsafe {
             let _ = SetProcessDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2);
