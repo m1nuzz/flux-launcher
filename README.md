@@ -27,7 +27,7 @@
   · <a href="#build-from-source">Build</a>
 </p>
 
-**Flux Launcher** is a lightweight **Flow Launcher alternative for Windows 11**. It opens with `Alt+Space`, finds applications and files, understands Everything search syntax, launches web searches, supports Obsidian vaults, and remains compatible with native Flow Launcher executable plugins. The interface is built exclusively with **windui** and uses the Windows 11 Acrylic/DWM composition path without a WebView or browser engine.
+**Flux Launcher** is a lightweight **Flow Launcher alternative for Windows 11**. It opens with `Alt+Space`, finds applications and files, understands Everything search syntax, launches web searches, supports Obsidian vaults, and remains compatible with native Flow Launcher executable plugins. The interface is built exclusively with **windui** and the Windows 11 Acrylic/DWM composition path. It does not use WebView, Electron, Tauri, or any browser engine.
 
 ## Why Flux Launcher
 
