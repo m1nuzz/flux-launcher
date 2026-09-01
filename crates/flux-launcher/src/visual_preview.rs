@@ -335,7 +335,14 @@ pub(crate) fn run(width: i32, height: i32, x: i32, y: i32) {
     let height = height.clamp(1, i32::from(u16::MAX));
     let width_signal = signal(width as u16);
     let height_signal = signal(height as u16);
-    let size_label = signal(format!("{width} × {height} logical px client area"));
+    let size_label = signal(
+        t!(
+            "visual_preview.client_area_label",
+            width = width,
+            height = height
+        )
+        .into_owned(),
+    );
     let width_for_commands = width_signal;
     let height_for_commands = height_signal;
     let size_label_for_commands = size_label;
@@ -364,7 +371,14 @@ pub(crate) fn run(width: i32, height: i32, x: i32, y: i32) {
             let height = height.clamp(1, i32::from(u16::MAX));
             width_for_commands.set(width as u16);
             height_for_commands.set(height as u16);
-            size_label_for_commands.set(format!("{width} × {height} logical px client area"));
+            size_label_for_commands.set(
+                t!(
+                    "visual_preview.client_area_label",
+                    width = width,
+                    height = height
+                )
+                .into_owned(),
+            );
             size_handle.set(width, height);
             position_handle.set(x, y);
         }

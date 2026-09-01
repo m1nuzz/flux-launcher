@@ -26,6 +26,8 @@ everything:
   winget_started_restart: winget 安装已开始。安装完成后请重启 Flux。
   winget_started_toast: winget 安装已开始
   unavailable: Everything 不可用
+  is_installed: Everything 已安装
+  is_not_installed: Everything 未安装
   result_count: "%{count} 个 Everything 结果"
   query_failed: 'Everything 查询失败：%{error}'
 recycle_bin:
@@ -89,9 +91,11 @@ settings:
   hours_between_checks: 小时检查一次
   update_action: 更新操作
   update_action_desc: 自动安装稳定更新
+  current_version: "当前版本：%{version}"
   check_updates: 检查更新
   install_now: 立即安装
   everything: Everything
+  everything_tab_desc: Everything 提供快速索引的文件与文件夹搜索。在此处与其它插件一同配置其自动使用。
   everything_desc: 安装后自动启用 Everything
   everything_command: '命令：winget install -e --id voidtools.Everything'
   lock_failed: 无法锁定 Flux 设置
@@ -188,6 +192,7 @@ visual_preview:
   title: Flux Launcher
   description: 这是实际的启动器预览窗口。其客户区直接调整大小，而非缩放进模拟卡片。
   units_hint: 控件使用逻辑客户区单位（DIP）；Windows 会在预览显示器 DPI 下将它们映射为物理像素。
+  client_area_label: "%{width} × %{height} 逻辑像素客户区"
   result_preview: 预览结果
   result_preview_sub: 原生 windui 表面
   result_exact: 宽度与高度完全精确

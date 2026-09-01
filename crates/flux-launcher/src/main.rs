@@ -32,6 +32,20 @@ use std::sync::{
 };
 use std::thread;
 use std::time::Duration;
+#[cfg(windows)]
+use windows::core::BOOL;
+#[cfg(windows)]
+use windows::Win32::Foundation::HANDLE;
+#[cfg(windows)]
+use windows::Win32::System::DataExchange::{
+    CloseClipboard, EmptyClipboard, OpenClipboard, SetClipboardData,
+};
+#[cfg(windows)]
+use windows::Win32::System::Memory::{GlobalAlloc, GlobalLock, GlobalUnlock, GMEM_MOVEABLE};
+#[cfg(windows)]
+use windows::Win32::UI::Input::KeyboardAndMouse::{GetAsyncKeyState, VK_SHIFT};
+#[cfg(windows)]
+use windows::Win32::UI::Shell::DROPFILES;
 
 use applications::{
     canonical_application_id, canonical_application_key, resolve_bare_executable_path,
@@ -54,33 +68,22 @@ use windui::event::{Event, Key, KeyEvent, MouseButton, PointerKind};
 use windui::prelude::*;
 use windui::render::{Canvas, Paint};
 
-#[cfg(windows)]
-use windows::core::BOOL;
-#[cfg(windows)]
-use windows::Win32::Foundation::HANDLE;
-#[cfg(windows)]
-use windows::Win32::System::DataExchange::{
-    CloseClipboard, EmptyClipboard, OpenClipboard, SetClipboardData,
-};
-#[cfg(windows)]
-use windows::Win32::System::Memory::{GlobalAlloc, GlobalLock, GlobalUnlock, GMEM_MOVEABLE};
-#[cfg(windows)]
-use windows::Win32::UI::Shell::DROPFILES;
-
 const CURRENT_VERSION: &str = env!("CARGO_PKG_VERSION");
 const SINGLE_INSTANCE_ID: &str = "m1nuzz.flux-launcher";
 const SETTINGS_WINDOW_WIDTH: i32 = 720;
-// 空启动器是一个紧凑的搜索条；结果状态保持用户配置的高度。
+const EVERYTHING_PROMPT_WINDOW_WIDTH: i32 = 440;
+const EVERYTHING_PROMPT_WINDOW_HEIGHT: i32 = 242;
+// The empty launcher is a compact search strip; the results state keeps the user-configured height.
 const COMPACT_WINDOW_HEIGHT: i32 = 56;
 const VISUAL_SLIDER_WIDTH: i32 = 200;
-// 操作组保持比最小启动器内容宽度更窄，以便
-// 在每个尺寸下都能在相同的左右内容边距之间居中显示。
+// The action group stays narrower than the minimum launcher content width so it
+// can be centered between the same left/right content insets at every size.
 const ACTION_BAR_WIDTH: i32 = 340;
 const ACTION_BAR_HEIGHT: i32 = 22;
-// 保持结果面板紧凑（如参考实现），同时显示六行视口；
-// 额外的结果可通过原生滚轮滚动查看。
+// Keep the result palette compact like the reference while exposing a six-row
+// viewport; additional results remain available through the native wheel scroll.
 const ACTION_WINDOW_HEIGHT: i32 = 250;
-// 六个 46 DIP 的结果行加上本地滚动内边距，使底部栏靠近结果。
+// Six 46-DIP result rows plus local scroll padding keep the footer close to the results.
 const RESULT_VIEWPORT_HEIGHT: i32 = 288;
 const SETTINGS_WINDOW_HEIGHT: i32 = 520;
 const LAUNCHER_FONT_FAMILY: &str = "Segoe UI Variable";
@@ -144,15 +147,10 @@ fn request_scroll(scroll_pending: Signal<bool>) {
 }
 
 #[cfg(test)]
-fn launcher_window_geometry(
-    settings_visible: bool,
-    show_results: bool,
-    everything_prompt_visible: bool,
-) -> (i32, i32) {
+fn launcher_window_geometry(settings_visible: bool, show_results: bool) -> (i32, i32) {
     launcher_window_geometry_with_sizes(
         settings_visible,
         show_results,
-        everything_prompt_visible,
         DEFAULT_LAUNCHER_WIDTH as i32,
         DEFAULT_LAUNCHER_HEIGHT as i32,
     )
@@ -161,7 +159,6 @@ fn launcher_window_geometry(
 fn launcher_window_geometry_with_sizes(
     settings_visible: bool,
     show_results: bool,
-    everything_prompt_visible: bool,
     launcher_width: i32,
     launcher_height: i32,
 ) -> (i32, i32) {
@@ -169,13 +166,37 @@ fn launcher_window_geometry_with_sizes(
         (SETTINGS_WINDOW_WIDTH, SETTINGS_WINDOW_HEIGHT)
     } else if show_results {
         (launcher_width, launcher_height)
-    } else if everything_prompt_visible {
-        // Everything 安装提示可见时需要足够高度显示搜索框 + 对话框面板，
-        // 否则面板被裁剪但作为模态对话框仍拦截键盘焦点导致输入无效。
-        (launcher_width, ACTION_WINDOW_HEIGHT)
     } else {
         (launcher_width, COMPACT_WINDOW_HEIGHT)
     }
+}
+
+fn launcher_window_geometry_with_prompt(
+    settings_visible: bool,
+    prompt_visible: bool,
+    show_results: bool,
+    launcher_width: i32,
+    launcher_height: i32,
+) -> (i32, i32) {
+    if settings_visible {
+        (SETTINGS_WINDOW_WIDTH, SETTINGS_WINDOW_HEIGHT)
+    } else if prompt_visible {
+        (
+            EVERYTHING_PROMPT_WINDOW_WIDTH,
+            EVERYTHING_PROMPT_WINDOW_HEIGHT,
+        )
+    } else {
+        launcher_window_geometry_with_sizes(false, show_results, launcher_width, launcher_height)
+    }
+}
+
+fn should_show_everything_install_prompt(
+    everything_installed: bool,
+    auto_enable_everything: bool,
+    prompt_seen: bool,
+    prompt_disabled: bool,
+) -> bool {
+    auto_enable_everything && !everything_installed && !prompt_seen && !prompt_disabled
 }
 
 fn visual_preview_position(
@@ -194,10 +215,10 @@ fn visual_preview_position(
         let gap = 24;
         let right_x = settings_x + SETTINGS_WINDOW_WIDTH + gap;
         let left_x = settings_x - preview_width - gap;
-        // 优先选择完全可见的并排预览。在小型 CI 桌面上，可能
-        // 没有一个不重叠的矩形可用于 720x520 的设置窗口加上所选
-        // 预览尺寸；将预览保持在设置窗口外部，让 Windows 裁剪其
-        // 屏幕外部分，而不是覆盖正在拖动的控件。
+        // Prefer a fully visible side-by-side preview. On a small CI desktop there
+        // may be no non-overlapping rectangle for 720x520 Settings plus the selected
+        // preview size; keep the preview outside Settings and let Windows clip its
+        // off-screen portion rather than covering the controls being dragged.
         let x = if right_x + preview_width <= bounds.right {
             right_x
         } else if left_x >= bounds.left {
@@ -253,9 +274,9 @@ fn apply_launcher_size(
     let width = i32::from(width.clamp(MIN_LAUNCHER_WIDTH, MAX_LAUNCHER_WIDTH));
     let height = i32::from(height.clamp(MIN_LAUNCHER_HEIGHT, MAX_LAUNCHER_HEIGHT));
     let (target_width, target_height) =
-        launcher_window_geometry_with_sizes(settings_visible, show_results, false, width, height);
-    // 在编辑视觉值时保持设置画布固定。真实的预览
-    // 进程会被单独调整大小；在设置外部，将尺寸应用于启动器。
+        launcher_window_geometry_with_sizes(settings_visible, show_results, width, height);
+    // Keep the Settings canvas fixed while visual values are edited. The real preview
+    // process is resized separately; outside Settings, apply the dimensions to the launcher.
     size.set(target_width, target_height);
     if !settings_visible {
         if let Ok(settings) = settings.read() {
@@ -269,9 +290,10 @@ fn apply_launcher_size(
     }
 }
 
-/// 在异步提供者计算新的非空查询时，保持前一个结果列表可见。
-/// 立即发布对首页和可执行的同步内置结果是安全的，但对每个按键发布空向量
-/// 会创建一个可见的空白帧并使列表闪烁。
+/// Keep the previous result list visible while asynchronous providers compute a
+/// new non-empty query. Immediate publication is safe for the home page and for
+/// actionable synchronous built-in results, but publishing an empty vector for
+/// every keystroke creates a visible blank frame and makes the list flicker.
 fn should_publish_initial_query_results(
     has_query: bool,
     built_in_results_are_empty: bool,
@@ -305,9 +327,9 @@ impl ProviderResults {
     }
 
     fn core_ready(&self) -> bool {
-        // 内置/系统结果必须可操作，无需等待异步
-        // Everything 响应。当查询没有内置结果时，
-        // 保留原子的应用程序+Everything 快照行为。
+        // Built-in/system results must be actionable without waiting for the
+        // asynchronous Everything response. When a query has no built-in result,
+        // retain the atomic application+Everything snapshot behavior.
         self.applications_ready && (self.everything_ready || !self.built_in.is_empty())
     }
 
@@ -334,7 +356,20 @@ impl ProviderResults {
 
 fn trace_query_probe(query: &str, results: &[SearchResult]) {
     let normalized = query.trim().to_ascii_lowercase();
-    if !matches!(normalized.as_str(), "1+1" | "powershell" | "pwsh") {
+    if !matches!(
+        normalized.as_str(),
+        "1+1"
+            | "2026-08"
+            | "powershell"
+            | "pwsh"
+            | "q"
+            | "中"
+            | "文"
+            | "中文"
+            | "q中"
+            | "q文"
+            | "q中文"
+    ) {
         return;
     }
     let Some(path) = std::env::var_os("FLUX_QUERY_PROBE_FILE") else {
@@ -417,11 +452,28 @@ fn merge_application_duplicates(results: Vec<SearchResult>) -> Vec<SearchResult>
             continue;
         };
 
+        let existing_is_exact_console = is_exact_console_result(&merged[existing_index]);
+        let result_is_exact_console = is_exact_console_result(&result);
         if application_source_rank(&result) < application_source_rank(&merged[existing_index]) {
+            let preserved_id = result_is_exact_console
+                .then(|| result.id.clone())
+                .or_else(|| existing_is_exact_console.then(|| merged[existing_index].id.clone()));
             merged[existing_index] = result;
+            if let Some(id) = preserved_id {
+                merged[existing_index].id = id;
+            }
+        } else if result_is_exact_console && !existing_is_exact_console {
+            merged[existing_index].id = result.id;
         }
     }
     merged
+}
+
+fn is_exact_console_result(result: &SearchResult) -> bool {
+    matches!(
+        result.id.as_str(),
+        "system:command-prompt" | "system:powershell"
+    )
 }
 
 fn application_source_rank(result: &SearchResult) -> u8 {
@@ -435,11 +487,11 @@ fn application_source_rank(result: &SearchResult) -> u8 {
     }
 }
 
-/// 保留 Everything 对非应用程序文件的原生修改日期顺序。
+/// Keep Everything's native modified-date order for non-application files.
 ///
-/// 全局排序器仍然决定哪个提供者层级占据每个结果位置，
-/// 因此应用程序结果保持优先。只有 Everything 文件位置会被替换
-/// 为日期排序的 IPC 查询返回的顺序。
+/// The global ranker still decides which provider tier occupies each result
+/// slot, so application results remain first. Only the Everything file slots
+/// are replaced in the order returned by the date-sorted IPC query.
 fn preserve_everything_file_order(merged: &mut [SearchResult], provider_order: &[SearchResult]) {
     let mut available = merged
         .iter()
@@ -524,12 +576,12 @@ struct ActionItem {
     kind: ActionKind,
 }
 
-fn plugin_action_label(action: &PluginAction) -> String {
+fn plugin_action_label(action: &PluginAction) -> &'static str {
     match action {
-        PluginAction::Flow(_) => t!("action.plugin_run").into_owned(),
-        PluginAction::OpenUrl(_) => t!("action.plugin_open_url").into_owned(),
-        PluginAction::OpenPath(_) => t!("action.plugin_open_path").into_owned(),
-        PluginAction::CopyText(_) => t!("action.plugin_copy_text").into_owned(),
+        PluginAction::Flow(_) => "Run plugin action",
+        PluginAction::OpenUrl(_) => "Open web result",
+        PluginAction::OpenPath(_) => "Open path",
+        PluginAction::CopyText(_) => "Copy text",
     }
 }
 
@@ -544,12 +596,12 @@ fn actions_for_result(
     if result.id.starts_with("system:") {
         actions.push(ActionItem {
             id: format!("{}:open", result.id),
-            label: t!("action.open").into_owned(),
+            label: String::from("Open"),
             kind: ActionKind::Open,
         });
         actions.push(ActionItem {
             id: format!("{}:copy-name", result.id),
-            label: t!("action.copy_name").into_owned(),
+            label: String::from("Copy name"),
             kind: ActionKind::CopyName,
         });
         return actions;
@@ -558,64 +610,47 @@ fn actions_for_result(
         if matches!(result.kind, ResultKind::Application) {
             actions.push(ActionItem {
                 id: format!("{}:set-priority", result.id),
-                label: t!("action.set_priority").into_owned(),
+                label: String::from("Set as priority (move to top)"),
                 kind: ActionKind::SetPriority,
             });
         }
         actions.push(ActionItem {
             id: format!("{}:open", result.id),
-            label: t!("action.open").into_owned(),
+            label: String::from("Open"),
             kind: ActionKind::Open,
         });
         actions.push(ActionItem {
             id: format!("{}:run-as-admin", result.id),
-            label: t!("action.run_as_admin").into_owned(),
+            label: String::from("Run as admin"),
             kind: ActionKind::RunAsAdmin,
         });
         actions.push(ActionItem {
             id: format!("{}:open-location", result.id),
-            label: t!("action.open_file_location").into_owned(),
+            label: String::from("Open file location"),
             kind: ActionKind::OpenLocation,
         });
-        let is_folder = matches!(result.kind, ResultKind::File)
-            && result
-                .target
-                .as_deref()
-                .map(|target| std::path::Path::new(target.trim().trim_matches('"')).is_dir())
-                .unwrap_or(false);
         actions.push(ActionItem {
-            id: format!(
-                "{}:{}",
-                result.id,
-                if is_folder {
-                    "copy-folder-path"
-                } else {
-                    "copy-file"
-                }
-            ),
-            label: if is_folder {
-                t!("action.copy_folder_path").into_owned()
-            } else {
-                t!("action.copy_file").into_owned()
-            },
-            kind: if is_folder {
-                ActionKind::CopyFolderPath
-            } else {
-                ActionKind::CopyFile
-            },
+            id: format!("{}:copy-file", result.id),
+            label: String::from("Copy file"),
+            kind: ActionKind::CopyFile,
+        });
+        actions.push(ActionItem {
+            id: format!("{}:copy-folder-path", result.id),
+            label: String::from("Copy folder path"),
+            kind: ActionKind::CopyFolderPath,
         });
     }
     if let Some(invocation) = plugin_actions.get(&result.id).cloned() {
         actions.push(ActionItem {
             id: format!("{}:plugin", result.id),
-            label: plugin_action_label(&invocation),
+            label: String::from(plugin_action_label(&invocation)),
             kind: ActionKind::RunPlugin(invocation),
         });
     }
     if !matches!(result.kind, ResultKind::Application) {
         actions.push(ActionItem {
             id: format!("{}:copy-name", result.id),
-            label: t!("action.copy_name").into_owned(),
+            label: String::from("Copy name"),
             kind: ActionKind::CopyName,
         });
     }
@@ -635,8 +670,8 @@ fn selected_result(
         .or_else(|| results.first().cloned())
 }
 
-/// 不可见的响应式小部件，用于将键盘选中的行保持在周围的
-/// windui 滚动视口内，而不绘制额外的表面。
+/// Invisible reactive widget that keeps the keyboard-selected row inside the
+/// surrounding windui scroll viewport without painting an additional surface.
 struct ResultRowAnchor {
     result_id: String,
     title: String,
@@ -649,6 +684,13 @@ struct ResultRowAnchor {
     query: Signal<String>,
     scroll_pending: Signal<bool>,
     selection_color: Signal<Color>,
+    action_items: Signal<Vec<ActionItem>>,
+    action_index: Signal<usize>,
+    action_scroll_pending: Signal<bool>,
+    action_mode: Signal<bool>,
+    launcher_width: Signal<u16>,
+    action_window_slot: Rc<RefCell<Option<WindowSizeHandle>>>,
+    actions: Vec<ActionItem>,
     on_click: Option<ClickFn>,
     pressed: bool,
     last_pointer: Option<(i32, i32)>,
@@ -679,9 +721,9 @@ impl ResultRowAnchor {
         {
             self.selected_index.set(index);
         }
-        // 行本身是响应式的，因此选中绘制会更新，无需
-        // 重建整个列表。在此重建会丢弃当前的行几何信息，
-        // 导致 scroll_into_view 无法显示选中的结果。
+        // The row itself is reactive, so selection painting updates without
+        // rebuilding the whole list. Rebuilding here would discard the current
+        // row geometry before scroll_into_view can reveal the selected result.
     }
 }
 
@@ -702,11 +744,11 @@ impl Widget for ResultRowAnchor {
             });
         }
         self.last_selected = Some(selected);
-        self.last_query = query.clone();
-        // 仅在明确的查询/键盘请求之后滚动。滚轮滚动、
-        // 悬停选择和列表重绘绝不能调用 scroll_into_view；
-        // 这样做会将布局变更反馈回 ScrollWidget，并将
-        // 视口固定到选中的行（通常是顶部）。
+        self.last_query = query;
+        // Scroll only after an explicit query/keyboard request. Wheel scrolling,
+        // hover selection, and list repaints must never call scroll_into_view;
+        // doing so feeds a layout mutation back into the ScrollWidget and pins
+        // the viewport to the selected row (usually the top).
         if selected && scroll_requested {
             let row_id = ctx.id();
             let _ = ctx.tree_mut().scroll_into_view(row_id);
@@ -720,8 +762,8 @@ impl Widget for ResultRowAnchor {
         };
         match pointer.kind {
             PointerKind::Enter => {
-                // 不要仅仅因为窗口出现在静止的光标下就进行选择；
-                // 改为在第一次真正的 Move 时选择。
+                // Do not select merely because the window appeared under a
+                // stationary cursor; select on the first real Move instead.
                 self.last_pointer = Some((pointer.pos.x, pointer.pos.y));
                 ctx.mark_dirty();
                 true
@@ -759,6 +801,20 @@ impl Widget for ResultRowAnchor {
                 }
                 true
             }
+            PointerKind::Down if pointer.button == MouseButton::Right => {
+                self.select_self();
+                if !self.actions.is_empty() {
+                    self.action_items.set(self.actions.clone());
+                    self.action_index.set(0);
+                    self.action_scroll_pending.set(true);
+                    self.action_mode.set(true);
+                    if let Some(handle) = self.action_window_slot.borrow().as_ref() {
+                        handle.set(i32::from(self.launcher_width.get()), ACTION_WINDOW_HEIGHT);
+                    }
+                }
+                ctx.mark_dirty();
+                true
+            }
             _ => false,
         }
     }
@@ -774,6 +830,10 @@ impl Widget for ResultRowAnchor {
 
     fn cursor(&self) -> windui::event::CursorShape {
         windui::event::CursorShape::Hand
+    }
+
+    fn wants_right_click(&self) -> bool {
+        true
     }
 
     fn paint(
@@ -802,10 +862,10 @@ impl Widget for ResultRowAnchor {
     }
 }
 
-/// A reactive action-menu row that reuses the result-list interaction contract.
-/// It owns selection/hover state and asks the nearest scroll container to reveal the
-/// selected row after keyboard or pointer navigation, while leaving the surrounding
-/// action-menu layout and styling unchanged.
+/// A reactive action-menu row that paints its own selection state and asks the
+/// nearest scroll container to reveal the selected row after keyboard or pointer
+/// navigation. It mirrors the result-list interaction contract so the submenu
+/// scrolls exactly like the search results when the actions overflow the viewport.
 struct ActionRowAnchor {
     item_index: usize,
     action_index: Signal<usize>,
@@ -850,7 +910,6 @@ impl Widget for ActionRowAnchor {
                 self.action_index.set(self.item_index);
                 self.scroll_pending.set(true);
                 self.pressed = true;
-                ctx.request_focus();
                 ctx.capture();
                 ctx.mark_dirty();
                 true
@@ -906,6 +965,7 @@ impl Widget for ActionRowAnchor {
         );
     }
 }
+
 /// A stable result-row icon that starts with a lightweight fallback and swaps to the
 /// cached Windows Shell image when the background icon worker completes. Keeping this
 /// widget inside the existing row avoids rebuilding the dynamic result list, which
@@ -1021,8 +1081,16 @@ fn quoted_result_path(result: &SearchResult) -> Option<String> {
     Some(format!("\"{target}\""))
 }
 
-/// Copy the result path as a drag-drop file list (CF_HDROP) so it can be pasted
-/// into Explorer or other drop targets.
+#[cfg(windows)]
+fn shift_key_is_down() -> bool {
+    unsafe { (GetAsyncKeyState(VK_SHIFT.0 as i32) as u16 & 0x8000) != 0 }
+}
+
+#[cfg(not(windows))]
+fn shift_key_is_down() -> bool {
+    false
+}
+
 #[cfg(windows)]
 fn copy_result_file(result: &SearchResult) -> bool {
     let Some(path) = result.target.as_deref() else {
@@ -1198,9 +1266,9 @@ fn tray_icon() -> Vec<u8> {
 
 fn game_mode_label(enabled: bool) -> String {
     if enabled {
-        t!("game_mode.on").into_owned()
+        String::from("Game Mode: On")
     } else {
-        t!("game_mode.off").into_owned()
+        String::from("Game Mode: Off")
     }
 }
 
@@ -1303,8 +1371,8 @@ fn display_title(title: &str) -> String {
 }
 
 fn title_match_doc(title: &str, query: &str) -> RichDoc {
-    // 遵循 Windows 11 类型层次结构：常规正文文本，
-    // 为与当前查询匹配的字符保留更强的字重。
+    // Follow the Windows 11 type hierarchy: regular body text, with stronger
+    // weight reserved for the characters matched by the current query.
     let normal = SpanStyle::new()
         .family(LAUNCHER_FONT_FAMILY)
         .weight(400)
@@ -1446,8 +1514,8 @@ fn should_show_launcher(is_foreground: bool) -> bool {
 }
 
 fn relaunch_mode_for_auto_install() -> updater::RelaunchMode {
-    // 自动更新必须保持不可见：重启应返回托盘
-    // 且绝不重新打开搜索。手动立即安装显式使用 Visible。
+    // Automatic updates must remain invisible: a restart should return to the
+    // tray and never reopen Search. Manual Install now uses Visible explicitly.
     updater::RelaunchMode::Hidden
 }
 
@@ -1555,7 +1623,7 @@ impl ShellIconWorker {
                     unsafe { windows::Win32::System::Com::CoUninitialize() };
                 }
             })
-            .expect("创建 Shell 图标工作线程失败");
+            .expect("failed to create shell icon worker thread");
         Self { pending, wake }
     }
 
@@ -1659,9 +1727,9 @@ fn shell_icon_rgba(target: &str) -> Option<Vec<u8>> {
         }
     }
 
-    // Steam 的开始菜单项通常是 .lnk/.url 快捷方式，其图标
-    // 与启动目标分开存储。首先解析该显式图标，
-    // 匹配 Flow Launcher 的快捷方式感知图像加载器，然后使用 Shell 回退。
+    // Steam's Start Menu entries are commonly .lnk/.url shortcuts whose icon is
+    // stored separately from the launch target. Resolve that explicit icon first,
+    // matching Flow Launcher's shortcut-aware image loader, then use Shell fallbacks.
     let icon = shortcut_icon_location(target)
         .and_then(|(path, index)| extract_icon_rgba_from_source(&path, Some(index)))
         .or_else(|| {
@@ -1988,8 +2056,9 @@ fn launcher_theme() -> Theme {
     theme.palette.surface = Color::rgba(38, 39, 41, 180);
     theme.palette.surface_alt = Color::rgba(48, 49, 51, 205);
     theme.palette.border = Color::rgba(255, 255, 255, 22);
-    // 搜索控件是透明的，因此其前景内容在深色和浅色亚克力（Acrylic）背景上都必须保持清晰易读。
-    // 普通文本应保持中性且不透明；强调色（蓝色）仅用于表示选中或焦点状态。
+    // The Search control is transparent, so its foreground must stay readable
+    // over both dark and light Acrylic samples. Keep ordinary text neutral and
+    // opaque; reserve accent blue for selection/focus feedback only.
     theme.palette.text = Color::rgba(250, 252, 255, 255);
     theme.palette.placeholder = Color::rgba(238, 243, 255, 230);
     theme.input.bg = Some(Color::rgba(29, 30, 32, 188));
@@ -2151,22 +2220,17 @@ fn format_update_progress(version: &str, progress: &updater::DownloadProgress) -
             let received = progress.received_bytes.min(total);
             let percent = received.saturating_mul(100) / total;
             let remaining = total.saturating_sub(received);
-            t!(
-                "updater.downloading_progress",
-                version = version,
-                percent = percent,
-                received = format_bytes(received),
-                total = format_bytes(total),
-                remaining = format_bytes(remaining)
+            format!(
+                "Downloading stable {version}: {percent}% — {} / {} ({} remaining)",
+                format_bytes(received),
+                format_bytes(total),
+                format_bytes(remaining)
             )
-            .into_owned()
         }
-        None => t!(
-            "updater.downloading_received",
-            version = version,
-            received = format_bytes(progress.received_bytes)
-        )
-        .into_owned(),
+        None => format!(
+            "Downloading stable {version}: {} received",
+            format_bytes(progress.received_bytes)
+        ),
     }
 }
 
@@ -2175,7 +2239,7 @@ fn save_settings_async(settings: &Arc<RwLock<Settings>>) {
     let _ = std::thread::Builder::new()
         .name(String::from("flux-settings-save"))
         .spawn(move || {
-            // 在等待任何变更完成后，读取最新的设置快照。
+            // Read the latest settings snapshot after waiting for any mutation.
             if let Ok(settings_guard) = settings.read() {
                 let _ = save_settings(&settings_guard);
             }
@@ -2195,7 +2259,7 @@ fn record_query_history(
     }
     *history.borrow_mut() = settings_guard.query_history.clone();
     drop(settings_guard);
-    // 确保“回车即隐藏”的操作不涉及同步文件系统 I/O。
+    // Keep Enter→hide free of synchronous filesystem I/O.
     save_settings_async(settings);
 }
 
@@ -2328,6 +2392,11 @@ fn result_row(
     rows_refresh: Signal<Vec<SearchResult>>,
     icon_refresh_generation: Signal<u64>,
     plugin_actions: Rc<RefCell<HashMap<String, PluginAction>>>,
+    action_items: Signal<Vec<ActionItem>>,
+    action_index: Signal<usize>,
+    action_scroll_pending: Signal<bool>,
+    action_mode: Signal<bool>,
+    launcher_width: Signal<u16>,
     query: Signal<String>,
     scroll_pending: Signal<bool>,
     selection_color: Signal<Color>,
@@ -2338,6 +2407,7 @@ fn result_row(
     settings_visible: Signal<bool>,
     window_size_slot: Rc<RefCell<Option<WindowSizeHandle>>>,
 ) -> Element {
+    let result_for_actions = result.clone();
     let id = result.id;
     let target = result.target;
     let title = result.title;
@@ -2351,6 +2421,7 @@ fn result_row(
     };
     let icon =
         bundled_icon_rgba(&id).or_else(|| icon_target.as_deref().and_then(request_shell_icon));
+    let actions = actions_for_result(&result_for_actions, &plugin_actions.borrow());
     trace_result_icon_probe(
         &title,
         target.as_deref(),
@@ -2389,6 +2460,13 @@ fn result_row(
             query,
             scroll_pending,
             selection_color,
+            action_items,
+            action_index,
+            action_scroll_pending,
+            action_mode,
+            launcher_width,
+            action_window_slot: Rc::clone(&window_size_slot),
+            actions,
             on_click: None,
             pressed: false,
             last_pointer: None,
@@ -2401,8 +2479,8 @@ fn result_row(
         .padding_xy(12, 3)
         .spacing(10)
         .corner(10.0)
-        // 选中背景由 ResultRowAnchor 独占。若在此处保留静态背景，
-        // 选中状态移动后会留下残留的高亮显示。
+        // Selection background is owned exclusively by ResultRowAnchor. Keeping
+        // a static background here leaves stale highlights after selection moves.
         .child(icon_element)
         .child(
             Element::col()
@@ -2410,10 +2488,10 @@ fn result_row(
                 .spacing(1)
                 .child(
                     Element::rich_signal(title_doc_signal)
+                        .selection_requires_ctrl(true)
+                        .copy_menu(false)
                         .font_family(LAUNCHER_FONT_FAMILY)
                         .font_size(14.0)
-                        .max_lines(1)
-                        .truncate(Truncate::End)
                         .width_match(),
                 )
                 .child(
@@ -2473,7 +2551,8 @@ fn result_row(
         })
 }
 
-/// 启动时按系统语言设置界面语言；仅支持简体中文与英文，其余回退到 `en`。
+/// Set the UI language based on the system locale at startup; only Simplified
+/// Chinese and English are supported, everything else falls back to `en`.
 fn apply_system_locale() {
     let Some(raw) = sys_locale::get_locale() else {
         return;
@@ -2481,8 +2560,9 @@ fn apply_system_locale() {
     rust_i18n::set_locale(select_locale(&raw));
 }
 
-/// 把系统 locale 标签映射到 Flux 支持的界面语言。
-/// 简体中文系（zh、zh-CN、zh-Hans 等）映射到 `zh-CN`；其余（含繁体 zh-TW/zh-Hant）回退 `en`。
+/// Map a system locale tag to a supported Flux UI language.
+/// Simplified Chinese tags (`zh`, `zh-CN`, `zh-Hans`, ...) map to `zh-CN`;
+/// everything else (including Traditional `zh-TW`/`zh-Hant`) falls back to `en`.
 fn select_locale(raw: &str) -> &'static str {
     let locale = raw.split('.').next().unwrap_or(raw).to_ascii_lowercase();
     if locale.starts_with("zh") && !locale.contains("tw") && !locale.contains("hant") {
@@ -2492,7 +2572,7 @@ fn select_locale(raw: &str) -> &'static str {
     }
 }
 
-/// 语言偏好索引：跟随系统 / 英文 / 简体中文。
+/// Language preference dropdown index: follow system / English / Simplified Chinese.
 fn language_preference_index(language: Language) -> usize {
     match language {
         Language::System => 0,
@@ -2501,7 +2581,7 @@ fn language_preference_index(language: Language) -> usize {
     }
 }
 
-/// 语言偏好索引到枚举。
+/// Language preference dropdown index back to the enum.
 fn language_preference_from_index(index: usize) -> Language {
     match index {
         1 => Language::English,
@@ -2510,7 +2590,8 @@ fn language_preference_from_index(index: usize) -> Language {
     }
 }
 
-/// 应用设置中配置的界面语言；`System` 保持启动时检测的结果。
+/// Apply the configured UI language from settings; `System` keeps the startup
+/// detection result.
 fn apply_configured_locale(language: Language) {
     match language {
         Language::English => rust_i18n::set_locale("en"),
@@ -2519,10 +2600,10 @@ fn apply_configured_locale(language: Language) {
     }
 }
 
-/// 语言切换后自动重启应用，使界面语言立即生效。
-///
-/// windui 的控件文本在 UI 树构建时通过 `t!` 求值一次，运行期 `set_locale`
-/// 只改变后续查找结果，已构建的文本不会刷新，因此切换语言需要重启进程。
+/// Restart the app after a language change so the new language takes effect
+/// immediately. windui widget texts are resolved once at UI-tree build time, so
+/// a runtime `set_locale` only affects later lookups; the built UI does not
+/// refresh, hence the process restart.
 #[cfg(windows)]
 fn restart_for_locale_change() {
     use std::os::windows::process::CommandExt;
@@ -2531,7 +2612,8 @@ fn restart_for_locale_change() {
         return;
     };
     let exe = format!("'{}'", current_exe.to_string_lossy().replace('\'', "''"));
-    // 延迟启动新实例，先让当前进程退出并释放单实例占用，避免交接竞态。
+    // Delay the new instance so the current process can exit and release the
+    // single-instance lock, avoiding a handoff race.
     let script = format!("Start-Sleep -Milliseconds 600; Start-Process -FilePath {exe}");
     let _ = std::process::Command::new("powershell.exe")
         .args([
@@ -2551,6 +2633,18 @@ fn restart_for_locale_change() {
 fn restart_for_locale_change() {}
 
 fn main() {
+    #[cfg(windows)]
+    {
+        // Monitor coordinates are queried before windui creates the HWND. Set
+        // per-monitor awareness first so Windows does not virtualize the
+        // 4K/mixed-DPI work area used for the initial center position.
+        use windows::Win32::UI::HiDpi::{
+            SetProcessDpiAwarenessContext, DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2,
+        };
+        unsafe {
+            let _ = SetProcessDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2);
+        }
+    }
     apply_system_locale();
     let mut args = std::env::args_os();
     let _executable = args.next();
@@ -2617,13 +2711,13 @@ fn main() {
     {
         return;
     }
-    // 卸载程序仅使用此一次性模式通过单实例监听器
-    // 到达已在运行的实例。如果没有需要关闭的实例，
-    // 切勿创建新的 UI。
+    // The uninstaller uses this one-shot mode only to reach the already-running
+    // instance through the single-instance listener. Never create a new UI if
+    // there is no instance left to shut down.
     if is_shutdown_mode(mode.as_deref()) {
         return;
     }
-    let _startup_launch = mode.as_deref() == Some(std::ffi::OsStr::new("--startup"));
+    let startup_launch = mode.as_deref() == Some(std::ffi::OsStr::new("--startup"));
 
     let settings = Settings::load_or_default();
     apply_configured_locale(settings.language);
@@ -2643,6 +2737,7 @@ fn main() {
     let selection_touched = signal(false);
     let action_mode = signal(false);
     let action_index = signal(0_usize);
+    let action_scroll_pending = signal(false);
     let recycle_bin_confirmation = signal(false);
     let action_items = signal(Vec::<ActionItem>::new());
     let action_window_slot = Rc::new(RefCell::new(None::<WindowSizeHandle>));
@@ -2693,10 +2788,14 @@ fn main() {
         MIN_LAUNCHER_HEIGHT,
         MAX_LAUNCHER_HEIGHT,
     ));
-    let launcher_preview_text = signal(format!(
-        "Current launcher client area: {} × {} logical px (DIP)",
-        settings.launcher_width, settings.launcher_height
-    ));
+    let launcher_preview_text = signal(
+        t!(
+            "settings.visual.client_area",
+            width = settings.launcher_width,
+            height = settings.launcher_height
+        )
+        .into_owned(),
+    );
     let visual_preview_generation = signal(0_u64);
     let clear_query_on_activation = signal(settings.clear_query_on_activation);
     let start_with_windows = signal(settings.start_with_windows);
@@ -2720,7 +2819,17 @@ fn main() {
     let monitor_preference = signal(monitor_preference_index(initial_monitor_preference));
     let initial_everything_state = everything::installation_state();
     let everything_installed = signal(initial_everything_state.is_installed());
-    let everything_prompt_visible = signal(false);
+    let everything_prompt_disabled = std::env::var("FLUX_DISABLE_EVERYTHING_PROMPT")
+        .ok()
+        .as_deref()
+        == Some("1");
+    let everything_prompt_visible_at_start = should_show_everything_install_prompt(
+        initial_everything_state.is_installed(),
+        settings.auto_enable_everything,
+        settings.everything_install_prompt_seen,
+        everything_prompt_disabled,
+    );
+    let everything_prompt_visible = signal(everything_prompt_visible_at_start);
     let everything_status = signal(if everything_installed.get() {
         t!("everything.detected_enable_ipc").into_owned()
     } else {
@@ -2745,14 +2854,17 @@ fn main() {
     let action_index_for_rows = action_index;
     let action_mode_for_rows = action_mode;
     let action_window_slot_for_rows = Rc::clone(&action_window_slot);
+    let launcher_width_for_rows = launcher_width;
     let query_for_rows = query;
     let scroll_request_for_rows = signal(false);
     let icon_refresh_generation = signal(SHELL_ICON_COMPLETION_GENERATION.load(Ordering::Acquire));
     let settings_visible_for_rows = settings_visible;
     let window_size_slot_for_rows = Rc::clone(&action_window_slot);
     let inline_completion = signal(String::new());
+    let query_caret_position = signal(query.with(|text| text.chars().count()));
 
     let search_box = Element::text_input(query, t!("search.placeholder").into_owned())
+        .cursor_position(query_caret_position)
         .leading_icon('⌕')
         .transparent_surface()
         .smooth_caret(settings.smooth_caret, settings.smooth_caret_duration_ms)
@@ -2763,8 +2875,8 @@ fn main() {
         .font_size(15.0)
         .font_weight(500)
         .corner(10.0)
-        // 整个搜索控件保持透明，使 Windows Acrylic 材质
-        // 能通过输入框、光标和前置图标保持可见。
+        // The entire Search control stays transparent so the Windows Acrylic
+        // material remains visible through the input, caret, and leading icon.
         .border(Color::rgba(0, 0, 0, 0), 0)
         .padding_xy(13, 0);
 
@@ -2787,9 +2899,9 @@ fn main() {
                     .fg(Color::rgba(222, 233, 248, 220)),
             )
     };
-    // 使用有界框架加显式居中的内容行替代全宽间隔子元素。
-    // 这使得三个提示在窗口宽度变化时
-    // 在启动器内容边距之间保持视觉居中。
+    // Use a bounded frame plus an explicitly centered content row instead of
+    // full-width spacer children. This keeps the three hints visually centered
+    // between the launcher content insets while the window width changes.
     let action_bar_content = Element::row()
         .height(22)
         .spacing(8)
@@ -2806,8 +2918,8 @@ fn main() {
         .width(ACTION_BAR_WIDTH)
         .height(ACTION_BAR_HEIGHT)
         .child(action_bar_content.align(Align::Center))
-        // 将探针保持在同一真实框架内，使其遥测数据描述
-        // 启动器边距之间居中的确切插槽位置。
+        // Keep the probe inside the same real frame so its telemetry describes
+        // the exact slot that is centered between the launcher insets.
         .child(
             Element::leaf()
                 .widget(ActionBarGeometryProbe::default())
@@ -2825,6 +2937,11 @@ fn main() {
             result_source,
             icon_refresh_generation,
             Rc::clone(&actions_for_rows),
+            action_items_for_rows,
+            action_index_for_rows,
+            action_scroll_pending,
+            action_mode_for_rows,
+            launcher_width_for_rows,
             query_for_rows,
             scroll_request_for_rows,
             selection_color,
@@ -2837,10 +2954,10 @@ fn main() {
         )
     })
     .width_match()
-    // 保持结果主体透明，使窗口保持为一个连续的 Acrylic 表面。
-    // 仅单个结果行绘制控件。额外的右边距
-    // 专属于滚动内容：它在不改变启动器窗口宽度的情况下
-    // 使滚动条滑块远离行卡片。
+    // Keep the result body transparent so the window remains one continuous
+    // Acrylic surface. Only individual result rows draw controls. The extra
+    // right inset is local to the scroll content: it keeps the thumb clear of
+    // row cards without changing the launcher window width.
     .padding_edges(6, 6, 18, 6);
     let result_list = Element::scroll()
         .width_match()
@@ -2851,23 +2968,11 @@ fn main() {
     let everything_prompt_for_close = everything_prompt_visible;
     let everything_prompt_for_decline = everything_prompt_visible;
     let everything_prompt_for_install = everything_prompt_visible;
-    let everything_close_size_slot = Rc::clone(&action_window_slot);
-    let everything_decline_size_slot = Rc::clone(&action_window_slot);
-    let everything_install_size_slot = Rc::clone(&action_window_slot);
-    let everything_close_launcher_width = launcher_width.clone();
-    let everything_decline_launcher_width = launcher_width.clone();
-    let everything_install_launcher_width = launcher_width.clone();
-    let everything_close_launcher_height = launcher_height.clone();
-    let everything_decline_launcher_height = launcher_height.clone();
-    let everything_install_launcher_height = launcher_height.clone();
-    let everything_close_settings_visible = settings_visible.clone();
-    let everything_decline_settings_visible = settings_visible.clone();
-    let everything_install_settings_visible = settings_visible.clone();
     let everything_status_for_prompt = everything_status;
     let settings_for_everything_prompt_close = Arc::clone(&shared_settings);
     let settings_for_everything_prompt_decline = Arc::clone(&shared_settings);
     let settings_for_everything_prompt_install = Arc::clone(&shared_settings);
-    let everything_install_prompt = Element::dialog_panel(
+    let everything_install_prompt = Element::dialog_glass_panel(
         everything_prompt_visible,
         t!("everything.install").into_owned(),
         400,
@@ -2876,17 +2981,6 @@ fn main() {
             if let Ok(mut settings) = settings_for_everything_prompt_close.write() {
                 settings.everything_install_prompt_seen = true;
                 let _ = save_settings(&settings);
-            }
-            // 面板关闭后窗口缩回紧凑模式（Everything 提示已不可见）
-            if let Some(handle) = everything_close_size_slot.borrow().as_ref() {
-                let (w, h) = launcher_window_geometry_with_sizes(
-                    everything_close_settings_visible.get(),
-                    false,
-                    false,
-                    everything_close_launcher_width.get() as i32,
-                    everything_close_launcher_height.get() as i32,
-                );
-                handle.set(w, h);
             }
         },
         Element::col()
@@ -2917,50 +3011,27 @@ fn main() {
                             settings.everything_install_prompt_seen = true;
                             let _ = save_settings(&settings);
                         }
-                        // 面板关闭后窗口缩回紧凑模式
-                        if let Some(handle) = everything_decline_size_slot.borrow().as_ref() {
-                            let (w, h) = launcher_window_geometry_with_sizes(
-                                everything_decline_settings_visible.get(),
-                                false,
-                                false,
-                                everything_decline_launcher_width.get() as i32,
-                                everything_decline_launcher_height.get() as i32,
-                            );
-                            handle.set(w, h);
-                        }
                     }),
             )
-            .child(
-                Element::button(t!("everything.install")).on_click(move |ctx| {
-                    everything_prompt_for_install.set(false);
-                    if let Ok(mut settings) = settings_for_everything_prompt_install.write() {
-                        settings.everything_install_prompt_seen = true;
-                        let _ = save_settings(&settings);
+            .child(Element::button("Install Everything").on_click(move |ctx| {
+                everything_prompt_for_install.set(false);
+                if let Ok(mut settings) = settings_for_everything_prompt_install.write() {
+                    settings.everything_install_prompt_seen = true;
+                    let _ = save_settings(&settings);
+                }
+                match everything::launch_winget_install() {
+                    Ok(()) => {
+                        everything_status_for_prompt
+                            .set(String::from("Everything installation started with winget."));
+                        ctx.toast_ok("Everything installation started");
                     }
-                    // 面板关闭后窗口缩回紧凑模式
-                    if let Some(handle) = everything_install_size_slot.borrow().as_ref() {
-                        let (w, h) = launcher_window_geometry_with_sizes(
-                            everything_install_settings_visible.get(),
-                            false,
-                            false,
-                            everything_install_launcher_width.get() as i32,
-                            everything_install_launcher_height.get() as i32,
-                        );
-                        handle.set(w, h);
+                    Err(error) => {
+                        everything_status_for_prompt.set(error.clone());
+                        ctx.toast_ok(error);
                     }
-                    match everything::launch_winget_install() {
-                        Ok(()) => {
-                            everything_status_for_prompt
-                                .set(t!("everything.install_started").into_owned());
-                            ctx.toast_ok(t!("everything.install_started_toast").into_owned());
-                        }
-                        Err(error) => {
-                            everything_status_for_prompt.set(error.clone());
-                            ctx.toast_ok(error);
-                        }
-                    }
-                }),
-            ),
+                }
+            }))
+            .padding_edges(0, 0, 0, 12),
     );
 
     let confirmation_for_close = recycle_bin_confirmation;
@@ -3013,7 +3084,6 @@ fn main() {
     let priorities_for_action_list = priorities;
     let providers_for_action_list = Rc::clone(&provider_results);
     let query_for_action_list = query;
-    let action_scroll_pending = signal(false);
     let action_list = Element::list_signal(
         action_items_for_rows,
         |item| item.id.clone(),
@@ -3025,12 +3095,6 @@ fn main() {
             let priorities_for_item_action = priorities_for_action_list;
             let providers_for_item_action = Rc::clone(&providers_for_action_list);
             let query_for_item_action = query_for_action_list;
-            let is_selected = action_items_for_rows
-                .get()
-                .iter()
-                .position(|candidate| candidate.id == item_id)
-                .map(|index| index == action_index_for_rows.get())
-                .unwrap_or(false);
             Element::row()
                 .widget(ActionRowAnchor {
                     item_index: action_items_for_rows
@@ -3049,11 +3113,6 @@ fn main() {
                 .height(36)
                 .padding_xy(10, 4)
                 .corner(9.0)
-                .bg(if is_selected {
-                    Color::rgba(76, 139, 245, 92)
-                } else {
-                    Color::rgba(255, 255, 255, 14)
-                })
                 .child(
                     Element::label(item_label)
                         .font_size(13.0)
@@ -3108,21 +3167,22 @@ fn main() {
     .corner(12.0)
     .visible_signal(action_mode);
 
-    // HWND 本身拥有系统 Acrylic 表面。保持此根节点透明，使模糊效果
-    // 填充整个客户区，而不是变成内嵌卡片。内容必须与实际窗口宽度匹配，
-    // 这样结果行才能随窗口大小调整展开。保持空搜索条和结果面板的固有尺寸。
-    // 全高列加加权间隔会使紧凑状态看起来过高，
-    // 并在最后一个结果与底部之间留下过大的间距。
-    // 保持紧凑搜索基线真正居中：相等的垂直边距
-    // 避免将空状态控件移向任一边缘。
+    // The HWND itself owns the system Acrylic surface. Keep this root transparent so
+    // the blur fills the complete client area instead of becoming an inset card. The
+    // content must match the live window width so result rows expand with resizing.
+    // Keep the empty search strip and the results palette intrinsically sized. A
+    // full-height column plus a weighted spacer made the compact state look too
+    // tall and left an oversized gap between the last result and the footer.
+    // Keep the compact Search baseline genuinely centered: equal vertical
+    // insets avoid moving the empty-state control toward either edge.
     let launcher_content = Element::col()
         .width_match()
         .padding_edges(10, 7, 10, 7)
         .spacing(4)
         .child(search_box)
         .child(result_list)
-        // 结果视口现在在固定底部之前立即结束。
-        // 切勿添加加权间隔：它会为短查询创建可见的空白带。
+        // The result viewport now ends immediately before the fixed footer. Do not
+        // add a weighted spacer: it creates a visible blank band for short queries.
         .child(action_bar)
         .child(action_list)
         .child(recycle_bin_dialog)
@@ -3158,35 +3218,54 @@ fn main() {
     let history_mode_for_interval = history_mode;
     let settings_visible_for_interval = settings_visible;
     let settings_tab_for_interval = settings_tab;
+    let everything_prompt_visible_for_interval = everything_prompt_visible;
+    let everything_installed_for_interval = everything_installed;
+    let everything_status_for_interval = everything_status;
     let visual_preview_generation_for_interval = visual_preview_generation;
     let visual_preview_smoke_for_interval =
         std::env::var_os("FLUX_SMOKE_VISUAL_SETTINGS").is_some();
+    let everything_plugins_smoke_for_interval =
+        std::env::var_os("FLUX_SMOKE_EVERYTHING_PLUGINS").is_some();
     let tray_settings_smoke_pending_for_interval = Rc::clone(&tray_settings_smoke_pending);
     let mut last_icon_generation = icon_refresh_generation.get();
     let mut last_launcher_width = launcher_width.get();
     let mut last_launcher_height = launcher_height.get();
     let mut last_settings_visible = settings_visible.get();
+    let mut last_everything_prompt_visible = everything_prompt_visible.get();
     let mut last_query = String::new();
     let mut visual_preview_process: Option<visual_preview::PreviewProcess> = None;
     let mut last_visual_preview_request: Option<(u16, u16)> = None;
     let mut last_visual_preview_generation = visual_preview_generation.get();
     let mut last_visual_control_state: Option<(u16, u16, u32, u32)> = None;
+    let mut everything_plugins_smoke_reported = false;
     let mut sequence = 0_u64;
 
     let settings_at_start = settings_visible.get();
     let initial_height = if settings_at_start {
         SETTINGS_WINDOW_HEIGHT
+    } else if everything_prompt_visible_at_start {
+        EVERYTHING_PROMPT_WINDOW_HEIGHT
     } else {
         COMPACT_WINDOW_HEIGHT
     };
     let initial_width = if settings_at_start {
         SETTINGS_WINDOW_WIDTH
+    } else if everything_prompt_visible_at_start {
+        EVERYTHING_PROMPT_WINDOW_WIDTH
     } else {
         launcher_width.get() as i32
     };
     let window_icon = tray_icon();
     let mut app =
         App::new("Flux Launcher", initial_width, initial_height).icon_rgba(16, 16, &window_icon);
+    if everything_prompt_visible_at_start
+        && std::env::var_os("FLUX_SMOKE_EVERYTHING_PROMPT").is_some()
+    {
+        eprintln!("Everything install prompt: visible at startup");
+        eprintln!(
+            "Everything install prompt style: glass-transparent panel_fill=none modal_scrim=none window_background=transparent"
+        );
+    }
     if let Some((x, y)) =
         monitor::centered_position(initial_monitor_preference, initial_width, initial_height)
     {
@@ -3408,16 +3487,6 @@ fn main() {
     } else {
         everything_status.set(t!("everything.auto_enable_disabled").into_owned());
     }
-    if settings.auto_enable_everything
-        && !everything_installed.get()
-        && !settings.everything_install_prompt_seen
-        && std::env::var("FLUX_DISABLE_EVERYTHING_PROMPT")
-            .ok()
-            .as_deref()
-            != Some("1")
-    {
-        everything_prompt_visible.set(true);
-    }
 
     let query_for_plugins = query;
     let results_for_plugins = results;
@@ -3534,16 +3603,15 @@ fn main() {
     let inline_completion_for_activation = inline_completion;
     let scroll_request_for_activation = scroll_request_for_rows;
     let settings_visible_for_activation = settings_visible;
-    let everything_prompt_visible_for_activation = everything_prompt_visible;
     let activation_handle = app.hotkey_handle(activation_hotkey, move |ctx| {
         let settings = settings_for_activation
             .read()
             .map(|settings| settings.clone())
             .unwrap_or_default();
         if !should_suppress_activation(&settings, fullscreen::foreground_is_fullscreen()) {
-            // 在切换可见性之前进行清理。之前的实现仅在 on_window_hide 中执行此操作，
-            // 这导致旧的查询帧（query frame）在窗口重新显示后的下一次重绘之前，
-            // 一直残留在合成器（compositor）中。
+            // Clear before toggling visibility. The previous implementation did
+            // this only from on_window_hide, which allowed the old query frame to
+            // survive in the compositor until the next repaint after re-show.
             if settings.clear_query_on_activation {
                 query_for_activation.set(String::new());
                 results_for_activation.set(Vec::new());
@@ -3561,7 +3629,6 @@ fn main() {
                 let (compact_width, compact_height) = launcher_window_geometry_with_sizes(
                     settings_visible_for_activation.get(),
                     false,
-                    everything_prompt_visible_for_activation.get(),
                     i32::from(launcher_width.get()),
                     i32::from(launcher_height.get()),
                 );
@@ -3570,7 +3637,6 @@ fn main() {
             let (width, height) = launcher_window_geometry_with_sizes(
                 settings_visible_for_activation.get(),
                 show_results_for_activation.get(),
-                everything_prompt_visible_for_activation.get(),
                 i32::from(launcher_width.get()),
                 i32::from(launcher_height.get()),
             );
@@ -3598,6 +3664,7 @@ fn main() {
     let activation_shift_for_keys = activation_shift;
     let activation_meta_for_keys = activation_meta;
     let query_for_keys = query;
+    let query_caret_position_for_keys = query_caret_position;
     let results_for_keys = results;
     let selected_id_for_keys = selected_id;
     let selected_index_for_keys = selected_index;
@@ -3666,6 +3733,32 @@ fn main() {
             cursor_visibility_for_keys.hide();
         }
         if event.ctrl
+            && (event.shift || shift_key_is_down())
+            && matches!(
+                event.key,
+                Key::Other(0x43) | Key::Char('c') | Key::Char('C')
+            )
+        {
+            eprintln!(
+                "Ctrl+Shift+C dispatch: event_shift={} physical_shift={}",
+                event.shift,
+                shift_key_is_down()
+            );
+            if let Some(result) = selected_result(
+                &results_for_keys.get(),
+                &selected_id_for_keys.get(),
+                selected_index_for_keys.get(),
+            ) {
+                eprintln!("Ctrl+Shift+C target={:?}", result.target);
+                if copy_result_file(&result) {
+                    return true;
+                }
+            }
+            return false;
+        }
+        if event.ctrl
+            && !event.shift
+            && !shift_key_is_down()
             && matches!(
                 event.key,
                 Key::Other(0x43) | Key::Char('c') | Key::Char('C')
@@ -3754,9 +3847,9 @@ fn main() {
             }
         }
 
-        // 匹配 Flow Launcher 行为：直接按 Tab 键选择下一个结果，
-        // 而 Shift+Tab 选择上一个结果。Ctrl+Tab 仍保留用于
-        // 上文所述的行内补全功能。
+        // Match Flow Launcher: plain Tab selects the next result, while
+        // Shift+Tab selects the previous result. Ctrl+Tab remains reserved
+        // for inline completion above.
         if !event.ctrl && !alt_down && event.key == Key::Tab {
             let count = current_results.len();
             let next = if event.shift {
@@ -3772,9 +3865,9 @@ fn main() {
             if let Some(result) = current_results.get(next) {
                 selected_id_for_keys.set(result.id.clone());
             }
-            // 保持现有行树完整，仅更改选中状态。
-            // 在此重建 DynList 会重置行几何结构，阻止待处理的
-            // 滚动请求将下一个结果带入视图。
+            // Keep the existing row tree intact while changing only selection.
+            // Rebuilding the DynList here resets row geometry and prevents the
+            // pending scroll request from bringing the next result into view.
             request_scroll(scroll_request_for_keys);
             return true;
         }
@@ -3920,7 +4013,7 @@ fn main() {
             return true;
         }
         match event.key {
-            Key::Up | Key::Down | Key::Home | Key::End => {
+            Key::Up | Key::Down => {
                 let count = current_results.len();
                 let next = match event.key {
                     Key::Up => selected_index_for_keys
@@ -3928,8 +4021,6 @@ fn main() {
                         .checked_sub(1)
                         .unwrap_or(count - 1),
                     Key::Down => (selected_index_for_keys.get() + 1) % count,
-                    Key::Home => 0,
-                    Key::End => count - 1,
                     _ => 0,
                 };
                 selection_touched_for_keys.set(true);
@@ -3937,12 +4028,15 @@ fn main() {
                 if let Some(result) = current_results.get(next) {
                     selected_id_for_keys.set(result.id.clone());
                 }
-                // 保持当前行几何结构，使 scroll_into_view 能
-                // 在选中结果变更后移动视口。
+                // Preserve the current row geometry so scroll_into_view can
+                // move the viewport after the selected result changes.
                 request_scroll(scroll_request_for_keys);
                 true
             }
             Key::Right => {
+                if query_caret_position_for_keys.get() != query_for_keys.get().chars().count() {
+                    return false;
+                }
                 if let Some(result) = selected_result(
                     &current_results,
                     &selected_id_for_keys.get(),
@@ -3952,6 +4046,7 @@ fn main() {
                     if !actions.is_empty() {
                         action_items_for_keys.set(actions);
                         action_index_for_keys.set(0);
+                        action_scroll_pending_for_keys.set(true);
                         action_mode_for_keys.set(true);
                         show_results_for_keys.set(true);
                         size_for_keys.set(i32::from(launcher_width.get()), ACTION_WINDOW_HEIGHT);
@@ -4071,12 +4166,12 @@ fn main() {
                         SETTINGS_WINDOW_HEIGHT,
                     );
                 }
-                // 在显示隐藏的托盘窗口之前排队设置尺寸。
-                // 首帧不得使用紧凑的 72 DIP 启动器高度。
+                // Queue the Settings size before showing the hidden tray window. The
+                // first frame must not use the compact 72-DIP launcher height.
                 size_for_settings.set(SETTINGS_WINDOW_WIDTH, SETTINGS_WINDOW_HEIGHT);
                 ctx.show_window();
-                // 在显示之后也保留请求，因为原生显示生命周期
-                // 可能会消耗来自上次隐藏的过时紧凑尺寸请求。
+                // Keep the request after show as well because the native show lifecycle
+                // may consume a stale compact-size request from the previous hide.
                 size_for_settings.set(SETTINGS_WINDOW_WIDTH, SETTINGS_WINDOW_HEIGHT);
             }),
             TrayMenuItem::separator(),
@@ -4134,6 +4229,10 @@ fn main() {
     let google_alias_for_apply = google_alias;
     let everything_status_for_apply = everything_status;
     let everything_installed_for_ui = everything_installed;
+    let settings_for_everything_toggle = Arc::clone(&shared_settings);
+    let auto_enable_everything_for_toggle = auto_enable_everything;
+    let everything_installed_for_toggle = everything_installed;
+    let everything_status_for_toggle = everything_status;
     let settings_for_priority_ui = Arc::clone(&shared_settings);
     let providers_for_priority_ui = Rc::clone(&provider_results);
     let query_for_priority_ui = query;
@@ -4207,7 +4306,7 @@ fn main() {
                                     priorities,
                                     results,
                                 );
-                                ctx.toast_ok(t!("priorities.moved_up").into_owned());
+                                ctx.toast_ok(t!("priorities.moved_up"));
                             }
                         }),
                 )
@@ -4224,7 +4323,7 @@ fn main() {
                                     priorities,
                                     results,
                                 );
-                                ctx.toast_ok(t!("priorities.moved_down").into_owned());
+                                ctx.toast_ok(t!("priorities.moved_down"));
                             }
                         }),
                 )
@@ -4244,7 +4343,7 @@ fn main() {
                                     priorities,
                                     results,
                                 );
-                                ctx.toast_ok(t!("priorities.removed").into_owned());
+                                ctx.toast_ok(t!("priorities.removed"));
                             }
                         }),
                 )
@@ -4265,9 +4364,9 @@ fn main() {
     let settings_visible_for_visual_apply = settings_visible;
     let show_results_for_visual_apply = show_results;
 
-    // 设置窗口与启动器共享同一个连续的 Acrylic 表面。
-    // 切勿在此添加深色卡片：它会隐藏模糊效果，
-    // 在透明窗口内创建旧的不透明搜索样式面板。
+    // Settings shares the same continuous Acrylic surface as the launcher.
+    // Do not add a dark card here: it hides the blur and creates the old opaque
+    // search-style slab inside the transparent window.
     let settings_panel = Element::col()
         .fill()
         .padding(24)
@@ -4295,10 +4394,10 @@ fn main() {
                 )
                 .child(Element::segmented(
                     vec![
-                        t!("settings.tab.general").into_owned(),
-                        t!("settings.tab.visual").into_owned(),
-                        t!("settings.tab.priorities").into_owned(),
-                        t!("settings.tab.plugins").into_owned(),
+                        t!("settings.tab.general").to_string(),
+                        t!("settings.tab.visual").to_string(),
+                        t!("settings.tab.priorities").to_string(),
+                        t!("settings.tab.plugins").to_string(),
                     ],
                     settings_tab,
                 ))
@@ -4356,10 +4455,7 @@ fn main() {
                                                         .set(true);
                                                     activation_handle_for_record_button
                                                         .set_enabled(false);
-                                                    ctx.toast_ok(
-                                                        t!("settings.press_desired_key")
-                                                            .into_owned(),
-                                                    );
+                                                    ctx.toast_ok(t!("settings.press_desired_key"));
                                                 }),
                                         ),
                                 )
@@ -4480,12 +4576,26 @@ fn main() {
                                                 .font_size(11.0),
                                         ),
                                 )
-                                .child(Element::field(
-                                    t!("settings.update_action").into_owned(),
-                                    Element::checkbox(
-                                        t!("settings.update_action_desc"),
-                                        auto_install_updates,
-                                    ),
+                                .child(
+                                    Element::row()
+                                        .width_match()
+                                        .spacing(8)
+                                        .child(
+                                            Element::label(t!("settings.update_action"))
+                                                .width_match(),
+                                        )
+                                        .child(
+                                            Element::label(t!(
+                                                "settings.current_version",
+                                                version = CURRENT_VERSION
+                                            ))
+                                            .font_size(11.0)
+                                            .fg(Color::rgba(235, 241, 255, 190)),
+                                        ),
+                                )
+                                .child(Element::checkbox(
+                                    "Install stable updates automatically",
+                                    auto_install_updates,
                                 ))
                                 .child(
                                     Element::row()
@@ -4509,9 +4619,7 @@ fn main() {
                                                         update_sender_for_check_now.clone(),
                                                         &update_check_in_flight_for_check_now,
                                                     );
-                                                    ctx.toast_ok(
-                                                        t!("updater.checking_toast").into_owned(),
-                                                    );
+                                                    ctx.toast_ok(t!("updater.checking_toast"));
                                                 },
                                             ),
                                         )
@@ -4548,57 +4656,12 @@ fn main() {
                                                                 t!("updater.already_installing")
                                                                     .into_owned(),
                                                             );
-                                                            ctx.toast_ok(
-                                                                t!("updater.already_installing")
-                                                                    .into_owned(),
-                                                            );
+                                                            ctx.toast_ok(t!(
+                                                                "updater.already_installing"
+                                                            ));
                                                         }
                                                     }
                                                 }),
-                                        ),
-                                )
-                                .child(Element::field(
-                                    t!("settings.everything").into_owned(),
-                                    Element::checkbox(
-                                        t!("settings.everything_desc"),
-                                        auto_enable_everything,
-                                    ),
-                                ))
-                                .child(
-                                    Element::label_signal(everything_status)
-                                        .font_size(11.0)
-                                        .fg(Color::rgba(235, 241, 255, 190))
-                                        .max_lines(2)
-                                        .truncate(Truncate::End)
-                                        .width_match(),
-                                )
-                                .child(
-                                    Element::label(t!("settings.everything_command"))
-                                        .font_size(10.0)
-                                        .fg(Color::rgba(235, 241, 255, 155))
-                                        .visible_when(move || !everything_installed_for_ui.get())
-                                        .width_match(),
-                                )
-                                .child(
-                                    Element::button(t!("everything.install"))
-                                        .visible_when(move || !everything_installed_for_ui.get())
-                                        .on_click(
-                                            move |ctx| match everything::launch_winget_install() {
-                                                Ok(()) => {
-                                                    everything_status.set(
-                                                        t!("everything.winget_started_restart")
-                                                            .into_owned(),
-                                                    );
-                                                    ctx.toast_ok(
-                                                        t!("everything.winget_started_toast")
-                                                            .into_owned(),
-                                                    );
-                                                }
-                                                Err(error) => {
-                                                    everything_status.set(error.clone());
-                                                    ctx.toast_ok(error);
-                                                }
-                                            },
                                         ),
                                 ),
                         )
@@ -4621,18 +4684,10 @@ fn main() {
                                         }
                                         history_for_clear.borrow_mut().clear();
                                         history_cursor_for_clear.set(None);
-                                        ctx.toast_ok(t!("settings.history_cleared").into_owned());
+                                        ctx.toast_ok(t!("settings.history_cleared"));
                                     },
                                 )),
                         )
-                        .child(Element::field(
-                            t!("settings.smooth_caret").into_owned(),
-                            Element::checkbox(t!("settings.smooth_caret_desc"), smooth_caret),
-                        ))
-                        .child(Element::field(
-                            t!("settings.caret_duration").into_owned(),
-                            Element::text_input(caret_duration, "95").width_match(),
-                        ))
                         .child(
                             Element::label(t!("settings.native_plugins_hint"))
                                 .font_size(12.0)
@@ -4667,6 +4722,7 @@ fn main() {
                             )
                             .unwrap_or(DEFAULT_LAUNCHER_HEIGHT);
                             if let Ok(mut settings) = settings_for_apply.write() {
+                                let previous_language = settings.language;
                                 settings.activation_hotkey = configuration;
                                 settings.ignore_hotkeys_in_fullscreen = ignore_fullscreen.get();
                                 settings.game_mode = game_mode.get();
@@ -4699,7 +4755,6 @@ fn main() {
                                 settings.google_alias = google_alias_for_apply.get();
                                 settings.monitor_preference =
                                     monitor_preference_from_index(monitor_preference.get());
-                                let previous_language = settings.language;
                                 settings.language = language_preference_from_index(
                                     language_preference_for_apply.get(),
                                 );
@@ -4757,9 +4812,8 @@ fn main() {
                                     everything_status_for_apply
                                         .set(t!("everything.auto_enable_disabled").into_owned());
                                 }
-                                let language_changed = previous_language != settings.language;
                                 let _ = save_settings(&settings);
-                                if language_changed {
+                                if previous_language != settings.language {
                                     restart_for_locale_change();
                                     ctx.quit();
                                     return;
@@ -4768,9 +4822,7 @@ fn main() {
                                 if let Err(error) =
                                     startup::set_enabled(settings.start_with_windows)
                                 {
-                                    ctx.toast_ok(
-                                        t!("settings.startup_failed", error = error).into_owned(),
-                                    );
+                                    ctx.toast_ok(t!("settings.startup_failed", error = error));
                                 }
                                 if settings.update_checks_enabled && update_check_due(&settings) {
                                     update_status_for_apply
@@ -4798,7 +4850,7 @@ fn main() {
                                 target_height,
                             );
                             size_for_apply.set(applied_width, target_height);
-                            ctx.toast_ok(t!("settings.applied").into_owned());
+                            ctx.toast_ok(t!("settings.applied"));
                         })),
                 ),
         )
@@ -4810,6 +4862,95 @@ fn main() {
                     Element::col()
                         .width_match()
                         .spacing(12)
+                        .child(
+                            Element::label(t!("settings.everything"))
+                                .font_size(17.0)
+                                .fg(Color::WHITE),
+                        )
+                        .child(
+                            Element::label(t!("settings.everything_tab_desc"))
+                                .font_size(11.0)
+                                .fg(Color::rgba(235, 241, 255, 180))
+                                .max_lines(3)
+                                .truncate(Truncate::End),
+                        )
+                        .child(Element::field(
+                            t!("settings.everything").into_owned(),
+                            Element::checkbox(
+                                t!("settings.everything_desc"),
+                                auto_enable_everything,
+                            )
+                            .on_toggle(move |_| {
+                                let enabled = auto_enable_everything_for_toggle.get();
+                                if let Ok(mut settings) = settings_for_everything_toggle.write() {
+                                    settings.auto_enable_everything = enabled;
+                                    settings.normalize();
+                                    let _ = save_settings(&settings);
+                                }
+                                if !enabled {
+                                    everything_status_for_toggle
+                                        .set(t!("everything.auto_enable_disabled").into_owned());
+                                    return;
+                                }
+                                match everything::start_background_if_installed() {
+                                    Ok(InstallationState::Installed(_)) => {
+                                        everything_installed_for_toggle.set(true);
+                                        everything_status_for_toggle
+                                            .set(t!("everything.detected_enable_ipc").into_owned());
+                                    }
+                                    Ok(InstallationState::Missing) => {
+                                        everything_installed_for_toggle.set(false);
+                                        everything_status_for_toggle.set(
+                                            t!("everything.not_installed_winget").into_owned(),
+                                        );
+                                    }
+                                    Err(error) => everything_status_for_toggle.set(error),
+                                }
+                            }),
+                        ))
+                        .child(
+                            Element::label(t!("everything.is_installed"))
+                                .font_size(12.0)
+                                .fg(Color::rgba(180, 255, 205, 235))
+                                .visible_when(move || everything_installed_for_ui.get()),
+                        )
+                        .child(
+                            Element::label(t!("everything.is_not_installed"))
+                                .font_size(12.0)
+                                .fg(Color::rgba(255, 225, 175, 235))
+                                .visible_when(move || !everything_installed_for_ui.get()),
+                        )
+                        .child(
+                            Element::label_signal(everything_status)
+                                .font_size(11.0)
+                                .fg(Color::rgba(235, 241, 255, 190))
+                                .max_lines(2)
+                                .truncate(Truncate::End)
+                                .width_match(),
+                        )
+                        .child(
+                            Element::label(t!("settings.everything_command"))
+                                .font_size(10.0)
+                                .fg(Color::rgba(235, 241, 255, 155))
+                                .visible_when(move || !everything_installed_for_ui.get())
+                                .width_match(),
+                        )
+                        .child(
+                            Element::button(t!("everything.install"))
+                                .visible_when(move || !everything_installed_for_ui.get())
+                                .on_click(move |ctx| match everything::launch_winget_install() {
+                                    Ok(()) => {
+                                        everything_status.set(
+                                            t!("everything.winget_started_restart").into_owned(),
+                                        );
+                                        ctx.toast_ok(t!("everything.winget_started_toast"));
+                                    }
+                                    Err(error) => {
+                                        everything_status.set(error.clone());
+                                        ctx.toast_ok(error);
+                                    }
+                                }),
+                        )
                         .child(
                             Element::label(t!("settings.plugins.title"))
                                 .font_size(17.0)
@@ -4894,6 +5035,21 @@ fn main() {
                                 .max_lines(3)
                                 .truncate(Truncate::End),
                         )
+                        .child(Element::field(
+                            t!("settings.smooth_caret").into_owned(),
+                            Element::row()
+                                .width_match()
+                                .spacing(8)
+                                .child(
+                                    Element::checkbox(
+                                        t!("settings.smooth_caret_desc"),
+                                        smooth_caret,
+                                    )
+                                    .width_match(),
+                                )
+                                .child(Element::text_input(caret_duration, "95").width(76))
+                                .child(Element::label("ms").font_size(11.0)),
+                        ))
                         .child(Element::field(
                             t!("settings.visual.selection_color").into_owned(),
                             Element::checkbox(
@@ -5057,18 +5213,26 @@ fn main() {
                                     MAX_LAUNCHER_HEIGHT,
                                 )
                                 .unwrap_or(DEFAULT_LAUNCHER_HEIGHT);
+                                let duration = caret_duration
+                                    .get()
+                                    .trim()
+                                    .parse::<u16>()
+                                    .unwrap_or(95)
+                                    .clamp(60, 160);
                                 let Ok(mut settings) = settings_for_visual_apply.write() else {
-                                    ctx.toast_ok(t!("settings.lock_failed").into_owned());
+                                    ctx.toast_ok(t!("settings.lock_failed"));
                                     return;
                                 };
                                 settings.launcher_width = width;
                                 settings.launcher_height = height;
+                                settings.smooth_caret = smooth_caret.get();
+                                settings.smooth_caret_duration_ms = duration;
                                 settings.normalize();
                                 width = settings.launcher_width;
                                 height = settings.launcher_height;
                                 let preference = settings.monitor_preference;
                                 if !save_settings(&settings) {
-                                    ctx.toast_ok(t!("settings.visual.save_failed").into_owned());
+                                    ctx.toast_ok(t!("settings.visual.save_failed"));
                                     return;
                                 }
                                 launcher_width.set(width);
@@ -5085,10 +5249,14 @@ fn main() {
                                     MIN_LAUNCHER_HEIGHT,
                                     MAX_LAUNCHER_HEIGHT,
                                 ));
-                                launcher_preview_text.set(format!(
-                                    "Current launcher client area: {} × {} logical px (DIP)",
-                                    width, height
-                                ));
+                                launcher_preview_text.set(
+                                    t!(
+                                        "settings.visual.client_area",
+                                        width = width,
+                                        height = height
+                                    )
+                                    .into_owned(),
+                                );
                                 eprintln!("Visual Apply dimensions clicked: {}x{}", width, height);
                                 settings_visible_for_visual_apply.set(false);
                                 let target_height = if show_results_for_visual_apply.get() {
@@ -5103,7 +5271,7 @@ fn main() {
                                     target_height,
                                 );
                                 size_for_visual_apply.set(i32::from(width), target_height);
-                                ctx.toast_ok(t!("settings.visual.applied").into_owned());
+                                ctx.toast_ok(t!("settings.visual.applied"));
                             }),
                         ),
                 ),
@@ -5142,13 +5310,23 @@ fn main() {
         .padding(18)
         .child(settings_panel)
         .visible_signal(settings_visible);
+    if std::env::var_os("FLUX_SMOKE_SETTINGS_UI").is_some() {
+        eprintln!(
+            "Settings UI contract: UpdateActionVersionLabel=Current version: {CURRENT_VERSION}; SmoothCaretTab=Visual; SmoothCaretGeneral=false"
+        );
+    }
+
     let content = Element::stack()
         .fill()
         .font_family(LAUNCHER_FONT_FAMILY)
         .child(launcher_page)
         .child(settings_page);
 
-    let mut app = app.start_hidden();
+    let mut app = if startup_launch {
+        app.start_hidden()
+    } else {
+        app
+    };
     let second_instance_sender = app.channel::<()>(|ctx, ()| {
         ctx.show_window();
     });
@@ -5158,13 +5336,13 @@ fn main() {
     if !single_instance_disabled {
         app = app.single_instance(SINGLE_INSTANCE_ID, move |argv| {
             if argv.iter().any(|arg| arg == "--shutdown") {
-                // 卸载是应用程序控制的交接：销毁原生窗口
-                // 并退出事件循环，而不是应用 hide_on_close。
+                // Uninstall is an application-controlled handoff: destroy the native
+                // window and exit the event loop instead of applying hide_on_close.
                 shutdown_window_op.quit();
                 return;
             }
-            // 原生 windui 监听器激活窗口；同时排队 Show，以便
-            // 托盘隐藏的启动在通道回调排空之前变为可见。
+            // The native windui listener activates the window; queue Show as well so a
+            // tray-hidden startup is made visible before the channel callback is drained.
             second_instance_window_op.show_window();
             let _ = second_instance_sender_for_callback.send(());
         });
@@ -5173,9 +5351,9 @@ fn main() {
         .hide_on_close()
         .hide_on_deactivate()
         .focus_first_control_on_show()
-        // Win32 后端在本地支持 Acrylic 的会话中保持此透明，
-        // 仅将此深色用作真正的 RDP 回退。
-        .bg(Color::rgba(32, 33, 35, 255))
+        // Keep the HWND background transparent so Acrylic/DWM remains visible
+        // through the launcher and its install prompt instead of adding a solid slab.
+        .bg(Color::TRANSPARENT)
         .centered()
         .frameless()
         .resizable(false)
@@ -5188,8 +5366,28 @@ fn main() {
             let current_width = width_for_interval.get();
             let current_height = height_for_interval.get();
             let settings_is_visible = settings_visible_for_interval.get();
+            let prompt_is_visible = everything_prompt_visible_for_interval.get();
             let visual_tab_is_visible = settings_tab_for_interval.get() == 1;
+            let plugins_tab_is_visible = settings_tab_for_interval.get() == 3;
             let visual_preview_is_visible = settings_is_visible && visual_tab_is_visible;
+            if everything_plugins_smoke_for_interval
+                && settings_is_visible
+                && plugins_tab_is_visible
+                && !everything_plugins_smoke_reported
+            {
+                let installed = everything_installed_for_interval.get();
+                let auto_enable = auto_enable_everything_for_interval.get();
+                let status = everything_status_for_interval.get();
+                eprintln!(
+                    "Everything Plugins UI: tab_visible=true everything_section=true auto_enable_checkbox=true status_label=true install_button_label=Install_Everything already_installed_label=Everything_is_already_installed auto_enable={} installed={} install_button_visible={} already_installed_visible={} status={}",
+                    auto_enable,
+                    installed,
+                    !installed,
+                    installed,
+                    status.replace(' ', "_")
+                );
+                everything_plugins_smoke_reported = true;
+            }
             if settings_is_visible && !last_settings_visible {
                 if let Ok(settings) = settings_for_interval_geometry.read() {
                     request_monitor_position(
@@ -5200,6 +5398,25 @@ fn main() {
                     );
                 }
                 size_for_interval.set(SETTINGS_WINDOW_WIDTH, SETTINGS_WINDOW_HEIGHT);
+            }
+            if prompt_is_visible != last_everything_prompt_visible {
+                last_everything_prompt_visible = prompt_is_visible;
+                let (prompt_width, prompt_height) = launcher_window_geometry_with_prompt(
+                    settings_is_visible,
+                    prompt_is_visible,
+                    show_results_for_interval.get(),
+                    width_for_interval.get() as i32,
+                    height_for_interval.get() as i32,
+                );
+                if let Ok(settings) = settings_for_interval_geometry.read() {
+                    request_monitor_position(
+                        &position_for_interval,
+                        settings.monitor_preference,
+                        prompt_width,
+                        prompt_height,
+                    );
+                }
+                size_for_interval.set(prompt_width, prompt_height);
             }
             if visual_preview_is_visible {
                 let preference = settings_for_interval_geometry
@@ -5415,8 +5632,8 @@ fn main() {
                 icon_refresh_generation_for_interval.set(completed_icon_generation);
             }
             if tray_settings_smoke_pending_for_interval.replace(false) {
-                // 执行与托盘设置项相同的生命周期顺序，
-                // 不依赖脆弱的屏幕坐标托盘自动化。
+                // Exercise the same lifecycle order as the tray Settings item,
+                // without relying on brittle screen-coordinate tray automation.
                 settings_visible_for_interval.set(true);
                 ctx.show_window();
                 size_for_interval.set(SETTINGS_WINDOW_WIDTH, SETTINGS_WINDOW_HEIGHT);
@@ -5430,14 +5647,17 @@ fn main() {
             let has_query = !next_query.trim().is_empty();
             history_mode_for_interval.set(false);
             show_results_for_interval.set(has_query);
-            size_for_interval.set(
+            // Query cleanup also happens when hide-on-deactivate hides the
+            // launcher. Do not let that asynchronous query transition resize
+            // an already-open Settings panel back to the compact search strip.
+            let (target_width, target_height) = launcher_window_geometry_with_prompt(
+                settings_visible_for_interval.get(),
+                everything_prompt_visible_for_interval.get(),
+                has_query,
                 launcher_width.get() as i32,
-                if has_query {
-                    launcher_height.get() as i32
-                } else {
-                    COMPACT_WINDOW_HEIGHT
-                },
+                launcher_height.get() as i32,
             );
+            size_for_interval.set(target_width, target_height);
             sequence = sequence.wrapping_add(1);
             sequence_for_interval.set(sequence);
             model.set_query(&next_query);
@@ -5462,13 +5682,13 @@ fn main() {
                             .map(|result| result.id.clone())
                             .unwrap_or_default(),
                     );
-                    // 内置/系统命令是同步的，必须立即可操作。
-                    // 一旦外部提供者收到相同查询序列的响应，
-                    // 仍会替换此快照。
+                    // Built-in/system commands are synchronous and must be actionable
+                    // immediately. External providers still replace this snapshot once
+                    // their responses arrive for the same query sequence.
                     results_for_interval.set(built_in_results);
                 }
-                // 当当前提供者世代仍在等待时，
-                // 不要从先前的查询中推导或显示补全。
+                // Do not derive or display completion from the previous query while
+                // the current provider generation is still pending.
                 inline_completion_for_interval.set(String::new());
             }
             request_scroll(scroll_request_for_interval);
@@ -5478,14 +5698,16 @@ fn main() {
             actions_for_interval.borrow_mut().clear();
             if !has_query {
                 inline_completion_for_interval.set(String::new());
-                status_for_interval.set(t!("status.ready").into_owned());
+                status_for_interval.set(String::from("Ready"));
             } else {
-                status_for_interval.set(t!("status.searching").into_owned());
+                status_for_interval.set(String::from(
+                    "Searching applications, Everything and native Flow plugins...",
+                ));
                 application_worker.request(sequence, next_query.clone());
-                // Everything 是每个非空查询的常驻文件提供程序。
-                // Everything 原生语法如 `ext:zip`、`parent:`、
-                // `file:` 和 `dm:today` 保持不变；仅对此提供程序
-                // 规范化前置 `.ext` 简写。
+                // Everything is the always-on file provider for every non-empty
+                // query. Native Everything syntax such as `ext:zip`, `parent:`,
+                // `file:`, and `dm:today` stays unchanged; a leading `.ext`
+                // shorthand is normalized only for this provider.
                 if auto_enable_everything_for_interval.get()
                     && next_query.trim().len() >= EVERYTHING_MIN_QUERY_LEN
                 {
@@ -5503,7 +5725,7 @@ fn main() {
                     native_plugin_worker.request(sequence, next_query.clone());
                 }
             }
-            last_query = next_query.clone();
+            last_query = next_query;
         })
         .on_window_show({
             let settings = Arc::clone(&shared_settings);
@@ -5515,9 +5737,9 @@ fn main() {
                 if let Ok(settings) = settings.read() {
                     selection_color.set(selection_color_for_settings(&settings));
                 }
-                // 激活托盘图标可能会在首次间隔处理之前显示 HWND。
-                // 因此，也需在此生命周期回调中应用设置的客户端尺寸，
-                // 从而确保初始帧呈现为完整面板，而非仅 72 DIP 宽的条状区域。
+                // Tray activation can show the HWND before the first interval pass.
+                // Apply the Settings client size in this lifecycle callback too, so
+                // the initial frame is the full panel rather than a 72-DIP strip.
                 if settings_visible_for_show.get() {
                     size_for_show.set(SETTINGS_WINDOW_WIDTH, SETTINGS_WINDOW_HEIGHT);
                 }
@@ -5571,7 +5793,6 @@ fn main() {
                     let (width, height) = launcher_window_geometry_with_sizes(
                         settings_visible.get(),
                         false,
-                        everything_prompt_visible.get(),
                         launcher_width.get() as i32,
                         launcher_height.get() as i32,
                     );
@@ -5589,52 +5810,19 @@ mod tests {
         dimension_slider_fraction, display_title, format_bytes, format_update_progress,
         google_icon_rgba, history_cursor_step, hover_position_changed,
         icon_completion_generation_changed, icon_target_for_path, is_executable_icon_target,
-        is_run_as_admin_key, is_shutdown_mode, language_preference_from_index,
-        language_preference_index, launcher_window_geometry, launcher_window_geometry_with_sizes,
-        merge_application_duplicates, normalize_built_in_executable_targets,
-        normalize_everything_query, obsidian_icon_rgba, parse_dimension_input,
-        parse_internet_shortcut_icon_location, preserve_everything_file_order, quoted_result_path,
+        is_run_as_admin_key, is_shutdown_mode, launcher_window_geometry,
+        launcher_window_geometry_with_sizes, merge_application_duplicates,
+        normalize_built_in_executable_targets, normalize_everything_query, obsidian_icon_rgba,
+        parse_dimension_input, parse_internet_shortcut_icon_location,
+        preserve_everything_file_order, quoted_result_path, rank_results_with_priorities,
         relaunch_mode_for_auto_install, resolve_bare_executable_path, resolve_shortcut_icon_path,
-        select_locale, should_claim_single_instance, should_publish_initial_query_results,
-        should_show_launcher, ProviderResults, ResultIconView, ShellIconCache,
-        COMPACT_WINDOW_HEIGHT, LAUNCHER_FONT_FAMILY, MAX_LAUNCHER_HEIGHT, MAX_LAUNCHER_WIDTH,
+        should_claim_single_instance, should_publish_initial_query_results, should_show_launcher,
+        ProviderResults, ResultIconView, ShellIconCache, COMPACT_WINDOW_HEIGHT,
+        LAUNCHER_FONT_FAMILY, MAX_LAUNCHER_HEIGHT, MAX_LAUNCHER_WIDTH,
         MAX_SHELL_ICON_CACHE_ENTRIES, MIN_LAUNCHER_HEIGHT, MIN_LAUNCHER_WIDTH,
     };
-    use flux_core::{Language, ResultKind, ResultSource, SearchResult};
+    use flux_core::{ResultKind, ResultSource, SearchResult};
     use windui::event::{Key, KeyEvent};
-
-    #[test]
-    fn language_preference_indexes_round_trip_and_unknown_falls_back_to_system() {
-        assert_eq!(
-            language_preference_from_index(language_preference_index(Language::System)),
-            Language::System
-        );
-        assert_eq!(
-            language_preference_from_index(language_preference_index(Language::English)),
-            Language::English
-        );
-        assert_eq!(
-            language_preference_from_index(language_preference_index(Language::SimplifiedChinese)),
-            Language::SimplifiedChinese
-        );
-        assert_eq!(language_preference_from_index(99), Language::System);
-    }
-
-    #[test]
-    fn simplified_chinese_system_locales_select_zh_cn() {
-        assert_eq!(select_locale("zh-CN"), "zh-CN");
-        assert_eq!(select_locale("zh-Hans-CN"), "zh-CN");
-        assert_eq!(select_locale("zh-CN.UTF-8"), "zh-CN");
-        assert_eq!(select_locale("zh"), "zh-CN");
-    }
-
-    #[test]
-    fn traditional_and_other_locales_fall_back_to_en() {
-        assert_eq!(select_locale("zh-TW"), "en");
-        assert_eq!(select_locale("zh-Hant"), "en");
-        assert_eq!(select_locale("en-US"), "en");
-        assert_eq!(select_locale("ja-JP"), "en");
-    }
 
     #[test]
     fn plugin_host_mode_bypasses_main_single_instance_guard() {
@@ -5903,6 +6091,35 @@ mod tests {
         assert!(merged.iter().any(|result| result.title == "PowerShell 7"));
     }
 
+    #[cfg(windows)]
+    #[test]
+    fn post_merge_exact_console_identity_survives_catalog_collision_and_ranks_first() {
+        let powershell_path =
+            resolve_bare_executable_path("powershell.exe").expect("PowerShell should resolve");
+        let system = SearchResult {
+            id: String::from("system:powershell"),
+            title: String::from("PowerShell"),
+            subtitle: String::from("Windows PowerShell"),
+            kind: ResultKind::Command,
+            source: ResultSource::BuiltIn,
+            target: Some(powershell_path.clone()),
+        };
+        let catalog = SearchResult {
+            id: canonical_application_id(&powershell_path).unwrap(),
+            title: String::from("Windows PowerShell"),
+            subtitle: String::from("Application • Start Menu"),
+            kind: ResultKind::Application,
+            source: ResultSource::ApplicationCatalog,
+            target: Some(powershell_path),
+        };
+
+        let mut merged = merge_application_duplicates(vec![system, catalog]);
+        rank_results_with_priorities("powershell", &mut merged, &[]);
+
+        assert_eq!(merged.len(), 1);
+        assert_eq!(merged[0].id, "system:powershell");
+    }
+
     #[test]
     fn executable_icon_target_detection_accepts_shell_executables_only() {
         assert!(is_executable_icon_target(
@@ -5970,34 +6187,15 @@ mod tests {
                 "Run as admin",
                 "Open file location",
                 "Copy file",
+                "Copy folder path",
             ]
         );
         assert!(matches!(actions[0].kind, super::ActionKind::SetPriority));
         assert!(matches!(actions[1].kind, super::ActionKind::Open));
         assert!(matches!(actions[2].kind, super::ActionKind::RunAsAdmin));
         assert!(matches!(actions[3].kind, super::ActionKind::OpenLocation));
-        assert_eq!(labels[4], "Copy file");
         assert!(matches!(actions[4].kind, super::ActionKind::CopyFile));
-    }
-
-    #[test]
-    fn file_results_offer_copy_folder_path_for_existing_directories() {
-        let folder = std::env::temp_dir();
-        let result = SearchResult {
-            id: String::from("file:folder-probe"),
-            title: String::from("Folder probe"),
-            subtitle: String::from("Everything"),
-            kind: ResultKind::File,
-            source: ResultSource::Everything,
-            target: Some(folder.to_string_lossy().into_owned()),
-        };
-        let actions = actions_for_result(&result, &std::collections::HashMap::new());
-        let copy = actions
-            .iter()
-            .find(|action| matches!(action.kind, super::ActionKind::CopyFolderPath))
-            .expect("folder copy action");
-        assert_eq!(copy.label, "Copy folder path");
-        assert!(matches!(copy.kind, super::ActionKind::CopyFolderPath));
+        assert!(matches!(actions[5].kind, super::ActionKind::CopyFolderPath));
     }
 
     #[test]
@@ -6231,22 +6429,22 @@ mod tests {
 
     #[test]
     fn settings_canvas_stays_fixed_while_visual_values_change() {
-        // 这是 Windows 滑块“烟雾”效果所使用的几何结构契约：
-        // 改变任一视觉数值时，不得导致“设置”窗口句柄（HWND）本身的大小发生变化或发生位移。
+        // This is the geometry contract used by the Windows slider smoke: changing
+        // either visual value must not resize or drift the Settings HWND itself.
         assert_eq!(
-            launcher_window_geometry_with_sizes(true, true, false, 640, 520),
+            launcher_window_geometry_with_sizes(true, true, 640, 520),
             (super::SETTINGS_WINDOW_WIDTH, super::SETTINGS_WINDOW_HEIGHT)
         );
         assert_eq!(
-            launcher_window_geometry_with_sizes(true, false, false, 380, 300),
+            launcher_window_geometry_with_sizes(true, false, 380, 300),
             (super::SETTINGS_WINDOW_WIDTH, super::SETTINGS_WINDOW_HEIGHT)
         );
         assert_eq!(
-            launcher_window_geometry_with_sizes(false, true, false, 640, 520),
+            launcher_window_geometry_with_sizes(false, true, 640, 520),
             (640, 520)
         );
         assert_eq!(
-            launcher_window_geometry_with_sizes(false, false, false, 640, 520),
+            launcher_window_geometry_with_sizes(false, false, 640, 520),
             (640, COMPACT_WINDOW_HEIGHT)
         );
     }
@@ -6254,15 +6452,15 @@ mod tests {
     #[test]
     fn custom_geometry_uses_visual_dimensions_and_keeps_compact_height() {
         assert_eq!(
-            launcher_window_geometry_with_sizes(false, true, false, 640, 520),
+            launcher_window_geometry_with_sizes(false, true, 640, 520),
             (640, 520)
         );
         assert_eq!(
-            launcher_window_geometry_with_sizes(false, false, false, 640, 520),
+            launcher_window_geometry_with_sizes(false, false, 640, 520),
             (640, COMPACT_WINDOW_HEIGHT)
         );
         assert_eq!(
-            launcher_window_geometry_with_sizes(true, true, false, 640, 520),
+            launcher_window_geometry_with_sizes(true, true, 640, 520),
             (super::SETTINGS_WINDOW_WIDTH, super::SETTINGS_WINDOW_HEIGHT)
         );
     }
@@ -6270,15 +6468,71 @@ mod tests {
     #[test]
     fn activation_clear_uses_compact_geometry_after_expanded_query() {
         assert_eq!(
-            launcher_window_geometry(false, true, false),
+            launcher_window_geometry(false, true),
             (
                 super::DEFAULT_LAUNCHER_WIDTH as i32,
                 super::DEFAULT_LAUNCHER_HEIGHT as i32,
             )
         );
         assert_eq!(
-            launcher_window_geometry(false, false, false),
+            launcher_window_geometry(false, false),
             (super::DEFAULT_LAUNCHER_WIDTH as i32, COMPACT_WINDOW_HEIGHT)
         );
+    }
+
+    #[test]
+    fn query_cleanup_keeps_open_settings_at_full_geometry() {
+        // hide-on-deactivate clears the query asynchronously. The following
+        // query transition must not resize the already-open Settings panel.
+        assert_eq!(
+            launcher_window_geometry_with_sizes(true, false, 420, 56),
+            (super::SETTINGS_WINDOW_WIDTH, super::SETTINGS_WINDOW_HEIGHT)
+        );
+    }
+
+    #[test]
+    fn missing_everything_prompt_uses_visible_dialog_geometry() {
+        assert_eq!(
+            super::launcher_window_geometry_with_prompt(false, true, false, 420, 382),
+            (
+                super::EVERYTHING_PROMPT_WINDOW_WIDTH,
+                super::EVERYTHING_PROMPT_WINDOW_HEIGHT
+            )
+        );
+        assert_eq!(
+            super::launcher_window_geometry_with_prompt(true, true, false, 420, 382),
+            (super::SETTINGS_WINDOW_WIDTH, super::SETTINGS_WINDOW_HEIGHT)
+        );
+    }
+
+    #[test]
+    fn missing_everything_prompt_does_not_override_normal_launcher_geometry() {
+        assert_eq!(
+            super::launcher_window_geometry_with_prompt(false, false, true, 640, 520),
+            (640, 520)
+        );
+        assert_eq!(
+            super::launcher_window_geometry_with_prompt(false, false, false, 640, 520),
+            (640, COMPACT_WINDOW_HEIGHT)
+        );
+    }
+
+    #[test]
+    fn everything_prompt_requires_missing_auto_enabled_and_unseen_state() {
+        assert!(super::should_show_everything_install_prompt(
+            false, true, false, false
+        ));
+        assert!(!super::should_show_everything_install_prompt(
+            true, true, false, false
+        ));
+        assert!(!super::should_show_everything_install_prompt(
+            false, false, false, false
+        ));
+        assert!(!super::should_show_everything_install_prompt(
+            false, true, true, false
+        ));
+        assert!(!super::should_show_everything_install_prompt(
+            false, true, false, true
+        ));
     }
 }

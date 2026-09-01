@@ -81,9 +81,6 @@ public static class FluxWallpaper {
     [DllImport("user32.dll", SetLastError = true)]
     public static extern bool SetForegroundWindow(IntPtr hwnd);
     [DllImport("user32.dll", SetLastError = true)]
-    public static extern bool ShowWindow(IntPtr hwnd, int command);
-    public const int SW_SHOW = 5;
-    [DllImport("user32.dll", SetLastError = true)]
     public static extern IntPtr SetFocus(IntPtr hwnd);
     [DllImport("user32.dll", SetLastError = true)]
     public static extern bool IsWindowVisible(IntPtr hwnd);
@@ -1571,7 +1568,7 @@ try {
             0
         }
         $resultRightArrowMiddleCaretActionMenu = $caretMiddleWindowVisible -and $caretMiddleWindowHeight -ge 240
-        $resultRightArrowMiddleCaretProbe = !$resultRightArrowMiddleCaretActionMenu
+        $resultRightArrowMiddleCaretProbe = $caretMiddleWindowVisible -and !$resultRightArrowMiddleCaretActionMenu
         Write-Host "Right Arrow caret-middle probe: visible=$caretMiddleWindowVisible height=$caretMiddleWindowHeight action_menu=$resultRightArrowMiddleCaretActionMenu passed=$resultRightArrowMiddleCaretProbe"
         Save-Screenshot "result-keyboard-caret-middle.png"
         if ($resultRightArrowMiddleCaretActionMenu) {
@@ -2152,12 +2149,8 @@ try {
     if (!$launchProcessCreationProbe) {
         throw "Launch process probe failed: dispatch_before_hide=$launchProbeDispatchBeforeHide, launch_succeeded=$launchProbeLaunchSucceeded, completed_before_hide=$launchProbeLaunchSucceededBeforeHide, process_created=$($launchProbeProcessTimestamp -gt 0.0), shell_return=$($launchProbeShellReturnTimestamp -gt 0.0)."
     }
-    $restoreDeadline = (Get-Date).AddSeconds(5)
-    while (![FluxWallpaper]::IsWindowVisible($launcherHandle) -and (Get-Date) -lt $restoreDeadline) {
-        [FluxWallpaper]::ShowWindow($launcherHandle, [FluxWallpaper]::SW_SHOW) | Out-Null
-        [FluxWallpaper]::SetForegroundWindow($launcherHandle) | Out-Null
-        Start-Sleep -Milliseconds 650
-    }
+    [FluxWallpaper]::SendMessage($launcherHandle, $wmHotkey, [UIntPtr]::Zero, [IntPtr]::Zero) | Out-Null
+    Start-Sleep -Milliseconds 650
     if (![FluxWallpaper]::IsWindowVisible($launcherHandle)) {
         throw "Unable to restore launcher after process creation smoke."
     }
@@ -2222,25 +2215,23 @@ try {
         if (!$ctrlCProbe) {
             throw "Ctrl+C did not copy the selected result path in quotes."
         }
-        $resultCtrlShiftCopyProbe = $false
-        for ($copyAttempt = 1; $copyAttempt -le 3 -and !$resultCtrlShiftCopyProbe; $copyAttempt++) {
-            [FluxWallpaper]::SetForegroundWindow($launcherHandle) | Out-Null
-            [FluxWallpaper]::keybd_event(0x11, 0, 0, [UIntPtr]::Zero)
-            [FluxWallpaper]::keybd_event(0x10, 0, 0, [UIntPtr]::Zero)
-            Start-Sleep -Milliseconds 120
-            [FluxWallpaper]::keybd_event(0x43, 0, 0, [UIntPtr]::Zero)
-            Start-Sleep -Milliseconds 120
-            [FluxWallpaper]::keybd_event(0x43, 0, 2, [UIntPtr]::Zero)
-            [FluxWallpaper]::keybd_event(0x10, 0, 2, [UIntPtr]::Zero)
-            [FluxWallpaper]::keybd_event(0x11, 0, 2, [UIntPtr]::Zero)
-            Start-Sleep -Milliseconds 450
-            try {
-                $dropPaths = @((Get-Clipboard -Format FileDropList -ErrorAction Stop) | ForEach-Object { $_.ToString() })
-                Write-Host "Ctrl+Shift+C file drop list attempt ${copyAttempt}: $($dropPaths -join '; ')"
-                $resultCtrlShiftCopyProbe = $dropPaths.Count -gt 0 -and ($dropPaths | Where-Object { [System.IO.Path]::IsPathFullyQualified($_) }).Count -gt 0
-            } catch {
-                Write-Host "Ctrl+Shift+C clipboard read failed attempt ${copyAttempt}: $($_.Exception.Message)"
-            }
+        [FluxWallpaper]::SetForegroundWindow($launcherHandle) | Out-Null
+        [FluxWallpaper]::keybd_event(0x11, 0, 0, [UIntPtr]::Zero)
+        [FluxWallpaper]::keybd_event(0x10, 0, 0, [UIntPtr]::Zero)
+        Start-Sleep -Milliseconds 120
+        [FluxWallpaper]::keybd_event(0x43, 0, 0, [UIntPtr]::Zero)
+        Start-Sleep -Milliseconds 120
+        [FluxWallpaper]::keybd_event(0x43, 0, 2, [UIntPtr]::Zero)
+        [FluxWallpaper]::keybd_event(0x10, 0, 2, [UIntPtr]::Zero)
+        [FluxWallpaper]::keybd_event(0x11, 0, 2, [UIntPtr]::Zero)
+        Start-Sleep -Milliseconds 450
+        try {
+            $dropPaths = @([System.Windows.Forms.Clipboard]::GetFileDropList() | ForEach-Object { $_.ToString() })
+            Write-Host "Ctrl+Shift+C file drop list: $($dropPaths -join '; ')"
+            $resultCtrlShiftCopyProbe = $dropPaths.Count -gt 0 -and ($dropPaths | Where-Object { [System.IO.Path]::IsPathFullyQualified($_) }).Count -gt 0
+        } catch {
+            Write-Host "Ctrl+Shift+C clipboard read failed: $($_.Exception.Message)"
+            $resultCtrlShiftCopyProbe = $false
         }
         if (!$resultCtrlShiftCopyProbe) {
             throw "Ctrl+Shift+C did not copy a Windows file object."
@@ -2912,8 +2903,7 @@ try {
         ResultRightClickWindowHidden = $resultRmbWindowHidden
         ResultRightClickLaunchProbe = $resultRmbLaunchProbe
         ResultRightArrowMiddleCaretActionMenu = $resultRightArrowMiddleCaretActionMenu
-        # This synthetic caret probe is diagnostic-only; manual behavior is verified separately.
-        ResultRightArrowMiddleCaretProbe = $resultRightArrowMiddleCaretProbe
+        ResultRightArrowMiddleCaretProbe = (!$ResultMouseInteractionSmoke) -or $resultRightArrowMiddleCaretProbe
         ResultNormalHoverTextCursor = $resultNormalHoverTextCursor
         ResultNormalHoverCopyDisabledProbe = (!$ResultMouseInteractionSmoke) -or $resultNormalHoverCopyDisabledProbe
         ResultNormalClickDispatchObserved = $resultNormalClickDispatchObserved
@@ -3023,6 +3013,9 @@ try {
             HiddenIdleAfterDeactivation = $deactivationIdleMemory
         }
     } | ConvertTo-Json | Set-Content -Encoding utf8 (Join-Path $OutputDirectory "environment.json")
+    if ($ResultMouseInteractionSmoke -and (!$resultRmbActionMenuVisible -or $resultRmbLaunchProbe -or !$resultNormalClickLaunchProbe -or !$resultCtrlCopyProbe -or !$resultCtrlShiftCopyProbe)) {
+        throw "Result mouse interaction smoke failed: right_click_action_menu=$resultRmbActionMenuVisible, right_click_launch=$resultRmbLaunchProbe, normal_click_launch=$resultNormalClickLaunchProbe, ctrl_copy=$resultCtrlCopyProbe, ctrl_shift_copy=$resultCtrlShiftCopyProbe."
+    }
 }
 finally {
     if (!$process.HasExited) {

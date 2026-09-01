@@ -6,10 +6,11 @@ members = [
     "crates/flux-plugin-sdk",
     "crates/flux-plugin-example",
 ]
+default-members = ["crates/flux-launcher"]
 resolver = "2"
 
 [workspace.package]
-version = "0.1.118"
+version = "0.1.121"
 edition = "2021"
 rust-version = "1.85"
 license = "MIT"

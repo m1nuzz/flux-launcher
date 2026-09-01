@@ -2782,7 +2782,7 @@ mod tests {
 
     #[test]
     fn ctrl_gated_drag_copies_focused_selection() {
-        let doc = RichDoc::new().para("result title");
+        let doc = RichDoc::new().para("result title extra");
         let (mut tree, node) = build(
             Element::rich(doc)
                 .selection_requires_ctrl(true)
@@ -2827,14 +2827,14 @@ mod tests {
             },
             PointerEvent {
                 kind: PointerKind::Move,
-                pos: pt(20),
+                pos: pt(65),
                 button: MouseButton::Left,
                 mods: ctrl,
                 click_count: 1,
             },
             PointerEvent {
                 kind: PointerKind::Up,
-                pos: pt(20),
+                pos: pt(65),
                 button: MouseButton::Left,
                 mods: ctrl,
                 click_count: 1,
@@ -2846,7 +2846,7 @@ mod tests {
         assert!(copied.consumed, "focused RichText must consume Ctrl+C");
         assert_eq!(
             &*clip.borrow(),
-            "result",
+            "result title",
             "Ctrl-drag should copy the title selection"
         );
         clip.borrow_mut().clear();
@@ -2865,7 +2865,7 @@ mod tests {
         );
         assert_eq!(
             &*clip.borrow(),
-            "result",
+            "result title",
             "character-form Ctrl+C should copy the selection"
         );
     }

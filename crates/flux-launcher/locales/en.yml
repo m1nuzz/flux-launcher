@@ -26,6 +26,8 @@ everything:
   winget_started_restart: winget install started. Restart Flux after Everything is installed.
   winget_started_toast: winget install started
   unavailable: Everything is not available
+  is_installed: Everything is already installed
+  is_not_installed: Everything is not installed
   result_count: "%{count} Everything result(s)"
   query_failed: 'Everything query failed: %{error}'
 recycle_bin:
@@ -89,9 +91,11 @@ settings:
   hours_between_checks: hours between checks
   update_action: Update action
   update_action_desc: Install stable updates automatically
+  current_version: "Current version: %{version}"
   check_updates: Check for updates
   install_now: Install now
   everything: Everything
+  everything_tab_desc: Everything provides fast indexed file and folder search. Configure its automatic use here, alongside the other plugins.
   everything_desc: Auto-enable Everything when installed
   everything_command: 'Command: winget install -e --id voidtools.Everything'
   lock_failed: Could not lock Flux settings
@@ -188,6 +192,7 @@ visual_preview:
   title: Flux Launcher
   description: This is the actual launcher preview window. Its client area is resized directly, not scaled into a mock card.
   units_hint: The controls use logical client units (DIP); Windows maps them to physical pixels at the preview monitor DPI.
+  client_area_label: "%{width} × %{height} logical px client area"
   result_preview: Preview result
   result_preview_sub: Native windui surface
   result_exact: Width and height are exact
