@@ -298,37 +298,45 @@ impl BuiltinProvider for ObsidianProvider {
             return Vec::new();
         }
         let vaults = discover_vaults();
-        if let Some(note_name) = search
-            .strip_prefix("create ")
-            .map(str::trim)
-            .filter(|name| !name.is_empty())
-        {
-            return create_note_results(note_name, &vaults);
-        }
-        let terms = search
-            .split_whitespace()
-            .map(str::to_owned)
-            .collect::<Vec<_>>();
-        let files = vaults
-            .iter()
-            .flat_map(collect_vault_files)
-            .collect::<Vec<_>>();
-        let mut scored = files
-            .into_iter()
-            .filter_map(|file| score_file(&file, &terms).map(|score| (score, file)))
-            .collect::<Vec<_>>();
-        scored.sort_by(|(left_score, left), (right_score, right)| {
-            right_score.cmp(left_score).then_with(|| {
-                normalize_search_text(&left.relative_path)
-                    .cmp(&normalize_search_text(&right.relative_path))
-            })
-        });
-        scored
-            .into_iter()
-            .take(MAX_RESULTS)
-            .map(|(_, file)| file_result(file))
-            .collect()
+        obsidian_results_for_vaults(&vaults, search)
     }
+}
+
+fn obsidian_results_for_vaults(vaults: &[Vault], search: &str) -> Vec<BuiltinResult> {
+    if let Some(note_name) = search
+        .strip_prefix("create ")
+        .map(str::trim)
+        .filter(|name| !name.is_empty())
+    {
+        return create_note_results(note_name, vaults);
+    }
+    let terms = search
+        .split_whitespace()
+        .map(str::to_owned)
+        .collect::<Vec<_>>();
+    let files = vaults
+        .iter()
+        .flat_map(collect_vault_files)
+        .collect::<Vec<_>>();
+    let mut scored = files
+        .into_iter()
+        .filter_map(|file| score_file(&file, &terms).map(|score| (score, file)))
+        .collect::<Vec<_>>();
+    scored.sort_by(|(left_score, left), (right_score, right)| {
+        right_score.cmp(left_score).then_with(|| {
+            normalize_search_text(&left.relative_path)
+                .cmp(&normalize_search_text(&right.relative_path))
+        })
+    });
+    let results: Vec<BuiltinResult> = scored
+        .into_iter()
+        .take(MAX_RESULTS)
+        .map(|(_, file)| file_result(file))
+        .collect();
+    if results.is_empty() && !vaults.is_empty() {
+        return create_note_results(search.trim(), vaults);
+    }
+    results
 }
 
 fn normalized_keyword<'a>(keyword: &'a str, fallback: &'a str) -> &'a str {
@@ -781,5 +789,95 @@ mod tests {
         };
         assert!(score_file(&file, &[String::from("контент-машина")]).is_some());
         assert!(score_file(&file, &[String::from("КОНТЕНТ-МАШИНА")]).is_some());
+    }
+
+    fn fake_vault(id: &str, name: &str) -> Vault {
+        Vault {
+            id: id.to_owned(),
+            name: name.to_owned(),
+            path: PathBuf::from(format!("C:/vaults/{id}")),
+        }
+    }
+
+    #[test]
+    fn obsidian_create_prefix_returns_one_option_per_vault() {
+        let vaults = vec![fake_vault("a", "Notes"), fake_vault("b", "Work")];
+        let results = obsidian_results_for_vaults(&vaults, "create Daily log");
+        assert_eq!(results.len(), 2);
+        assert!(results.iter().all(|result| {
+            result.result.title == "Create note: Daily log"
+                && result.result.subtitle.starts_with("Obsidian • ")
+        }));
+        let uris: Vec<String> = results
+            .iter()
+            .filter_map(|result| match &result.action {
+                Some(BuiltinAction::OpenUrl(url)) => Some(url.clone()),
+                _ => None,
+            })
+            .collect();
+        assert!(uris.contains(&"obsidian://new?vault=a&name=Daily%20log".to_owned()));
+        assert!(uris.contains(&"obsidian://new?vault=b&name=Daily%20log".to_owned()));
+    }
+
+    #[test]
+    fn obsidian_no_matches_falls_back_to_create_note_per_vault() {
+        let vaults = vec![fake_vault("a", "Notes"), fake_vault("b", "Work")];
+        let results = obsidian_results_for_vaults(&vaults, "totally-new-idea");
+        assert_eq!(results.len(), 2);
+        assert!(results.iter().all(|result| {
+            result.result.title == "Create note: totally-new-idea"
+                && result.result.id.starts_with("builtin:obsidian:create:")
+        }));
+    }
+
+    #[test]
+    fn obsidian_no_matches_with_no_vaults_returns_empty() {
+        let results = obsidian_results_for_vaults(&[], "anything");
+        assert!(results.is_empty());
+    }
+
+    #[test]
+    fn obsidian_search_with_matches_does_not_fall_back_to_create() {
+        let dir = tempdir();
+        let note = dir.path().join("welcome.md");
+        std::fs::write(&note, "---\naliases: [home]\n---\n").expect("write note");
+        let vaults = vec![Vault {
+            id: String::from("a"),
+            name: String::from("Notes"),
+            path: dir.path().to_path_buf(),
+        }];
+        let results = obsidian_results_for_vaults(&vaults, "welcome");
+        assert_eq!(results.len(), 1);
+        assert!(results[0].result.title == "welcome");
+        assert!(!results[0].result.id.starts_with("builtin:obsidian:create:"));
+    }
+
+    fn tempdir() -> TempDir {
+        let base = std::env::temp_dir();
+        let unique = format!(
+            "flux-launcher-obsidian-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|value| value.as_nanos())
+                .unwrap_or_default()
+        );
+        let path = base.join(unique);
+        std::fs::create_dir_all(&path).expect("create temp dir");
+        TempDir(path)
+    }
+
+    struct TempDir(PathBuf);
+
+    impl Drop for TempDir {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir_all(&self.0);
+        }
+    }
+
+    impl TempDir {
+        fn path(&self) -> &Path {
+            &self.0
+        }
     }
 }
