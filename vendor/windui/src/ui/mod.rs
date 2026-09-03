@@ -1436,8 +1436,8 @@ impl Element {
 
     /// 单行文本输入（绑定 `Signal<String>`）。
     /// 可链式 `.password()` / `.multiline()` / `.wrap(bool)` 配置行为。
-    pub fn text_input(text: Signal<String>, placeholder: impl Into<String>) -> Self {
-        Self::base(Layout::None).widget(TextInput::new(text, placeholder.into()))
+    pub fn text_input(text: Signal<String>, placeholder: impl Into<TextContent>) -> Self {
+        Self::base(Layout::None).widget(TextInput::new(text, placeholder))
     }
 
     /// Mirror the text input caret position in character indices.
@@ -1558,6 +1558,13 @@ impl Element {
         Self::base(Layout::None).widget(segmented::SegmentedControl::new(opts, selected))
     }
 
+    /// 响应式分段控制器：选项段标签绑定 `Signal<Vec<String>>`。
+    #[track_caller]
+    pub fn segmented_signal(options: Signal<Vec<String>>, selected: Signal<usize>) -> Self {
+        Self::base(Layout::None)
+            .widget(segmented::SegmentedControl::new_reactive(options, selected))
+    }
+
     /// 下拉选择（绑定 `Signal<usize>` 选中索引 + 选项标签）。
     pub fn dropdown(options: Vec<impl Into<String>>, selected: Signal<usize>) -> Self {
         let opts: Vec<String> = options.into_iter().map(|o| o.into()).collect();
@@ -1603,6 +1610,16 @@ impl Element {
         selected: Signal<usize>,
     ) -> Self {
         Self::dropdown_items_signal(items, selected)
+    }
+
+    /// 下拉项选中项变更时的回调钩子（`ctx` 在首位，其后是新选中项的索引）。
+    pub fn on_dropdown_change(mut self, f: impl Fn(&mut EventCtx, usize) + 'static) -> Self {
+        if let Some(a) = self.widget.as_any_mut() {
+            if let Some(d) = a.downcast_mut::<select::Dropdown>() {
+                d.set_on_change(f);
+            }
+        }
+        self
     }
 
     /// 下拉式复选菜单：外观同 `dropdown`，面板是菜单，项可单独开关。
@@ -2270,6 +2287,19 @@ impl Element {
             .cross(Align::Center)
             .spacing(f.gap())
             .child(Self::form_label(label, f, &th.metrics).width(f.label_width()))
+            .child(control)
+    }
+
+    /// 表单行，标签为动态信号。用法同 `field`，但标签会随信号更新。
+    pub fn field_signal(label: Signal<String>, control: Element) -> Self {
+        let th = crate::theme::current();
+        let f = &th.form;
+        Element::row()
+            .width_match()
+            .height(f.row_height())
+            .cross(Align::Center)
+            .spacing(f.gap())
+            .child(Element::label_signal(label).width(f.label_width()))
             .child(control)
     }
 

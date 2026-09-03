@@ -22,9 +22,23 @@ use crate::text::TextEngine;
 /// 段内左右内边距（measure 用，决定等宽段的自然宽度）。
 const SEG_PAD_X: i32 = 14;
 
+enum SegmentOptions {
+    Static(Vec<String>),
+    Bound(Signal<Vec<String>>),
+}
+
+impl SegmentOptions {
+    fn with<R>(&self, f: impl FnOnce(&[String]) -> R) -> R {
+        match self {
+            SegmentOptions::Static(v) => f(v),
+            SegmentOptions::Bound(sig) => sig.with(|v| f(v.as_slice())),
+        }
+    }
+}
+
 /// 多段单选控件。各段等宽，选中段高亮，段间以分隔线连体。
 pub struct SegmentedControl {
-    options: Vec<String>,
+    options: SegmentOptions,
     selected: Signal<usize>,
     /// 当前悬停段下标（仅视觉，不写绑定状态）。
     hover: Option<usize>,
@@ -36,7 +50,17 @@ impl SegmentedControl {
     pub fn new(options: Vec<String>, selected: Signal<usize>) -> Self {
         let init = selected.get().min(options.len().saturating_sub(1)) as f32;
         Self {
-            options,
+            options: SegmentOptions::Static(options),
+            selected,
+            hover: None,
+            sel_pos: Cell::new(Transition::new(init)),
+        }
+    }
+
+    pub fn new_reactive(options: Signal<Vec<String>>, selected: Signal<usize>) -> Self {
+        let init = options.with(|opts| selected.get().min(opts.len().saturating_sub(1)) as f32);
+        Self {
+            options: SegmentOptions::Bound(options),
             selected,
             hover: None,
             sel_pos: Cell::new(Transition::new(init)),
@@ -44,7 +68,7 @@ impl SegmentedControl {
     }
 
     fn len(&self) -> usize {
-        self.options.len()
+        self.options.with(|opts| opts.len())
     }
 
     /// 夹紧后的有效选中下标（绑定值越界时回退到末段）。
@@ -84,11 +108,13 @@ impl Widget for SegmentedControl {
         // 取最宽选项作为统一段宽，乘段数 → 等宽连体。
         let mut tw = 0;
         let mut th = 0;
-        for o in &self.options {
-            let t = text.measure(o, &crate::text::TextStyle::of(style), None);
-            tw = tw.max(t.w);
-            th = th.max(t.h);
-        }
+        self.options.with(|opts| {
+            for o in opts {
+                let t = text.measure(o, &crate::text::TextStyle::of(style), None);
+                tw = tw.max(t.w);
+                th = th.max(t.h);
+            }
+        });
         let seg_w = tw + 2 * SEG_PAD_X;
         let h = th.max(style.font_size as i32) + 14;
         Size::new(seg_w * self.len().max(1) as i32, h)
@@ -185,21 +211,25 @@ impl Widget for SegmentedControl {
             // text_muted 比 text_disabled 更深，使选中段与非选中段有可见对比
             pal.text_muted
         };
-        for i in 0..n {
-            let (x0, x1) = self.seg_x(bounds, i);
-            let seg = Rect::new(x0, bounds.y, x1 - x0, bounds.h);
-            canvas.draw_text(&self.options[i], seg, tc_normal, Align::Center, ts);
-        }
-        if let Some(clip) = pill_clip {
-            canvas.save();
-            canvas.clip_rect(clip);
+        self.options.with(|opts| {
             for i in 0..n {
                 let (x0, x1) = self.seg_x(bounds, i);
                 let seg = Rect::new(x0, bounds.y, x1 - x0, bounds.h);
-                canvas.draw_text(&self.options[i], seg, tc_selected, Align::Center, ts);
+                let text_label = opts.get(i).map(|s| s.as_str()).unwrap_or("");
+                canvas.draw_text(text_label, seg, tc_normal, Align::Center, ts);
             }
-            canvas.restore();
-        }
+            if let Some(clip) = pill_clip {
+                canvas.save();
+                canvas.clip_rect(clip);
+                for i in 0..n {
+                    let (x0, x1) = self.seg_x(bounds, i);
+                    let seg = Rect::new(x0, bounds.y, x1 - x0, bounds.h);
+                    let text_label = opts.get(i).map(|s| s.as_str()).unwrap_or("");
+                    canvas.draw_text(text_label, seg, tc_selected, Align::Center, ts);
+                }
+                canvas.restore();
+            }
+        });
 
         // 段间分隔线：仅画两侧都非选中的边界（选中段填充自带视觉边界）。
         let divider = sg.divider(pal);

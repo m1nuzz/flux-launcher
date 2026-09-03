@@ -187,6 +187,7 @@ enum OptionSource {
 pub struct Dropdown {
     options: OptionSource,
     selected: Signal<usize>,
+    on_change: Option<Rc<dyn Fn(&mut EventCtx, usize)>>,
     hover: bool,
     /// 边框色补间（hover/focus 高亮淡变）；首帧靠 `primed` 落定。
     border_anim: Cell<Transition<Color>>,
@@ -217,10 +218,15 @@ impl Dropdown {
         Self {
             options,
             selected,
+            on_change: None,
             hover: false,
             border_anim: Cell::new(Transition::new(Color::rgba(0, 0, 0, 0))),
             primed: Cell::new(false),
         }
+    }
+
+    pub fn set_on_change(&mut self, f: impl Fn(&mut EventCtx, usize) + 'static) {
+        self.on_change = Some(Rc::new(f));
     }
 
     fn current(&self) -> String {
@@ -261,7 +267,17 @@ impl Dropdown {
                     .enumerate()
                     .map(|(i, o)| {
                         let sel = self.selected;
-                        MenuItem::run(o, move |_ctx| sel.set(i), i == cur)
+                        let cb = self.on_change.clone();
+                        MenuItem::run(
+                            o,
+                            move |ctx| {
+                                sel.set(i);
+                                if let Some(ref cb) = cb {
+                                    cb(ctx, i);
+                                }
+                            },
+                            i == cur,
+                        )
                     })
                     .collect()
             }
@@ -274,7 +290,17 @@ impl Dropdown {
                     .enumerate()
                     .map(|(i, it)| {
                         let sel = self.selected;
-                        let mut mi = MenuItem::run(it.label, move |_ctx| sel.set(i), i == cur);
+                        let cb = self.on_change.clone();
+                        let mut mi = MenuItem::run(
+                            it.label,
+                            move |ctx| {
+                                sel.set(i);
+                                if let Some(ref cb) = cb {
+                                    cb(ctx, i);
+                                }
+                            },
+                            i == cur,
+                        );
                         if let Some(sub) = it.subtitle {
                             mi = mi.subtitle(sub);
                         }
@@ -436,6 +462,10 @@ impl Widget for Dropdown {
 
     fn focusable(&self) -> bool {
         true
+    }
+
+    fn as_any_mut(&mut self) -> Option<&mut dyn std::any::Any> {
+        Some(self)
     }
 }
 

@@ -82,7 +82,7 @@ fn deliver_notification(title: &str, body: &str) {
 
 enum ItemKind {
     Action {
-        label: String,
+        label: crate::ui::TextContent,
         /// 勾选态绑定（None=从不打勾）；菜单弹出时读当前值。
         checked: Option<Signal<bool>>,
         /// 禁用态绑定（None=始终可用）；菜单弹出时读当前值，false 则灰显且不可点。
@@ -99,7 +99,10 @@ pub struct TrayMenuItem {
 
 impl TrayMenuItem {
     /// 普通项：点击触发回调。
-    pub fn item(label: impl Into<String>, cb: impl FnMut(&mut TrayCtx) + 'static) -> Self {
+    pub fn item(
+        label: impl Into<crate::ui::TextContent>,
+        cb: impl FnMut(&mut TrayCtx) + 'static,
+    ) -> Self {
         Self {
             kind: ItemKind::Action {
                 label: label.into(),
@@ -116,7 +119,7 @@ impl TrayMenuItem {
     /// 托盘菜单在主线程构建、勾选态也在主线程的菜单弹出路径上读取，
     /// 把构建好的 `Tray` 搬到别的线程会在编译期就被拦下。
     pub fn check(
-        label: impl Into<String>,
+        label: impl Into<crate::ui::TextContent>,
         checked: Signal<bool>,
         cb: impl FnMut(&mut TrayCtx) + 'static,
     ) -> Self {
@@ -292,7 +295,7 @@ impl TrayTarget {
                         let item = unsafe {
                             NSMenuItem::initWithTitle_action_keyEquivalent(
                                 NSMenuItem::alloc(mtm),
-                                &NSString::from_str(label),
+                                &NSString::from_str(&label.resolve()),
                                 Some(sel!(menuClick:)),
                                 &NSString::from_str(""),
                             )

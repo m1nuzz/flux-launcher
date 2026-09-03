@@ -754,7 +754,7 @@ struct TextLayout {
 
 pub struct TextInput {
     text: Signal<String>,
-    placeholder: String,
+    placeholder: super::TextContent,
     config: TextConfig,
     cursor: usize,         // 字符索引
     anchor: Option<usize>, // 选区锚点（Some 且 != cursor 时有选区）
@@ -785,11 +785,11 @@ pub struct TextInput {
 }
 
 impl TextInput {
-    pub fn new(text: Signal<String>, placeholder: String) -> Self {
+    pub fn new(text: Signal<String>, placeholder: impl Into<super::TextContent>) -> Self {
         let cursor = text.with(|t| t.chars().count());
         Self {
             text,
-            placeholder,
+            placeholder: placeholder.into(),
             config: TextConfig::default(),
             cursor,
             anchor: None,
@@ -1516,7 +1516,7 @@ impl Widget for TextInput {
             let pr = Rect::new(inner.x, first_line_y, inner.w, line_h);
             super::draw_text_with_halo(
                 canvas,
-                &self.placeholder,
+                &self.placeholder.resolve(),
                 pr,
                 inp.placeholder(pal),
                 Align::Start,

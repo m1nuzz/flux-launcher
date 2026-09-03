@@ -109,8 +109,7 @@ type TrayFn = Box<dyn FnMut(&mut TrayCtx)>;
 
 enum ItemKind {
     Action {
-        label: String,
-        /// 勾选态绑定（None=从不打勾）；菜单弹出时读当前值。
+        label: crate::ui::TextContent,
         checked: Option<Signal<bool>>,
         /// 禁用态绑定（None=始终可用）；菜单弹出时读当前值，false 则灰显且不可点。
         enabled: Option<Signal<bool>>,
@@ -126,7 +125,10 @@ pub struct TrayMenuItem {
 
 impl TrayMenuItem {
     /// 普通项：点击触发回调。
-    pub fn item(label: impl Into<String>, cb: impl FnMut(&mut TrayCtx) + 'static) -> Self {
+    pub fn item(
+        label: impl Into<crate::ui::TextContent>,
+        cb: impl FnMut(&mut TrayCtx) + 'static,
+    ) -> Self {
         Self {
             kind: ItemKind::Action {
                 label: label.into(),
@@ -136,14 +138,11 @@ impl TrayMenuItem {
             },
         }
     }
+
     /// 勾选项：`checked` 绑定状态，菜单弹出时按当前值显示对勾；点击触发回调
     /// （回调内自行翻转 `checked` 即可，框架不自动改）。
-    ///
-    /// `Signal<bool>` 是 `!Send` 的（存储线程局部），故整个 `Tray` 也是 `!Send`——
-    /// 托盘菜单在 UI 线程构建、勾选态也在 UI 线程的菜单弹出路径上读取，
-    /// 把构建好的 `Tray` 搬到别的线程会在编译期就被拦下。
     pub fn check(
-        label: impl Into<String>,
+        label: impl Into<crate::ui::TextContent>,
         checked: Signal<bool>,
         cb: impl FnMut(&mut TrayCtx) + 'static,
     ) -> Self {
@@ -156,6 +155,7 @@ impl TrayMenuItem {
             },
         }
     }
+
     /// 绑定禁用态：`flag` 为 false 时该项灰显且不可点（菜单弹出时读当前值）。
     /// 对分隔线无效。永久禁用可传 `signal(false)`。
     pub fn enabled(mut self, flag: Signal<bool>) -> Self {
@@ -164,6 +164,7 @@ impl TrayMenuItem {
         }
         self
     }
+
     /// 分隔线。
     pub fn separator() -> Self {
         Self {
@@ -329,7 +330,7 @@ impl TrayState {
                     if enabled.is_some_and(|e| !e.get()) {
                         flags |= MF_GRAYED;
                     }
-                    let w = wide_nul(label);
+                    let w = wide_nul(&label.resolve());
                     // 命令 id = 序号+1（分隔线不可选，故返回 id 必对应 Action）。
                     unsafe {
                         let _ = AppendMenuW(hmenu, flags, i + 1, PCWSTR(w.as_ptr()));
