@@ -63,6 +63,10 @@ Flow plugin support is limited to native or executable JSON-RPC plugins. Do not 
 
 Keep dependencies pinned where practical. Prefer small, platform-specific changes over broad rewrites. Preserve the separation between `flux-core`, Flux application code, and the vendored `windui` backend. Everything integration must retain graceful fallback behavior. Keep Windows-specific code behind appropriate platform modules and maintain non-Windows cross-target compilation where practical.
 
+## Formatting and line endings
+
+The repository root contains `rustfmt.toml` with the project formatting policy, including Unix line endings. When Rust files show line-ending or formatting sequence differences, run `cargo fmt --all` directly and do not manually rewrite line endings or bypass the configured formatter.
+
 ## Required local validation
 
 Before committing, run the applicable quality gates. The standard local gate is:

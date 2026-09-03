@@ -17,6 +17,7 @@ mod native_host;
 mod plugin_limits;
 mod plugin_transport;
 mod plugins;
+mod query;
 mod startup;
 mod updater;
 mod visual_preview;
@@ -47,20 +48,21 @@ use windows::Win32::UI::Input::KeyboardAndMouse::{GetAsyncKeyState, VK_SHIFT};
 #[cfg(windows)]
 use windows::Win32::UI::Shell::DROPFILES;
 
-use applications::{
-    canonical_application_id, canonical_application_key, resolve_bare_executable_path,
-    ApplicationResponse, ApplicationWorker,
-};
+use applications::{resolve_bare_executable_path, ApplicationResponse, ApplicationWorker};
 use everything::{EverythingResponse, EverythingWorker, InstallationState};
 use flux_core::{
-    history_results, rank_results_with_priorities, should_suppress_activation, HotkeyConfig,
-    Language, MonitorPreference, PriorityEntry, ResultKind, ResultSource, SearchModel,
-    SearchResult, Settings, DEFAULT_LAUNCHER_HEIGHT, DEFAULT_LAUNCHER_WIDTH, MAX_LAUNCHER_HEIGHT,
-    MAX_LAUNCHER_WIDTH, MIN_LAUNCHER_HEIGHT, MIN_LAUNCHER_WIDTH,
+    history_results, should_suppress_activation, HotkeyConfig, Language, MonitorPreference,
+    PriorityEntry, ResultKind, SearchModel, SearchResult, Settings, DEFAULT_LAUNCHER_HEIGHT,
+    DEFAULT_LAUNCHER_WIDTH, MAX_LAUNCHER_HEIGHT, MAX_LAUNCHER_WIDTH, MIN_LAUNCHER_HEIGHT,
+    MIN_LAUNCHER_WIDTH,
 };
 use plugins::{
     native_plugin_install_path, FlowPluginWorker, NativePluginQueryResponse, NativePluginWorker,
     PluginAction, PluginQueryResponse,
+};
+use query::{
+    commit_provider_results, normalize_built_in_executable_targets, refresh_merged_results,
+    should_publish_initial_query_results, ProviderResults,
 };
 use windui::app::{CursorVisibilityHandle, WindowOpHandle, WindowPositionHandle, WindowSizeHandle};
 use windui::core::{ClickFn, ClipboardProvider, EventCtx, Widget};
@@ -90,7 +92,6 @@ const LAUNCHER_FONT_FAMILY: &str = "Segoe UI Variable";
 const SEARCH_INTERVAL: Duration = Duration::from_millis(40);
 const EVERYTHING_MIN_QUERY_LEN: usize = 1;
 const PLUGIN_MIN_QUERY_LEN: usize = 2;
-const MAX_VISIBLE_RESULTS: usize = 16;
 
 static GOOGLE_ICON_RGBA: OnceLock<Option<Vec<u8>>> = OnceLock::new();
 static OBSIDIAN_ICON_RGBA: OnceLock<Option<Vec<u8>>> = OnceLock::new();
@@ -288,273 +289,6 @@ fn apply_launcher_size(
             );
         }
     }
-}
-
-/// Keep the previous result list visible while asynchronous providers compute a
-/// new non-empty query. Immediate publication is safe for the home page and for
-/// actionable synchronous built-in results, but publishing an empty vector for
-/// every keystroke creates a visible blank frame and makes the list flicker.
-fn should_publish_initial_query_results(
-    has_query: bool,
-    built_in_results_are_empty: bool,
-    displayed_results_are_empty: bool,
-) -> bool {
-    !has_query || !built_in_results_are_empty || displayed_results_are_empty
-}
-
-#[derive(Default)]
-struct ProviderResults {
-    sequence: u64,
-    built_in: Vec<SearchResult>,
-    applications: Vec<SearchResult>,
-    everything: Vec<SearchResult>,
-    plugins: Vec<SearchResult>,
-    native_plugins: Vec<SearchResult>,
-    applications_ready: bool,
-    everything_ready: bool,
-}
-
-impl ProviderResults {
-    fn reset(&mut self, sequence: u64, built_in: Vec<SearchResult>, everything_expected: bool) {
-        self.sequence = sequence;
-        self.built_in = built_in;
-        self.applications.clear();
-        self.everything.clear();
-        self.plugins.clear();
-        self.native_plugins.clear();
-        self.applications_ready = false;
-        self.everything_ready = !everything_expected;
-    }
-
-    fn core_ready(&self) -> bool {
-        // Built-in/system results must be actionable without waiting for the
-        // asynchronous Everything response. When a query has no built-in result,
-        // retain the atomic application+Everything snapshot behavior.
-        self.applications_ready && (self.everything_ready || !self.built_in.is_empty())
-    }
-
-    fn merged(&self, query: &str, priorities: &[String]) -> Vec<SearchResult> {
-        let mut seen = HashSet::new();
-        let collected = self
-            .built_in
-            .iter()
-            .chain(&self.applications)
-            .chain(&self.everything)
-            .chain(&self.plugins)
-            .chain(&self.native_plugins)
-            .filter(|result| seen.insert(result.id.clone()))
-            .cloned()
-            .collect::<Vec<_>>();
-        let mut merged = merge_application_duplicates(collected);
-        rank_results_with_priorities(query, &mut merged, priorities);
-        preserve_everything_file_order(&mut merged, &self.everything);
-        merged.truncate(MAX_VISIBLE_RESULTS);
-        trace_query_probe(query, &merged);
-        merged
-    }
-}
-
-fn trace_query_probe(query: &str, results: &[SearchResult]) {
-    let normalized = query.trim().to_ascii_lowercase();
-    if !matches!(
-        normalized.as_str(),
-        "1+1"
-            | "2026-08"
-            | "powershell"
-            | "pwsh"
-            | "q"
-            | "中"
-            | "文"
-            | "中文"
-            | "q中"
-            | "q文"
-            | "q中文"
-    ) {
-        return;
-    }
-    let Some(path) = std::env::var_os("FLUX_QUERY_PROBE_FILE") else {
-        return;
-    };
-    let Ok(mut file) = std::fs::OpenOptions::new()
-        .create(true)
-        .append(true)
-        .open(path)
-    else {
-        return;
-    };
-    let snapshot = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|duration| duration.as_micros())
-        .unwrap_or_default();
-    let sanitize = |value: &str| value.replace(['\t', '\r', '\n'], " ");
-    let _ = writeln!(
-        file,
-        "snapshot={snapshot}\tquery={}\tcount={}",
-        sanitize(&normalized),
-        results.len()
-    );
-    for (index, result) in results.iter().enumerate() {
-        let target = result.target.as_deref().map(sanitize).unwrap_or_default();
-        let identity = canonical_application_key(result)
-            .map(|value| sanitize(&value))
-            .unwrap_or_default();
-        let _ = writeln!(
-            file,
-            "snapshot={snapshot}\tquery={}\tindex={index}\tid={}\ttitle={}\tsource={:?}\tkind={:?}\ttarget={}\tidentity={}",
-            sanitize(&normalized),
-            sanitize(&result.id),
-            sanitize(&result.title),
-            result.source,
-            result.kind,
-            target,
-            identity
-        );
-    }
-}
-
-#[allow(clippy::too_many_arguments)]
-fn commit_provider_results(
-    providers: &ProviderResults,
-    query: &str,
-    priorities: &[String],
-    selected_id: Signal<String>,
-    selected_index: Signal<usize>,
-    selection_touched: Signal<bool>,
-    inline_completion: Signal<String>,
-    results: Signal<Vec<SearchResult>>,
-) {
-    let merged = providers.merged(query, priorities);
-    if !selection_touched.get() {
-        selected_index.set(0);
-        selected_id.set(
-            merged
-                .first()
-                .map(|result| result.id.clone())
-                .unwrap_or_default(),
-        );
-    }
-    inline_completion.set(inline_completion_suffix(query, &merged));
-    results.set(merged);
-}
-
-fn merge_application_duplicates(results: Vec<SearchResult>) -> Vec<SearchResult> {
-    let mut positions = HashMap::<String, usize>::new();
-    let mut merged = Vec::with_capacity(results.len());
-
-    for result in results {
-        let Some(identity) = canonical_application_key(&result) else {
-            merged.push(result);
-            continue;
-        };
-        let Some(existing_index) = positions.get(&identity).copied() else {
-            positions.insert(identity, merged.len());
-            merged.push(result);
-            continue;
-        };
-
-        let existing_is_exact_console = is_exact_console_result(&merged[existing_index]);
-        let result_is_exact_console = is_exact_console_result(&result);
-        if application_source_rank(&result) < application_source_rank(&merged[existing_index]) {
-            let preserved_id = result_is_exact_console
-                .then(|| result.id.clone())
-                .or_else(|| existing_is_exact_console.then(|| merged[existing_index].id.clone()));
-            merged[existing_index] = result;
-            if let Some(id) = preserved_id {
-                merged[existing_index].id = id;
-            }
-        } else if result_is_exact_console && !existing_is_exact_console {
-            merged[existing_index].id = result.id;
-        }
-    }
-    merged
-}
-
-fn is_exact_console_result(result: &SearchResult) -> bool {
-    matches!(
-        result.id.as_str(),
-        "system:command-prompt" | "system:powershell"
-    )
-}
-
-fn application_source_rank(result: &SearchResult) -> u8 {
-    let subtitle = result.subtitle.to_ascii_lowercase();
-    match result.source {
-        ResultSource::ApplicationCatalog if subtitle.contains("start menu") => 0,
-        ResultSource::ApplicationCatalog => 1,
-        ResultSource::Everything => 2,
-        ResultSource::Plugin => 3,
-        ResultSource::BuiltIn => 4,
-    }
-}
-
-/// Keep Everything's native modified-date order for non-application files.
-///
-/// The global ranker still decides which provider tier occupies each result
-/// slot, so application results remain first. Only the Everything file slots
-/// are replaced in the order returned by the date-sorted IPC query.
-fn preserve_everything_file_order(merged: &mut [SearchResult], provider_order: &[SearchResult]) {
-    let mut available = merged
-        .iter()
-        .filter(|result| {
-            result.source == ResultSource::Everything && result.kind == ResultKind::File
-        })
-        .map(|result| (result.id.clone(), result.clone()))
-        .collect::<HashMap<_, _>>();
-    let slots = merged
-        .iter()
-        .enumerate()
-        .filter(|(_, result)| {
-            result.source == ResultSource::Everything && result.kind == ResultKind::File
-        })
-        .map(|(index, _)| index)
-        .collect::<Vec<_>>();
-
-    for (slot, provider_result) in slots
-        .into_iter()
-        .zip(provider_order.iter().filter(|result| {
-            result.source == ResultSource::Everything && result.kind == ResultKind::File
-        }))
-    {
-        let Some(result) = available.remove(&provider_result.id) else {
-            continue;
-        };
-        merged[slot] = result;
-    }
-}
-
-fn normalize_built_in_executable_targets(results: &mut [SearchResult]) {
-    for result in results {
-        if result.source != ResultSource::BuiltIn || !result.id.starts_with("system:") {
-            continue;
-        }
-        let Some(target) = result.target.as_deref() else {
-            continue;
-        };
-        if let Some(resolved) = resolve_bare_executable_path(target) {
-            result.target = Some(resolved);
-        }
-    }
-}
-
-fn refresh_merged_results(
-    providers: &Rc<RefCell<ProviderResults>>,
-    query: Signal<String>,
-    priorities: Signal<Vec<PriorityEntry>>,
-    results: Signal<Vec<SearchResult>>,
-) {
-    let priority_ids = priorities
-        .get()
-        .into_iter()
-        .flat_map(|entry| {
-            let mut ids = vec![entry.id];
-            if let Some(canonical_id) = canonical_application_id(&entry.target) {
-                ids.push(canonical_id);
-            }
-            ids
-        })
-        .collect::<Vec<_>>();
-    let merged = providers.borrow().merged(&query.get(), &priority_ids);
-    results.set(merged);
 }
 
 #[derive(Clone, Debug)]
@@ -6137,22 +5871,24 @@ fn main() {
 #[cfg(test)]
 mod tests {
     use super::{
-        actions_for_result, bundled_icon_rgba, canonical_application_id, dimension_from_slider,
-        dimension_slider_fraction, display_title, format_bytes, format_update_progress,
-        google_icon_rgba, history_cursor_step, hover_position_changed,
-        icon_completion_generation_changed, icon_target_for_path, is_executable_icon_target,
-        is_run_as_admin_key, is_shutdown_mode, launcher_window_geometry,
-        launcher_window_geometry_with_sizes, merge_application_duplicates,
-        normalize_built_in_executable_targets, normalize_everything_query, obsidian_icon_rgba,
-        parse_dimension_input, parse_internet_shortcut_icon_location,
-        preserve_everything_file_order, quoted_result_path, rank_results_with_priorities,
+        actions_for_result, bundled_icon_rgba, dimension_from_slider, dimension_slider_fraction,
+        display_title, format_bytes, format_update_progress, google_icon_rgba, history_cursor_step,
+        hover_position_changed, icon_completion_generation_changed, icon_target_for_path,
+        is_executable_icon_target, is_run_as_admin_key, is_shutdown_mode, launcher_window_geometry,
+        launcher_window_geometry_with_sizes, normalize_everything_query, obsidian_icon_rgba,
+        parse_dimension_input, parse_internet_shortcut_icon_location, quoted_result_path,
         relaunch_mode_for_auto_install, resolve_bare_executable_path, resolve_shortcut_icon_path,
         should_claim_single_instance, should_publish_initial_query_results, should_show_launcher,
-        ProviderResults, ResultIconView, ShellIconCache, COMPACT_WINDOW_HEIGHT,
-        LAUNCHER_FONT_FAMILY, MAX_LAUNCHER_HEIGHT, MAX_LAUNCHER_WIDTH,
-        MAX_SHELL_ICON_CACHE_ENTRIES, MIN_LAUNCHER_HEIGHT, MIN_LAUNCHER_WIDTH,
+        ResultIconView, ShellIconCache, COMPACT_WINDOW_HEIGHT, LAUNCHER_FONT_FAMILY,
+        MAX_LAUNCHER_HEIGHT, MAX_LAUNCHER_WIDTH, MAX_SHELL_ICON_CACHE_ENTRIES, MIN_LAUNCHER_HEIGHT,
+        MIN_LAUNCHER_WIDTH,
     };
-    use flux_core::{ResultKind, ResultSource, SearchResult};
+    use crate::applications::canonical_application_id;
+    use crate::query::{
+        merge_application_duplicates, normalize_built_in_executable_targets,
+        preserve_everything_file_order, ProviderResults,
+    };
+    use flux_core::{rank_results_with_priorities, ResultKind, ResultSource, SearchResult};
     use windui::event::{Key, KeyEvent};
 
     #[test]
