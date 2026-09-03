@@ -7,3 +7,4 @@ target/
 artifacts/
 coverage/
 doc/
+.serena/
