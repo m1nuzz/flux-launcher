@@ -323,11 +323,15 @@ impl BuiltinProvider for ObsidianProvider {
                     .cmp(&normalize_search_text(&right.relative_path))
             })
         });
-        scored
+        let results: Vec<BuiltinResult> = scored
             .into_iter()
             .take(MAX_RESULTS)
             .map(|(_, file)| file_result(file))
-            .collect()
+            .collect();
+        if results.is_empty() && !vaults.is_empty() {
+            return create_note_results(search.trim(), &vaults);
+        }
+        results
     }
 }
 
@@ -786,5 +790,67 @@ mod tests {
         };
         assert!(score_file(&file, &[String::from("контент-машина")]).is_some());
         assert!(score_file(&file, &[String::from("КОНТЕНТ-МАШИНА")]).is_some());
+    }
+
+    fn fake_vault(id: &str, name: &str) -> Vault {
+        Vault {
+            id: id.to_owned(),
+            name: name.to_owned(),
+            path: PathBuf::from(format!("C:/vaults/{id}")),
+        }
+    }
+
+    fn obsidian_results_for_vaults(vaults: &[Vault], search: &str) -> Vec<BuiltinResult> {
+        if let Some(note_name) = search
+            .strip_prefix("create ")
+            .map(str::trim)
+            .filter(|name| !name.is_empty())
+        {
+            return create_note_results(note_name, vaults);
+        }
+        let terms = search
+            .split_whitespace()
+            .map(str::to_owned)
+            .collect::<Vec<_>>();
+        let files = vaults
+            .iter()
+            .flat_map(collect_vault_files)
+            .collect::<Vec<_>>();
+        let mut scored = files
+            .into_iter()
+            .filter_map(|file| score_file(&file, &terms).map(|score| (score, file)))
+            .collect::<Vec<_>>();
+        scored.sort_by(|(left_score, left), (right_score, right)| {
+            right_score.cmp(left_score).then_with(|| {
+                normalize_search_text(&left.relative_path)
+                    .cmp(&normalize_search_text(&right.relative_path))
+            })
+        });
+        let results: Vec<BuiltinResult> = scored
+            .into_iter()
+            .take(MAX_RESULTS)
+            .map(|(_, file)| file_result(file))
+            .collect();
+        if results.is_empty() && !vaults.is_empty() {
+            return create_note_results(search.trim(), vaults);
+        }
+        results
+    }
+
+    #[test]
+    fn obsidian_no_matches_falls_back_to_create_note_per_vault() {
+        let vaults = vec![fake_vault("a", "Notes"), fake_vault("b", "Work")];
+        let results = obsidian_results_for_vaults(&vaults, "totally-new-idea");
+        assert_eq!(results.len(), 2);
+        assert!(results.iter().all(|result| {
+            result.result.title == "Create note: totally-new-idea"
+                && result.result.id.starts_with("builtin:obsidian:create:")
+        }));
+    }
+
+    #[test]
+    fn obsidian_no_matches_with_no_vaults_returns_empty() {
+        let results = obsidian_results_for_vaults(&[], "anything");
+        assert!(results.is_empty());
     }
 }
