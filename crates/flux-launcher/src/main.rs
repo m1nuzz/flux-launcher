@@ -5,6 +5,7 @@ extern crate rust_i18n;
 i18n!("locales", fallback = "en");
 
 mod accent;
+mod actions;
 mod applications;
 mod builtin;
 mod everything;
@@ -34,20 +35,12 @@ use std::sync::{
 use std::thread;
 use std::time::Duration;
 #[cfg(windows)]
-use windows::core::BOOL;
-#[cfg(windows)]
-use windows::Win32::Foundation::HANDLE;
-#[cfg(windows)]
-use windows::Win32::System::DataExchange::{
-    CloseClipboard, EmptyClipboard, OpenClipboard, SetClipboardData,
-};
-#[cfg(windows)]
-use windows::Win32::System::Memory::{GlobalAlloc, GlobalLock, GlobalUnlock, GMEM_MOVEABLE};
-#[cfg(windows)]
 use windows::Win32::UI::Input::KeyboardAndMouse::{GetAsyncKeyState, VK_SHIFT};
-#[cfg(windows)]
-use windows::Win32::UI::Shell::DROPFILES;
 
+use actions::{
+    actions_for_result, copy_result_file, copy_result_path, execute_result_action, selected_result,
+    ActionItem, ActionKind,
+};
 use applications::{resolve_bare_executable_path, ApplicationResponse, ApplicationWorker};
 use everything::{EverythingResponse, EverythingWorker, InstallationState};
 use flux_core::{
@@ -65,7 +58,7 @@ use query::{
     should_publish_initial_query_results, ProviderResults,
 };
 use windui::app::{CursorVisibilityHandle, WindowOpHandle, WindowPositionHandle, WindowSizeHandle};
-use windui::core::{ClickFn, ClipboardProvider, EventCtx, Widget};
+use windui::core::{ClickFn, EventCtx, Widget};
 use windui::event::{Event, Key, KeyEvent, MouseButton, PointerKind};
 use windui::prelude::*;
 use windui::render::{Canvas, Paint};
@@ -289,119 +282,6 @@ fn apply_launcher_size(
             );
         }
     }
-}
-
-#[derive(Clone, Debug)]
-enum ActionKind {
-    Open,
-    RunAsAdmin,
-    OpenLocation,
-    CopyFile,
-    CopyFolderPath,
-    CopyName,
-    SetPriority,
-    RunPlugin(PluginAction),
-}
-
-#[derive(Clone, Debug)]
-struct ActionItem {
-    id: String,
-    label: String,
-    kind: ActionKind,
-}
-
-fn plugin_action_label(action: &PluginAction) -> &'static str {
-    match action {
-        PluginAction::Flow(_) => "Run plugin action",
-        PluginAction::OpenUrl(_) => "Open web result",
-        PluginAction::OpenPath(_) => "Open path",
-        PluginAction::CopyText(_) => "Copy text",
-    }
-}
-
-fn actions_for_result(
-    result: &SearchResult,
-    plugin_actions: &HashMap<String, PluginAction>,
-) -> Vec<ActionItem> {
-    let mut actions = Vec::with_capacity(6);
-    if matches!(result.id.as_str(), "empty-recycle-bin" | "open-recycle-bin") {
-        return actions;
-    }
-    if result.id.starts_with("system:") {
-        actions.push(ActionItem {
-            id: format!("{}:open", result.id),
-            label: String::from("Open"),
-            kind: ActionKind::Open,
-        });
-        actions.push(ActionItem {
-            id: format!("{}:copy-name", result.id),
-            label: String::from("Copy name"),
-            kind: ActionKind::CopyName,
-        });
-        return actions;
-    }
-    if result.target.is_some() {
-        if matches!(result.kind, ResultKind::Application) {
-            actions.push(ActionItem {
-                id: format!("{}:set-priority", result.id),
-                label: String::from("Set as priority (move to top)"),
-                kind: ActionKind::SetPriority,
-            });
-        }
-        actions.push(ActionItem {
-            id: format!("{}:open", result.id),
-            label: String::from("Open"),
-            kind: ActionKind::Open,
-        });
-        actions.push(ActionItem {
-            id: format!("{}:run-as-admin", result.id),
-            label: String::from("Run as admin"),
-            kind: ActionKind::RunAsAdmin,
-        });
-        actions.push(ActionItem {
-            id: format!("{}:open-location", result.id),
-            label: String::from("Open file location"),
-            kind: ActionKind::OpenLocation,
-        });
-        actions.push(ActionItem {
-            id: format!("{}:copy-file", result.id),
-            label: String::from("Copy file"),
-            kind: ActionKind::CopyFile,
-        });
-        actions.push(ActionItem {
-            id: format!("{}:copy-folder-path", result.id),
-            label: String::from("Copy folder path"),
-            kind: ActionKind::CopyFolderPath,
-        });
-    }
-    if let Some(invocation) = plugin_actions.get(&result.id).cloned() {
-        actions.push(ActionItem {
-            id: format!("{}:plugin", result.id),
-            label: String::from(plugin_action_label(&invocation)),
-            kind: ActionKind::RunPlugin(invocation),
-        });
-    }
-    if !matches!(result.kind, ResultKind::Application) {
-        actions.push(ActionItem {
-            id: format!("{}:copy-name", result.id),
-            label: String::from("Copy name"),
-            kind: ActionKind::CopyName,
-        });
-    }
-    actions
-}
-
-fn selected_result(
-    results: &[SearchResult],
-    selected_id: &str,
-    selected_index: usize,
-) -> Option<SearchResult> {
-    results
-        .iter()
-        .find(|result| result.id == selected_id)
-        .cloned()
-        .or_else(|| results.get(selected_index).cloned())
-        .or_else(|| results.first().cloned())
 }
 
 /// Invisible reactive widget that keeps the keyboard-selected row inside the
@@ -803,18 +683,6 @@ impl Widget for ResultIconView {
     }
 }
 
-fn quoted_result_path(result: &SearchResult) -> Option<String> {
-    let target = result.target.as_deref()?.trim();
-    if target.is_empty() {
-        return None;
-    }
-    let target = target
-        .strip_prefix('"')
-        .and_then(|value| value.strip_suffix('"'))
-        .unwrap_or(target);
-    Some(format!("\"{target}\""))
-}
-
 #[cfg(windows)]
 fn shift_key_is_down() -> bool {
     unsafe { (GetAsyncKeyState(VK_SHIFT.0 as i32) as u16 & 0x8000) != 0 }
@@ -823,87 +691,6 @@ fn shift_key_is_down() -> bool {
 #[cfg(not(windows))]
 fn shift_key_is_down() -> bool {
     false
-}
-
-#[cfg(windows)]
-fn copy_result_file(result: &SearchResult) -> bool {
-    let Some(path) = result.target.as_deref() else {
-        return false;
-    };
-    let path: Vec<u16> = path.encode_utf16().chain([0]).collect();
-    let header = std::mem::size_of::<DROPFILES>();
-    let bytes = header + path.len() * 2 + 2;
-    unsafe {
-        let Ok(hmem) = GlobalAlloc(GMEM_MOVEABLE, bytes) else {
-            return false;
-        };
-        let ptr = GlobalLock(hmem) as *mut u8;
-        if ptr.is_null() {
-            return false;
-        }
-        std::ptr::write_bytes(ptr, 0, bytes);
-        let drop = ptr as *mut DROPFILES;
-        (*drop).pFiles = header as u32;
-        (*drop).fWide = BOOL(1);
-        std::ptr::copy_nonoverlapping(path.as_ptr() as *const u8, ptr.add(header), path.len() * 2);
-        let _ = GlobalUnlock(hmem);
-        if OpenClipboard(None).is_err() {
-            return false;
-        }
-        let ok = EmptyClipboard().is_ok() && SetClipboardData(15, Some(HANDLE(hmem.0))).is_ok();
-        let _ = CloseClipboard();
-        ok
-    }
-}
-
-#[cfg(not(windows))]
-fn copy_result_file(_result: &SearchResult) -> bool {
-    false
-}
-
-fn copy_result_path(result: &SearchResult) -> bool {
-    let Some(path) = quoted_result_path(result) else {
-        return false;
-    };
-    windui::platform::Clipboard.set_text(&path);
-    true
-}
-
-fn execute_result_action(result: &SearchResult, action: &ActionKind) -> bool {
-    match action {
-        ActionKind::Open => {
-            if let Some(target) = result.target.as_deref() {
-                launch::open_path_async(target);
-                true
-            } else {
-                false
-            }
-        }
-        ActionKind::RunAsAdmin => result
-            .target
-            .as_deref()
-            .map(launch::run_as_admin)
-            .unwrap_or(false),
-        ActionKind::OpenLocation => {
-            if let Some(target) = result.target.as_deref() {
-                let _ = launch::open_file_location(target);
-                true
-            } else {
-                false
-            }
-        }
-        ActionKind::CopyFile => copy_result_file(result),
-        ActionKind::CopyFolderPath => copy_result_path(result),
-        ActionKind::CopyName => {
-            windui::platform::Clipboard.set_text(&result.title);
-            true
-        }
-        ActionKind::SetPriority => false,
-        ActionKind::RunPlugin(invocation) => {
-            plugins::execute_async(invocation.clone());
-            true
-        }
-    }
 }
 
 fn decode_bundled_icon(bytes: &[u8]) -> Option<Vec<u8>> {
@@ -5871,18 +5658,19 @@ fn main() {
 #[cfg(test)]
 mod tests {
     use super::{
-        actions_for_result, bundled_icon_rgba, dimension_from_slider, dimension_slider_fraction,
-        display_title, format_bytes, format_update_progress, google_icon_rgba, history_cursor_step,
+        bundled_icon_rgba, dimension_from_slider, dimension_slider_fraction, display_title,
+        format_bytes, format_update_progress, google_icon_rgba, history_cursor_step,
         hover_position_changed, icon_completion_generation_changed, icon_target_for_path,
         is_executable_icon_target, is_run_as_admin_key, is_shutdown_mode, launcher_window_geometry,
         launcher_window_geometry_with_sizes, normalize_everything_query, obsidian_icon_rgba,
-        parse_dimension_input, parse_internet_shortcut_icon_location, quoted_result_path,
+        parse_dimension_input, parse_internet_shortcut_icon_location,
         relaunch_mode_for_auto_install, resolve_bare_executable_path, resolve_shortcut_icon_path,
         should_claim_single_instance, should_publish_initial_query_results, should_show_launcher,
         ResultIconView, ShellIconCache, COMPACT_WINDOW_HEIGHT, LAUNCHER_FONT_FAMILY,
         MAX_LAUNCHER_HEIGHT, MAX_LAUNCHER_WIDTH, MAX_SHELL_ICON_CACHE_ENTRIES, MIN_LAUNCHER_HEIGHT,
         MIN_LAUNCHER_WIDTH,
     };
+    use crate::actions::{actions_for_result, quoted_result_path};
     use crate::applications::canonical_application_id;
     use crate::query::{
         merge_application_duplicates, normalize_built_in_executable_targets,
