@@ -93,6 +93,7 @@ settings:
   update_action_desc: Install stable updates automatically
   current_version: "Current version: %{version}"
   check_updates: Check for updates
+  auto_install_updates: Install stable updates automatically
   install_now: Install now
   everything: Everything
   everything_tab_desc: Everything provides fast indexed file and folder search. Configure its automatic use here, alongside the other plugins.

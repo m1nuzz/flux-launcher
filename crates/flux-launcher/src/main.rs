@@ -2590,47 +2590,65 @@ fn language_preference_from_index(index: usize) -> Language {
     }
 }
 
-/// Apply the configured UI language from settings; `System` keeps the startup
-/// detection result.
+/// Apply the configured UI language from settings.
 fn apply_configured_locale(language: Language) {
+    let locale = match language {
+        Language::English => "en",
+        Language::SimplifiedChinese => "zh-CN",
+        Language::System => sys_locale::get_locale()
+            .map(|raw| select_locale(&raw))
+            .unwrap_or("en"),
+    };
+    rust_i18n::set_locale(locale);
+}
+
+fn configured_locale(language: Language) -> String {
     match language {
-        Language::English => rust_i18n::set_locale("en"),
-        Language::SimplifiedChinese => rust_i18n::set_locale("zh-CN"),
-        Language::System => {}
+        Language::English => String::from("en"),
+        Language::SimplifiedChinese => String::from("zh-CN"),
+        Language::System => sys_locale::get_locale()
+            .map(|raw| select_locale(&raw))
+            .unwrap_or("en")
+            .to_string(),
     }
 }
 
-/// Restart the app after a language change so the new language takes effect
-/// immediately. windui widget texts are resolved once at UI-tree build time, so
-/// a runtime `set_locale` only affects later lookups; the built UI does not
-/// refresh, hence the process restart.
-#[cfg(windows)]
-fn restart_for_locale_change() {
-    use std::os::windows::process::CommandExt;
-
-    let Ok(current_exe) = std::env::current_exe() else {
-        return;
-    };
-    let exe = format!("'{}'", current_exe.to_string_lossy().replace('\'', "''"));
-    // Delay the new instance so the current process can exit and release the
-    // single-instance lock, avoiding a handoff race.
-    let script = format!("Start-Sleep -Milliseconds 600; Start-Process -FilePath {exe}");
-    let _ = std::process::Command::new("powershell.exe")
-        .args([
-            "-NoLogo",
-            "-NoProfile",
-            "-NonInteractive",
-            "-WindowStyle",
-            "Hidden",
-            "-Command",
-            &script,
-        ])
-        .creation_flags(0x0800_0000)
-        .spawn();
+/// Reactive manager for localized string signals that update when locale changes.
+#[derive(Clone)]
+struct I18nHub {
+    signals: Rc<RefCell<Vec<(Box<dyn Fn() -> String>, Signal<String>)>>>,
+    vec_signals: Rc<RefCell<Vec<(Box<dyn Fn() -> Vec<String>>, Signal<Vec<String>>)>>>,
 }
 
-#[cfg(not(windows))]
-fn restart_for_locale_change() {}
+impl I18nHub {
+    fn new() -> Self {
+        Self {
+            signals: Rc::new(RefCell::new(Vec::new())),
+            vec_signals: Rc::new(RefCell::new(Vec::new())),
+        }
+    }
+
+    fn tr(&self, f: impl Fn() -> String + 'static) -> Signal<String> {
+        let sig = signal(f());
+        self.signals.borrow_mut().push((Box::new(f), sig));
+        sig
+    }
+
+    fn tr_vec(&self, f: impl Fn() -> Vec<String> + 'static) -> Signal<Vec<String>> {
+        let sig = signal(f());
+        self.vec_signals.borrow_mut().push((Box::new(f), sig));
+        sig
+    }
+
+    fn refresh(&self) {
+        for (f, sig) in self.signals.borrow().iter() {
+            sig.set(f());
+        }
+        for (f, sig) in self.vec_signals.borrow().iter() {
+            sig.set(f());
+        }
+    }
+}
 
 fn main() {
     #[cfg(windows)]
@@ -2662,7 +2680,11 @@ fn main() {
             };
             *value = parsed;
         }
-        visual_preview::run(values[0], values[1], values[2], values[3]);
+        let locale = args
+            .next()
+            .map(|value| value.to_string_lossy().into_owned())
+            .unwrap_or_else(|| String::from("en"));
+        visual_preview::run(values[0], values[1], values[2], values[3], &locale);
         return;
     }
     if mode.as_deref() == Some(std::ffi::OsStr::new("--plugin-host")) {
@@ -2741,8 +2763,9 @@ fn main() {
     let recycle_bin_confirmation = signal(false);
     let action_items = signal(Vec::<ActionItem>::new());
     let action_window_slot = Rc::new(RefCell::new(None::<WindowSizeHandle>));
-    let status = signal(t!("status.ready").into_owned());
-    let update_status = signal(t!("updater.checked_automatically").into_owned());
+    let i18n_hub = I18nHub::new();
+    let status = i18n_hub.tr(|| t!("status.ready").into_owned());
+    let update_status = i18n_hub.tr(|| t!("updater.checked_automatically").into_owned());
     let update_available = signal(None::<updater::StableUpdate>);
     let update_install_progress = signal(None::<(String, updater::DownloadProgress)>);
     let update_installing = signal(false);
@@ -2863,7 +2886,8 @@ fn main() {
     let inline_completion = signal(String::new());
     let query_caret_position = signal(query.with(|text| text.chars().count()));
 
-    let search_box = Element::text_input(query, t!("search.placeholder").into_owned())
+    let search_placeholder = i18n_hub.tr(|| t!("search.placeholder").into_owned());
+    let search_box = Element::text_input(query, search_placeholder)
         .cursor_position(query_caret_position)
         .leading_icon('⌕')
         .transparent_surface()
@@ -2880,7 +2904,7 @@ fn main() {
         .border(Color::rgba(0, 0, 0, 0), 0)
         .padding_xy(13, 0);
 
-    let action_hint = |key: &'static str, label: String| {
+    let action_hint = |key: &'static str, label: Signal<String>| {
         Element::row()
             .height(22)
             .cross(Align::Center)
@@ -2905,14 +2929,17 @@ fn main() {
     let action_bar_content = Element::row()
         .height(22)
         .spacing(8)
-        .child(action_hint("↵", t!("action_bar.open").into_owned()))
+        .child(action_hint(
+            "↵",
+            i18n_hub.tr(|| t!("action_bar.open").into_owned()),
+        ))
         .child(action_hint(
             "Ctrl + R",
-            t!("action_bar.run_as_admin").into_owned(),
+            i18n_hub.tr(|| t!("action_bar.run_as_admin").into_owned()),
         ))
         .child(action_hint(
             "Alt + Enter",
-            t!("action_bar.open_file_location").into_owned(),
+            i18n_hub.tr(|| t!("action_bar.open_file_location").into_owned()),
         ));
     let action_bar = Element::stack()
         .width(ACTION_BAR_WIDTH)
@@ -2986,12 +3013,14 @@ fn main() {
         Element::col()
             .spacing(10)
             .child(
-                Element::label(t!("everything.prompt_install_question"))
-                    .font_size(13.0)
-                    .fg(Color::rgba(245, 248, 255, 245)),
+                Element::label(
+                    i18n_hub.tr(|| t!("everything.prompt_install_question").into_owned()),
+                )
+                .font_size(13.0)
+                .fg(Color::rgba(245, 248, 255, 245)),
             )
             .child(
-                Element::label(t!("everything.prompt_winget_command"))
+                Element::label(i18n_hub.tr(|| t!("everything.prompt_winget_command").into_owned()))
                     .font_size(11.0)
                     .fg(Color::rgba(235, 241, 255, 180))
                     .max_lines(2)
@@ -3002,7 +3031,7 @@ fn main() {
             .spacing(8)
             .child(Element::flex_spacer())
             .child(
-                Element::button(t!("everything.not_now"))
+                Element::button(i18n_hub.tr(|| t!("everything.not_now").into_owned()))
                     .neutral()
                     .outline_soft()
                     .on_click(move |_| {
@@ -3013,24 +3042,28 @@ fn main() {
                         }
                     }),
             )
-            .child(Element::button("Install Everything").on_click(move |ctx| {
-                everything_prompt_for_install.set(false);
-                if let Ok(mut settings) = settings_for_everything_prompt_install.write() {
-                    settings.everything_install_prompt_seen = true;
-                    let _ = save_settings(&settings);
-                }
-                match everything::launch_winget_install() {
-                    Ok(()) => {
-                        everything_status_for_prompt
-                            .set(String::from("Everything installation started with winget."));
-                        ctx.toast_ok("Everything installation started");
-                    }
-                    Err(error) => {
-                        everything_status_for_prompt.set(error.clone());
-                        ctx.toast_ok(error);
-                    }
-                }
-            }))
+            .child(
+                Element::button(i18n_hub.tr(|| t!("everything.install").into_owned())).on_click(
+                    move |ctx| {
+                        everything_prompt_for_install.set(false);
+                        if let Ok(mut settings) = settings_for_everything_prompt_install.write() {
+                            settings.everything_install_prompt_seen = true;
+                            let _ = save_settings(&settings);
+                        }
+                        match everything::launch_winget_install() {
+                            Ok(()) => {
+                                everything_status_for_prompt
+                                    .set(t!("everything.install_started").into_owned());
+                                ctx.toast_ok(t!("everything.install_started_toast"));
+                            }
+                            Err(error) => {
+                                everything_status_for_prompt.set(error.clone());
+                                ctx.toast_ok(error);
+                            }
+                        }
+                    },
+                ),
+            )
             .padding_edges(0, 0, 0, 12),
     );
 
@@ -3046,7 +3079,7 @@ fn main() {
         Element::col()
             .spacing(8)
             .child(
-                Element::label(t!("recycle_bin.warning"))
+                Element::label(i18n_hub.tr(|| t!("recycle_bin.warning").into_owned()))
                     .font_size(13.0)
                     .fg(Color::rgba(245, 248, 255, 245)),
             )
@@ -3216,6 +3249,7 @@ fn main() {
     let google_enabled_for_interval = google_enabled;
     let google_alias_for_interval = google_alias;
     let history_mode_for_interval = history_mode;
+    let language_preference_for_interval = language_preference;
     let settings_visible_for_interval = settings_visible;
     let settings_tab_for_interval = settings_tab;
     let everything_prompt_visible_for_interval = everything_prompt_visible;
@@ -3235,6 +3269,7 @@ fn main() {
     let mut last_query = String::new();
     let mut visual_preview_process: Option<visual_preview::PreviewProcess> = None;
     let mut last_visual_preview_request: Option<(u16, u16)> = None;
+    let mut last_visual_preview_locale = String::new();
     let mut last_visual_preview_generation = visual_preview_generation.get();
     let mut last_visual_control_state: Option<(u16, u16, u32, u32)> = None;
     let mut everything_plugins_smoke_reported = false;
@@ -4138,7 +4173,7 @@ fn main() {
             ctx.show_window();
         })
         .menu(vec![
-            TrayMenuItem::item(t!("tray.show").into_owned(), move |ctx| {
+            TrayMenuItem::item(i18n_hub.tr(|| t!("tray.show").into_owned()), move |ctx| {
                 settings_visible_for_tray.set(false);
                 let height = if show_results_for_tray.get() {
                     launcher_height.get() as i32
@@ -4156,38 +4191,48 @@ fn main() {
                 size_for_tray.set(launcher_width.get() as i32, height);
                 ctx.show_window();
             }),
-            TrayMenuItem::item(t!("tray.settings").into_owned(), move |ctx| {
-                settings_visible.set(true);
-                if let Ok(settings) = settings_for_settings_position.read() {
-                    request_monitor_position(
-                        &position_for_settings,
-                        settings.monitor_preference,
-                        SETTINGS_WINDOW_WIDTH,
-                        SETTINGS_WINDOW_HEIGHT,
+            TrayMenuItem::item(
+                i18n_hub.tr(|| t!("tray.settings").into_owned()),
+                move |ctx| {
+                    settings_visible.set(true);
+                    if let Ok(settings) = settings_for_settings_position.read() {
+                        request_monitor_position(
+                            &position_for_settings,
+                            settings.monitor_preference,
+                            SETTINGS_WINDOW_WIDTH,
+                            SETTINGS_WINDOW_HEIGHT,
+                        );
+                    }
+                    // Queue the Settings size before showing the hidden tray window. The
+                    // first frame must not use the compact 72-DIP launcher height.
+                    size_for_settings.set(SETTINGS_WINDOW_WIDTH, SETTINGS_WINDOW_HEIGHT);
+                    ctx.show_window();
+                    // Keep the request after show as well because the native show lifecycle
+                    // may consume a stale compact-size request from the previous hide.
+                    size_for_settings.set(SETTINGS_WINDOW_WIDTH, SETTINGS_WINDOW_HEIGHT);
+                },
+            ),
+            TrayMenuItem::separator(),
+            TrayMenuItem::check(
+                i18n_hub.tr(|| t!("tray.game_mode").into_owned()),
+                game_mode,
+                move |_| {
+                    let enabled = !game_mode_for_tray.get();
+                    set_game_mode(
+                        &settings_for_tray_toggle,
+                        game_mode_for_tray,
+                        game_status_for_tray,
+                        enabled,
                     );
-                }
-                // Queue the Settings size before showing the hidden tray window. The
-                // first frame must not use the compact 72-DIP launcher height.
-                size_for_settings.set(SETTINGS_WINDOW_WIDTH, SETTINGS_WINDOW_HEIGHT);
-                ctx.show_window();
-                // Keep the request after show as well because the native show lifecycle
-                // may consume a stale compact-size request from the previous hide.
-                size_for_settings.set(SETTINGS_WINDOW_WIDTH, SETTINGS_WINDOW_HEIGHT);
-            }),
+                },
+            ),
             TrayMenuItem::separator(),
-            TrayMenuItem::check(t!("tray.game_mode").into_owned(), game_mode, move |_| {
-                let enabled = !game_mode_for_tray.get();
-                set_game_mode(
-                    &settings_for_tray_toggle,
-                    game_mode_for_tray,
-                    game_status_for_tray,
-                    enabled,
-                );
+            TrayMenuItem::item(i18n_hub.tr(|| t!("tray.exit").into_owned()), |ctx| {
+                ctx.quit()
             }),
-            TrayMenuItem::separator(),
-            TrayMenuItem::item(t!("tray.exit").into_owned(), |ctx| ctx.quit()),
         ]);
 
+    let i18n_hub_for_apply = i18n_hub.clone();
     let settings_for_apply = Arc::clone(&shared_settings);
     let language_preference_for_apply = language_preference;
     let position_for_apply = window_position.clone();
@@ -4199,10 +4244,6 @@ fn main() {
     let activation_display_for_apply = activation_display;
     let game_mode_status_for_apply = game_mode_status;
     let settings_visible_for_apply = settings_visible;
-    let show_results_for_back = show_results;
-    let position_for_back = window_position.clone();
-    let settings_for_back_position = Arc::clone(&shared_settings);
-    let size_for_back = window_size.clone();
     let size_for_apply = window_size.clone();
     let settings_for_clear_history = Arc::clone(&shared_settings);
     let history_for_clear = Rc::clone(&query_history);
@@ -4229,6 +4270,138 @@ fn main() {
     let google_alias_for_apply = google_alias;
     let everything_status_for_apply = everything_status;
     let everything_installed_for_ui = everything_installed;
+    let cancel_settings = {
+        let settings = Arc::clone(&shared_settings);
+        let language_preference = language_preference;
+        let activation_handle = activation_handle.clone();
+        let activation_recording = activation_recording;
+        let activation_display = activation_display;
+        let activation_key = activation_key;
+        let activation_ctrl = activation_ctrl;
+        let activation_alt = activation_alt;
+        let activation_shift = activation_shift;
+        let activation_meta = activation_meta;
+        let ignore_fullscreen = ignore_fullscreen;
+        let game_mode = game_mode;
+        let game_mode_status = game_mode_status;
+        let smooth_caret = smooth_caret;
+        let switch_to_english_layout = switch_to_english_layout;
+        let use_system_accent = use_system_accent;
+        let custom_selection_color = custom_selection_color;
+        let selection_color = selection_color;
+        let launcher_width = launcher_width;
+        let launcher_height = launcher_height;
+        let launcher_width_input = launcher_width_input;
+        let launcher_height_input = launcher_height_input;
+        let launcher_width_slider = launcher_width_slider;
+        let launcher_height_slider = launcher_height_slider;
+        let launcher_preview_text = launcher_preview_text;
+        let clear_query_on_activation = clear_query_on_activation;
+        let start_with_windows = start_with_windows;
+        let auto_enable_everything = auto_enable_everything;
+        let update_checks_enabled = update_checks_enabled;
+        let update_interval_hours = update_interval_hours;
+        let auto_install_updates = auto_install_updates;
+        let obsidian_enabled = obsidian_enabled;
+        let obsidian_alias = obsidian_alias;
+        let google_enabled = google_enabled;
+        let google_alias = google_alias;
+        let monitor_preference = monitor_preference;
+        let everything_installed = everything_installed;
+        let i18n_hub = i18n_hub.clone();
+        let settings_visible = settings_visible;
+        let show_results = show_results;
+        let window_size = window_size.clone();
+        let window_position = window_position.clone();
+
+        Rc::new(move || {
+            let Ok(saved) = settings.read() else {
+                return;
+            };
+            let saved = saved.clone();
+
+            settings_visible.set(false);
+            language_preference.set(language_preference_index(saved.language));
+            apply_configured_locale(saved.language);
+            i18n_hub.refresh();
+
+            activation_key.set(saved.activation_hotkey.key.clone());
+            activation_ctrl.set(saved.activation_hotkey.ctrl);
+            activation_alt.set(saved.activation_hotkey.alt);
+            activation_shift.set(saved.activation_hotkey.shift);
+            activation_meta.set(saved.activation_hotkey.meta);
+            activation_display.set(hotkeys::display_config(&saved.activation_hotkey));
+            activation_recording.set(false);
+            activation_handle.set(hotkeys::activation_hotkey(&saved.activation_hotkey));
+            activation_handle.set_enabled(true);
+
+            ignore_fullscreen.set(saved.ignore_hotkeys_in_fullscreen);
+            game_mode.set(saved.game_mode);
+            game_mode_status.set(game_mode_label(saved.game_mode));
+            smooth_caret.set(saved.smooth_caret);
+            switch_to_english_layout.set(saved.switch_to_english_layout);
+            use_system_accent.set(saved.use_system_accent);
+            custom_selection_color.set(selection_color_hex(saved.custom_selection_color));
+            selection_color.set(selection_color_for_settings(&saved));
+
+            launcher_width.set(saved.launcher_width);
+            launcher_height.set(saved.launcher_height);
+            launcher_width_input.set(saved.launcher_width.to_string());
+            launcher_height_input.set(saved.launcher_height.to_string());
+            launcher_width_slider.set(dimension_slider_fraction(
+                saved.launcher_width,
+                MIN_LAUNCHER_WIDTH,
+                MAX_LAUNCHER_WIDTH,
+            ));
+            launcher_height_slider.set(dimension_slider_fraction(
+                saved.launcher_height,
+                MIN_LAUNCHER_HEIGHT,
+                MAX_LAUNCHER_HEIGHT,
+            ));
+            launcher_preview_text.set(
+                t!(
+                    "settings.visual.client_area",
+                    width = saved.launcher_width,
+                    height = saved.launcher_height
+                )
+                .into_owned(),
+            );
+
+            clear_query_on_activation.set(saved.clear_query_on_activation);
+            start_with_windows.set(saved.start_with_windows);
+            auto_enable_everything.set(saved.auto_enable_everything);
+            update_checks_enabled.set(saved.update_checks_enabled);
+            update_interval_hours.set(saved.update_interval_hours.to_string());
+            auto_install_updates.set(saved.auto_install_updates);
+            obsidian_enabled.set(saved.obsidian_enabled);
+            obsidian_alias.set(saved.obsidian_alias.clone());
+            google_enabled.set(saved.google_enabled);
+            google_alias.set(saved.google_alias.clone());
+            monitor_preference.set(monitor_preference_index(saved.monitor_preference));
+            everything_status.set(if saved.auto_enable_everything {
+                if everything_installed.get() {
+                    t!("everything.detected_enable_ipc").into_owned()
+                } else {
+                    t!("everything.not_installed_winget").into_owned()
+                }
+            } else {
+                t!("everything.auto_enable_disabled").into_owned()
+            });
+
+            let target_height = if show_results.get() {
+                i32::from(saved.launcher_height)
+            } else {
+                COMPACT_WINDOW_HEIGHT
+            };
+            request_monitor_position(
+                &window_position,
+                saved.monitor_preference,
+                i32::from(saved.launcher_width),
+                target_height,
+            );
+            window_size.set(i32::from(saved.launcher_width), target_height);
+        }) as Rc<dyn Fn()>
+    };
     let settings_for_everything_toggle = Arc::clone(&shared_settings);
     let auto_enable_everything_for_toggle = auto_enable_everything;
     let everything_installed_for_toggle = everything_installed;
@@ -4382,44 +4555,38 @@ fn main() {
                         .weight(1.0)
                         .spacing(3)
                         .child(
-                            Element::label(t!("settings.title"))
+                            Element::label(i18n_hub.tr(|| t!("settings.title").into_owned()))
                                 .font_size(25.0)
                                 .fg(Color::WHITE),
                         )
                         .child(
-                            Element::label(t!("settings.apply_immediate"))
-                                .font_size(12.0)
-                                .fg(Color::rgba(235, 241, 255, 180)),
+                            Element::label(
+                                i18n_hub.tr(|| t!("settings.apply_immediate").into_owned()),
+                            )
+                            .font_size(12.0)
+                            .fg(Color::rgba(235, 241, 255, 180)),
                         ),
                 )
-                .child(Element::segmented(
-                    vec![
-                        t!("settings.tab.general").to_string(),
-                        t!("settings.tab.visual").to_string(),
-                        t!("settings.tab.priorities").to_string(),
-                        t!("settings.tab.plugins").to_string(),
-                    ],
+                .child(Element::segmented_signal(
+                    i18n_hub.tr_vec(|| {
+                        vec![
+                            t!("settings.tab.general").to_string(),
+                            t!("settings.tab.visual").to_string(),
+                            t!("settings.tab.priorities").to_string(),
+                            t!("settings.tab.plugins").to_string(),
+                        ]
+                    }),
                     settings_tab,
                 ))
                 .child(
-                    Element::button(t!("settings.back"))
+                    Element::button(i18n_hub.tr(|| t!("settings.back").into_owned()))
                         .neutral()
-                        .on_click(move |_| {
-                            settings_visible.set(false);
-                            let height = if show_results_for_back.get() {
-                                launcher_height.get() as i32
-                            } else {
-                                COMPACT_WINDOW_HEIGHT
-                            };
-                            if let Ok(settings) = settings_for_back_position.read() {
-                                request_monitor_position(
-                                    &position_for_back,
-                                    settings.monitor_preference,
-                                    launcher_width.get() as i32,
-                                    height,
-                                );
+                        .on_click({
+                            let cancel_settings = Rc::clone(&cancel_settings);
+                            move |ctx| {
+                                cancel_settings();
+                                ctx.show_window();
                             }
-                            size_for_back.set(launcher_width.get() as i32, height);
                         }),
                 ),
         )
@@ -4431,8 +4598,8 @@ fn main() {
                     Element::col()
                         .width_match()
                         .spacing(12)
-                        .child(Element::field(
-                            t!("settings.activation_key").into_owned(),
+                        .child(Element::field_signal(
+                            i18n_hub.tr(|| t!("settings.activation_key").into_owned()),
                             Element::col()
                                 .width_match()
                                 .spacing(6)
@@ -4448,24 +4615,31 @@ fn main() {
                                                 .corner(8.0),
                                         )
                                         .child(
-                                            Element::button(t!("settings.record_key"))
-                                                .neutral()
-                                                .on_click(move |ctx| {
+                                            Element::button(
+                                                i18n_hub
+                                                    .tr(|| t!("settings.record_key").into_owned()),
+                                            )
+                                            .neutral()
+                                            .on_click(
+                                                move |ctx| {
                                                     activation_recording_for_record_button
                                                         .set(true);
                                                     activation_handle_for_record_button
                                                         .set_enabled(false);
                                                     ctx.toast_ok(t!("settings.press_desired_key"));
-                                                }),
+                                                },
+                                            ),
                                         ),
                                 )
                                 .child(
-                                    Element::label(t!("settings.record_hint"))
-                                        .font_size(11.0)
-                                        .fg(Color::rgba(235, 241, 255, 170))
-                                        .visible_when(move || {
-                                            activation_recording_for_record_button.get()
-                                        }),
+                                    Element::label(
+                                        i18n_hub.tr(|| t!("settings.record_hint").into_owned()),
+                                    )
+                                    .font_size(11.0)
+                                    .fg(Color::rgba(235, 241, 255, 170))
+                                    .visible_when(move || {
+                                        activation_recording_for_record_button.get()
+                                    }),
                                 ),
                         ))
                         .child(
@@ -4473,81 +4647,97 @@ fn main() {
                                 .width_match()
                                 .spacing(10)
                                 .child(Element::checkbox(
-                                    t!("settings.modifier.ctrl"),
+                                    i18n_hub.tr(|| t!("settings.modifier.ctrl").into_owned()),
                                     activation_ctrl,
                                 ))
                                 .child(Element::checkbox(
-                                    t!("settings.modifier.alt"),
+                                    i18n_hub.tr(|| t!("settings.modifier.alt").into_owned()),
                                     activation_alt,
                                 ))
                                 .child(Element::checkbox(
-                                    t!("settings.modifier.shift"),
+                                    i18n_hub.tr(|| t!("settings.modifier.shift").into_owned()),
                                     activation_shift,
                                 ))
                                 .child(Element::checkbox(
-                                    t!("settings.modifier.windows"),
+                                    i18n_hub.tr(|| t!("settings.modifier.windows").into_owned()),
                                     activation_meta,
                                 )),
                         )
-                        .child(Element::field(
-                            t!("settings.fullscreen_protection").into_owned(),
+                        .child(Element::field_signal(
+                            i18n_hub.tr(|| t!("settings.fullscreen_protection").into_owned()),
                             Element::checkbox(
-                                t!("settings.fullscreen_protection_desc"),
+                                i18n_hub
+                                    .tr(|| t!("settings.fullscreen_protection_desc").into_owned()),
                                 ignore_fullscreen,
                             ),
                         ))
-                        .child(Element::field(
-                            t!("settings.game_mode").into_owned(),
-                            Element::checkbox(t!("settings.game_mode_desc"), game_mode),
-                        ))
-                        .child(Element::field(
-                            t!("settings.keyboard_layout").into_owned(),
+                        .child(Element::field_signal(
+                            i18n_hub.tr(|| t!("settings.game_mode").into_owned()),
                             Element::checkbox(
-                                t!("settings.keyboard_layout_desc"),
+                                i18n_hub.tr(|| t!("settings.game_mode_desc").into_owned()),
+                                game_mode,
+                            ),
+                        ))
+                        .child(Element::field_signal(
+                            i18n_hub.tr(|| t!("settings.keyboard_layout").into_owned()),
+                            Element::checkbox(
+                                i18n_hub.tr(|| t!("settings.keyboard_layout_desc").into_owned()),
                                 switch_to_english_layout,
                             ),
                         ))
-                        .child(Element::field(
-                            t!("settings.query_on_activation").into_owned(),
+                        .child(Element::field_signal(
+                            i18n_hub.tr(|| t!("settings.query_on_activation").into_owned()),
                             Element::checkbox(
-                                t!("settings.query_on_activation_desc"),
+                                i18n_hub
+                                    .tr(|| t!("settings.query_on_activation_desc").into_owned()),
                                 clear_query_on_activation,
                             ),
                         ))
-                        .child(Element::field(
-                            t!("settings.windows_startup").into_owned(),
+                        .child(Element::field_signal(
+                            i18n_hub.tr(|| t!("settings.windows_startup").into_owned()),
                             Element::checkbox(
-                                t!("settings.windows_startup_desc"),
+                                i18n_hub.tr(|| t!("settings.windows_startup_desc").into_owned()),
                                 start_with_windows,
                             ),
                         ))
-                        .child(Element::field(
-                            t!("settings.language").into_owned(),
-                            Element::dropdown(
-                                vec![
-                                    t!("settings.language_options.follow_system").into_owned(),
-                                    t!("settings.language_options.english").into_owned(),
-                                    t!("settings.language_options.chinese").into_owned(),
-                                ],
+                        .child(Element::field_signal(
+                            i18n_hub.tr(|| t!("settings.language").into_owned()),
+                            Element::dropdown_signal(
+                                i18n_hub.tr_vec(|| {
+                                    vec![
+                                        t!("settings.language_options.follow_system").into_owned(),
+                                        t!("settings.language_options.english").into_owned(),
+                                        t!("settings.language_options.chinese").into_owned(),
+                                    ]
+                                }),
                                 language_preference,
-                            ),
+                            )
+                            .on_dropdown_change({
+                                let i18n_hub = i18n_hub.clone();
+                                move |ctx, index| {
+                                    let target_lang = language_preference_from_index(index);
+                                    apply_configured_locale(target_lang);
+                                    i18n_hub.refresh();
+                                    ctx.mark_dirty_all();
+                                }
+                            }),
                         ))
-                        .child(Element::field(
-                            t!("settings.open_launcher_on").into_owned(),
+                        .child(Element::field_signal(
+                            i18n_hub.tr(|| t!("settings.open_launcher_on").into_owned()),
                             Element::col()
                                 .spacing(6)
                                 .child(Element::radio(
-                                    t!("settings.monitor.primary"),
+                                    i18n_hub.tr(|| t!("settings.monitor.primary").into_owned()),
                                     monitor_preference,
                                     0,
                                 ))
                                 .child(Element::radio(
-                                    t!("settings.monitor.cursor"),
+                                    i18n_hub.tr(|| t!("settings.monitor.cursor").into_owned()),
                                     monitor_preference,
                                     1,
                                 ))
                                 .child(Element::radio(
-                                    t!("settings.monitor.foreground"),
+                                    i18n_hub.tr(|| t!("settings.monitor.foreground").into_owned()),
                                     monitor_preference,
                                     2,
                                 )),
@@ -4556,10 +4746,10 @@ fn main() {
                             Element::col()
                                 .width_match()
                                 .spacing(8)
-                                .child(Element::field(
-                                    t!("settings.updates").into_owned(),
+                                .child(Element::field_signal(
+                                    i18n_hub.tr(|| t!("settings.updates").into_owned()),
                                     Element::checkbox(
-                                        t!("settings.updates_desc"),
+                                        i18n_hub.tr(|| t!("settings.updates_desc").into_owned()),
                                         update_checks_enabled,
                                     ),
                                 ))
@@ -4572,8 +4762,10 @@ fn main() {
                                                 .width_match(),
                                         )
                                         .child(
-                                            Element::label(t!("settings.hours_between_checks"))
-                                                .font_size(11.0),
+                                            Element::label(i18n_hub.tr(|| {
+                                                t!("settings.hours_between_checks").into_owned()
+                                            }))
+                                            .font_size(11.0),
                                         ),
                                 )
                                 .child(
@@ -4581,8 +4773,12 @@ fn main() {
                                         .width_match()
                                         .spacing(8)
                                         .child(
-                                            Element::label(t!("settings.update_action"))
-                                                .width_match(),
+                                            Element::label(
+                                                i18n_hub.tr(|| {
+                                                    t!("settings.update_action").into_owned()
+                                                }),
+                                            )
+                                            .width_match(),
                                         )
                                         .child(
                                             Element::label(t!(
@@ -4594,7 +4790,8 @@ fn main() {
                                         ),
                                 )
                                 .child(Element::checkbox(
-                                    "Install stable updates automatically",
+                                    i18n_hub
+                                        .tr(|| t!("settings.auto_install_updates").into_owned()),
                                     auto_install_updates,
                                 ))
                                 .child(
@@ -4610,7 +4807,12 @@ fn main() {
                                                 .width_match(),
                                         )
                                         .child(
-                                            Element::button(t!("settings.check_updates")).on_click(
+                                            Element::button(
+                                                i18n_hub.tr(|| {
+                                                    t!("settings.check_updates").into_owned()
+                                                }),
+                                            )
+                                            .on_click(
                                                 move |ctx| {
                                                     update_status_for_apply.set(
                                                         t!("updater.checking_github").into_owned(),
@@ -4624,12 +4826,16 @@ fn main() {
                                             ),
                                         )
                                         .child(
-                                            Element::button(t!("settings.install_now"))
-                                                .visible_when(move || {
-                                                    update_available_for_install.get().is_some()
-                                                        && !update_installing_for_ui.get()
-                                                })
-                                                .on_click(move |ctx| {
+                                            Element::button(
+                                                i18n_hub
+                                                    .tr(|| t!("settings.install_now").into_owned()),
+                                            )
+                                            .visible_when(move || {
+                                                update_available_for_install.get().is_some()
+                                                    && !update_installing_for_ui.get()
+                                            })
+                                            .on_click(
+                                                move |ctx| {
                                                     if update_installing_for_ui.get() {
                                                         return;
                                                     }
@@ -4661,7 +4867,8 @@ fn main() {
                                                             ));
                                                         }
                                                     }
-                                                }),
+                                                },
+                                            ),
                                         ),
                                 ),
                         )
@@ -4670,13 +4877,19 @@ fn main() {
                                 .width_match()
                                 .spacing(10)
                                 .child(
-                                    Element::label(t!("settings.query_history_hint"))
-                                        .font_size(11.0)
-                                        .fg(Color::rgba(235, 241, 255, 175))
-                                        .width_match(),
+                                    Element::label(
+                                        i18n_hub
+                                            .tr(|| t!("settings.query_history_hint").into_owned()),
+                                    )
+                                    .font_size(11.0)
+                                    .fg(Color::rgba(235, 241, 255, 175))
+                                    .width_match(),
                                 )
-                                .child(Element::button(t!("settings.clear_history")).on_click(
-                                    move |ctx| {
+                                .child(
+                                    Element::button(
+                                        i18n_hub.tr(|| t!("settings.clear_history").into_owned()),
+                                    )
+                                    .on_click(move |ctx| {
                                         if let Ok(mut settings) = settings_for_clear_history.write()
                                         {
                                             settings.clear_query_history();
@@ -4685,173 +4898,208 @@ fn main() {
                                         history_for_clear.borrow_mut().clear();
                                         history_cursor_for_clear.set(None);
                                         ctx.toast_ok(t!("settings.history_cleared"));
-                                    },
-                                )),
+                                    }),
+                                ),
                         )
                         .child(
-                            Element::label(t!("settings.native_plugins_hint"))
-                                .font_size(12.0)
-                                .fg(Color::rgba(235, 241, 255, 160)),
+                            Element::label(
+                                i18n_hub.tr(|| t!("settings.native_plugins_hint").into_owned()),
+                            )
+                            .font_size(12.0)
+                            .fg(Color::rgba(235, 241, 255, 160)),
                         )
-                        .child(Element::button(t!("settings.apply")).on_click(move |ctx| {
-                            let duration = caret_duration
-                                .get()
-                                .trim()
-                                .parse::<u16>()
-                                .unwrap_or(95)
-                                .clamp(60, 160);
-                            let configuration = HotkeyConfig {
-                                ctrl: activation_ctrl.get(),
-                                alt: activation_alt.get(),
-                                shift: activation_shift.get(),
-                                meta: activation_meta.get(),
-                                key: activation_key.get(),
-                            };
-                            let custom_color = parse_selection_color(&custom_selection_color.get())
-                                .unwrap_or(0x4c8bf4);
-                            let configured_width = parse_dimension_input(
-                                &launcher_width_input.get(),
-                                MIN_LAUNCHER_WIDTH,
-                                MAX_LAUNCHER_WIDTH,
-                            )
-                            .unwrap_or(DEFAULT_LAUNCHER_WIDTH);
-                            let configured_height = parse_dimension_input(
-                                &launcher_height_input.get(),
-                                MIN_LAUNCHER_HEIGHT,
-                                MAX_LAUNCHER_HEIGHT,
-                            )
-                            .unwrap_or(DEFAULT_LAUNCHER_HEIGHT);
-                            if let Ok(mut settings) = settings_for_apply.write() {
-                                let previous_language = settings.language;
-                                settings.activation_hotkey = configuration;
-                                settings.ignore_hotkeys_in_fullscreen = ignore_fullscreen.get();
-                                settings.game_mode = game_mode.get();
-                                settings.smooth_caret = smooth_caret.get();
-                                settings.switch_to_english_layout = switch_to_english_layout.get();
-                                settings.use_system_accent = use_system_accent.get();
-                                settings.custom_selection_color = custom_color;
-                                settings.launcher_width = configured_width;
-                                settings.launcher_height = configured_height;
-                                settings.clear_query_on_activation =
-                                    clear_query_on_activation.get();
-                                settings.start_with_windows = start_with_windows_for_apply.get();
-                                settings.update_checks_enabled =
-                                    update_checks_enabled_for_apply.get();
-                                settings.update_interval_hours = update_interval_hours_for_apply
-                                    .get()
-                                    .trim()
-                                    .parse::<u32>()
-                                    .unwrap_or(24)
-                                    .clamp(1, 168);
-                                settings.auto_install_updates =
-                                    auto_install_updates_for_apply.get();
-                                update_interval_hours_for_apply
-                                    .set(settings.update_interval_hours.to_string());
-                                settings.auto_enable_everything =
-                                    auto_enable_everything_for_apply.get();
-                                settings.obsidian_enabled = obsidian_enabled_for_apply.get();
-                                settings.obsidian_alias = obsidian_alias_for_apply.get();
-                                settings.google_enabled = google_enabled_for_apply.get();
-                                settings.google_alias = google_alias_for_apply.get();
-                                settings.monitor_preference =
-                                    monitor_preference_from_index(monitor_preference.get());
-                                settings.language = language_preference_from_index(
-                                    language_preference_for_apply.get(),
-                                );
-                                settings.smooth_caret_duration_ms = duration;
-                                settings.normalize();
-                                activation_recording_for_apply.set(false);
-                                activation_display_for_apply
-                                    .set(hotkeys::display_config(&settings.activation_hotkey));
-                                selection_color.set(selection_color_for_settings(&settings));
-                                custom_selection_color
-                                    .set(selection_color_hex(settings.custom_selection_color));
-                                launcher_width.set(settings.launcher_width);
-                                launcher_height.set(settings.launcher_height);
-                                launcher_width_input.set(settings.launcher_width.to_string());
-                                launcher_height_input.set(settings.launcher_height.to_string());
-                                launcher_width_slider.set(dimension_slider_fraction(
-                                    settings.launcher_width,
-                                    MIN_LAUNCHER_WIDTH,
-                                    MAX_LAUNCHER_WIDTH,
-                                ));
-                                launcher_height_slider.set(dimension_slider_fraction(
-                                    settings.launcher_height,
-                                    MIN_LAUNCHER_HEIGHT,
-                                    MAX_LAUNCHER_HEIGHT,
-                                ));
-                                launcher_preview_text.set(
-                                    t!(
-                                        "settings.visual.client_area",
-                                        width = settings.launcher_width,
-                                        height = settings.launcher_height
+                        .child(
+                            Element::button(i18n_hub.tr(|| t!("settings.apply").into_owned()))
+                                .on_click(move |ctx| {
+                                    let duration = caret_duration
+                                        .get()
+                                        .trim()
+                                        .parse::<u16>()
+                                        .unwrap_or(95)
+                                        .clamp(60, 160);
+                                    let configuration = HotkeyConfig {
+                                        ctrl: activation_ctrl.get(),
+                                        alt: activation_alt.get(),
+                                        shift: activation_shift.get(),
+                                        meta: activation_meta.get(),
+                                        key: activation_key.get(),
+                                    };
+                                    let custom_color =
+                                        parse_selection_color(&custom_selection_color.get())
+                                            .unwrap_or(0x4c8bf4);
+                                    let configured_width = parse_dimension_input(
+                                        &launcher_width_input.get(),
+                                        MIN_LAUNCHER_WIDTH,
+                                        MAX_LAUNCHER_WIDTH,
                                     )
-                                    .into_owned(),
-                                );
-                                activation_handle_for_apply
-                                    .set(hotkeys::activation_hotkey(&settings.activation_hotkey));
-                                activation_handle_for_apply.set_enabled(true);
-                                game_mode_status_for_apply.set(game_mode_label(settings.game_mode));
-                                if settings.auto_enable_everything {
-                                    match everything::start_background_if_installed() {
-                                        Ok(InstallationState::Installed(_)) => {
-                                            everything_installed.set(true);
+                                    .unwrap_or(DEFAULT_LAUNCHER_WIDTH);
+                                    let configured_height = parse_dimension_input(
+                                        &launcher_height_input.get(),
+                                        MIN_LAUNCHER_HEIGHT,
+                                        MAX_LAUNCHER_HEIGHT,
+                                    )
+                                    .unwrap_or(DEFAULT_LAUNCHER_HEIGHT);
+                                    if let Ok(mut settings) = settings_for_apply.write() {
+                                        let previous_language = settings.language;
+                                        settings.activation_hotkey = configuration;
+                                        settings.ignore_hotkeys_in_fullscreen =
+                                            ignore_fullscreen.get();
+                                        settings.game_mode = game_mode.get();
+                                        settings.smooth_caret = smooth_caret.get();
+                                        settings.switch_to_english_layout =
+                                            switch_to_english_layout.get();
+                                        settings.use_system_accent = use_system_accent.get();
+                                        settings.custom_selection_color = custom_color;
+                                        settings.launcher_width = configured_width;
+                                        settings.launcher_height = configured_height;
+                                        settings.clear_query_on_activation =
+                                            clear_query_on_activation.get();
+                                        settings.start_with_windows =
+                                            start_with_windows_for_apply.get();
+                                        settings.update_checks_enabled =
+                                            update_checks_enabled_for_apply.get();
+                                        settings.update_interval_hours =
+                                            update_interval_hours_for_apply
+                                                .get()
+                                                .trim()
+                                                .parse::<u32>()
+                                                .unwrap_or(24)
+                                                .clamp(1, 168);
+                                        settings.auto_install_updates =
+                                            auto_install_updates_for_apply.get();
+                                        update_interval_hours_for_apply
+                                            .set(settings.update_interval_hours.to_string());
+                                        settings.auto_enable_everything =
+                                            auto_enable_everything_for_apply.get();
+                                        settings.obsidian_enabled =
+                                            obsidian_enabled_for_apply.get();
+                                        settings.obsidian_alias = obsidian_alias_for_apply.get();
+                                        settings.google_enabled = google_enabled_for_apply.get();
+                                        settings.google_alias = google_alias_for_apply.get();
+                                        settings.monitor_preference =
+                                            monitor_preference_from_index(monitor_preference.get());
+                                        settings.language = language_preference_from_index(
+                                            language_preference_for_apply.get(),
+                                        );
+                                        settings.smooth_caret_duration_ms = duration;
+                                        settings.normalize();
+                                        activation_recording_for_apply.set(false);
+                                        activation_display_for_apply.set(hotkeys::display_config(
+                                            &settings.activation_hotkey,
+                                        ));
+                                        selection_color
+                                            .set(selection_color_for_settings(&settings));
+                                        custom_selection_color.set(selection_color_hex(
+                                            settings.custom_selection_color,
+                                        ));
+                                        launcher_width.set(settings.launcher_width);
+                                        launcher_height.set(settings.launcher_height);
+                                        launcher_width_input
+                                            .set(settings.launcher_width.to_string());
+                                        launcher_height_input
+                                            .set(settings.launcher_height.to_string());
+                                        launcher_width_slider.set(dimension_slider_fraction(
+                                            settings.launcher_width,
+                                            MIN_LAUNCHER_WIDTH,
+                                            MAX_LAUNCHER_WIDTH,
+                                        ));
+                                        launcher_height_slider.set(dimension_slider_fraction(
+                                            settings.launcher_height,
+                                            MIN_LAUNCHER_HEIGHT,
+                                            MAX_LAUNCHER_HEIGHT,
+                                        ));
+                                        launcher_preview_text.set(
+                                            t!(
+                                                "settings.visual.client_area",
+                                                width = settings.launcher_width,
+                                                height = settings.launcher_height
+                                            )
+                                            .into_owned(),
+                                        );
+                                        activation_handle_for_apply.set(
+                                            hotkeys::activation_hotkey(&settings.activation_hotkey),
+                                        );
+                                        activation_handle_for_apply.set_enabled(true);
+                                        game_mode_status_for_apply
+                                            .set(game_mode_label(settings.game_mode));
+                                        if settings.auto_enable_everything {
+                                            match everything::start_background_if_installed() {
+                                                Ok(InstallationState::Installed(_)) => {
+                                                    everything_installed.set(true);
+                                                    everything_status_for_apply.set(
+                                                        t!("everything.detected_enable_ipc")
+                                                            .into_owned(),
+                                                    );
+                                                }
+                                                Ok(InstallationState::Missing) => {
+                                                    everything_installed.set(false);
+                                                    everything_status_for_apply.set(
+                                                        t!("everything.not_installed_winget")
+                                                            .into_owned(),
+                                                    );
+                                                }
+                                                Err(error) => {
+                                                    everything_status_for_apply.set(error)
+                                                }
+                                            }
+                                        } else {
                                             everything_status_for_apply.set(
-                                                t!("everything.detected_enable_ipc").into_owned(),
+                                                t!("everything.auto_enable_disabled").into_owned(),
                                             );
                                         }
-                                        Ok(InstallationState::Missing) => {
-                                            everything_installed.set(false);
-                                            everything_status_for_apply.set(
-                                                t!("everything.not_installed_winget").into_owned(),
+                                        let _ = save_settings(&settings);
+                                        apply_configured_locale(settings.language);
+                                        if previous_language != settings.language {
+                                            launcher_preview_text.set(
+                                                t!(
+                                                    "settings.visual.client_area",
+                                                    width = launcher_width.get(),
+                                                    height = launcher_height.get()
+                                                )
+                                                .into_owned(),
+                                            );
+                                            i18n_hub_for_apply.refresh();
+                                        }
+                                        if let Err(error) =
+                                            startup::set_enabled(settings.start_with_windows)
+                                        {
+                                            ctx.toast_ok(t!(
+                                                "settings.startup_failed",
+                                                error = error
+                                            ));
+                                        }
+                                        if settings.update_checks_enabled
+                                            && update_check_due(&settings)
+                                        {
+                                            update_status_for_apply
+                                                .set(t!("updater.checking_github").into_owned());
+                                            request_update_check(
+                                                update_sender_for_apply.clone(),
+                                                &update_check_in_flight_for_apply,
                                             );
                                         }
-                                        Err(error) => everything_status_for_apply.set(error),
                                     }
-                                } else {
-                                    everything_status_for_apply
-                                        .set(t!("everything.auto_enable_disabled").into_owned());
-                                }
-                                let _ = save_settings(&settings);
-                                if previous_language != settings.language {
-                                    restart_for_locale_change();
-                                    ctx.quit();
-                                    return;
-                                }
-                                apply_configured_locale(settings.language);
-                                if let Err(error) =
-                                    startup::set_enabled(settings.start_with_windows)
-                                {
-                                    ctx.toast_ok(t!("settings.startup_failed", error = error));
-                                }
-                                if settings.update_checks_enabled && update_check_due(&settings) {
-                                    update_status_for_apply
-                                        .set(t!("updater.checking_github").into_owned());
-                                    request_update_check(
-                                        update_sender_for_apply.clone(),
-                                        &update_check_in_flight_for_apply,
+                                    settings_visible_for_apply.set(false);
+                                    let selected_preference =
+                                        monitor_preference_from_index(monitor_preference.get());
+                                    let applied_width = launcher_width.get() as i32;
+                                    let applied_height = launcher_height.get() as i32;
+                                    let target_height = if show_results.get() {
+                                        applied_height
+                                    } else {
+                                        COMPACT_WINDOW_HEIGHT
+                                    };
+                                    request_monitor_position(
+                                        &position_for_apply,
+                                        selected_preference,
+                                        applied_width,
+                                        target_height,
                                     );
-                                }
-                            }
-                            settings_visible_for_apply.set(false);
-                            let selected_preference =
-                                monitor_preference_from_index(monitor_preference.get());
-                            let applied_width = launcher_width.get() as i32;
-                            let applied_height = launcher_height.get() as i32;
-                            let target_height = if show_results.get() {
-                                applied_height
-                            } else {
-                                COMPACT_WINDOW_HEIGHT
-                            };
-                            request_monitor_position(
-                                &position_for_apply,
-                                selected_preference,
-                                applied_width,
-                                target_height,
-                            );
-                            size_for_apply.set(applied_width, target_height);
-                            ctx.toast_ok(t!("settings.applied"));
-                        })),
+                                    size_for_apply.set(applied_width, target_height);
+                                    ctx.show_window();
+                                    ctx.toast_ok(t!("settings.applied"));
+                                }),
+                        ),
                 ),
         )
         .child(
@@ -4863,21 +5111,23 @@ fn main() {
                         .width_match()
                         .spacing(12)
                         .child(
-                            Element::label(t!("settings.everything"))
+                            Element::label(i18n_hub.tr(|| t!("settings.everything").into_owned()))
                                 .font_size(17.0)
                                 .fg(Color::WHITE),
                         )
                         .child(
-                            Element::label(t!("settings.everything_tab_desc"))
-                                .font_size(11.0)
-                                .fg(Color::rgba(235, 241, 255, 180))
-                                .max_lines(3)
-                                .truncate(Truncate::End),
+                            Element::label(
+                                i18n_hub.tr(|| t!("settings.everything_tab_desc").into_owned()),
+                            )
+                            .font_size(11.0)
+                            .fg(Color::rgba(235, 241, 255, 180))
+                            .max_lines(3)
+                            .truncate(Truncate::End),
                         )
-                        .child(Element::field(
-                            t!("settings.everything").into_owned(),
+                        .child(Element::field_signal(
+                            i18n_hub.tr(|| t!("settings.everything").into_owned()),
                             Element::checkbox(
-                                t!("settings.everything_desc"),
+                                i18n_hub.tr(|| t!("settings.everything_desc").into_owned()),
                                 auto_enable_everything,
                             )
                             .on_toggle(move |_| {
@@ -4909,16 +5159,20 @@ fn main() {
                             }),
                         ))
                         .child(
-                            Element::label(t!("everything.is_installed"))
-                                .font_size(12.0)
-                                .fg(Color::rgba(180, 255, 205, 235))
-                                .visible_when(move || everything_installed_for_ui.get()),
+                            Element::label(
+                                i18n_hub.tr(|| t!("everything.is_installed").into_owned()),
+                            )
+                            .font_size(12.0)
+                            .fg(Color::rgba(180, 255, 205, 235))
+                            .visible_when(move || everything_installed_for_ui.get()),
                         )
                         .child(
-                            Element::label(t!("everything.is_not_installed"))
-                                .font_size(12.0)
-                                .fg(Color::rgba(255, 225, 175, 235))
-                                .visible_when(move || !everything_installed_for_ui.get()),
+                            Element::label(
+                                i18n_hub.tr(|| t!("everything.is_not_installed").into_owned()),
+                            )
+                            .font_size(12.0)
+                            .fg(Color::rgba(255, 225, 175, 235))
+                            .visible_when(move || !everything_installed_for_ui.get()),
                         )
                         .child(
                             Element::label_signal(everything_status)
@@ -4929,14 +5183,16 @@ fn main() {
                                 .width_match(),
                         )
                         .child(
-                            Element::label(t!("settings.everything_command"))
-                                .font_size(10.0)
-                                .fg(Color::rgba(235, 241, 255, 155))
-                                .visible_when(move || !everything_installed_for_ui.get())
-                                .width_match(),
+                            Element::label(
+                                i18n_hub.tr(|| t!("settings.everything_command").into_owned()),
+                            )
+                            .font_size(10.0)
+                            .fg(Color::rgba(235, 241, 255, 155))
+                            .visible_when(move || !everything_installed_for_ui.get())
+                            .width_match(),
                         )
                         .child(
-                            Element::button(t!("everything.install"))
+                            Element::button(i18n_hub.tr(|| t!("everything.install").into_owned()))
                                 .visible_when(move || !everything_installed_for_ui.get())
                                 .on_click(move |ctx| match everything::launch_winget_install() {
                                     Ok(()) => {
@@ -4952,16 +5208,20 @@ fn main() {
                                 }),
                         )
                         .child(
-                            Element::label(t!("settings.plugins.title"))
-                                .font_size(17.0)
-                                .fg(Color::WHITE),
+                            Element::label(
+                                i18n_hub.tr(|| t!("settings.plugins.title").into_owned()),
+                            )
+                            .font_size(17.0)
+                            .fg(Color::WHITE),
                         )
                         .child(
-                            Element::label(t!("settings.plugins.description"))
-                                .font_size(11.0)
-                                .fg(Color::rgba(235, 241, 255, 180))
-                                .max_lines(3)
-                                .truncate(Truncate::End),
+                            Element::label(
+                                i18n_hub.tr(|| t!("settings.plugins.description").into_owned()),
+                            )
+                            .font_size(11.0)
+                            .fg(Color::rgba(235, 241, 255, 180))
+                            .max_lines(3)
+                            .truncate(Truncate::End),
                         )
                         .child(
                             Element::label(t!(
@@ -4974,44 +5234,53 @@ fn main() {
                             .truncate(Truncate::End),
                         )
                         .child(
-                            Element::label(t!("settings.plugins.config_hint"))
-                                .font_size(11.0)
-                                .fg(Color::rgba(235, 241, 255, 180))
-                                .max_lines(2)
-                                .truncate(Truncate::End),
+                            Element::label(
+                                i18n_hub.tr(|| t!("settings.plugins.config_hint").into_owned()),
+                            )
+                            .font_size(11.0)
+                            .fg(Color::rgba(235, 241, 255, 180))
+                            .max_lines(2)
+                            .truncate(Truncate::End),
                         )
-                        .child(Element::field(
-                            t!("settings.plugins.obsidian").into_owned(),
+                        .child(Element::field_signal(
+                            i18n_hub.tr(|| t!("settings.plugins.obsidian").into_owned()),
                             Element::checkbox(
-                                t!("settings.plugins.obsidian_desc"),
+                                i18n_hub.tr(|| t!("settings.plugins.obsidian_desc").into_owned()),
                                 obsidian_enabled,
                             ),
                         ))
-                        .child(Element::field(
-                            t!("settings.plugins.action_keyword").into_owned(),
+                        .child(Element::field_signal(
+                            i18n_hub.tr(|| t!("settings.plugins.action_keyword").into_owned()),
                             Element::text_input(obsidian_alias, "ob").width_match(),
                         ))
                         .child(
-                            Element::label(t!("settings.plugins.obsidian_hint"))
-                                .font_size(11.0)
-                                .fg(Color::rgba(235, 241, 255, 175))
-                                .max_lines(3)
-                                .truncate(Truncate::End),
+                            Element::label(
+                                i18n_hub.tr(|| t!("settings.plugins.obsidian_hint").into_owned()),
+                            )
+                            .font_size(11.0)
+                            .fg(Color::rgba(235, 241, 255, 175))
+                            .max_lines(3)
+                            .truncate(Truncate::End),
                         )
-                        .child(Element::field(
-                            t!("settings.plugins.google").into_owned(),
-                            Element::checkbox(t!("settings.plugins.google_desc"), google_enabled),
+                        .child(Element::field_signal(
+                            i18n_hub.tr(|| t!("settings.plugins.google").into_owned()),
+                            Element::checkbox(
+                                i18n_hub.tr(|| t!("settings.plugins.google_desc").into_owned()),
+                                google_enabled,
+                            ),
                         ))
-                        .child(Element::field(
-                            t!("settings.plugins.action_keyword").into_owned(),
+                        .child(Element::field_signal(
+                            i18n_hub.tr(|| t!("settings.plugins.action_keyword").into_owned()),
                             Element::text_input(google_alias, "g").width_match(),
                         ))
                         .child(
-                            Element::label(t!("settings.plugins.google_hint"))
-                                .font_size(11.0)
-                                .fg(Color::rgba(235, 241, 255, 175))
-                                .max_lines(3)
-                                .truncate(Truncate::End),
+                            Element::label(
+                                i18n_hub.tr(|| t!("settings.plugins.google_hint").into_owned()),
+                            )
+                            .font_size(11.0)
+                            .fg(Color::rgba(235, 241, 255, 175))
+                            .max_lines(3)
+                            .truncate(Truncate::End),
                         ),
                 ),
         )
@@ -5024,25 +5293,30 @@ fn main() {
                         .width_match()
                         .spacing(12)
                         .child(
-                            Element::label(t!("settings.visual.title"))
-                                .font_size(17.0)
-                                .fg(Color::WHITE),
+                            Element::label(
+                                i18n_hub.tr(|| t!("settings.visual.title").into_owned()),
+                            )
+                            .font_size(17.0)
+                            .fg(Color::WHITE),
                         )
                         .child(
-                            Element::label(t!("settings.visual.preview_desc"))
-                                .font_size(11.0)
-                                .fg(Color::rgba(235, 241, 255, 180))
-                                .max_lines(3)
-                                .truncate(Truncate::End),
+                            Element::label(
+                                i18n_hub.tr(|| t!("settings.visual.preview_desc").into_owned()),
+                            )
+                            .font_size(11.0)
+                            .fg(Color::rgba(235, 241, 255, 180))
+                            .max_lines(3)
+                            .truncate(Truncate::End),
                         )
-                        .child(Element::field(
-                            t!("settings.smooth_caret").into_owned(),
+                        .child(Element::field_signal(
+                            i18n_hub.tr(|| t!("settings.smooth_caret").into_owned()),
                             Element::row()
                                 .width_match()
                                 .spacing(8)
                                 .child(
                                     Element::checkbox(
-                                        t!("settings.smooth_caret_desc"),
+                                        i18n_hub
+                                            .tr(|| t!("settings.smooth_caret_desc").into_owned()),
                                         smooth_caret,
                                     )
                                     .width_match(),
@@ -5050,26 +5324,31 @@ fn main() {
                                 .child(Element::text_input(caret_duration, "95").width(76))
                                 .child(Element::label("ms").font_size(11.0)),
                         ))
-                        .child(Element::field(
-                            t!("settings.visual.selection_color").into_owned(),
+                        .child(Element::field_signal(
+                            i18n_hub.tr(|| t!("settings.visual.selection_color").into_owned()),
                             Element::checkbox(
-                                t!("settings.visual.use_system_accent"),
+                                i18n_hub
+                                    .tr(|| t!("settings.visual.use_system_accent").into_owned()),
                                 use_system_accent,
                             ),
                         ))
                         .child(
-                            Element::label(t!("settings.visual.accent_hint"))
-                                .font_size(10.0)
-                                .fg(Color::rgba(235, 241, 255, 150))
-                                .max_lines(2)
-                                .truncate(Truncate::End),
+                            Element::label(
+                                i18n_hub.tr(|| t!("settings.visual.accent_hint").into_owned()),
+                            )
+                            .font_size(10.0)
+                            .fg(Color::rgba(235, 241, 255, 150))
+                            .max_lines(2)
+                            .truncate(Truncate::End),
                         )
                         .child(
-                            Element::label(t!("settings.visual.preview_hint"))
-                                .font_size(10.0)
-                                .fg(Color::rgba(235, 241, 255, 170))
-                                .max_lines(2)
-                                .truncate(Truncate::End),
+                            Element::label(
+                                i18n_hub.tr(|| t!("settings.visual.preview_hint").into_owned()),
+                            )
+                            .font_size(10.0)
+                            .fg(Color::rgba(235, 241, 255, 170))
+                            .max_lines(2)
+                            .truncate(Truncate::End),
                         )
                         .child(
                             Element::col()
@@ -5081,8 +5360,8 @@ fn main() {
                                 )
                                 .child(selection_palette(custom_selection_color)),
                         )
-                        .child(Element::field(
-                            t!("settings.visual.launcher_width").into_owned(),
+                        .child(Element::field_signal(
+                            i18n_hub.tr(|| t!("settings.visual.launcher_width").into_owned()),
                             Element::row()
                                 .width_match()
                                 .spacing(8)
@@ -5092,50 +5371,60 @@ fn main() {
                                 )
                                 .child(Element::text_input(launcher_width_input, "420").width(76))
                                 .child(
-                                    Element::button(t!("settings.visual.reset"))
-                                        .neutral()
-                                        .on_click(move |_| {
-                                            let width = DEFAULT_LAUNCHER_WIDTH;
-                                            let height = launcher_height.get();
-                                            eprintln!(
-                                                "Visual width reset clicked: {}x{}",
-                                                width, height
-                                            );
-                                            launcher_width.set(width);
-                                            launcher_width_input.set(width.to_string());
-                                            launcher_width_slider.set(dimension_slider_fraction(
-                                                width,
-                                                MIN_LAUNCHER_WIDTH,
-                                                MAX_LAUNCHER_WIDTH,
-                                            ));
-                                            launcher_preview_text.set(
-                                                t!(
-                                                    "settings.visual.client_area",
-                                                    width = width,
-                                                    height = height
-                                                )
-                                                .into_owned(),
-                                            );
-                                            visual_preview_generation_for_width_reset.set(
-                                                visual_preview_generation_for_width_reset
-                                                    .get()
-                                                    .saturating_add(1),
-                                            );
-                                        }),
+                                    Element::button(
+                                        i18n_hub.tr(|| t!("settings.visual.reset").into_owned()),
+                                    )
+                                    .neutral()
+                                    .on_click(move |_| {
+                                        let width = DEFAULT_LAUNCHER_WIDTH;
+                                        let height = launcher_height.get();
+                                        eprintln!(
+                                            "Visual width reset clicked: {}x{}",
+                                            width, height
+                                        );
+                                        launcher_width.set(width);
+                                        launcher_width_input.set(width.to_string());
+                                        launcher_width_slider.set(dimension_slider_fraction(
+                                            width,
+                                            MIN_LAUNCHER_WIDTH,
+                                            MAX_LAUNCHER_WIDTH,
+                                        ));
+                                        launcher_preview_text.set(
+                                            t!(
+                                                "settings.visual.client_area",
+                                                width = width,
+                                                height = height
+                                            )
+                                            .into_owned(),
+                                        );
+                                        visual_preview_generation_for_width_reset.set(
+                                            visual_preview_generation_for_width_reset
+                                                .get()
+                                                .saturating_add(1),
+                                        );
+                                    }),
                                 )
-                                .child(Element::label(t!("settings.visual.dip")).font_size(11.0)),
+                                .child(
+                                    Element::label(
+                                        i18n_hub.tr(|| t!("settings.visual.dip").into_owned()),
+                                    )
+                                    .font_size(11.0),
+                                ),
                         ))
                         .child(
-                            Element::label(t!(
-                                "settings.visual.safe_range",
-                                min = MIN_LAUNCHER_WIDTH,
-                                max = MAX_LAUNCHER_WIDTH
-                            ))
+                            Element::label(i18n_hub.tr(|| {
+                                t!(
+                                    "settings.visual.safe_range",
+                                    min = MIN_LAUNCHER_WIDTH,
+                                    max = MAX_LAUNCHER_WIDTH
+                                )
+                                .into_owned()
+                            }))
                             .font_size(10.0)
                             .fg(Color::rgba(235, 241, 255, 150)),
                         )
-                        .child(Element::field(
-                            t!("settings.visual.results_height").into_owned(),
+                        .child(Element::field_signal(
+                            i18n_hub.tr(|| t!("settings.visual.results_height").into_owned()),
                             Element::row()
                                 .width_match()
                                 .spacing(8)
@@ -5145,45 +5434,56 @@ fn main() {
                                 )
                                 .child(Element::text_input(launcher_height_input, "382").width(76))
                                 .child(
-                                    Element::button(t!("settings.visual.reset"))
-                                        .neutral()
-                                        .on_click(move |_| {
-                                            let width = launcher_width.get();
-                                            let height = DEFAULT_LAUNCHER_HEIGHT;
-                                            eprintln!(
-                                                "Visual height reset clicked: {}x{}",
-                                                width, height
-                                            );
-                                            launcher_height.set(height);
-                                            launcher_height_input.set(height.to_string());
-                                            launcher_height_slider.set(dimension_slider_fraction(
-                                                height,
-                                                MIN_LAUNCHER_HEIGHT,
-                                                MAX_LAUNCHER_HEIGHT,
-                                            ));
-                                            launcher_preview_text.set(
-                                                t!(
-                                                    "settings.visual.client_area",
-                                                    width = width,
-                                                    height = height
-                                                )
-                                                .into_owned(),
-                                            );
-                                            visual_preview_generation_for_height_reset.set(
-                                                visual_preview_generation_for_height_reset
-                                                    .get()
-                                                    .saturating_add(1),
-                                            );
-                                        }),
+                                    Element::button(
+                                        i18n_hub.tr(|| t!("settings.visual.reset").into_owned()),
+                                    )
+                                    .neutral()
+                                    .on_click(move |_| {
+                                        let width = launcher_width.get();
+                                        let height = DEFAULT_LAUNCHER_HEIGHT;
+                                        eprintln!(
+                                            "Visual height reset clicked: {}x{}",
+                                            width, height
+                                        );
+                                        launcher_height.set(height);
+                                        launcher_height_input.set(height.to_string());
+                                        launcher_height_slider.set(dimension_slider_fraction(
+                                            height,
+                                            MIN_LAUNCHER_HEIGHT,
+                                            MAX_LAUNCHER_HEIGHT,
+                                        ));
+                                        launcher_preview_text.set(
+                                            t!(
+                                                "settings.visual.client_area",
+                                                width = width,
+                                                height = height
+                                            )
+                                            .into_owned(),
+                                        );
+                                        visual_preview_generation_for_height_reset.set(
+                                            visual_preview_generation_for_height_reset
+                                                .get()
+                                                .saturating_add(1),
+                                        );
+                                    }),
                                 )
-                                .child(Element::label(t!("settings.visual.dip")).font_size(11.0)),
+                                .child(
+                                    Element::label(
+                                        i18n_hub.tr(|| t!("settings.visual.dip").into_owned()),
+                                    )
+                                    .font_size(11.0),
+                                ),
                         ))
                         .child(
-                            Element::label(t!(
-                                "settings.visual.safe_range",
-                                min = MIN_LAUNCHER_HEIGHT,
-                                max = MAX_LAUNCHER_HEIGHT
-                            ))
+                            Element::label(i18n_hub.tr(|| {
+                                t!(
+                                    "settings.visual.safe_range",
+                                    min = MIN_LAUNCHER_HEIGHT,
+                                    max = MAX_LAUNCHER_HEIGHT
+                                )
+                                .into_owned()
+                            }))
+                            .font_size(10.0)
                             .font_size(10.0)
                             .fg(Color::rgba(235, 241, 255, 150)),
                         )
@@ -5193,14 +5493,20 @@ fn main() {
                                 .fg(Color::WHITE),
                         )
                         .child(
-                            Element::label(t!("settings.visual.native_preview_hint"))
-                                .font_size(11.0)
-                                .fg(Color::rgba(235, 241, 255, 175))
-                                .max_lines(2)
-                                .truncate(Truncate::End),
+                            Element::label(
+                                i18n_hub
+                                    .tr(|| t!("settings.visual.native_preview_hint").into_owned()),
+                            )
+                            .font_size(11.0)
+                            .fg(Color::rgba(235, 241, 255, 175))
+                            .max_lines(2)
+                            .truncate(Truncate::End),
                         )
                         .child(
-                            Element::button(t!("settings.visual.apply")).on_click(move |ctx| {
+                            Element::button(
+                                i18n_hub.tr(|| t!("settings.visual.apply").into_owned()),
+                            )
+                            .on_click(move |ctx| {
                                 let mut width = parse_dimension_input(
                                     &launcher_width_input.get(),
                                     MIN_LAUNCHER_WIDTH,
@@ -5271,6 +5577,7 @@ fn main() {
                                     target_height,
                                 );
                                 size_for_visual_apply.set(i32::from(width), target_height);
+                                ctx.show_window();
                                 ctx.toast_ok(t!("settings.visual.applied"));
                             }),
                         ),
@@ -5285,16 +5592,20 @@ fn main() {
                         .width_match()
                         .spacing(10)
                         .child(
-                            Element::label(t!("settings.priorities.title"))
-                                .font_size(17.0)
-                                .fg(Color::WHITE),
+                            Element::label(
+                                i18n_hub.tr(|| t!("settings.priorities.title").into_owned()),
+                            )
+                            .font_size(17.0)
+                            .fg(Color::WHITE),
                         )
                         .child(
-                            Element::label(t!("settings.priorities.description"))
-                                .font_size(11.0)
-                                .fg(Color::rgba(235, 241, 255, 180))
-                                .max_lines(2)
-                                .truncate(Truncate::End),
+                            Element::label(
+                                i18n_hub.tr(|| t!("settings.priorities.description").into_owned()),
+                            )
+                            .font_size(11.0)
+                            .fg(Color::rgba(235, 241, 255, 180))
+                            .max_lines(2)
+                            .truncate(Truncate::End),
                         )
                         .child(priorities_empty)
                         .child(priority_list),
@@ -5429,6 +5740,7 @@ fn main() {
                 if child_exited {
                     visual_preview_process.take();
                     last_visual_preview_request = None;
+                    last_visual_preview_locale.clear();
                 }
                 if let Some(preview) = visual_preview_process.as_mut() {
                     match preview.poll_ready() {
@@ -5437,6 +5749,7 @@ fn main() {
                             eprintln!("Could not ready visual preview: {error}");
                             visual_preview_process.take();
                             last_visual_preview_request = None;
+                            last_visual_preview_locale.clear();
                         }
                     }
                 }
@@ -5450,10 +5763,14 @@ fn main() {
                         preview_height,
                         preview_x,
                         preview_y,
+                        &configured_locale(language_preference_from_index(language_preference.get())),
                     ) {
                         Ok(preview) => {
                             visual_preview_process = Some(preview);
                             last_visual_preview_request = None;
+                            last_visual_preview_locale = configured_locale(
+                                language_preference_from_index(language_preference.get()),
+                            );
                         }
                         Err(error) => eprintln!("Could not start visual preview: {error}"),
                     }
@@ -5465,6 +5782,7 @@ fn main() {
                 );
                 visual_preview_process.take();
                 last_visual_preview_request = None;
+                last_visual_preview_locale.clear();
             }
             last_settings_visible = settings_is_visible;
             let slider_width = dimension_from_slider(
@@ -5531,10 +5849,10 @@ fn main() {
                     MIN_LAUNCHER_HEIGHT,
                     MAX_LAUNCHER_HEIGHT,
                 ));
-                preview_text_for_interval.set(format!(
-                    "Current launcher client area: {} × {} logical px (DIP)",
-                    next_width, next_height
-                ));
+                preview_text_for_interval.set(t!(
+                    "settings.visual.client_area",
+                    width=next_width, height=next_height
+                ).into_owned());
                 if !(settings_visible_for_interval.get() && settings_tab_for_interval.get() == 1) {
                     apply_launcher_size(
                         &size_for_interval,
@@ -5563,8 +5881,12 @@ fn main() {
             let preview_generation = visual_preview_generation_for_interval.get();
             if visual_preview_is_visible {
                 let requested = (width_for_interval.get(), height_for_interval.get());
+                let preview_locale = configured_locale(language_preference_from_index(
+                    language_preference_for_interval.get(),
+                ));
                 let must_dispatch = last_visual_preview_request != Some(requested)
-                    || last_visual_preview_generation != preview_generation;
+                    || last_visual_preview_generation != preview_generation
+                    || last_visual_preview_locale != preview_locale;
                 if must_dispatch {
                     let preference = settings_for_interval_geometry
                         .read()
@@ -5577,12 +5899,18 @@ fn main() {
                     );
                     let dispatch_result = if let Some(preview) = visual_preview_process.as_mut() {
                         match preview.poll_ready() {
-                            Ok(true) => Some(preview.resize(
-                                i32::from(requested.0),
-                                i32::from(requested.1),
-                                preview_x,
-                                preview_y,
-                            )),
+                            Ok(true) => Some(
+                                preview
+                                    .set_locale(&preview_locale)
+                                    .and_then(|_| {
+                                        preview.resize(
+                                            i32::from(requested.0),
+                                            i32::from(requested.1),
+                                            preview_x,
+                                            preview_y,
+                                        )
+                                    }),
+                            ),
                             Ok(false) => None,
                             Err(error) => Some(Err(error)),
                         }
@@ -5593,6 +5921,7 @@ fn main() {
                         Some(Ok(())) => {
                             last_visual_preview_request = Some(requested);
                             last_visual_preview_generation = preview_generation;
+                            last_visual_preview_locale = preview_locale.clone();
                             eprintln!(
                                 "Visual preview IPC resize dispatched: {}x{}",
                                 requested.0, requested.1
@@ -5602,6 +5931,7 @@ fn main() {
                             eprintln!("Could not update visual preview: {error}");
                             visual_preview_process.take();
                             last_visual_preview_request = None;
+                            last_visual_preview_locale.clear();
                         }
                         None => {}
                     }
@@ -5698,7 +6028,7 @@ fn main() {
             actions_for_interval.borrow_mut().clear();
             if !has_query {
                 inline_completion_for_interval.set(String::new());
-                status_for_interval.set(String::from("Ready"));
+                status_for_interval.set(i18n_hub.tr(|| t!("status.ready").into_owned()).get());
             } else {
                 status_for_interval.set(String::from(
                     "Searching applications, Everything and native Flow plugins...",
@@ -5757,13 +6087,14 @@ fn main() {
                 }
             }
         })
-        .on_window_deactivated(|| {
-            launch::trace_launch_event("window-deactivated");
-        })
         .on_window_hide({
             let settings = Arc::clone(&shared_settings);
+            let cancel_settings = Rc::clone(&cancel_settings);
             move || {
-                launch::trace_launch_event("window-hide");
+                let was_settings_visible = settings_visible.get();
+                if was_settings_visible {
+                    cancel_settings();
+                }
                 let (enabled, clear_query) = settings
                     .read()
                     .map(|settings| {

@@ -18,7 +18,22 @@ enum PreviewCommand {
         x: i32,
         y: i32,
     },
+    Language(String),
     Close,
+}
+
+#[derive(Clone, Copy)]
+struct PreviewTextSignals {
+    title: Signal<String>,
+    search_placeholder: Signal<String>,
+    description: Signal<String>,
+    preview_result: Signal<String>,
+    preview_result_sub: Signal<String>,
+    exact_result: Signal<String>,
+    exact_result_sub: Signal<String>,
+    acrylic_result: Signal<String>,
+    acrylic_result_sub: Signal<String>,
+    units_hint: Signal<String>,
 }
 
 fn parse_command(line: &str) -> Option<PreviewCommand> {
@@ -31,6 +46,7 @@ fn parse_command(line: &str) -> Option<PreviewCommand> {
             x: parts.next()?.parse().ok()?,
             y: parts.next()?.parse().ok()?,
         },
+        "language" => PreviewCommand::Language(parts.next()?.to_string()),
         "close" => PreviewCommand::Close,
         _ => return None,
     };
@@ -91,7 +107,13 @@ pub(crate) struct PreviewProcess {
 }
 
 impl PreviewProcess {
-    pub(crate) fn start(width: i32, height: i32, x: i32, y: i32) -> Result<Self, String> {
+    pub(crate) fn start(
+        width: i32,
+        height: i32,
+        x: i32,
+        y: i32,
+        locale: &str,
+    ) -> Result<Self, String> {
         let executable = std::env::current_exe().map_err(|error| error.to_string())?;
         let mut child = Command::new(&executable)
             .arg("--visual-preview")
@@ -99,6 +121,7 @@ impl PreviewProcess {
             .arg(height.to_string())
             .arg(x.to_string())
             .arg(y.to_string())
+            .arg(locale)
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
@@ -163,6 +186,12 @@ impl PreviewProcess {
             .map_err(|error| error.to_string())
     }
 
+    pub(crate) fn set_locale(&mut self, locale: &str) -> Result<(), String> {
+        writeln!(self.stdin, "language {locale}")
+            .and_then(|_| self.stdin.flush())
+            .map_err(|error| error.to_string())
+    }
+
     pub(crate) fn pid(&self) -> u32 {
         self.pid
     }
@@ -192,7 +221,7 @@ impl Drop for PreviewProcess {
     }
 }
 
-fn preview_content(size_label: Signal<String>) -> Element {
+fn preview_content(size_label: Signal<String>, text: PreviewTextSignals) -> Element {
     Element::col()
         .fill()
         .padding(20)
@@ -203,7 +232,7 @@ fn preview_content(size_label: Signal<String>) -> Element {
                 .width_match()
                 .spacing(10)
                 .child(
-                    Element::label(t!("visual_preview.title"))
+                    Element::label_signal(text.title)
                         .font_size(22.0)
                         .fg(Color::WHITE),
                 )
@@ -224,13 +253,13 @@ fn preview_content(size_label: Signal<String>) -> Element {
                 .corner(8.0)
                 .bg(Color::rgba(255, 255, 255, 24))
                 .child(
-                    Element::label(t!("search.placeholder"))
+                    Element::label_signal(text.search_placeholder)
                         .font_size(15.0)
                         .fg(Color::rgba(255, 255, 255, 220)),
                 ),
         )
         .child(
-            Element::label(t!("visual_preview.description"))
+            Element::label_signal(text.description)
                 .font_size(11.0)
                 .fg(Color::rgba(235, 241, 255, 170))
                 .max_lines(2)
@@ -240,18 +269,9 @@ fn preview_content(size_label: Signal<String>) -> Element {
             Element::col()
                 .width_match()
                 .spacing(6)
-                .child(preview_result(
-                    t!("visual_preview.result_preview").into_owned(),
-                    t!("visual_preview.result_preview_sub").into_owned(),
-                ))
-                .child(preview_result(
-                    t!("visual_preview.result_exact").into_owned(),
-                    t!("visual_preview.result_exact_sub").into_owned(),
-                ))
-                .child(preview_result(
-                    t!("visual_preview.result_acrylic").into_owned(),
-                    t!("visual_preview.result_acrylic_sub").into_owned(),
-                )),
+                .child(preview_result(text.preview_result, text.preview_result_sub))
+                .child(preview_result(text.exact_result, text.exact_result_sub))
+                .child(preview_result(text.acrylic_result, text.acrylic_result_sub)),
         )
         .child(
             Element::label_signal(size_label)
@@ -259,7 +279,7 @@ fn preview_content(size_label: Signal<String>) -> Element {
                 .fg(Color::rgba(235, 241, 255, 160)),
         )
         .child(
-            Element::label(t!("visual_preview.units_hint"))
+            Element::label_signal(text.units_hint)
                 .font_size(10.0)
                 .fg(Color::rgba(235, 241, 255, 135))
                 .max_lines(2)
@@ -267,7 +287,7 @@ fn preview_content(size_label: Signal<String>) -> Element {
         )
 }
 
-fn preview_result(title: String, subtitle: String) -> Element {
+fn preview_result(title: Signal<String>, subtitle: Signal<String>) -> Element {
     Element::col()
         .width_match()
         .padding_xy(12, 8)
@@ -275,19 +295,58 @@ fn preview_result(title: String, subtitle: String) -> Element {
         .corner(8.0)
         .bg(Color::rgba(255, 255, 255, 18))
         .child(
-            Element::label(title)
+            Element::label_signal(title)
                 .font_size(14.0)
                 .fg(Color::WHITE)
                 .max_lines(1)
                 .truncate(Truncate::End),
         )
         .child(
-            Element::label(subtitle)
+            Element::label_signal(subtitle)
                 .font_size(11.0)
                 .fg(Color::rgba(235, 241, 255, 165))
                 .max_lines(1)
                 .truncate(Truncate::End),
         )
+}
+
+fn preview_text_signals() -> PreviewTextSignals {
+    PreviewTextSignals {
+        title: signal(t!("visual_preview.title").into_owned()),
+        search_placeholder: signal(t!("search.placeholder").into_owned()),
+        description: signal(t!("visual_preview.description").into_owned()),
+        preview_result: signal(t!("visual_preview.result_preview").into_owned()),
+        preview_result_sub: signal(t!("visual_preview.result_preview_sub").into_owned()),
+        exact_result: signal(t!("visual_preview.result_exact").into_owned()),
+        exact_result_sub: signal(t!("visual_preview.result_exact_sub").into_owned()),
+        acrylic_result: signal(t!("visual_preview.result_acrylic").into_owned()),
+        acrylic_result_sub: signal(t!("visual_preview.result_acrylic_sub").into_owned()),
+        units_hint: signal(t!("visual_preview.units_hint").into_owned()),
+    }
+}
+
+impl PreviewTextSignals {
+    fn refresh(&self) {
+        self.title.set(t!("visual_preview.title").into_owned());
+        self.search_placeholder
+            .set(t!("search.placeholder").into_owned());
+        self.description
+            .set(t!("visual_preview.description").into_owned());
+        self.preview_result
+            .set(t!("visual_preview.result_preview").into_owned());
+        self.preview_result_sub
+            .set(t!("visual_preview.result_preview_sub").into_owned());
+        self.exact_result
+            .set(t!("visual_preview.result_exact").into_owned());
+        self.exact_result_sub
+            .set(t!("visual_preview.result_exact_sub").into_owned());
+        self.acrylic_result
+            .set(t!("visual_preview.result_acrylic").into_owned());
+        self.acrylic_result_sub
+            .set(t!("visual_preview.result_acrylic_sub").into_owned());
+        self.units_hint
+            .set(t!("visual_preview.units_hint").into_owned());
+    }
 }
 
 #[cfg(windows)]
@@ -330,7 +389,8 @@ fn current_window_geometry() -> Option<(i32, i32, u32)> {
     None
 }
 
-pub(crate) fn run(width: i32, height: i32, x: i32, y: i32) {
+pub(crate) fn run(width: i32, height: i32, x: i32, y: i32, locale: &str) {
+    rust_i18n::set_locale(locale);
     let width = width.clamp(1, i32::from(u16::MAX));
     let height = height.clamp(1, i32::from(u16::MAX));
     let width_signal = signal(width as u16);
@@ -346,6 +406,7 @@ pub(crate) fn run(width: i32, height: i32, x: i32, y: i32) {
     let width_for_commands = width_signal;
     let height_for_commands = height_signal;
     let size_label_for_commands = size_label;
+    let preview_text = preview_text_signals();
 
     let mut app = App::new("Flux Launcher Preview", width, height)
         .position(x, y)
@@ -356,7 +417,7 @@ pub(crate) fn run(width: i32, height: i32, x: i32, y: i32) {
         .renderer(Renderer::Auto)
         .backdrop(Backdrop::Acrylic)
         .bg(Color::rgba(32, 33, 35, 255))
-        .content(preview_content(size_label));
+        .content(preview_content(size_label, preview_text));
     let size_handle: WindowSizeHandle = app.window_size_handle();
     let position_handle: WindowPositionHandle = app.window_position_handle();
 
@@ -381,6 +442,21 @@ pub(crate) fn run(width: i32, height: i32, x: i32, y: i32) {
             );
             size_handle.set(width, height);
             position_handle.set(x, y);
+        }
+        PreviewCommand::Language(locale) => {
+            rust_i18n::set_locale(&locale);
+            preview_text.refresh();
+            let width = width_for_commands.get();
+            let height = height_for_commands.get();
+            size_label_for_commands.set(
+                t!(
+                    "visual_preview.client_area_label",
+                    width = width,
+                    height = height
+                )
+                .into_owned(),
+            );
+            ctx.mark_dirty_all();
         }
         PreviewCommand::Close => ctx.request_close(),
     });
@@ -475,5 +551,15 @@ mod tests {
             parse_command("close"),
             Some(super::PreviewCommand::Close)
         ));
+    }
+
+    #[test]
+    fn parses_language_command() {
+        assert!(matches!(
+            parse_command("language zh-CN"),
+            Some(super::PreviewCommand::Language(locale)) if locale == "zh-CN"
+        ));
+        assert!(parse_command("language").is_none());
+        assert!(parse_command("language zh-CN extra").is_none());
     }
 }

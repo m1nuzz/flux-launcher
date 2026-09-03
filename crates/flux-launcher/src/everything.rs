@@ -1,3 +1,5 @@
+#[cfg(windows)]
+use std::os::windows::process::CommandExt;
 use std::path::PathBuf;
 #[cfg(windows)]
 use std::process::Command;
@@ -20,6 +22,9 @@ use windui::prelude::Sender;
 const MAX_RESULTS: u32 = 16;
 const QUERY_TIMEOUT: Duration = Duration::from_millis(350);
 pub const WINGET_PACKAGE_ID: &str = "voidtools.Everything";
+
+#[cfg(windows)]
+const CREATE_NO_WINDOW: u32 = 0x0800_0000;
 
 fn startup_args() -> [&'static str; 1] {
     ["-startup"]
@@ -73,6 +78,7 @@ fn should_start_everything(ipc_available: bool, process_running: bool) -> bool {
 fn everything_process_running() -> bool {
     let Ok(output) = Command::new("tasklist")
         .args(["/FI", "IMAGENAME eq Everything.exe", "/FO", "CSV", "/NH"])
+        .creation_flags(CREATE_NO_WINDOW)
         .output()
     else {
         return false;
@@ -99,6 +105,10 @@ pub fn start_background_if_installed() -> Result<InstallationState, String> {
             .lock()
             .map_err(|_| String::from("Everything startup lock is poisoned"))?;
         let ipc_available = EverythingClient::new().is_ok();
+        if ipc_available {
+            everything_start_requested().store(false, Ordering::Release);
+            return Ok(state);
+        }
         let process_running = everything_process_running();
         if !should_start_everything(ipc_available, process_running) {
             everything_start_requested().store(false, Ordering::Release);
@@ -109,7 +119,11 @@ pub fn start_background_if_installed() -> Result<InstallationState, String> {
         }
 
         everything_start_requested().store(true, Ordering::Release);
-        if let Err(error) = Command::new(path).args(startup_args()).spawn() {
+        if let Err(error) = Command::new(path)
+            .args(startup_args())
+            .creation_flags(CREATE_NO_WINDOW)
+            .spawn()
+        {
             everything_start_requested().store(false, Ordering::Release);
             return Err(format!(
                 "Unable to start Everything in the background: {error}"
@@ -124,6 +138,7 @@ pub fn launch_winget_install() -> Result<(), String> {
     {
         Command::new("winget")
             .args(winget_install_args())
+            .creation_flags(CREATE_NO_WINDOW)
             .spawn()
             .map(|_| ())
             .map_err(|error| format!("Unable to start winget: {error}"))
@@ -136,36 +151,73 @@ pub fn launch_winget_install() -> Result<(), String> {
 
 #[cfg(windows)]
 fn installed_executable() -> Option<PathBuf> {
-    let mut candidates = Vec::new();
-    for variable in ["ProgramFiles", "ProgramFiles(x86)", "LOCALAPPDATA"] {
-        if let Some(root) = std::env::var_os(variable).map(PathBuf::from) {
-            candidates.push(root.join("Everything").join("Everything.exe"));
-            candidates.push(root.join("Everything 1.4").join("Everything.exe"));
-            candidates.push(root.join("Everything 1.5").join("Everything.exe"));
-            if let Ok(entries) = std::fs::read_dir(&root) {
-                candidates.extend(entries.flatten().filter_map(|entry| {
-                    let name = entry.file_name().to_string_lossy().to_ascii_lowercase();
-                    (name.starts_with("everything") && entry.path().is_dir())
-                        .then(|| entry.path().join("Everything.exe"))
-                }));
+    use windows::core::{w, PCWSTR};
+    use windows::Win32::Foundation::ERROR_SUCCESS;
+    use windows::Win32::System::Registry::{
+        RegCloseKey, RegOpenKeyExW, RegQueryValueExW, HKEY, HKEY_CURRENT_USER, HKEY_LOCAL_MACHINE,
+        KEY_READ, REG_EXPAND_SZ, REG_SZ,
+    };
+
+    unsafe fn read_string(root: HKEY, subkey: PCWSTR, value_name: PCWSTR) -> Option<String> {
+        let mut key = HKEY::default();
+        if RegOpenKeyExW(root, subkey, None, KEY_READ, &mut key) != ERROR_SUCCESS {
+            return None;
+        }
+
+        let mut value_type = REG_SZ;
+        let mut bytes = vec![0_u8; 32 * 1024];
+        let mut byte_len = bytes.len() as u32;
+        let result = RegQueryValueExW(
+            key,
+            value_name,
+            None,
+            Some(&mut value_type),
+            Some(bytes.as_mut_ptr()),
+            Some(&mut byte_len),
+        );
+        let _ = RegCloseKey(key);
+        if result != ERROR_SUCCESS
+            || (value_type != REG_SZ && value_type != REG_EXPAND_SZ)
+            || byte_len < 2
+        {
+            return None;
+        }
+
+        let words = std::slice::from_raw_parts(bytes.as_ptr().cast::<u16>(), byte_len as usize / 2);
+        Some(
+            String::from_utf16_lossy(words)
+                .trim_end_matches('\0')
+                .trim()
+                .to_owned(),
+        )
+    }
+
+    unsafe fn read_install_path(root: HKEY, subkey: PCWSTR) -> Option<PathBuf> {
+        if let Some(exe_path) = read_string(root, subkey, w!("ExePath")) {
+            let path = PathBuf::from(exe_path);
+            if path.is_file() {
+                return Some(path);
+            }
+        }
+        let install_location = read_string(root, subkey, w!("InstallLocation"))?;
+        let path = PathBuf::from(install_location).join("Everything.exe");
+        path.is_file().then_some(path)
+    }
+
+    let subkeys = [
+        w!("Software\\voidtools\\Everything"),
+        w!("Software\\WOW6432Node\\voidtools\\Everything"),
+    ];
+    let roots = [HKEY_LOCAL_MACHINE, HKEY_CURRENT_USER];
+    for root in roots {
+        for subkey in subkeys {
+            if let Some(path) = unsafe { read_install_path(root, subkey) } {
+                return Some(path);
             }
         }
     }
-    candidates
-        .into_iter()
-        .find(|path| path.is_file())
-        .or_else(|| {
-            let output = Command::new("where").arg("Everything.exe").output().ok()?;
-            if !output.status.success() {
-                return None;
-            }
-            output
-                .stdout
-                .split(|byte| *byte == b'\r' || *byte == b'\n')
-                .filter(|line| !line.is_empty())
-                .filter_map(|line| std::str::from_utf8(line).ok().map(PathBuf::from))
-                .find(|path| path.is_file())
-        })
+
+    None
 }
 
 #[cfg(not(windows))]
