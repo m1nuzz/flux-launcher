@@ -136,3 +136,19 @@ pub(crate) fn google_enabled_checkbox(i18n_hub: I18nHub, google_enabled: Signal<
         ),
     )
 }
+
+/// Build the Obsidian action keyword input.
+pub(crate) fn obsidian_alias_input(i18n_hub: I18nHub, obsidian_alias: Signal<String>) -> Element {
+    Element::field_signal(
+        i18n_hub.tr(|| t!("settings.plugins.action_keyword").into_owned()),
+        Element::text_input(obsidian_alias, "ob").width_match(),
+    )
+}
+
+/// Build the Google action keyword input.
+pub(crate) fn google_alias_input(i18n_hub: I18nHub, google_alias: Signal<String>) -> Element {
+    Element::field_signal(
+        i18n_hub.tr(|| t!("settings.plugins.action_keyword").into_owned()),
+        Element::text_input(google_alias, "g").width_match(),
+    )
+}

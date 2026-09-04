@@ -2952,9 +2952,9 @@ fn main() {
                             i18n_hub.clone(),
                             obsidian_enabled,
                         ))
-                        .child(Element::field_signal(
-                            i18n_hub.tr(|| t!("settings.plugins.action_keyword").into_owned()),
-                            Element::text_input(obsidian_alias, "ob").width_match(),
+                        .child(settings_view::obsidian_alias_input(
+                            i18n_hub.clone(),
+                            obsidian_alias,
                         ))
                         .child(
                             Element::label(
@@ -2969,9 +2969,9 @@ fn main() {
                             i18n_hub.clone(),
                             google_enabled,
                         ))
-                        .child(Element::field_signal(
-                            i18n_hub.tr(|| t!("settings.plugins.action_keyword").into_owned()),
-                            Element::text_input(google_alias, "g").width_match(),
+                        .child(settings_view::google_alias_input(
+                            i18n_hub.clone(),
+                            google_alias,
                         ))
                         .child(
                             Element::label(
