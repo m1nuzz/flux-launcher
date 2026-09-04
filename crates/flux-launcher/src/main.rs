@@ -20,6 +20,7 @@ mod plugin_limits;
 mod plugin_transport;
 mod plugins;
 mod query;
+mod settings_state;
 mod startup;
 mod updater;
 mod visual_preview;
@@ -27,7 +28,7 @@ mod visual_preview;
 use std::cell::{Cell, RefCell};
 use std::collections::HashMap;
 use std::rc::Rc;
-use std::sync::{atomic::Ordering, Arc, Mutex, OnceLock, RwLock};
+use std::sync::{atomic::Ordering, Arc, RwLock};
 use std::time::Duration;
 #[cfg(windows)]
 use windows::Win32::UI::Input::KeyboardAndMouse::{GetAsyncKeyState, VK_SHIFT};
@@ -45,7 +46,7 @@ use applications::{ApplicationResponse, ApplicationWorker};
 use everything::{EverythingResponse, EverythingWorker, InstallationState};
 use flux_core::{
     history_results, should_suppress_activation, HotkeyConfig, Language, MonitorPreference,
-    PriorityEntry, ResultKind, SearchModel, SearchResult, Settings, DEFAULT_LAUNCHER_HEIGHT,
+    ResultKind, SearchModel, SearchResult, Settings, DEFAULT_LAUNCHER_HEIGHT,
     DEFAULT_LAUNCHER_WIDTH, MAX_LAUNCHER_HEIGHT, MAX_LAUNCHER_WIDTH, MIN_LAUNCHER_HEIGHT,
     MIN_LAUNCHER_WIDTH,
 };
@@ -56,6 +57,10 @@ use plugins::{
 use query::{
     commit_provider_results, normalize_built_in_executable_targets, refresh_merged_results,
     should_publish_initial_query_results, ProviderResults,
+};
+use settings_state::{
+    move_priority_entry, record_query_history, remove_priority_entry, save_settings, set_game_mode,
+    set_result_priority,
 };
 use windui::app::{CursorVisibilityHandle, WindowOpHandle, WindowPositionHandle, WindowSizeHandle};
 use windui::core::{ClickFn, EventCtx, Widget};
@@ -85,8 +90,6 @@ const LAUNCHER_FONT_FAMILY: &str = "Segoe UI Variable";
 const SEARCH_INTERVAL: Duration = Duration::from_millis(40);
 const EVERYTHING_MIN_QUERY_LEN: usize = 1;
 const PLUGIN_MIN_QUERY_LEN: usize = 2;
-
-static SETTINGS_SAVE_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
 
 fn should_claim_single_instance(mode: Option<&std::ffi::OsStr>) -> bool {
     !matches!(
@@ -865,17 +868,6 @@ fn launcher_theme() -> Theme {
     theme
 }
 
-fn settings_save_lock() -> &'static Mutex<()> {
-    SETTINGS_SAVE_LOCK.get_or_init(|| Mutex::new(()))
-}
-
-fn save_settings(settings: &Settings) -> bool {
-    let Ok(_save_guard) = settings_save_lock().lock() else {
-        return false;
-    };
-    settings.save().is_ok()
-}
-
 fn request_update_check(
     sender: Sender<updater::UpdateCheckResponse>,
     in_flight: &Cell<bool>,
@@ -1025,122 +1017,6 @@ fn format_update_progress(version: &str, progress: &updater::DownloadProgress) -
             "Downloading stable {version}: {} received",
             format_bytes(progress.received_bytes)
         ),
-    }
-}
-
-fn save_settings_async(settings: &Arc<RwLock<Settings>>) {
-    let settings = Arc::clone(settings);
-    let _ = std::thread::Builder::new()
-        .name(String::from("flux-settings-save"))
-        .spawn(move || {
-            // Read the latest settings snapshot after waiting for any mutation.
-            if let Ok(settings_guard) = settings.read() {
-                let _ = save_settings(&settings_guard);
-            }
-        });
-}
-
-fn record_query_history(
-    settings: &Arc<RwLock<Settings>>,
-    history: &Rc<RefCell<Vec<String>>>,
-    query: &str,
-) {
-    let Ok(mut settings_guard) = settings.write() else {
-        return;
-    };
-    if !settings_guard.record_query(query) {
-        return;
-    }
-    *history.borrow_mut() = settings_guard.query_history.clone();
-    drop(settings_guard);
-    // Keep Enter→hide free of synchronous filesystem I/O.
-    save_settings_async(settings);
-}
-
-fn set_result_priority(
-    settings: &Arc<RwLock<Settings>>,
-    priorities: Signal<Vec<PriorityEntry>>,
-    result: &SearchResult,
-) -> bool {
-    let Some(target) = result.target.as_deref() else {
-        return false;
-    };
-    if !matches!(result.kind, ResultKind::Application) {
-        return false;
-    }
-    let Ok(mut settings_guard) = settings.write() else {
-        return false;
-    };
-    settings_guard.add_priority(PriorityEntry {
-        id: result.id.clone(),
-        title: result.title.clone(),
-        target: target.to_owned(),
-    });
-    let entries = settings_guard.priority_entries.clone();
-    let saved = save_settings(&settings_guard);
-    if saved {
-        priorities.set(entries);
-    }
-    saved
-}
-
-fn remove_priority_entry(
-    settings: &Arc<RwLock<Settings>>,
-    priorities: Signal<Vec<PriorityEntry>>,
-    id: &str,
-) -> bool {
-    let Ok(mut settings_guard) = settings.write() else {
-        return false;
-    };
-    if !settings_guard.remove_priority(id) {
-        return false;
-    }
-    let entries = settings_guard.priority_entries.clone();
-    let saved = save_settings(&settings_guard);
-    if saved {
-        priorities.set(entries);
-    }
-    saved
-}
-
-fn move_priority_entry(
-    settings: &Arc<RwLock<Settings>>,
-    priorities: Signal<Vec<PriorityEntry>>,
-    id: &str,
-    direction: i32,
-) -> bool {
-    let Ok(mut settings_guard) = settings.write() else {
-        return false;
-    };
-    let Some(index) = settings_guard
-        .priority_entries
-        .iter()
-        .position(|entry| entry.id == id)
-    else {
-        return false;
-    };
-    if !settings_guard.move_priority(index, direction) {
-        return false;
-    }
-    let entries = settings_guard.priority_entries.clone();
-    let saved = save_settings(&settings_guard);
-    if saved {
-        priorities.set(entries);
-    }
-    saved
-}
-
-fn set_game_mode(
-    settings: &Arc<RwLock<Settings>>,
-    game_mode: Signal<bool>,
-    status: Signal<String>,
-    enabled: bool,
-) {
-    if let Ok(mut settings) = settings.write() {
-        settings.game_mode = enabled;
-        game_mode.set(enabled);
-        status.set(game_mode_label(enabled));
-        let _ = save_settings(&settings);
     }
 }
 
