@@ -22,6 +22,7 @@ mod plugins;
 mod query;
 mod settings_state;
 mod startup;
+mod update_state;
 mod updater;
 mod visual_preview;
 
@@ -61,6 +62,10 @@ use query::{
 use settings_state::{
     move_priority_entry, record_query_history, remove_priority_entry, save_settings, set_game_mode,
     set_result_priority,
+};
+use update_state::{
+    format_update_progress, request_update_check, request_update_install, update_check_due,
+    UpdateInstallResponse,
 };
 use windui::app::{CursorVisibilityHandle, WindowOpHandle, WindowPositionHandle, WindowSizeHandle};
 use windui::core::{ClickFn, EventCtx, Widget};
@@ -866,158 +871,6 @@ fn launcher_theme() -> Theme {
     theme.input.selection = Some(Color::rgba(76, 139, 245, 150));
     theme.input.cursor = Some(Color::rgba(255, 255, 255, 255));
     theme
-}
-
-fn request_update_check(
-    sender: Sender<updater::UpdateCheckResponse>,
-    in_flight: &Cell<bool>,
-) -> bool {
-    if in_flight.replace(true) {
-        return false;
-    }
-    spawn_update_check(sender);
-    true
-}
-
-fn spawn_update_check(sender: Sender<updater::UpdateCheckResponse>) {
-    let _ = std::thread::Builder::new()
-        .name(String::from("flux-update-check"))
-        .spawn(move || {
-            let checked_at = updater::unix_now();
-            let result = updater::check_stable(CURRENT_VERSION);
-            let _ = sender.send(updater::UpdateCheckResponse { checked_at, result });
-        });
-}
-
-#[derive(Clone, Debug)]
-enum UpdateInstallResponse {
-    Progress {
-        version: String,
-        progress: updater::DownloadProgress,
-    },
-    Started {
-        version: String,
-    },
-    Failed {
-        version: String,
-        error: String,
-    },
-}
-
-fn request_update_install(
-    update: updater::StableUpdate,
-    sender: Sender<UpdateInstallResponse>,
-    in_flight: &Cell<bool>,
-    relaunch_mode: updater::RelaunchMode,
-) -> bool {
-    if in_flight.replace(true) {
-        return false;
-    }
-    spawn_update_install(update, sender, relaunch_mode);
-    true
-}
-
-fn spawn_update_install(
-    update: updater::StableUpdate,
-    sender: Sender<UpdateInstallResponse>,
-    relaunch_mode: updater::RelaunchMode,
-) {
-    let _ = std::thread::Builder::new()
-        .name(String::from("flux-update-install"))
-        .spawn(move || {
-            let version = update.version.to_string();
-            trace_update_event(&format!("update-install-start\\t{version}"));
-            let installer_path =
-                std::env::temp_dir().join(format!("FluxLauncher-update-{}.exe", update.version));
-            let version_for_progress = version.clone();
-            let progress_sender = sender.clone();
-            let download =
-                updater::download_installer_to_path(&update, &installer_path, move |progress| {
-                    trace_update_event(&format!(
-                        "update-progress\t{}\t{}\t{:?}",
-                        version_for_progress, progress.received_bytes, progress.total_bytes
-                    ));
-                    let _ = progress_sender.send(UpdateInstallResponse::Progress {
-                        version: version_for_progress.clone(),
-                        progress,
-                    });
-                });
-            match download {
-                Ok(_) => match updater::handoff_installer(&installer_path, relaunch_mode) {
-                    Ok(()) => {
-                        trace_update_event(&format!("update-installer-started\\t{version}"));
-                        let _ = sender.send(UpdateInstallResponse::Started { version });
-                    }
-                    Err(error) => {
-                        trace_update_event(&format!("update-failed\\t{version}\\t{error}"));
-                        let _ = std::fs::remove_file(&installer_path);
-                        let _ = sender.send(UpdateInstallResponse::Failed { version, error });
-                    }
-                },
-                Err(error) => {
-                    trace_update_event(&format!("update-failed\\t{version}\\t{error}"));
-                    let _ = sender.send(UpdateInstallResponse::Failed { version, error });
-                }
-            }
-        });
-}
-
-fn format_bytes(bytes: u64) -> String {
-    const KIB: u64 = 1024;
-    const MIB: u64 = KIB * 1024;
-    if bytes >= MIB {
-        format!("{:.1} MiB", bytes as f64 / MIB as f64)
-    } else if bytes >= KIB {
-        format!("{:.0} KiB", bytes as f64 / KIB as f64)
-    } else {
-        format!("{bytes} B")
-    }
-}
-
-fn trace_update_event(event: &str) {
-    let Some(path) = std::env::var_os("FLUX_UPDATE_TRACE_FILE") else {
-        return;
-    };
-    if let Ok(mut file) = std::fs::OpenOptions::new()
-        .create(true)
-        .append(true)
-        .open(path)
-    {
-        use std::io::Write as _;
-        let _ = writeln!(file, "{event}");
-    }
-}
-
-fn update_check_due(settings: &Settings) -> bool {
-    let forced = std::env::var("FLUX_FORCE_UPDATE_CHECK")
-        .map(|value| value == "1")
-        .unwrap_or(false);
-    forced
-        || updater::should_check(
-            updater::unix_now(),
-            settings.last_update_check_unix,
-            settings.update_interval_hours,
-        )
-}
-
-fn format_update_progress(version: &str, progress: &updater::DownloadProgress) -> String {
-    match progress.total_bytes.filter(|total| *total > 0) {
-        Some(total) => {
-            let received = progress.received_bytes.min(total);
-            let percent = received.saturating_mul(100) / total;
-            let remaining = total.saturating_sub(received);
-            format!(
-                "Downloading stable {version}: {percent}% — {} / {} ({} remaining)",
-                format_bytes(received),
-                format_bytes(total),
-                format_bytes(remaining)
-            )
-        }
-        None => format!(
-            "Downloading stable {version}: {} received",
-            format_bytes(progress.received_bytes)
-        ),
-    }
 }
 
 #[derive(Default)]
@@ -4803,13 +4656,13 @@ fn main() {
 #[cfg(test)]
 mod tests {
     use super::{
-        dimension_from_slider, dimension_slider_fraction, display_title, format_bytes,
-        format_update_progress, history_cursor_step, hover_position_changed, is_run_as_admin_key,
-        is_shutdown_mode, launcher_window_geometry, launcher_window_geometry_with_sizes,
-        normalize_everything_query, parse_dimension_input, relaunch_mode_for_auto_install,
-        should_claim_single_instance, should_publish_initial_query_results, should_show_launcher,
-        COMPACT_WINDOW_HEIGHT, LAUNCHER_FONT_FAMILY, MAX_LAUNCHER_HEIGHT, MAX_LAUNCHER_WIDTH,
-        MIN_LAUNCHER_HEIGHT, MIN_LAUNCHER_WIDTH,
+        dimension_from_slider, dimension_slider_fraction, display_title, format_update_progress,
+        history_cursor_step, hover_position_changed, is_run_as_admin_key, is_shutdown_mode,
+        launcher_window_geometry, launcher_window_geometry_with_sizes, normalize_everything_query,
+        parse_dimension_input, relaunch_mode_for_auto_install, should_claim_single_instance,
+        should_publish_initial_query_results, should_show_launcher, COMPACT_WINDOW_HEIGHT,
+        LAUNCHER_FONT_FAMILY, MAX_LAUNCHER_HEIGHT, MAX_LAUNCHER_WIDTH, MIN_LAUNCHER_HEIGHT,
+        MIN_LAUNCHER_WIDTH,
     };
     use crate::actions::{actions_for_result, quoted_result_path};
     use crate::applications::{canonical_application_id, resolve_bare_executable_path};
@@ -4823,6 +4676,7 @@ mod tests {
         merge_application_duplicates, normalize_built_in_executable_targets,
         preserve_everything_file_order, ProviderResults,
     };
+    use crate::update_state::format_bytes;
     use flux_core::{rank_results_with_priorities, ResultKind, ResultSource, SearchResult};
     use windui::event::{Key, KeyEvent};
 
