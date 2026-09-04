@@ -8,3 +8,4 @@ artifacts/
 coverage/
 doc/
 .serena/
+.vscode/
