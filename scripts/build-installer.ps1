@@ -4,7 +4,8 @@ param(
     [string]$AppVersion,
     [string]$BuildDir = "target/x86_64-pc-windows-msvc/release",
     [string]$OutputDirectory = "artifacts/FluxLauncher-Windows11-x64",
-    [string]$InnoCompiler = "C:\Program Files (x86)\Inno Setup 6\ISCC.exe"
+    [string]$InstallDirectory,
+    [string]$InnoCompiler
 )
 
 $ErrorActionPreference = "Stop"
@@ -13,9 +14,29 @@ $buildPath = (Resolve-Path (Join-Path $repoRoot $BuildDir)).Path
 $outputPath = Join-Path $repoRoot $OutputDirectory
 $portableName = "FluxLauncher-Portable.exe"
 $installerName = "FluxLauncher-Setup.exe"
+$requestedInnoCompiler = $InnoCompiler
 
-if (-not (Test-Path $InnoCompiler)) {
-    throw "Inno Setup compiler was not found at $InnoCompiler"
+if ($InnoCompiler) {
+    $innoCandidates = @($InnoCompiler)
+} elseif ($InstallDirectory) {
+    $innoCandidates = @((Join-Path $InstallDirectory "ISCC.exe"))
+} else {
+    $innoCandidates = @(
+        "C:\Program Files (x86)\Inno Setup 6\ISCC.exe",
+        "C:\Program Files\Inno Setup 6\ISCC.exe",
+        "C:\Users\$env:USERNAME\AppData\Local\Programs\Inno Setup 6\ISCC.exe"
+    )
+}
+
+$InnoCompiler = $innoCandidates | Where-Object { Test-Path -LiteralPath $_ -PathType Leaf } | Select-Object -First 1
+if (-not $InnoCompiler) {
+    if ($InstallDirectory) {
+        throw "Inno Setup compiler was not found at $InstallDirectory. Expected ISCC.exe in that directory."
+    }
+    if ($PSBoundParameters.ContainsKey("InnoCompiler")) {
+        throw "Inno Setup compiler was not found at $requestedInnoCompiler"
+    }
+    throw "Inno Setup compiler was not found in standard locations. Specify -InstallDirectory or -InnoCompiler."
 }
 $launcher = Join-Path $buildPath "flux-launcher.exe"
 if (-not (Test-Path $launcher)) {
