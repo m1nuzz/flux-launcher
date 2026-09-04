@@ -111,3 +111,28 @@ pub(crate) fn plugin_config_hint(i18n_hub: I18nHub) -> Element {
         .max_lines(2)
         .truncate(Truncate::End)
 }
+
+/// Build the Obsidian enable checkbox.
+pub(crate) fn obsidian_enabled_checkbox(
+    i18n_hub: I18nHub,
+    obsidian_enabled: Signal<bool>,
+) -> Element {
+    Element::field_signal(
+        i18n_hub.tr(|| t!("settings.plugins.obsidian").into_owned()),
+        Element::checkbox(
+            i18n_hub.tr(|| t!("settings.plugins.obsidian_desc").into_owned()),
+            obsidian_enabled,
+        ),
+    )
+}
+
+/// Build the Google enable checkbox.
+pub(crate) fn google_enabled_checkbox(i18n_hub: I18nHub, google_enabled: Signal<bool>) -> Element {
+    Element::field_signal(
+        i18n_hub.tr(|| t!("settings.plugins.google").into_owned()),
+        Element::checkbox(
+            i18n_hub.tr(|| t!("settings.plugins.google_desc").into_owned()),
+            google_enabled,
+        ),
+    )
+}

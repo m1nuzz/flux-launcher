@@ -2948,12 +2948,9 @@ fn main() {
                         .child(settings_view::plugin_description(i18n_hub.clone()))
                         .child(settings_view::plugin_folder())
                         .child(settings_view::plugin_config_hint(i18n_hub.clone()))
-                        .child(Element::field_signal(
-                            i18n_hub.tr(|| t!("settings.plugins.obsidian").into_owned()),
-                            Element::checkbox(
-                                i18n_hub.tr(|| t!("settings.plugins.obsidian_desc").into_owned()),
-                                obsidian_enabled,
-                            ),
+                        .child(settings_view::obsidian_enabled_checkbox(
+                            i18n_hub.clone(),
+                            obsidian_enabled,
                         ))
                         .child(Element::field_signal(
                             i18n_hub.tr(|| t!("settings.plugins.action_keyword").into_owned()),
@@ -2968,12 +2965,9 @@ fn main() {
                             .max_lines(3)
                             .truncate(Truncate::End),
                         )
-                        .child(Element::field_signal(
-                            i18n_hub.tr(|| t!("settings.plugins.google").into_owned()),
-                            Element::checkbox(
-                                i18n_hub.tr(|| t!("settings.plugins.google_desc").into_owned()),
-                                google_enabled,
-                            ),
+                        .child(settings_view::google_enabled_checkbox(
+                            i18n_hub.clone(),
+                            google_enabled,
                         ))
                         .child(Element::field_signal(
                             i18n_hub.tr(|| t!("settings.plugins.action_keyword").into_owned()),
