@@ -152,3 +152,21 @@ pub(crate) fn google_alias_input(i18n_hub: I18nHub, google_alias: Signal<String>
         Element::text_input(google_alias, "g").width_match(),
     )
 }
+
+/// Build the Obsidian action keyword hint.
+pub(crate) fn obsidian_hint(i18n_hub: I18nHub) -> Element {
+    Element::label(i18n_hub.tr(|| t!("settings.plugins.obsidian_hint").into_owned()))
+        .font_size(11.0)
+        .fg(Color::rgba(235, 241, 255, 175))
+        .max_lines(3)
+        .truncate(Truncate::End)
+}
+
+/// Build the Google action keyword hint.
+pub(crate) fn google_hint(i18n_hub: I18nHub) -> Element {
+    Element::label(i18n_hub.tr(|| t!("settings.plugins.google_hint").into_owned()))
+        .font_size(11.0)
+        .fg(Color::rgba(235, 241, 255, 175))
+        .max_lines(3)
+        .truncate(Truncate::End)
+}

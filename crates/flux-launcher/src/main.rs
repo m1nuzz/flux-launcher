@@ -2956,15 +2956,7 @@ fn main() {
                             i18n_hub.clone(),
                             obsidian_alias,
                         ))
-                        .child(
-                            Element::label(
-                                i18n_hub.tr(|| t!("settings.plugins.obsidian_hint").into_owned()),
-                            )
-                            .font_size(11.0)
-                            .fg(Color::rgba(235, 241, 255, 175))
-                            .max_lines(3)
-                            .truncate(Truncate::End),
-                        )
+                        .child(settings_view::obsidian_hint(i18n_hub.clone()))
                         .child(settings_view::google_enabled_checkbox(
                             i18n_hub.clone(),
                             google_enabled,
@@ -2973,15 +2965,7 @@ fn main() {
                             i18n_hub.clone(),
                             google_alias,
                         ))
-                        .child(
-                            Element::label(
-                                i18n_hub.tr(|| t!("settings.plugins.google_hint").into_owned()),
-                            )
-                            .font_size(11.0)
-                            .fg(Color::rgba(235, 241, 255, 175))
-                            .max_lines(3)
-                            .truncate(Truncate::End),
-                        ),
+                        .child(settings_view::google_hint(i18n_hub.clone())),
                 ),
         )
         .child(
