@@ -1,6 +1,7 @@
 use std::rc::Rc;
 
 use crate::i18n::I18nHub;
+use crate::plugins::native_plugin_install_path;
 use windui::prelude::*;
 
 /// Shared reactive state for the Settings surface.
@@ -72,4 +73,41 @@ pub(crate) fn settings_header(
                     }
                 }),
         )
+}
+
+/// Build the native plugin section title.
+pub(crate) fn plugin_title(i18n_hub: I18nHub) -> Element {
+    Element::label(i18n_hub.tr(|| t!("settings.plugins.title").into_owned()))
+        .font_size(17.0)
+        .fg(Color::WHITE)
+}
+
+/// Build the native plugin section description.
+pub(crate) fn plugin_description(i18n_hub: I18nHub) -> Element {
+    Element::label(i18n_hub.tr(|| t!("settings.plugins.description").into_owned()))
+        .font_size(11.0)
+        .fg(Color::rgba(235, 241, 255, 180))
+        .max_lines(3)
+        .truncate(Truncate::End)
+}
+
+/// Build the native plugin installation directory label.
+pub(crate) fn plugin_folder() -> Element {
+    Element::label(t!(
+        "settings.plugins.folder",
+        path = native_plugin_install_path()
+    ))
+    .font_size(10.0)
+    .fg(Color::rgba(235, 241, 255, 150))
+    .max_lines(2)
+    .truncate(Truncate::End)
+}
+
+/// Build the native plugin configuration hint.
+pub(crate) fn plugin_config_hint(i18n_hub: I18nHub) -> Element {
+    Element::label(i18n_hub.tr(|| t!("settings.plugins.config_hint").into_owned()))
+        .font_size(11.0)
+        .fg(Color::rgba(235, 241, 255, 180))
+        .max_lines(2)
+        .truncate(Truncate::End)
 }

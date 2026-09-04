@@ -58,8 +58,8 @@ use i18n::{
     language_preference_from_index, language_preference_index, I18nHub,
 };
 use plugins::{
-    native_plugin_install_path, FlowPluginWorker, NativePluginQueryResponse, NativePluginWorker,
-    PluginAction, PluginQueryResponse,
+    FlowPluginWorker, NativePluginQueryResponse, NativePluginWorker, PluginAction,
+    PluginQueryResponse,
 };
 use query::{
     commit_provider_results, normalize_built_in_executable_targets, refresh_merged_results,
@@ -2944,41 +2944,10 @@ fn main() {
                                     }
                                 }),
                         )
-                        .child(
-                            Element::label(
-                                i18n_hub.tr(|| t!("settings.plugins.title").into_owned()),
-                            )
-                            .font_size(17.0)
-                            .fg(Color::WHITE),
-                        )
-                        .child(
-                            Element::label(
-                                i18n_hub.tr(|| t!("settings.plugins.description").into_owned()),
-                            )
-                            .font_size(11.0)
-                            .fg(Color::rgba(235, 241, 255, 180))
-                            .max_lines(3)
-                            .truncate(Truncate::End),
-                        )
-                        .child(
-                            Element::label(t!(
-                                "settings.plugins.folder",
-                                path = native_plugin_install_path()
-                            ))
-                            .font_size(10.0)
-                            .fg(Color::rgba(235, 241, 255, 150))
-                            .max_lines(2)
-                            .truncate(Truncate::End),
-                        )
-                        .child(
-                            Element::label(
-                                i18n_hub.tr(|| t!("settings.plugins.config_hint").into_owned()),
-                            )
-                            .font_size(11.0)
-                            .fg(Color::rgba(235, 241, 255, 180))
-                            .max_lines(2)
-                            .truncate(Truncate::End),
-                        )
+                        .child(settings_view::plugin_title(i18n_hub.clone()))
+                        .child(settings_view::plugin_description(i18n_hub.clone()))
+                        .child(settings_view::plugin_folder())
+                        .child(settings_view::plugin_config_hint(i18n_hub.clone()))
                         .child(Element::field_signal(
                             i18n_hub.tr(|| t!("settings.plugins.obsidian").into_owned()),
                             Element::checkbox(
