@@ -2944,28 +2944,13 @@ fn main() {
                                     }
                                 }),
                         )
-                        .child(settings_view::plugin_title(i18n_hub.clone()))
-                        .child(settings_view::plugin_description(i18n_hub.clone()))
-                        .child(settings_view::plugin_folder())
-                        .child(settings_view::plugin_config_hint(i18n_hub.clone()))
-                        .child(settings_view::obsidian_enabled_checkbox(
+                        .child(settings_view::plugin_settings(
                             i18n_hub.clone(),
                             obsidian_enabled,
-                        ))
-                        .child(settings_view::obsidian_alias_input(
-                            i18n_hub.clone(),
                             obsidian_alias,
-                        ))
-                        .child(settings_view::obsidian_hint(i18n_hub.clone()))
-                        .child(settings_view::google_enabled_checkbox(
-                            i18n_hub.clone(),
                             google_enabled,
-                        ))
-                        .child(settings_view::google_alias_input(
-                            i18n_hub.clone(),
                             google_alias,
-                        ))
-                        .child(settings_view::google_hint(i18n_hub.clone())),
+                        )),
                 ),
         )
         .child(

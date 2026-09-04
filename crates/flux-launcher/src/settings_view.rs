@@ -75,98 +75,80 @@ pub(crate) fn settings_header(
         )
 }
 
-/// Build the native plugin section title.
-pub(crate) fn plugin_title(i18n_hub: I18nHub) -> Element {
-    Element::label(i18n_hub.tr(|| t!("settings.plugins.title").into_owned()))
-        .font_size(17.0)
-        .fg(Color::WHITE)
-}
-
-/// Build the native plugin section description.
-pub(crate) fn plugin_description(i18n_hub: I18nHub) -> Element {
-    Element::label(i18n_hub.tr(|| t!("settings.plugins.description").into_owned()))
-        .font_size(11.0)
-        .fg(Color::rgba(235, 241, 255, 180))
-        .max_lines(3)
-        .truncate(Truncate::End)
-}
-
-/// Build the native plugin installation directory label.
-pub(crate) fn plugin_folder() -> Element {
-    Element::label(t!(
-        "settings.plugins.folder",
-        path = native_plugin_install_path()
-    ))
-    .font_size(10.0)
-    .fg(Color::rgba(235, 241, 255, 150))
-    .max_lines(2)
-    .truncate(Truncate::End)
-}
-
-/// Build the native plugin configuration hint.
-pub(crate) fn plugin_config_hint(i18n_hub: I18nHub) -> Element {
-    Element::label(i18n_hub.tr(|| t!("settings.plugins.config_hint").into_owned()))
-        .font_size(11.0)
-        .fg(Color::rgba(235, 241, 255, 180))
-        .max_lines(2)
-        .truncate(Truncate::End)
-}
-
-/// Build the Obsidian enable checkbox.
-pub(crate) fn obsidian_enabled_checkbox(
+/// Build the native plugin configuration section.
+pub(crate) fn plugin_settings(
     i18n_hub: I18nHub,
     obsidian_enabled: Signal<bool>,
+    obsidian_alias: Signal<String>,
+    google_enabled: Signal<bool>,
+    google_alias: Signal<String>,
 ) -> Element {
-    Element::field_signal(
-        i18n_hub.tr(|| t!("settings.plugins.obsidian").into_owned()),
-        Element::checkbox(
-            i18n_hub.tr(|| t!("settings.plugins.obsidian_desc").into_owned()),
-            obsidian_enabled,
-        ),
-    )
-}
-
-/// Build the Google enable checkbox.
-pub(crate) fn google_enabled_checkbox(i18n_hub: I18nHub, google_enabled: Signal<bool>) -> Element {
-    Element::field_signal(
-        i18n_hub.tr(|| t!("settings.plugins.google").into_owned()),
-        Element::checkbox(
-            i18n_hub.tr(|| t!("settings.plugins.google_desc").into_owned()),
-            google_enabled,
-        ),
-    )
-}
-
-/// Build the Obsidian action keyword input.
-pub(crate) fn obsidian_alias_input(i18n_hub: I18nHub, obsidian_alias: Signal<String>) -> Element {
-    Element::field_signal(
-        i18n_hub.tr(|| t!("settings.plugins.action_keyword").into_owned()),
-        Element::text_input(obsidian_alias, "ob").width_match(),
-    )
-}
-
-/// Build the Google action keyword input.
-pub(crate) fn google_alias_input(i18n_hub: I18nHub, google_alias: Signal<String>) -> Element {
-    Element::field_signal(
-        i18n_hub.tr(|| t!("settings.plugins.action_keyword").into_owned()),
-        Element::text_input(google_alias, "g").width_match(),
-    )
-}
-
-/// Build the Obsidian action keyword hint.
-pub(crate) fn obsidian_hint(i18n_hub: I18nHub) -> Element {
-    Element::label(i18n_hub.tr(|| t!("settings.plugins.obsidian_hint").into_owned()))
-        .font_size(11.0)
-        .fg(Color::rgba(235, 241, 255, 175))
-        .max_lines(3)
-        .truncate(Truncate::End)
-}
-
-/// Build the Google action keyword hint.
-pub(crate) fn google_hint(i18n_hub: I18nHub) -> Element {
-    Element::label(i18n_hub.tr(|| t!("settings.plugins.google_hint").into_owned()))
-        .font_size(11.0)
-        .fg(Color::rgba(235, 241, 255, 175))
-        .max_lines(3)
-        .truncate(Truncate::End)
+    Element::col()
+        .width_match()
+        .spacing(12)
+        .child(
+            Element::label(i18n_hub.tr(|| t!("settings.plugins.title").into_owned()))
+                .font_size(17.0)
+                .fg(Color::WHITE),
+        )
+        .child(
+            Element::label(i18n_hub.tr(|| t!("settings.plugins.description").into_owned()))
+                .font_size(11.0)
+                .fg(Color::rgba(235, 241, 255, 180))
+                .max_lines(3)
+                .truncate(Truncate::End),
+        )
+        .child(
+            Element::label(t!(
+                "settings.plugins.folder",
+                path = native_plugin_install_path()
+            ))
+            .font_size(10.0)
+            .fg(Color::rgba(235, 241, 255, 150))
+            .max_lines(2)
+            .truncate(Truncate::End),
+        )
+        .child(
+            Element::label(i18n_hub.tr(|| t!("settings.plugins.config_hint").into_owned()))
+                .font_size(11.0)
+                .fg(Color::rgba(235, 241, 255, 180))
+                .max_lines(2)
+                .truncate(Truncate::End),
+        )
+        .child(Element::field_signal(
+            i18n_hub.tr(|| t!("settings.plugins.obsidian").into_owned()),
+            Element::checkbox(
+                i18n_hub.tr(|| t!("settings.plugins.obsidian_desc").into_owned()),
+                obsidian_enabled,
+            ),
+        ))
+        .child(Element::field_signal(
+            i18n_hub.tr(|| t!("settings.plugins.action_keyword").into_owned()),
+            Element::text_input(obsidian_alias, "ob").width_match(),
+        ))
+        .child(
+            Element::label(i18n_hub.tr(|| t!("settings.plugins.obsidian_hint").into_owned()))
+                .font_size(11.0)
+                .fg(Color::rgba(235, 241, 255, 175))
+                .max_lines(3)
+                .truncate(Truncate::End),
+        )
+        .child(Element::field_signal(
+            i18n_hub.tr(|| t!("settings.plugins.google").into_owned()),
+            Element::checkbox(
+                i18n_hub.tr(|| t!("settings.plugins.google_desc").into_owned()),
+                google_enabled,
+            ),
+        ))
+        .child(Element::field_signal(
+            i18n_hub.tr(|| t!("settings.plugins.action_keyword").into_owned()),
+            Element::text_input(google_alias, "g").width_match(),
+        ))
+        .child(
+            Element::label(i18n_hub.tr(|| t!("settings.plugins.google_hint").into_owned()))
+                .font_size(11.0)
+                .fg(Color::rgba(235, 241, 255, 175))
+                .max_lines(3)
+                .truncate(Truncate::End),
+        )
 }
