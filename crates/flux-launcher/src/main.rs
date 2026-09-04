@@ -11,6 +11,7 @@ mod builtin;
 mod everything;
 mod fullscreen;
 mod hotkeys;
+mod i18n;
 mod icons;
 mod keyboard_layout;
 mod launch;
@@ -46,10 +47,13 @@ use actions::{
 use applications::{ApplicationResponse, ApplicationWorker};
 use everything::{EverythingResponse, EverythingWorker, InstallationState};
 use flux_core::{
-    history_results, should_suppress_activation, HotkeyConfig, Language, MonitorPreference,
-    ResultKind, SearchModel, SearchResult, Settings, DEFAULT_LAUNCHER_HEIGHT,
-    DEFAULT_LAUNCHER_WIDTH, MAX_LAUNCHER_HEIGHT, MAX_LAUNCHER_WIDTH, MIN_LAUNCHER_HEIGHT,
-    MIN_LAUNCHER_WIDTH,
+    history_results, should_suppress_activation, HotkeyConfig, MonitorPreference, ResultKind,
+    SearchModel, SearchResult, Settings, DEFAULT_LAUNCHER_HEIGHT, DEFAULT_LAUNCHER_WIDTH,
+    MAX_LAUNCHER_HEIGHT, MAX_LAUNCHER_WIDTH, MIN_LAUNCHER_HEIGHT, MIN_LAUNCHER_WIDTH,
+};
+use i18n::{
+    apply_configured_locale, apply_system_locale, configured_locale,
+    language_preference_from_index, language_preference_index, I18nHub,
 };
 use plugins::{
     native_plugin_install_path, FlowPluginWorker, NativePluginQueryResponse, NativePluginWorker,
@@ -1068,105 +1072,6 @@ fn result_row(
                 ctx.hide_window();
             }
         })
-}
-
-/// Set the UI language based on the system locale at startup; only Simplified
-/// Chinese and English are supported, everything else falls back to `en`.
-fn apply_system_locale() {
-    let Some(raw) = sys_locale::get_locale() else {
-        return;
-    };
-    rust_i18n::set_locale(select_locale(&raw));
-}
-
-/// Map a system locale tag to a supported Flux UI language.
-/// Simplified Chinese tags (`zh`, `zh-CN`, `zh-Hans`, ...) map to `zh-CN`;
-/// everything else (including Traditional `zh-TW`/`zh-Hant`) falls back to `en`.
-fn select_locale(raw: &str) -> &'static str {
-    let locale = raw.split('.').next().unwrap_or(raw).to_ascii_lowercase();
-    if locale.starts_with("zh") && !locale.contains("tw") && !locale.contains("hant") {
-        "zh-CN"
-    } else {
-        "en"
-    }
-}
-
-/// Language preference dropdown index: follow system / English / Simplified Chinese.
-fn language_preference_index(language: Language) -> usize {
-    match language {
-        Language::System => 0,
-        Language::English => 1,
-        Language::SimplifiedChinese => 2,
-    }
-}
-
-/// Language preference dropdown index back to the enum.
-fn language_preference_from_index(index: usize) -> Language {
-    match index {
-        1 => Language::English,
-        2 => Language::SimplifiedChinese,
-        _ => Language::System,
-    }
-}
-
-/// Apply the configured UI language from settings.
-fn apply_configured_locale(language: Language) {
-    let locale = match language {
-        Language::English => "en",
-        Language::SimplifiedChinese => "zh-CN",
-        Language::System => sys_locale::get_locale()
-            .map(|raw| select_locale(&raw))
-            .unwrap_or("en"),
-    };
-    rust_i18n::set_locale(locale);
-}
-
-fn configured_locale(language: Language) -> String {
-    match language {
-        Language::English => String::from("en"),
-        Language::SimplifiedChinese => String::from("zh-CN"),
-        Language::System => sys_locale::get_locale()
-            .map(|raw| select_locale(&raw))
-            .unwrap_or("en")
-            .to_string(),
-    }
-}
-
-/// Reactive manager for localized string signals that update when locale changes.
-#[derive(Clone)]
-struct I18nHub {
-    signals: Rc<RefCell<Vec<(Box<dyn Fn() -> String>, Signal<String>)>>>,
-    vec_signals: Rc<RefCell<Vec<(Box<dyn Fn() -> Vec<String>>, Signal<Vec<String>>)>>>,
-}
-
-impl I18nHub {
-    fn new() -> Self {
-        Self {
-            signals: Rc::new(RefCell::new(Vec::new())),
-            vec_signals: Rc::new(RefCell::new(Vec::new())),
-        }
-    }
-
-    fn tr(&self, f: impl Fn() -> String + 'static) -> Signal<String> {
-        let sig = signal(f());
-        self.signals.borrow_mut().push((Box::new(f), sig));
-        sig
-    }
-
-    fn tr_vec(&self, f: impl Fn() -> Vec<String> + 'static) -> Signal<Vec<String>> {
-        let sig = signal(f());
-        self.vec_signals.borrow_mut().push((Box::new(f), sig));
-        sig
-    }
-
-    fn refresh(&self) {
-        for (f, sig) in self.signals.borrow().iter() {
-            sig.set(f());
-        }
-        for (f, sig) in self.vec_signals.borrow().iter() {
-            sig.set(f());
-        }
-    }
 }
 
 fn main() {
