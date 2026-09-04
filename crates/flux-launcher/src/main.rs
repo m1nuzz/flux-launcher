@@ -23,6 +23,7 @@ mod plugins;
 mod query;
 mod result_row;
 mod settings_state;
+mod settings_view;
 mod startup;
 mod update_state;
 mod updater;
@@ -69,6 +70,7 @@ use settings_state::{
     move_priority_entry, record_query_history, remove_priority_entry, save_settings, set_game_mode,
     set_result_priority,
 };
+use settings_view::SettingsUiState;
 use update_state::{
     format_update_progress, request_update_check, request_update_install, update_check_due,
     UpdateInstallResponse,
@@ -541,15 +543,19 @@ fn main() {
     let current_sequence = signal(0_u64);
     let game_mode = signal(settings.game_mode);
     let game_mode_status = signal(game_mode_label(settings.game_mode));
-    let settings_visible = signal(std::env::var_os("FLUX_OPEN_SETTINGS").is_some());
-    let language_preference = signal(language_preference_index(settings.language));
-    let settings_tab = signal(
-        std::env::var("FLUX_SMOKE_SETTINGS_TAB")
-            .ok()
-            .and_then(|value| value.parse::<usize>().ok())
-            .filter(|tab| *tab < 4)
-            .unwrap_or(0),
+    let settings_ui = SettingsUiState::new(
+        signal(std::env::var_os("FLUX_OPEN_SETTINGS").is_some()),
+        signal(
+            std::env::var("FLUX_SMOKE_SETTINGS_TAB")
+                .ok()
+                .and_then(|value| value.parse::<usize>().ok())
+                .filter(|tab| *tab < 4)
+                .unwrap_or(0),
+        ),
     );
+    let settings_visible = settings_ui.visible;
+    let settings_tab = settings_ui.tab;
+    let language_preference = signal(language_preference_index(settings.language));
     let tray_settings_smoke_pending = Rc::new(Cell::new(
         std::env::var_os("FLUX_SMOKE_TRAY_SETTINGS").is_some(),
     ));
@@ -3385,11 +3391,7 @@ fn main() {
         .fill()
         .child(launcher_surface)
         .visible_when(move || !settings_visible.get());
-    let settings_page = Element::col()
-        .fill()
-        .padding(18)
-        .child(settings_panel)
-        .visible_signal(settings_visible);
+    let settings_page = settings_view::settings_page(settings_panel, settings_ui);
     if std::env::var_os("FLUX_SMOKE_SETTINGS_UI").is_some() {
         eprintln!(
             "Settings UI contract: UpdateActionVersionLabel=Current version: {CURRENT_VERSION}; SmoothCaretTab=Visual; SmoothCaretGeneral=false"
