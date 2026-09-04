@@ -27,6 +27,7 @@ mod startup;
 mod update_state;
 mod updater;
 mod visual_preview;
+mod window_state;
 
 use std::cell::{Cell, RefCell};
 use std::collections::HashMap;
@@ -72,7 +73,14 @@ use update_state::{
     format_update_progress, request_update_check, request_update_install, update_check_due,
     UpdateInstallResponse,
 };
-use windui::app::{CursorVisibilityHandle, WindowOpHandle, WindowPositionHandle, WindowSizeHandle};
+use window_state::{
+    apply_launcher_size, dimension_from_slider, dimension_slider_fraction, launcher_is_foreground,
+    launcher_window_geometry_with_prompt, launcher_window_geometry_with_sizes,
+    monitor_preference_from_index, monitor_preference_index, parse_dimension_input,
+    request_monitor_position, request_scroll, should_show_everything_install_prompt,
+    should_show_launcher, visual_preview_position,
+};
+use windui::app::{CursorVisibilityHandle, WindowOpHandle, WindowSizeHandle};
 use windui::core::Widget;
 use windui::event::{Key, KeyEvent};
 use windui::prelude::*;
@@ -129,181 +137,6 @@ fn shift_key_is_down() -> bool {
 #[cfg(not(windows))]
 fn shift_key_is_down() -> bool {
     false
-}
-
-fn monitor_preference_index(preference: MonitorPreference) -> usize {
-    match preference {
-        MonitorPreference::Primary => 0,
-        MonitorPreference::Cursor => 1,
-        MonitorPreference::Foreground => 2,
-    }
-}
-
-fn monitor_preference_from_index(index: usize) -> MonitorPreference {
-    match index {
-        1 => MonitorPreference::Cursor,
-        2 => MonitorPreference::Foreground,
-        _ => MonitorPreference::Primary,
-    }
-}
-
-fn request_monitor_position(
-    position: &WindowPositionHandle,
-    preference: MonitorPreference,
-    width: i32,
-    height: i32,
-) {
-    if let Some((x, y)) = monitor::centered_position(preference, width, height) {
-        position.set(x, y);
-    }
-}
-
-fn request_scroll(scroll_pending: Signal<bool>) {
-    scroll_pending.set(true);
-}
-
-#[cfg(test)]
-fn launcher_window_geometry(settings_visible: bool, show_results: bool) -> (i32, i32) {
-    launcher_window_geometry_with_sizes(
-        settings_visible,
-        show_results,
-        DEFAULT_LAUNCHER_WIDTH as i32,
-        DEFAULT_LAUNCHER_HEIGHT as i32,
-    )
-}
-
-fn launcher_window_geometry_with_sizes(
-    settings_visible: bool,
-    show_results: bool,
-    launcher_width: i32,
-    launcher_height: i32,
-) -> (i32, i32) {
-    if settings_visible {
-        (SETTINGS_WINDOW_WIDTH, SETTINGS_WINDOW_HEIGHT)
-    } else if show_results {
-        (launcher_width, launcher_height)
-    } else {
-        (launcher_width, COMPACT_WINDOW_HEIGHT)
-    }
-}
-
-fn launcher_window_geometry_with_prompt(
-    settings_visible: bool,
-    prompt_visible: bool,
-    show_results: bool,
-    launcher_width: i32,
-    launcher_height: i32,
-) -> (i32, i32) {
-    if settings_visible {
-        (SETTINGS_WINDOW_WIDTH, SETTINGS_WINDOW_HEIGHT)
-    } else if prompt_visible {
-        (
-            EVERYTHING_PROMPT_WINDOW_WIDTH,
-            EVERYTHING_PROMPT_WINDOW_HEIGHT,
-        )
-    } else {
-        launcher_window_geometry_with_sizes(false, show_results, launcher_width, launcher_height)
-    }
-}
-
-fn should_show_everything_install_prompt(
-    everything_installed: bool,
-    auto_enable_everything: bool,
-    prompt_seen: bool,
-    prompt_disabled: bool,
-) -> bool {
-    auto_enable_everything && !everything_installed && !prompt_seen && !prompt_disabled
-}
-
-fn visual_preview_position(
-    preference: MonitorPreference,
-    preview_width: i32,
-    preview_height: i32,
-) -> (i32, i32) {
-    #[cfg(windows)]
-    {
-        let Some(bounds) = monitor::work_area(preference) else {
-            return (0, 0);
-        };
-        let (settings_x, settings_y) =
-            monitor::centered_position(preference, SETTINGS_WINDOW_WIDTH, SETTINGS_WINDOW_HEIGHT)
-                .unwrap_or((bounds.left, bounds.top));
-        let gap = 24;
-        let right_x = settings_x + SETTINGS_WINDOW_WIDTH + gap;
-        let left_x = settings_x - preview_width - gap;
-        // Prefer a fully visible side-by-side preview. On a small CI desktop there
-        // may be no non-overlapping rectangle for 720x520 Settings plus the selected
-        // preview size; keep the preview outside Settings and let Windows clip its
-        // off-screen portion rather than covering the controls being dragged.
-        let x = if right_x + preview_width <= bounds.right {
-            right_x
-        } else if left_x >= bounds.left {
-            left_x
-        } else {
-            right_x
-        };
-        let y = settings_y + (SETTINGS_WINDOW_HEIGHT - preview_height).max(0) / 2;
-        (
-            x,
-            y.clamp(bounds.top, (bounds.bottom - preview_height).max(bounds.top)),
-        )
-    }
-    #[cfg(not(windows))]
-    {
-        let _ = (preference, preview_width, preview_height);
-        (0, 0)
-    }
-}
-
-fn dimension_slider_fraction(value: u16, min: u16, max: u16) -> f32 {
-    if max <= min {
-        return 0.0;
-    }
-    (value.clamp(min, max) - min) as f32 / (max - min) as f32
-}
-
-fn dimension_from_slider(value: f32, min: u16, max: u16) -> u16 {
-    if max <= min {
-        return min;
-    }
-    let span = (max - min) as f32;
-    (min as f32 + value.clamp(0.0, 1.0) * span).round() as u16
-}
-
-fn parse_dimension_input(value: &str, min: u16, max: u16) -> Option<u16> {
-    value
-        .trim()
-        .parse::<u16>()
-        .ok()
-        .map(|value| value.clamp(min, max))
-}
-
-fn apply_launcher_size(
-    size: &WindowSizeHandle,
-    position: &WindowPositionHandle,
-    settings: &Arc<RwLock<Settings>>,
-    width: u16,
-    height: u16,
-    settings_visible: bool,
-    show_results: bool,
-) {
-    let width = i32::from(width.clamp(MIN_LAUNCHER_WIDTH, MAX_LAUNCHER_WIDTH));
-    let height = i32::from(height.clamp(MIN_LAUNCHER_HEIGHT, MAX_LAUNCHER_HEIGHT));
-    let (target_width, target_height) =
-        launcher_window_geometry_with_sizes(settings_visible, show_results, width, height);
-    // Keep the Settings canvas fixed while visual values are edited. The real preview
-    // process is resized separately; outside Settings, apply the dimensions to the launcher.
-    size.set(target_width, target_height);
-    if !settings_visible {
-        if let Ok(settings) = settings.read() {
-            request_monitor_position(
-                position,
-                settings.monitor_preference,
-                target_width,
-                target_height,
-            );
-        }
-    }
 }
 
 fn game_mode_label(enabled: bool) -> String {
@@ -528,31 +361,6 @@ fn alt_key_is_down() -> bool {
 #[cfg(not(windows))]
 fn alt_key_is_down() -> bool {
     false
-}
-
-#[cfg(windows)]
-fn launcher_is_foreground() -> bool {
-    use windows::Win32::System::Threading::GetCurrentProcessId;
-    use windows::Win32::UI::WindowsAndMessaging::{GetForegroundWindow, GetWindowThreadProcessId};
-
-    unsafe {
-        let foreground = GetForegroundWindow();
-        if foreground.is_invalid() {
-            return false;
-        }
-        let mut process_id = 0_u32;
-        GetWindowThreadProcessId(foreground, Some(&mut process_id));
-        process_id == GetCurrentProcessId()
-    }
-}
-
-#[cfg(not(windows))]
-fn launcher_is_foreground() -> bool {
-    false
-}
-
-fn should_show_launcher(is_foreground: bool) -> bool {
-    !is_foreground
 }
 
 fn relaunch_mode_for_auto_install() -> updater::RelaunchMode {
@@ -4099,7 +3907,7 @@ fn main() {
 mod tests {
     use super::{
         dimension_from_slider, dimension_slider_fraction, display_title, format_update_progress,
-        history_cursor_step, is_run_as_admin_key, is_shutdown_mode, launcher_window_geometry,
+        history_cursor_step, is_run_as_admin_key, is_shutdown_mode,
         launcher_window_geometry_with_sizes, normalize_everything_query, parse_dimension_input,
         relaunch_mode_for_auto_install, should_claim_single_instance,
         should_publish_initial_query_results, should_show_launcher, COMPACT_WINDOW_HEIGHT,
@@ -4120,6 +3928,7 @@ mod tests {
     };
     use crate::result_row::hover_position_changed;
     use crate::update_state::format_bytes;
+    use crate::window_state::launcher_window_geometry;
     use flux_core::{rank_results_with_priorities, ResultKind, ResultSource, SearchResult};
     use windui::event::{Key, KeyEvent};
 
