@@ -50,6 +50,18 @@ Flow plugin support is limited to native or executable JSON-RPC plugins. Do not 
 
 Keep dependencies pinned where practical. Prefer small, platform-specific changes over broad rewrites. Preserve the separation between `flux-core`, Flux application code, and the vendored `windui` backend. Everything integration must retain graceful fallback behavior. Keep Windows-specific code behind appropriate platform modules and maintain non-Windows cross-target compilation where practical.
 
+## Agent skills
+
+Vendored third-party skills live in `.agents/skills/` (see `.agents/skills/SOURCES.md` for upstream URLs, versions, and licenses). If a task matches a skill, load it with the `skill` tool before implementing.
+
+| Intent | Skill |
+|---|---|
+| Write or review Rust in `crates/` or `vendor/windui` glue | `rust-skills` |
+| Write, edit, or debug `scripts/*.ps1` | `powershell-expert` |
+| Commit changes | `conventional-commit` |
+| Pin GitHub Actions or set up Dependabot | `pin-github-actions` |
+| Diagnose CI failures from PR logs | `verify-pr-logs` |
+
 ## Required local validation
 
 Before committing, run the applicable quality gates. The standard local gate is:

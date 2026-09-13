@@ -1,0 +1,157 @@
+[
+  {
+    "id": "simple-feature-commit",
+    "prompt": "I've staged my changes. Can you help me commit them? I added a new search bar component.",
+    "expected_output": "Reviews staged changes, crafts a conventional commit with feat type, and asks for approval",
+    "assertions": [
+      "runs git status or git diff --cached to review staged changes",
+      "proposes a commit message starting with feat or feat(scope):",
+      "uses imperative mood in the subject line",
+      "presents the commit message for user approval before executing"
+    ],
+    "files": [
+      "skills/conventional-commit/SKILL.md"
+    ]
+  },
+  {
+    "id": "bug-fix-commit",
+    "prompt": "I fixed a null pointer exception in the user service. My changes are staged, please commit.",
+    "expected_output": "Reviews staged changes, crafts a conventional commit with fix type, and asks for approval",
+    "assertions": [
+      "runs git diff --cached to review the actual changes",
+      "proposes a commit message starting with fix:",
+      "subject describes the fix specifically, not just 'fix bug'",
+      "presents the commit message for approval before executing"
+    ],
+    "files": [
+      "skills/conventional-commit/SKILL.md"
+    ]
+  },
+  {
+    "id": "nothing-staged",
+    "prompt": "Please commit my changes with a conventional commit message.",
+    "expected_output": "Checks staged files and informs the user if nothing is staged",
+    "assertions": [
+      "runs git status to check for staged files",
+      "if nothing is staged, informs the user and does not create an empty commit",
+      "does not fabricate a commit message without reviewing changes"
+    ],
+    "files": [
+      "skills/conventional-commit/SKILL.md"
+    ]
+  },
+  {
+    "id": "multiple-unrelated-changes",
+    "prompt": "I staged changes to the auth module and also updated the README. Please commit everything.",
+    "expected_output": "Detects multiple unrelated changes and suggests splitting into separate commits",
+    "assertions": [
+      "reviews the staged diff to understand the changes",
+      "identifies that auth changes and README changes are unrelated",
+      "suggests splitting into separate commits",
+      "lets the user decide whether to proceed with one commit or split"
+    ],
+    "files": [
+      "skills/conventional-commit/SKILL.md"
+    ]
+  },
+  {
+    "id": "breaking-change-commit",
+    "prompt": "I changed the API response format from XML to JSON. This breaks existing clients. Please commit.",
+    "expected_output": "Crafts a conventional commit with BREAKING CHANGE footer",
+    "assertions": [
+      "reviews the staged changes",
+      "includes a BREAKING CHANGE footer or uses the ! notation in the type",
+      "body explains what changed and the impact on clients",
+      "presents the message for approval"
+    ],
+    "files": [
+      "skills/conventional-commit/SKILL.md"
+    ]
+  },
+  {
+    "id": "respects-project-conventions",
+    "prompt": "Commit my staged changes following the project's commit conventions.",
+    "expected_output": "Checks recent git history for scope and style conventions before crafting the message",
+    "assertions": [
+      "runs git log to check recent commit message patterns",
+      "follows scope conventions found in the project history",
+      "uses conventional commit format",
+      "presents the message for approval"
+    ],
+    "files": [
+      "skills/conventional-commit/SKILL.md"
+    ]
+  },
+  {
+    "id": "secrets-detection",
+    "prompt": "I staged my .env file along with my code changes. Please commit.",
+    "expected_output": "Warns the user about committing secrets and suggests unstaging the .env file",
+    "assertions": [
+      "detects that .env is staged",
+      "warns the user about committing secrets or sensitive files",
+      "suggests unstaging the .env file before committing",
+      "does not blindly commit the .env file"
+    ],
+    "files": [
+      "skills/conventional-commit/SKILL.md"
+    ]
+  },
+  {
+    "id": "commit-ordering-on-split",
+    "prompt": "I staged a code formatting fix, a new feature, and a package.json dependency update. Please commit.",
+    "expected_output": "Suggests splitting into separate commits and recommends an order: tidying first, then dependency update, then feature",
+    "assertions": [
+      "reviews staged changes and identifies multiple unrelated changes",
+      "classifies changes into categories (tidying, infrastructure, feature)",
+      "suggests committing tidying or infrastructure changes before the feature",
+      "keeps dependency manifest with its lock file in the same commit",
+      "lets the user decide whether to split or proceed as one commit"
+    ],
+    "files": [
+      "skills/conventional-commit/SKILL.md"
+    ]
+  },
+  {
+    "id": "comment-only-changes",
+    "prompt": "I only added some code comments to explain a complex algorithm. My changes are staged, please commit.",
+    "expected_output": "Uses style or chore type for comment-only changes, keeps the message concise",
+    "assertions": [
+      "reviews the staged diff",
+      "uses style or chore as the commit type, not feat or fix",
+      "does not describe each individual comment in the commit message",
+      "presents the commit message for approval"
+    ],
+    "files": [
+      "skills/conventional-commit/SKILL.md"
+    ]
+  },
+  {
+    "id": "fixup-commit-on-branch",
+    "prompt": "This is a fixup for the OAuth commit. My staged change fixes a typo in the OAuth login flow I added earlier on this branch.",
+    "expected_output": "Creates a fixup! commit targeting the original OAuth commit on the current branch",
+    "assertions": [
+      "determines the branch boundary using git merge-base HEAD origin/main",
+      "searches the branch log for the commit that introduced the OAuth login flow",
+      "creates the commit using git commit --fixup <target-sha>",
+      "asks the user whether to autosquash now or leave the fixup for later"
+    ],
+    "files": [
+      "skills/conventional-commit/SKILL.md"
+    ]
+  },
+  {
+    "id": "fixup-target-not-on-branch",
+    "prompt": "This is a fixup for the database migration. The migration was merged to main last week, and I just found a bug in it.",
+    "expected_output": "Detects the target commit is on main (not the current branch) and creates a normal fix commit instead",
+    "assertions": [
+      "determines the branch boundary using git merge-base HEAD origin/main",
+      "searches the branch log and finds no matching commit on the current branch",
+      "does not create a fixup! commit for a commit outside the branch range",
+      "informs the user the target commit is on main and cannot be fixed up",
+      "creates a normal commit with an appropriate type such as fix"
+    ],
+    "files": [
+      "skills/conventional-commit/SKILL.md"
+    ]
+  }
+]
