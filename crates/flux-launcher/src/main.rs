@@ -23,6 +23,7 @@ mod plugins;
 mod provider_merge;
 mod provider_snapshot;
 mod result_actions;
+mod result_widgets;
 mod startup;
 mod ui_constants;
 mod updater;
@@ -54,10 +55,10 @@ use plugins::{
     PluginAction, PluginQueryResponse,
 };
 use windui::app::{CursorVisibilityHandle, WindowOpHandle, WindowSizeHandle};
-use windui::core::{ClickFn, EventCtx, Widget};
-use windui::event::{Event, Key, KeyEvent, MouseButton, PointerKind};
+use windui::core::Widget;
+use windui::event::{Key, KeyEvent};
 use windui::prelude::*;
-use windui::render::{Canvas, Paint};
+use windui::render::Canvas;
 
 pub(crate) use ui_constants::*;
 
@@ -87,405 +88,7 @@ pub(crate) use input_keys::*;
 pub(crate) use provider_merge::*;
 pub(crate) use provider_snapshot::*;
 pub(crate) use result_actions::*;
-
-/// Invisible reactive widget that keeps the keyboard-selected row inside the
-/// surrounding windui scroll viewport without painting an additional surface.
-struct ResultRowAnchor {
-    result_id: String,
-    title: String,
-    title_doc_signal: Signal<RichDoc>,
-    trailing_signal: Signal<String>,
-    selected_id: Signal<String>,
-    selected_index: Signal<usize>,
-    selection_touched: Signal<bool>,
-    rows_refresh: Signal<Vec<SearchResult>>,
-    query: Signal<String>,
-    scroll_pending: Signal<bool>,
-    selection_color: Signal<Color>,
-    action_items: Signal<Vec<ActionItem>>,
-    action_index: Signal<usize>,
-    action_scroll_pending: Signal<bool>,
-    action_mode: Signal<bool>,
-    launcher_width: Signal<u16>,
-    action_window_slot: Rc<RefCell<Option<WindowSizeHandle>>>,
-    actions: Vec<ActionItem>,
-    on_click: Option<ClickFn>,
-    pressed: bool,
-    last_pointer: Option<(i32, i32)>,
-    last_selected: Option<bool>,
-    last_query: String,
-}
-
-fn hover_position_changed(last: &mut Option<(i32, i32)>, position: (i32, i32)) -> bool {
-    if *last == Some(position) {
-        return false;
-    }
-    *last = Some(position);
-    true
-}
-
-impl ResultRowAnchor {
-    fn select_self(&self) {
-        if self.selected_id.get() == self.result_id {
-            return;
-        }
-        self.selection_touched.set(true);
-        self.selected_id.set(self.result_id.clone());
-        if let Some(index) = self
-            .rows_refresh
-            .get()
-            .iter()
-            .position(|result| result.id == self.result_id)
-        {
-            self.selected_index.set(index);
-        }
-        // The row itself is reactive, so selection painting updates without
-        // rebuilding the whole list. Rebuilding here would discard the current
-        // row geometry before scroll_into_view can reveal the selected result.
-    }
-}
-
-impl Widget for ResultRowAnchor {
-    fn on_update(&mut self, ctx: &mut EventCtx) {
-        let selected = self.selected_id.get() == self.result_id;
-        let query = self.query.get();
-        let selection_changed = self.last_selected != Some(selected);
-        let query_changed = self.last_query != query;
-        let scroll_requested = self.scroll_pending.get();
-        if selection_changed || query_changed {
-            self.title_doc_signal
-                .set(title_match_doc(&self.title, &query));
-            self.trailing_signal.set(if selected {
-                String::from("↵")
-            } else {
-                String::new()
-            });
-        }
-        self.last_selected = Some(selected);
-        self.last_query = query;
-        // Scroll only after an explicit query/keyboard request. Wheel scrolling,
-        // hover selection, and list repaints must never call scroll_into_view;
-        // doing so feeds a layout mutation back into the ScrollWidget and pins
-        // the viewport to the selected row (usually the top).
-        if selected && scroll_requested {
-            let row_id = ctx.id();
-            let _ = ctx.tree_mut().scroll_into_view(row_id);
-            self.scroll_pending.set(false);
-        }
-    }
-
-    fn on_event(&mut self, ctx: &mut EventCtx, event: &Event) -> bool {
-        let Event::Pointer(pointer) = event else {
-            return false;
-        };
-        match pointer.kind {
-            PointerKind::Enter => {
-                // Do not select merely because the window appeared under a
-                // stationary cursor; select on the first real Move instead.
-                self.last_pointer = Some((pointer.pos.x, pointer.pos.y));
-                ctx.mark_dirty();
-                true
-            }
-            PointerKind::Move => {
-                let position = (pointer.pos.x, pointer.pos.y);
-                if hover_position_changed(&mut self.last_pointer, position) {
-                    self.select_self();
-                    ctx.mark_dirty();
-                }
-                true
-            }
-            PointerKind::Leave => {
-                self.last_pointer = None;
-                ctx.mark_dirty();
-                true
-            }
-            PointerKind::Down if pointer.button == MouseButton::Left => {
-                self.select_self();
-                self.pressed = true;
-                ctx.capture();
-                ctx.mark_dirty();
-                true
-            }
-            PointerKind::Up if pointer.button == MouseButton::Left => {
-                let was_pressed = self.pressed;
-                self.pressed = false;
-                let inside = ctx.bounds().contains(pointer.pos);
-                ctx.release_capture();
-                ctx.mark_dirty();
-                if was_pressed && inside {
-                    if let Some(callback) = self.on_click.as_mut() {
-                        callback(ctx);
-                    }
-                }
-                true
-            }
-            PointerKind::Down if pointer.button == MouseButton::Right => {
-                self.select_self();
-                if !self.actions.is_empty() {
-                    self.action_items.set(self.actions.clone());
-                    self.action_index.set(0);
-                    self.action_scroll_pending.set(true);
-                    self.action_mode.set(true);
-                    if let Some(handle) = self.action_window_slot.borrow().as_ref() {
-                        handle.set(i32::from(self.launcher_width.get()), ACTION_WINDOW_HEIGHT);
-                    }
-                }
-                ctx.mark_dirty();
-                true
-            }
-            _ => false,
-        }
-    }
-
-    fn take_click(&mut self, callback: ClickFn) {
-        self.on_click = Some(callback);
-    }
-
-    fn reset_interaction(&mut self) {
-        self.pressed = false;
-        self.last_pointer = None;
-    }
-
-    fn cursor(&self) -> windui::event::CursorShape {
-        windui::event::CursorShape::Hand
-    }
-
-    fn wants_right_click(&self) -> bool {
-        true
-    }
-
-    fn paint(
-        &self,
-        bounds: windui::geometry::Rect,
-        _content: windui::geometry::Rect,
-        _focused: bool,
-        _enabled: bool,
-        canvas: &mut dyn Canvas,
-        _style: &windui::style::Style,
-    ) {
-        let selected = self.selected_id.get() == self.result_id;
-        let color = if selected {
-            self.selection_color.get()
-        } else {
-            Color::rgba(255, 255, 255, 18)
-        };
-        canvas.fill_round_rect(
-            bounds.x as f32,
-            bounds.y as f32,
-            bounds.w as f32,
-            bounds.h as f32,
-            10.0,
-            &Paint::fill(color),
-        );
-    }
-}
-
-/// A reactive action-menu row that paints its own selection state and asks the
-/// nearest scroll container to reveal the selected row after keyboard or pointer
-/// navigation. It mirrors the result-list interaction contract so the submenu
-/// scrolls exactly like the search results when the actions overflow the viewport.
-struct ActionRowAnchor {
-    item_index: usize,
-    action_index: Signal<usize>,
-    scroll_pending: Signal<bool>,
-    last_pointer: Option<(i32, i32)>,
-    pressed: bool,
-    on_click: Option<ClickFn>,
-}
-impl Widget for ActionRowAnchor {
-    fn on_update(&mut self, ctx: &mut EventCtx) {
-        if self.action_index.get() == self.item_index && self.scroll_pending.get() {
-            let row_id = ctx.id();
-            let _ = ctx.tree_mut().scroll_into_view(row_id);
-            self.scroll_pending.set(false);
-        }
-    }
-    fn on_event(&mut self, ctx: &mut EventCtx, event: &Event) -> bool {
-        let Event::Pointer(pointer) = event else {
-            return false;
-        };
-        match pointer.kind {
-            PointerKind::Enter => {
-                self.last_pointer = Some((pointer.pos.x, pointer.pos.y));
-                ctx.mark_dirty();
-                true
-            }
-            PointerKind::Move => {
-                let position = (pointer.pos.x, pointer.pos.y);
-                if hover_position_changed(&mut self.last_pointer, position) {
-                    self.action_index.set(self.item_index);
-                    self.scroll_pending.set(true);
-                    ctx.mark_dirty();
-                }
-                true
-            }
-            PointerKind::Leave => {
-                self.last_pointer = None;
-                ctx.mark_dirty();
-                true
-            }
-            PointerKind::Down if pointer.button == MouseButton::Left => {
-                self.action_index.set(self.item_index);
-                self.scroll_pending.set(true);
-                self.pressed = true;
-                ctx.capture();
-                ctx.mark_dirty();
-                true
-            }
-            PointerKind::Up if pointer.button == MouseButton::Left => {
-                let was_pressed = self.pressed;
-                self.pressed = false;
-                let inside = ctx.bounds().contains(pointer.pos);
-                ctx.release_capture();
-                ctx.mark_dirty();
-                if was_pressed && inside {
-                    if let Some(callback) = self.on_click.as_mut() {
-                        callback(ctx);
-                    }
-                }
-                true
-            }
-            _ => false,
-        }
-    }
-    fn take_click(&mut self, callback: ClickFn) {
-        self.on_click = Some(callback);
-    }
-    fn reset_interaction(&mut self) {
-        self.pressed = false;
-        self.last_pointer = None;
-    }
-    fn cursor(&self) -> windui::event::CursorShape {
-        windui::event::CursorShape::Hand
-    }
-    fn paint(
-        &self,
-        bounds: windui::geometry::Rect,
-        _content: windui::geometry::Rect,
-        _focused: bool,
-        _enabled: bool,
-        canvas: &mut dyn Canvas,
-        _style: &windui::style::Style,
-    ) {
-        let selected = self.action_index.get() == self.item_index;
-        let color = if selected {
-            Color::rgba(76, 139, 245, 92)
-        } else {
-            Color::rgba(255, 255, 255, 14)
-        };
-        canvas.fill_round_rect(
-            bounds.x as f32,
-            bounds.y as f32,
-            bounds.w as f32,
-            bounds.h as f32,
-            9.0,
-            &Paint::fill(color),
-        );
-    }
-}
-
-/// A stable result-row icon that starts with a lightweight fallback and swaps to the
-/// cached Windows Shell image when the background icon worker completes. Keeping this
-/// widget inside the existing row avoids rebuilding the dynamic result list, which
-/// would otherwise reset row-local interaction state and can disturb scrolling.
-struct ResultIconView {
-    target: Option<String>,
-    fallback: String,
-    fallback_font: &'static str,
-    refresh_generation: Signal<u64>,
-    last_generation: u64,
-    image: Option<Image>,
-}
-
-impl ResultIconView {
-    fn new(
-        target: Option<String>,
-        fallback: String,
-        fallback_font: &'static str,
-        initial_rgba: Option<Vec<u8>>,
-        refresh_generation: Signal<u64>,
-    ) -> Self {
-        let image = initial_rgba
-            .as_deref()
-            .and_then(|rgba| Image::from_rgba(32, 32, rgba).ok());
-        Self {
-            target,
-            fallback,
-            fallback_font,
-            refresh_generation,
-            last_generation: refresh_generation.get(),
-            image,
-        }
-    }
-
-    fn refresh_cached_image(&mut self) {
-        let Some(target) = self.target.as_deref() else {
-            return;
-        };
-        #[cfg(windows)]
-        let rgba = shell_icon_cache_lookup(target).flatten();
-        #[cfg(not(windows))]
-        let rgba: Option<Vec<u8>> = None;
-        self.image = rgba
-            .as_deref()
-            .and_then(|bytes| Image::from_rgba(32, 32, bytes).ok());
-    }
-}
-
-impl Widget for ResultIconView {
-    fn measure(
-        &self,
-        _avail: Size,
-        _style: &Style,
-        _text: &mut dyn windui::text::TextEngine,
-    ) -> Size {
-        Size::new(32, 32)
-    }
-
-    fn paint(
-        &self,
-        bounds: Rect,
-        _content: Rect,
-        _focused: bool,
-        _enabled: bool,
-        canvas: &mut dyn Canvas,
-        style: &Style,
-    ) {
-        if let Some(image) = self.image.as_ref() {
-            canvas.draw_image(image, bounds, Fit::Contain, style.corner_radius, 1.0);
-            return;
-        }
-        let fallback_style = Style {
-            font_family: Some(self.fallback_font.to_owned()),
-            font_size: 20.0,
-            text_align: Align::Center,
-            fg: Color::rgba(201, 218, 240, 235),
-            fg_role: None,
-            ..style.clone()
-        };
-        canvas.draw_text(
-            &self.fallback,
-            bounds,
-            fallback_style.fg,
-            Align::Center,
-            &windui::text::TextStyle::of(&fallback_style),
-        );
-    }
-
-    fn on_update(&mut self, ctx: &mut EventCtx) {
-        let generation = self.refresh_generation.get();
-        if generation == self.last_generation {
-            return;
-        }
-        self.last_generation = generation;
-        self.refresh_cached_image();
-        ctx.mark_dirty();
-    }
-
-    fn on_event(&mut self, _ctx: &mut EventCtx, _event: &Event) -> bool {
-        false
-    }
-}
+pub(crate) use result_widgets::*;
 
 fn decode_bundled_icon(bytes: &[u8]) -> Option<Vec<u8>> {
     const ICON_SIZE: usize = 32;
@@ -4882,12 +4485,11 @@ fn main() {
 mod tests {
     use super::{
         bundled_icon_rgba, display_title, format_bytes, format_update_progress, google_icon_rgba,
-        history_cursor_step, hover_position_changed, icon_completion_generation_changed,
-        icon_target_for_path, is_executable_icon_target, is_shutdown_mode,
-        normalize_built_in_executable_targets, normalize_everything_query, obsidian_icon_rgba,
-        parse_internet_shortcut_icon_location, relaunch_mode_for_auto_install,
-        resolve_shortcut_icon_path, should_claim_single_instance, ResultIconView, ShellIconCache,
-        LAUNCHER_FONT_FAMILY, MAX_SHELL_ICON_CACHE_ENTRIES,
+        history_cursor_step, icon_completion_generation_changed, icon_target_for_path,
+        is_executable_icon_target, is_shutdown_mode, normalize_built_in_executable_targets,
+        normalize_everything_query, obsidian_icon_rgba, parse_internet_shortcut_icon_location,
+        relaunch_mode_for_auto_install, resolve_shortcut_icon_path, should_claim_single_instance,
+        ShellIconCache, MAX_SHELL_ICON_CACHE_ENTRIES,
     };
     use flux_core::{ResultKind, ResultSource, SearchResult};
     use windui::event::Key;
@@ -5035,29 +4637,6 @@ mod tests {
     }
 
     #[test]
-    fn result_icon_view_accepts_valid_cached_rgba_and_keeps_placeholder_on_miss() {
-        let generation = windui::prelude::signal(0_u64);
-        let valid = [255_u8, 128, 64, 255].repeat(32 * 32);
-        let loaded = ResultIconView::new(
-            Some(String::from(r"C:\Program Files\Demo\demo.exe")),
-            String::from("▣"),
-            LAUNCHER_FONT_FAMILY,
-            Some(valid),
-            generation,
-        );
-        assert!(loaded.image.is_some());
-
-        let pending = ResultIconView::new(
-            Some(String::from(r"C:\Program Files\Pending\pending.exe")),
-            String::from("▣"),
-            LAUNCHER_FONT_FAMILY,
-            None,
-            generation,
-        );
-        assert!(pending.image.is_none());
-    }
-
-    #[test]
     fn executable_icon_target_detection_accepts_shell_executables_only() {
         assert!(is_executable_icon_target(
             r"C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe"
@@ -5120,14 +4699,6 @@ mod tests {
         cursor = history_cursor_step(4, cursor, Key::Down);
         assert_eq!(cursor, Some(3));
         assert_eq!(history_cursor_step(0, cursor, Key::Up), None);
-    }
-
-    #[test]
-    fn stationary_pointer_after_enter_does_not_trigger_hover_selection() {
-        let mut last = None;
-        assert!(hover_position_changed(&mut last, (240, 120)));
-        assert!(!hover_position_changed(&mut last, (240, 120)));
-        assert!(hover_position_changed(&mut last, (241, 120)));
     }
 
     #[test]
