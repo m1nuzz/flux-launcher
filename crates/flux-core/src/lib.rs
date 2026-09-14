@@ -6,6 +6,7 @@ pub mod search;
 mod search_match;
 mod search_model;
 pub mod settings;
+mod settings_store;
 mod system_results;
 
 pub use flow::{
