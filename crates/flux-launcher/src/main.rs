@@ -3080,11 +3080,18 @@ fn main() {
     // Keep the empty search strip and the results palette intrinsically sized. A
     // full-height column plus a weighted spacer made the compact state look too
     // tall and left an oversized gap between the last result and the footer.
-    // Keep the compact Search baseline genuinely centered: equal vertical
-    // insets avoid moving the empty-state control toward either edge.
+    // Pin the content to the top edge: the window grows downward when results
+    // appear, so a vertically centered column would move the Search strip down
+    // by half the slack difference between the compact and expanded states
+    // (the Search icon, text, and caret visibly jumped on the first keystroke).
+    // Top-anchoring keeps the strip at the same offset in every state. The top
+    // inset is 13 so the 31px strip sits centered in the 56px compact window
+    // ((56 - 31) / 2 = 12.5); padding lives inside the content, so the expanded
+    // strip lands at the same offset and the action-bar bottom inset stays
+    // within the smoke contract.
     let launcher_content = Element::col()
         .width_match()
-        .padding_edges(10, 7, 10, 7)
+        .padding_edges(10, 13, 10, 7)
         .spacing(4)
         .child(search_box)
         .child(result_list)
@@ -3097,7 +3104,7 @@ fn main() {
     let launcher_surface = Element::stack()
         .fill()
         .bg(Color::rgba(0, 0, 0, 0))
-        .child(launcher_content.align(Align::Center));
+        .child(launcher_content.align(Align::Start));
 
     let query_for_interval = query;
     let results_for_interval = results;
