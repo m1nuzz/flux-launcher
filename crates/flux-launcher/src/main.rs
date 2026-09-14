@@ -3,6 +3,8 @@
 mod accent;
 mod applications;
 mod builtin;
+mod builtin_calc;
+mod builtin_obsidian;
 mod everything;
 mod fullscreen;
 mod hotkeys;
