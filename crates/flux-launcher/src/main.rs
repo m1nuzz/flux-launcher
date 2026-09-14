@@ -11,6 +11,7 @@ mod everything;
 mod fullscreen;
 mod host_protocol;
 mod hotkeys;
+mod input_keys;
 mod keyboard_layout;
 mod launch;
 mod monitor;
@@ -21,6 +22,7 @@ mod plugin_transport;
 mod plugins;
 mod provider_merge;
 mod provider_snapshot;
+mod result_actions;
 mod startup;
 mod ui_constants;
 mod updater;
@@ -38,20 +40,6 @@ use std::sync::{
 };
 use std::thread;
 use std::time::Duration;
-#[cfg(windows)]
-use windows::core::BOOL;
-#[cfg(windows)]
-use windows::Win32::Foundation::HANDLE;
-#[cfg(windows)]
-use windows::Win32::System::DataExchange::{
-    CloseClipboard, EmptyClipboard, OpenClipboard, SetClipboardData,
-};
-#[cfg(windows)]
-use windows::Win32::System::Memory::{GlobalAlloc, GlobalLock, GlobalUnlock, GMEM_MOVEABLE};
-#[cfg(windows)]
-use windows::Win32::UI::Input::KeyboardAndMouse::{GetAsyncKeyState, VK_SHIFT};
-#[cfg(windows)]
-use windows::Win32::UI::Shell::DROPFILES;
 
 use applications::{resolve_bare_executable_path, ApplicationResponse, ApplicationWorker};
 use everything::{EverythingResponse, EverythingWorker, InstallationState};
@@ -66,7 +54,7 @@ use plugins::{
     PluginAction, PluginQueryResponse,
 };
 use windui::app::{CursorVisibilityHandle, WindowOpHandle, WindowSizeHandle};
-use windui::core::{ClickFn, ClipboardProvider, EventCtx, Widget};
+use windui::core::{ClickFn, EventCtx, Widget};
 use windui::event::{Event, Key, KeyEvent, MouseButton, PointerKind};
 use windui::prelude::*;
 use windui::render::{Canvas, Paint};
@@ -88,13 +76,6 @@ fn should_claim_single_instance(mode: Option<&std::ffi::OsStr>) -> bool {
 fn is_shutdown_mode(mode: Option<&std::ffi::OsStr>) -> bool {
     mode == Some(std::ffi::OsStr::new("--shutdown"))
 }
-fn is_run_as_admin_key(event: &KeyEvent) -> bool {
-    event.ctrl
-        && matches!(
-            event.key,
-            Key::Other(0x52) | Key::Char('r') | Key::Char('R')
-        )
-}
 
 fn request_scroll(scroll_pending: Signal<bool>) {
     scroll_pending.set(true);
@@ -102,126 +83,10 @@ fn request_scroll(scroll_pending: Signal<bool>) {
 
 pub(crate) use window_geometry::*;
 
+pub(crate) use input_keys::*;
 pub(crate) use provider_merge::*;
 pub(crate) use provider_snapshot::*;
-
-/// Keep Everything's native modified-date order for non-application files.
-///
-/// The global ranker still decides which provider tier occupies each result
-/// slot, so application results remain first. Only the Everything file slots
-/// are replaced in the order returned by the date-sorted IPC query.
-#[derive(Clone, Debug)]
-enum ActionKind {
-    Open,
-    RunAsAdmin,
-    OpenLocation,
-    CopyFile,
-    CopyFolderPath,
-    CopyName,
-    SetPriority,
-    RunPlugin(PluginAction),
-}
-
-#[derive(Clone, Debug)]
-struct ActionItem {
-    id: String,
-    label: String,
-    kind: ActionKind,
-}
-
-fn plugin_action_label(action: &PluginAction) -> &'static str {
-    match action {
-        PluginAction::Flow(_) => "Run plugin action",
-        PluginAction::OpenUrl(_) => "Open web result",
-        PluginAction::OpenPath(_) => "Open path",
-        PluginAction::CopyText(_) => "Copy text",
-    }
-}
-
-fn actions_for_result(
-    result: &SearchResult,
-    plugin_actions: &HashMap<String, PluginAction>,
-) -> Vec<ActionItem> {
-    let mut actions = Vec::with_capacity(6);
-    if matches!(result.id.as_str(), "empty-recycle-bin" | "open-recycle-bin") {
-        return actions;
-    }
-    if result.id.starts_with("system:") {
-        actions.push(ActionItem {
-            id: format!("{}:open", result.id),
-            label: String::from("Open"),
-            kind: ActionKind::Open,
-        });
-        actions.push(ActionItem {
-            id: format!("{}:copy-name", result.id),
-            label: String::from("Copy name"),
-            kind: ActionKind::CopyName,
-        });
-        return actions;
-    }
-    if result.target.is_some() {
-        if matches!(result.kind, ResultKind::Application) {
-            actions.push(ActionItem {
-                id: format!("{}:set-priority", result.id),
-                label: String::from("Set as priority (move to top)"),
-                kind: ActionKind::SetPriority,
-            });
-        }
-        actions.push(ActionItem {
-            id: format!("{}:open", result.id),
-            label: String::from("Open"),
-            kind: ActionKind::Open,
-        });
-        actions.push(ActionItem {
-            id: format!("{}:run-as-admin", result.id),
-            label: String::from("Run as admin"),
-            kind: ActionKind::RunAsAdmin,
-        });
-        actions.push(ActionItem {
-            id: format!("{}:open-location", result.id),
-            label: String::from("Open file location"),
-            kind: ActionKind::OpenLocation,
-        });
-        actions.push(ActionItem {
-            id: format!("{}:copy-file", result.id),
-            label: String::from("Copy file"),
-            kind: ActionKind::CopyFile,
-        });
-        actions.push(ActionItem {
-            id: format!("{}:copy-folder-path", result.id),
-            label: String::from("Copy folder path"),
-            kind: ActionKind::CopyFolderPath,
-        });
-    }
-    if let Some(invocation) = plugin_actions.get(&result.id).cloned() {
-        actions.push(ActionItem {
-            id: format!("{}:plugin", result.id),
-            label: String::from(plugin_action_label(&invocation)),
-            kind: ActionKind::RunPlugin(invocation),
-        });
-    }
-    if !matches!(result.kind, ResultKind::Application) {
-        actions.push(ActionItem {
-            id: format!("{}:copy-name", result.id),
-            label: String::from("Copy name"),
-            kind: ActionKind::CopyName,
-        });
-    }
-    actions
-}
-
-fn selected_result(
-    results: &[SearchResult],
-    selected_id: &str,
-    selected_index: usize,
-) -> Option<SearchResult> {
-    results
-        .iter()
-        .find(|result| result.id == selected_id)
-        .cloned()
-        .or_else(|| results.get(selected_index).cloned())
-        .or_else(|| results.first().cloned())
-}
+pub(crate) use result_actions::*;
 
 /// Invisible reactive widget that keeps the keyboard-selected row inside the
 /// surrounding windui scroll viewport without painting an additional surface.
@@ -622,109 +487,6 @@ impl Widget for ResultIconView {
     }
 }
 
-fn quoted_result_path(result: &SearchResult) -> Option<String> {
-    let target = result.target.as_deref()?.trim();
-    if target.is_empty() {
-        return None;
-    }
-    let target = target
-        .strip_prefix('"')
-        .and_then(|value| value.strip_suffix('"'))
-        .unwrap_or(target);
-    Some(format!("\"{target}\""))
-}
-
-#[cfg(windows)]
-fn shift_key_is_down() -> bool {
-    unsafe { (GetAsyncKeyState(VK_SHIFT.0 as i32) as u16 & 0x8000) != 0 }
-}
-
-#[cfg(not(windows))]
-fn shift_key_is_down() -> bool {
-    false
-}
-
-#[cfg(windows)]
-fn copy_result_file(result: &SearchResult) -> bool {
-    let Some(path) = result.target.as_deref() else {
-        return false;
-    };
-    let path: Vec<u16> = path.encode_utf16().chain([0]).collect();
-    let header = std::mem::size_of::<DROPFILES>();
-    let bytes = header + path.len() * 2 + 2;
-    unsafe {
-        let Ok(hmem) = GlobalAlloc(GMEM_MOVEABLE, bytes) else {
-            return false;
-        };
-        let ptr = GlobalLock(hmem) as *mut u8;
-        if ptr.is_null() {
-            return false;
-        }
-        std::ptr::write_bytes(ptr, 0, bytes);
-        let drop = ptr as *mut DROPFILES;
-        (*drop).pFiles = header as u32;
-        (*drop).fWide = BOOL(1);
-        std::ptr::copy_nonoverlapping(path.as_ptr() as *const u8, ptr.add(header), path.len() * 2);
-        let _ = GlobalUnlock(hmem);
-        if OpenClipboard(None).is_err() {
-            return false;
-        }
-        let ok = EmptyClipboard().is_ok() && SetClipboardData(15, Some(HANDLE(hmem.0))).is_ok();
-        let _ = CloseClipboard();
-        ok
-    }
-}
-
-#[cfg(not(windows))]
-fn copy_result_file(_result: &SearchResult) -> bool {
-    false
-}
-
-fn copy_result_path(result: &SearchResult) -> bool {
-    let Some(path) = quoted_result_path(result) else {
-        return false;
-    };
-    windui::platform::Clipboard.set_text(&path);
-    true
-}
-
-fn execute_result_action(result: &SearchResult, action: &ActionKind) -> bool {
-    match action {
-        ActionKind::Open => {
-            if let Some(target) = result.target.as_deref() {
-                launch::open_path_async(target);
-                true
-            } else {
-                false
-            }
-        }
-        ActionKind::RunAsAdmin => result
-            .target
-            .as_deref()
-            .map(launch::run_as_admin)
-            .unwrap_or(false),
-        ActionKind::OpenLocation => {
-            if let Some(target) = result.target.as_deref() {
-                let _ = launch::open_file_location(target);
-                true
-            } else {
-                false
-            }
-        }
-        ActionKind::CopyFile => copy_result_file(result),
-        ActionKind::CopyFolderPath => copy_result_path(result),
-        ActionKind::CopyName => {
-            windui::platform::Clipboard.set_text(&result.title);
-            true
-        }
-        ActionKind::SetPriority => false,
-        ActionKind::RunPlugin(invocation) => {
-            plugins::execute_async(invocation.clone());
-            true
-        }
-    }
-}
-
 fn decode_bundled_icon(bytes: &[u8]) -> Option<Vec<u8>> {
     const ICON_SIZE: usize = 32;
     let decoder = png::Decoder::new(std::io::Cursor::new(bytes));
@@ -1028,42 +790,6 @@ fn history_cursor_step(history_len: usize, cursor: Option<usize>, key: Key) -> O
         (Key::Down, Some(index)) => (index + 1).min(history_len - 1),
         (_, _) => history_len - 1,
     })
-}
-
-#[cfg(windows)]
-fn alt_key_is_down() -> bool {
-    use windows::Win32::UI::Input::KeyboardAndMouse::{GetKeyState, VK_MENU};
-    unsafe { GetKeyState(VK_MENU.0 as i32) < 0 }
-}
-
-#[cfg(not(windows))]
-fn alt_key_is_down() -> bool {
-    false
-}
-
-#[cfg(windows)]
-fn launcher_is_foreground() -> bool {
-    use windows::Win32::System::Threading::GetCurrentProcessId;
-    use windows::Win32::UI::WindowsAndMessaging::{GetForegroundWindow, GetWindowThreadProcessId};
-
-    unsafe {
-        let foreground = GetForegroundWindow();
-        if foreground.is_invalid() {
-            return false;
-        }
-        let mut process_id = 0_u32;
-        GetWindowThreadProcessId(foreground, Some(&mut process_id));
-        process_id == GetCurrentProcessId()
-    }
-}
-
-#[cfg(not(windows))]
-fn launcher_is_foreground() -> bool {
-    false
-}
-
-fn should_show_launcher(is_foreground: bool) -> bool {
-    !is_foreground
 }
 
 fn relaunch_mode_for_auto_install() -> updater::RelaunchMode {
@@ -5155,17 +4881,16 @@ fn main() {
 #[cfg(test)]
 mod tests {
     use super::{
-        actions_for_result, bundled_icon_rgba, display_title, format_bytes, format_update_progress,
-        google_icon_rgba, history_cursor_step, hover_position_changed,
-        icon_completion_generation_changed, icon_target_for_path, is_executable_icon_target,
-        is_run_as_admin_key, is_shutdown_mode, normalize_built_in_executable_targets,
-        normalize_everything_query, obsidian_icon_rgba, parse_internet_shortcut_icon_location,
-        quoted_result_path, relaunch_mode_for_auto_install, resolve_shortcut_icon_path,
-        should_claim_single_instance, should_show_launcher, ResultIconView, ShellIconCache,
+        bundled_icon_rgba, display_title, format_bytes, format_update_progress, google_icon_rgba,
+        history_cursor_step, hover_position_changed, icon_completion_generation_changed,
+        icon_target_for_path, is_executable_icon_target, is_shutdown_mode,
+        normalize_built_in_executable_targets, normalize_everything_query, obsidian_icon_rgba,
+        parse_internet_shortcut_icon_location, relaunch_mode_for_auto_install,
+        resolve_shortcut_icon_path, should_claim_single_instance, ResultIconView, ShellIconCache,
         LAUNCHER_FONT_FAMILY, MAX_SHELL_ICON_CACHE_ENTRIES,
     };
     use flux_core::{ResultKind, ResultSource, SearchResult};
-    use windui::event::{Key, KeyEvent};
+    use windui::event::Key;
 
     #[test]
     fn plugin_host_mode_bypasses_main_single_instance_guard() {
@@ -5380,92 +5105,6 @@ mod tests {
     }
 
     #[test]
-    fn application_results_offer_priority_and_launch_actions_in_order() {
-        let result = SearchResult {
-            id: String::from("app:probe"),
-            title: String::from("Result Mouse Probe"),
-            subtitle: String::from("Application • Start Menu"),
-            kind: ResultKind::Application,
-            source: ResultSource::ApplicationCatalog,
-            target: Some(String::from(r"C:\ResultMouseProbe.lnk")),
-        };
-        let actions = actions_for_result(&result, &std::collections::HashMap::new());
-        let labels: Vec<_> = actions.iter().map(|action| action.label.as_str()).collect();
-        assert_eq!(
-            labels,
-            vec![
-                "Set as priority (move to top)",
-                "Open",
-                "Run as admin",
-                "Open file location",
-                "Copy file",
-                "Copy folder path",
-            ]
-        );
-        assert!(matches!(actions[0].kind, super::ActionKind::SetPriority));
-        assert!(matches!(actions[1].kind, super::ActionKind::Open));
-        assert!(matches!(actions[2].kind, super::ActionKind::RunAsAdmin));
-        assert!(matches!(actions[3].kind, super::ActionKind::OpenLocation));
-        assert!(matches!(actions[4].kind, super::ActionKind::CopyFile));
-        assert!(matches!(actions[5].kind, super::ActionKind::CopyFolderPath));
-    }
-
-    #[test]
-    fn system_results_only_offer_open_and_copy_name_actions() {
-        let result = SearchResult {
-            id: String::from("system:settings"),
-            title: String::from("Settings"),
-            subtitle: String::from("Windows Settings"),
-            kind: ResultKind::Command,
-            source: ResultSource::BuiltIn,
-            target: Some(String::from("ms-settings:")),
-        };
-        let actions = actions_for_result(&result, &std::collections::HashMap::new());
-        assert_eq!(actions.len(), 2);
-        assert!(matches!(actions[0].kind, super::ActionKind::Open));
-        assert!(matches!(actions[1].kind, super::ActionKind::CopyName));
-    }
-
-    #[test]
-    fn copy_path_always_uses_one_pair_of_quotes() {
-        let result = SearchResult {
-            id: String::from("file:test"),
-            title: String::from("Roaming"),
-            subtitle: String::new(),
-            kind: ResultKind::File,
-            source: ResultSource::Everything,
-            target: Some(String::from(r#"C:\Users\m1nus\AppData\Roaming"#)),
-        };
-        assert_eq!(
-            quoted_result_path(&result).as_deref(),
-            Some(r#""C:\Users\m1nus\AppData\Roaming""#)
-        );
-
-        let mut already_quoted = result.clone();
-        already_quoted.target = Some(String::from(r#""C:\Users\m1nus\AppData\Roaming""#));
-        assert_eq!(
-            quoted_result_path(&already_quoted).as_deref(),
-            Some(r#""C:\Users\m1nus\AppData\Roaming""#)
-        );
-    }
-
-    #[test]
-    fn ctrl_r_matches_win32_other_key_event() {
-        assert!(is_run_as_admin_key(&KeyEvent {
-            key: Key::Other(0x52),
-            pressed: true,
-            shift: false,
-            ctrl: true,
-        }));
-        assert!(!is_run_as_admin_key(&KeyEvent {
-            key: Key::Other(0x52),
-            pressed: true,
-            shift: false,
-            ctrl: false,
-        }));
-    }
-
-    #[test]
     fn history_cursor_walks_older_and_newer_queries() {
         let mut cursor = None;
         cursor = history_cursor_step(4, cursor, Key::Up);
@@ -5526,12 +5165,6 @@ mod tests {
         assert!(displayed.starts_with("finish"));
         assert!(displayed.contains("Timeline"));
         assert!(displayed.chars().count() <= 26);
-    }
-
-    #[test]
-    fn activation_shows_when_flux_is_not_foreground() {
-        assert!(should_show_launcher(false));
-        assert!(!should_show_launcher(true));
     }
 
     #[test]
