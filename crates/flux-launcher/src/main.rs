@@ -9,6 +9,7 @@ mod builtin_calc;
 mod builtin_obsidian;
 mod everything;
 mod fullscreen;
+mod host_protocol;
 mod hotkeys;
 mod keyboard_layout;
 mod launch;
