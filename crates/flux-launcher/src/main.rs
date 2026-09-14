@@ -14,6 +14,7 @@ mod keyboard_layout;
 mod launch;
 mod monitor;
 mod native_host;
+mod native_plugins;
 mod plugin_limits;
 mod plugin_transport;
 mod plugins;
