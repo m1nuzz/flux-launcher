@@ -1,6 +1,8 @@
 #![cfg_attr(windows, windows_subsystem = "windows")]
 
 mod accent;
+mod app_identity;
+mod app_scan;
 mod applications;
 mod builtin;
 mod builtin_calc;
