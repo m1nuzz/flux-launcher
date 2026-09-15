@@ -95,6 +95,10 @@ Installers:
     InstallerUrl: $installerUrl
     InstallerSha256: $InstallerSha256
     Scope: user
+    Dependencies:
+      PackageDependencies:
+        - PackageIdentifier: Microsoft.VCRedist.2015+.x64
+          MinimumVersion: 14.38.33130
     InstallerSwitches:
       Silent: /VERYSILENT /SUPPRESSMSGBOXES /NORESTART /SP-
       SilentWithProgress: /SILENT /SUPPRESSMSGBOXES /NORESTART /SP-

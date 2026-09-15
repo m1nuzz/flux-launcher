@@ -12,6 +12,10 @@ Installers:
     InstallerUrl: https://github.com/m1nuzz/flux-launcher/releases/download/v0.1.54/FluxLauncher-Setup.exe
     InstallerSha256: 44E5A300C38B50EA8768C4536C8B2B88E26B5B433958C6DB1B9EF63DB8826D59
     Scope: user
+    Dependencies:
+      PackageDependencies:
+        - PackageIdentifier: Microsoft.VCRedist.2015+.x64
+          MinimumVersion: 14.38.33130
     InstallerSwitches:
       Silent: /VERYSILENT /SUPPRESSMSGBOXES /NORESTART /SP-
       SilentWithProgress: /SILENT /SUPPRESSMSGBOXES /NORESTART /SP-
