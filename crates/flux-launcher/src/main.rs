@@ -67,19 +67,6 @@ use windui::prelude::*;
 
 pub(crate) use ui_constants::*;
 
-fn should_claim_single_instance(mode: Option<&std::ffi::OsStr>) -> bool {
-    !matches!(
-        mode,
-        Some(mode)
-            if mode == std::ffi::OsStr::new("--plugin-host")
-                || mode == std::ffi::OsStr::new("--folder-launch-smoke")
-                || mode == std::ffi::OsStr::new("--shortcut-icon-smoke")
-    )
-}
-fn is_shutdown_mode(mode: Option<&std::ffi::OsStr>) -> bool {
-    mode == Some(std::ffi::OsStr::new("--shutdown"))
-}
-
 fn request_scroll(scroll_pending: Signal<bool>) {
     scroll_pending.set(true);
 }
@@ -667,41 +654,4 @@ fn main() {
         Arc::clone(&shared_settings),
         selection_color,
     );
-}
-
-#[cfg(test)]
-mod tests {
-    use super::{is_shutdown_mode, should_claim_single_instance};
-
-    #[test]
-    fn plugin_host_mode_bypasses_main_single_instance_guard() {
-        assert!(!should_claim_single_instance(Some(std::ffi::OsStr::new(
-            "--plugin-host"
-        ))));
-    }
-
-    #[test]
-    fn folder_launch_smoke_mode_bypasses_main_single_instance_guard() {
-        assert!(!should_claim_single_instance(Some(std::ffi::OsStr::new(
-            "--folder-launch-smoke"
-        ))));
-    }
-
-    #[test]
-    fn normal_and_startup_modes_use_main_single_instance_guard() {
-        assert!(should_claim_single_instance(None));
-        assert!(should_claim_single_instance(Some(std::ffi::OsStr::new(
-            "--startup"
-        ))));
-    }
-
-    #[test]
-    fn shutdown_mode_is_a_single_instance_command() {
-        assert!(should_claim_single_instance(Some(std::ffi::OsStr::new(
-            "--shutdown"
-        ))));
-        assert!(is_shutdown_mode(Some(std::ffi::OsStr::new("--shutdown"))));
-        assert!(!is_shutdown_mode(Some(std::ffi::OsStr::new("--startup"))));
-        assert!(!is_shutdown_mode(None));
-    }
 }
