@@ -118,11 +118,6 @@ fn application_source_rank(result: &SearchResult) -> u8 {
 /// The global ranker still decides which provider tier occupies each result
 /// slot, so application results remain first. Only the Everything file slots
 /// are replaced in the order returned by the date-sorted IPC query.
-/// Keep Everything's native modified-date order for non-application files.
-///
-/// The global ranker still decides which provider tier occupies each result
-/// slot, so application results remain first. Only the Everything file slots
-/// are replaced in the order returned by the date-sorted IPC query.
 pub(crate) fn preserve_everything_file_order(
     merged: &mut [SearchResult],
     provider_order: &[SearchResult],
