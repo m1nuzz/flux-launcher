@@ -14,6 +14,7 @@ mod history_priorities;
 mod host_protocol;
 mod hotkeys;
 mod input_keys;
+mod key_handlers;
 mod keyboard_layout;
 mod launch;
 mod launcher_icons;
@@ -44,9 +45,9 @@ mod window_geometry;
 use applications::{ApplicationResponse, ApplicationWorker};
 use everything::{EverythingResponse, EverythingWorker, InstallationState};
 use flux_core::{
-    history_results, should_suppress_activation, HotkeyConfig, MonitorPreference, SearchModel,
-    Settings, DEFAULT_LAUNCHER_HEIGHT, DEFAULT_LAUNCHER_WIDTH, MAX_LAUNCHER_HEIGHT,
-    MAX_LAUNCHER_WIDTH, MIN_LAUNCHER_HEIGHT, MIN_LAUNCHER_WIDTH,
+    should_suppress_activation, HotkeyConfig, MonitorPreference, SearchModel, Settings,
+    DEFAULT_LAUNCHER_HEIGHT, DEFAULT_LAUNCHER_WIDTH, MAX_LAUNCHER_HEIGHT, MAX_LAUNCHER_WIDTH,
+    MIN_LAUNCHER_HEIGHT, MIN_LAUNCHER_WIDTH,
 };
 use plugins::{
     native_plugin_install_path, FlowPluginWorker, NativePluginQueryResponse, NativePluginWorker,
@@ -57,7 +58,6 @@ use std::collections::HashMap;
 use std::rc::Rc;
 use std::sync::{atomic::Ordering, Arc, RwLock};
 use windui::app::{CursorVisibilityHandle, WindowOpHandle, WindowSizeHandle};
-use windui::event::{Key, KeyEvent};
 use windui::prelude::*;
 
 pub(crate) use ui_constants::*;
@@ -787,41 +787,6 @@ fn main() {
         }
     });
 
-    let activation_handle_for_recorder = activation_handle.clone();
-    let activation_recording_for_keys = activation_recording;
-    let activation_display_for_keys = activation_display;
-    let activation_key_for_keys = activation_key;
-    let activation_ctrl_for_keys = activation_ctrl;
-    let activation_alt_for_keys = activation_alt;
-    let activation_shift_for_keys = activation_shift;
-    let activation_meta_for_keys = activation_meta;
-    let query_for_keys = query;
-    let query_caret_position_for_keys = query_caret_position;
-    let results_for_keys = results;
-    let selected_id_for_keys = selected_id;
-    let selected_index_for_keys = selected_index;
-    let scroll_request_for_keys = scroll_request_for_rows;
-    let selection_touched_for_keys = selection_touched;
-    let action_mode_for_keys = action_mode;
-    let action_index_for_keys = action_index;
-    let action_items_for_keys = action_items;
-    let action_scroll_pending_for_keys = action_scroll_pending;
-    let recycle_bin_confirmation_for_keys = recycle_bin_confirmation;
-    let plugin_actions_for_keys = Rc::clone(&plugin_actions);
-    let inline_completion_for_keys = inline_completion;
-    let settings_visible_for_keys = settings_visible;
-    let query_history_for_keys = Rc::clone(&query_history);
-    let history_mode_for_keys = history_mode;
-    let history_cursor_for_keys = history_cursor;
-    let settings_for_history_for_keys = Arc::clone(&shared_settings);
-    let settings_for_priority_for_keys = Arc::clone(&shared_settings);
-    let priorities_for_keys = priorities;
-    let providers_for_keys = Rc::clone(&provider_results);
-    let query_for_priority_keys = query;
-    let window_op_for_keys = window_op.clone();
-    let cursor_visibility_for_keys = cursor_visibility.clone();
-    let size_for_keys = window_size.clone();
-    let show_results_for_keys = show_results;
     let settings_for_game_hotkey = Arc::clone(&shared_settings);
     let game_mode_for_hotkey = game_mode;
     let game_mode_status_for_hotkey = game_mode_status;
@@ -835,402 +800,44 @@ fn main() {
         );
     });
 
-    app = app.on_key(move |event: KeyEvent| {
-        if activation_recording_for_keys.get() {
-            if event.pressed {
-                if let Some(configuration) =
-                    hotkeys::capture_config(&event, alt_key_is_down(), hotkeys::meta_key_is_down())
-                {
-                    activation_key_for_keys.set(configuration.key.clone());
-                    activation_ctrl_for_keys.set(configuration.ctrl);
-                    activation_alt_for_keys.set(configuration.alt);
-                    activation_shift_for_keys.set(configuration.shift);
-                    activation_meta_for_keys.set(configuration.meta);
-                    activation_display_for_keys.set(hotkeys::display_config(&configuration));
-                    activation_recording_for_keys.set(false);
-                    activation_handle_for_recorder.set_enabled(true);
-                }
-            }
-            return true;
-        }
-        if !event.pressed || settings_visible_for_keys.get() {
-            return false;
-        }
-        let alt_down = alt_key_is_down();
-        if !event.ctrl
-            && !alt_down
-            && matches!(event.key, Key::Char(_) | Key::Backspace | Key::Delete)
-        {
-            history_cursor_for_keys.set(None);
-            cursor_visibility_for_keys.hide();
-        }
-        if event.ctrl
-            && (event.shift || shift_key_is_down())
-            && matches!(
-                event.key,
-                Key::Other(0x43) | Key::Char('c') | Key::Char('C')
-            )
-        {
-            eprintln!(
-                "Ctrl+Shift+C dispatch: event_shift={} physical_shift={}",
-                event.shift,
-                shift_key_is_down()
-            );
-            if let Some(result) = selected_result(
-                &results_for_keys.get(),
-                &selected_id_for_keys.get(),
-                selected_index_for_keys.get(),
-            ) {
-                eprintln!("Ctrl+Shift+C target={:?}", result.target);
-                if copy_result_file(&result) {
-                    return true;
-                }
-            }
-            return false;
-        }
-        if event.ctrl
-            && !event.shift
-            && !shift_key_is_down()
-            && matches!(
-                event.key,
-                Key::Other(0x43) | Key::Char('c') | Key::Char('C')
-            )
-        {
-            if let Some(result) = selected_result(
-                &results_for_keys.get(),
-                &selected_id_for_keys.get(),
-                selected_index_for_keys.get(),
-            ) {
-                if copy_result_path(&result) {
-                    return true;
-                }
-            }
-            return false;
-        }
-        if event.ctrl && matches!(event.key, Key::Char('h') | Key::Char('H')) {
-            let history = query_history_for_keys.borrow();
-            if history.is_empty() {
-                return false;
-            }
-            let filtered = history_results(&history, &query_for_keys.get());
-            history_mode_for_keys.set(true);
-            history_cursor_for_keys.set(None);
-            action_mode_for_keys.set(false);
-            action_items_for_keys.set(Vec::new());
-            inline_completion_for_keys.set(String::new());
-            selected_index_for_keys.set(0);
-            selected_id_for_keys.set(
-                filtered
-                    .first()
-                    .map(|result| result.id.clone())
-                    .unwrap_or_default(),
-            );
-            results_for_keys.set(filtered);
-            show_results_for_keys.set(true);
-            size_for_keys.set(
-                i32::from(launcher_width.get()),
-                i32::from(launcher_height.get()),
-            );
-            return true;
-        }
-        let query = query_for_keys.get();
-        let history = query_history_for_keys.borrow();
-        if alt_down && !event.ctrl && !event.shift && matches!(event.key, Key::Up | Key::Down) {
-            if history.is_empty() {
-                return false;
-            }
-            let Some(next) =
-                history_cursor_step(history.len(), history_cursor_for_keys.get(), event.key)
-            else {
-                return false;
-            };
-            history_cursor_for_keys.set(Some(next));
-            history_mode_for_keys.set(false);
-            query_for_keys.set(history[next].clone());
-            return true;
-        }
-        if !history_mode_for_keys.get()
-            && event.key == Key::Up
-            && !alt_down
-            && !event.ctrl
-            && !event.shift
-            && query.trim().is_empty()
-        {
-            if let Some(latest) = history.last() {
-                history_cursor_for_keys.set(Some(history.len() - 1));
-                query_for_keys.set(latest.clone());
-                return true;
-            }
-        }
-        drop(history);
-        if query.trim().is_empty() {
-            return false;
-        }
-        let current_results = results_for_keys.get();
-        if current_results.is_empty() {
-            return false;
-        }
-
-        if event.ctrl && event.key == Key::Tab {
-            let suffix = inline_completion_for_keys.get();
-            if !suffix.is_empty() {
-                query_for_keys.set(format!("{query}{suffix}"));
-                return true;
-            }
-        }
-
-        // Match Flow Launcher: plain Tab selects the next result, while
-        // Shift+Tab selects the previous result. Ctrl+Tab remains reserved
-        // for inline completion above.
-        if !event.ctrl && !alt_down && event.key == Key::Tab {
-            let count = current_results.len();
-            let next = if event.shift {
-                selected_index_for_keys
-                    .get()
-                    .checked_sub(1)
-                    .unwrap_or(count - 1)
-            } else {
-                (selected_index_for_keys.get() + 1) % count
-            };
-            selection_touched_for_keys.set(true);
-            selected_index_for_keys.set(next);
-            if let Some(result) = current_results.get(next) {
-                selected_id_for_keys.set(result.id.clone());
-            }
-            // Keep the existing row tree intact while changing only selection.
-            // Rebuilding the DynList here resets row geometry and prevents the
-            // pending scroll request from bringing the next result into view.
-            request_scroll(scroll_request_for_keys);
-            return true;
-        }
-
-        if event.key == Key::Enter && alt_key_is_down() {
-            if history_mode_for_keys.get() {
-                if let Some(result) = selected_result(
-                    &current_results,
-                    &selected_id_for_keys.get(),
-                    selected_index_for_keys.get(),
-                ) {
-                    query_for_keys.set(result.title.clone());
-                    history_mode_for_keys.set(false);
-                }
-                return true;
-            }
-            record_query_history(
-                &settings_for_history_for_keys,
-                &query_history_for_keys,
-                &query,
-            );
-            if let Some(result) = selected_result(
-                &current_results,
-                &selected_id_for_keys.get(),
-                selected_index_for_keys.get(),
-            ) {
-                if let Some(target) = result.target.as_deref() {
-                    let _ = launch::open_file_location(target);
-                }
-            }
-            return true;
-        }
-
-        if action_mode_for_keys.get() {
-            let count = action_items_for_keys.get().len();
-            if count == 0 {
-                action_mode_for_keys.set(false);
-                return true;
-            }
-            match event.key {
-                Key::Up => {
-                    action_index_for_keys.set(
-                        action_index_for_keys
-                            .get()
-                            .checked_sub(1)
-                            .unwrap_or(count - 1),
-                    );
-                    action_scroll_pending_for_keys.set(true);
-                    return true;
-                }
-                Key::Down => {
-                    action_index_for_keys.set((action_index_for_keys.get() + 1) % count);
-                    action_scroll_pending_for_keys.set(true);
-                    return true;
-                }
-                Key::Left | Key::Escape => {
-                    action_mode_for_keys.set(false);
-                    action_index_for_keys.set(0);
-                    size_for_keys.set(
-                        i32::from(launcher_width.get()),
-                        i32::from(launcher_height.get()),
-                    );
-                    return true;
-                }
-                Key::Enter | Key::Space => {
-                    if history_mode_for_keys.get() {
-                        if let Some(result) = selected_result(
-                            &current_results,
-                            &selected_id_for_keys.get(),
-                            selected_index_for_keys.get(),
-                        ) {
-                            query_for_keys.set(result.title.clone());
-                            history_mode_for_keys.set(false);
-                        }
-                        return true;
-                    }
-                    record_query_history(
-                        &settings_for_history_for_keys,
-                        &query_history_for_keys,
-                        &query,
-                    );
-                    if let Some(result) = selected_result(
-                        &current_results,
-                        &selected_id_for_keys.get(),
-                        selected_index_for_keys.get(),
-                    ) {
-                        if let Some(action) = action_items_for_keys
-                            .get()
-                            .get(action_index_for_keys.get())
-                            .cloned()
-                        {
-                            let executed = if matches!(action.kind, ActionKind::SetPriority) {
-                                let saved = set_result_priority(
-                                    &settings_for_priority_for_keys,
-                                    priorities_for_keys,
-                                    &result,
-                                );
-                                if saved {
-                                    refresh_merged_results(
-                                        &providers_for_keys,
-                                        query_for_priority_keys,
-                                        priorities_for_keys,
-                                        results_for_keys,
-                                    );
-                                }
-                                saved
-                            } else {
-                                execute_result_action(&result, &action.kind)
-                            };
-                            if executed {
-                                window_op_for_keys.hide_window();
-                            }
-                        }
-                    }
-                    action_mode_for_keys.set(false);
-                    size_for_keys.set(
-                        i32::from(launcher_width.get()),
-                        i32::from(launcher_height.get()),
-                    );
-                    return true;
-                }
-                _ => return true,
-            }
-        }
-
-        if is_run_as_admin_key(&event) {
-            record_query_history(
-                &settings_for_history_for_keys,
-                &query_history_for_keys,
-                &query,
-            );
-            if let Some(result) = selected_result(
-                &current_results,
-                &selected_id_for_keys.get(),
-                selected_index_for_keys.get(),
-            ) {
-                if let Some(target) = result.target.as_deref() {
-                    if launch::run_as_admin(target) {
-                        window_op_for_keys.hide_window();
-                    }
-                }
-            }
-            return true;
-        }
-        match event.key {
-            Key::Up | Key::Down => {
-                let count = current_results.len();
-                let next = match event.key {
-                    Key::Up => selected_index_for_keys
-                        .get()
-                        .checked_sub(1)
-                        .unwrap_or(count - 1),
-                    Key::Down => (selected_index_for_keys.get() + 1) % count,
-                    _ => 0,
-                };
-                selection_touched_for_keys.set(true);
-                selected_index_for_keys.set(next);
-                if let Some(result) = current_results.get(next) {
-                    selected_id_for_keys.set(result.id.clone());
-                }
-                // Preserve the current row geometry so scroll_into_view can
-                // move the viewport after the selected result changes.
-                request_scroll(scroll_request_for_keys);
-                true
-            }
-            Key::Right => {
-                if query_caret_position_for_keys.get() != query_for_keys.get().chars().count() {
-                    return false;
-                }
-                if let Some(result) = selected_result(
-                    &current_results,
-                    &selected_id_for_keys.get(),
-                    selected_index_for_keys.get(),
-                ) {
-                    let actions = actions_for_result(&result, &plugin_actions_for_keys.borrow());
-                    if !actions.is_empty() {
-                        action_items_for_keys.set(actions);
-                        action_index_for_keys.set(0);
-                        action_scroll_pending_for_keys.set(true);
-                        action_mode_for_keys.set(true);
-                        show_results_for_keys.set(true);
-                        size_for_keys.set(i32::from(launcher_width.get()), ACTION_WINDOW_HEIGHT);
-                    }
-                }
-                true
-            }
-            Key::Enter => {
-                if history_mode_for_keys.get() {
-                    if let Some(result) = selected_result(
-                        &current_results,
-                        &selected_id_for_keys.get(),
-                        selected_index_for_keys.get(),
-                    ) {
-                        query_for_keys.set(result.title.clone());
-                        history_mode_for_keys.set(false);
-                    }
-                    return true;
-                }
-                record_query_history(
-                    &settings_for_history_for_keys,
-                    &query_history_for_keys,
-                    &query,
-                );
-                if let Some(result) = selected_result(
-                    &current_results,
-                    &selected_id_for_keys.get(),
-                    selected_index_for_keys.get(),
-                ) {
-                    if result.id == "empty-recycle-bin" {
-                        recycle_bin_confirmation_for_keys.set(true);
-                    } else if result.id == "flux-settings" {
-                        settings_visible_for_keys.set(true);
-                        size_for_keys.set(SETTINGS_WINDOW_WIDTH, SETTINGS_WINDOW_HEIGHT);
-                    } else if result.id == "open-recycle-bin" {
-                        launch::open_recycle_bin_async();
-                        window_op_for_keys.hide_window();
-                    } else if let Some(target) = result.target.as_deref() {
-                        launch::open_path_async(target);
-                        window_op_for_keys.hide_window();
-                    } else if let Some(action) =
-                        plugin_actions_for_keys.borrow().get(&result.id).cloned()
-                    {
-                        plugins::execute_async(action);
-                        window_op_for_keys.hide_window();
-                    }
-                }
-                true
-            }
-            _ => false,
-        }
-    });
+    app = key_handlers::register_key_handlers(
+        app,
+        activation_recording,
+        activation_display,
+        activation_key,
+        activation_ctrl,
+        activation_alt,
+        activation_shift,
+        activation_meta,
+        activation_handle.clone(),
+        query,
+        query_caret_position,
+        results,
+        selected_id,
+        selected_index,
+        scroll_request_for_rows,
+        selection_touched,
+        action_mode,
+        action_index,
+        action_items,
+        action_scroll_pending,
+        recycle_bin_confirmation,
+        Rc::clone(&plugin_actions),
+        inline_completion,
+        settings_visible,
+        Rc::clone(&query_history),
+        history_mode,
+        history_cursor,
+        Arc::clone(&shared_settings),
+        priorities,
+        Rc::clone(&provider_results),
+        window_op.clone(),
+        cursor_visibility.clone(),
+        window_size.clone(),
+        show_results,
+        launcher_width,
+        launcher_height,
+    );
 
     let settings_for_tray_toggle = Arc::clone(&shared_settings);
     let game_mode_for_tray = game_mode;
