@@ -33,6 +33,9 @@ mod shell_icon_extract;
 mod startup;
 mod theme_text;
 mod ui_constants;
+mod ui_dialogs;
+mod ui_results;
+mod ui_search;
 mod update_tasks;
 mod updater;
 mod visual_preview;
@@ -84,8 +87,6 @@ pub(crate) use launcher_icons::*;
 pub(crate) use provider_merge::*;
 pub(crate) use provider_snapshot::*;
 pub(crate) use result_actions::*;
-pub(crate) use result_row::*;
-pub(crate) use result_widgets::*;
 pub(crate) use shell_icon_cache::*;
 pub(crate) use theme_text::*;
 pub(crate) use update_tasks::*;
@@ -217,328 +218,68 @@ fn main() {
     let provider_results = Rc::new(RefCell::new(ProviderResults::default()));
     let plugin_actions = Rc::new(RefCell::new(HashMap::<String, PluginAction>::new()));
     let result_source = results;
-    let selected_for_rows = selected_id;
-    let selected_index_for_rows = selected_index;
-    let selection_touched_for_rows = selection_touched;
-    let actions_for_rows = Rc::clone(&plugin_actions);
-    let settings_for_rows = Arc::clone(&shared_settings);
-    let history_for_rows = Rc::clone(&query_history);
-    let history_mode_for_rows = history_mode;
-    let action_items_for_rows = action_items;
-    let action_index_for_rows = action_index;
-    let action_mode_for_rows = action_mode;
-    let action_window_slot_for_rows = Rc::clone(&action_window_slot);
-    let launcher_width_for_rows = launcher_width;
-    let query_for_rows = query;
     let scroll_request_for_rows = signal(false);
     let icon_refresh_generation = signal(SHELL_ICON_COMPLETION_GENERATION.load(Ordering::Acquire));
-    let settings_visible_for_rows = settings_visible;
-    let window_size_slot_for_rows = Rc::clone(&action_window_slot);
     let inline_completion = signal(String::new());
     let query_caret_position = signal(query.with(|text| text.chars().count()));
 
-    let search_box = Element::text_input(query, "Search")
-        .cursor_position(query_caret_position)
-        .leading_icon('⌕')
-        .transparent_surface()
-        .smooth_caret(settings.smooth_caret, settings.smooth_caret_duration_ms)
-        .inline_completion(inline_completion)
-        .show_focus_ring(false)
-        .width_match()
-        .font_family(LAUNCHER_FONT_FAMILY)
-        .font_size(15.0)
-        .font_weight(500)
-        .corner(10.0)
-        // The entire Search control stays transparent so the Windows Acrylic
-        // material remains visible through the input, caret, and leading icon.
-        .border(Color::rgba(0, 0, 0, 0), 0)
-        .padding_xy(13, 0);
-
-    let action_hint = |key: &'static str, label: &'static str| {
-        Element::row()
-            .height(22)
-            .cross(Align::Center)
-            .spacing(4)
-            .child(
-                Element::label(key)
-                    .font_size(9.0)
-                    .fg(Color::rgba(235, 243, 255, 235))
-                    .bg(Color::rgba(255, 255, 255, 24))
-                    .corner(5.0)
-                    .padding_xy(4, 2),
-            )
-            .child(
-                Element::label(label)
-                    .font_size(10.0)
-                    .fg(Color::rgba(222, 233, 248, 220)),
-            )
-    };
-    // Use a bounded frame plus an explicitly centered content row instead of
-    // full-width spacer children. This keeps the three hints visually centered
-    // between the launcher content insets while the window width changes.
-    let action_bar_content = Element::row()
-        .height(22)
-        .spacing(8)
-        .child(action_hint("↵", "Open"))
-        .child(action_hint("Ctrl + R", "Run as admin"))
-        .child(action_hint("Alt + Enter", "Open file location"));
-    let action_bar = Element::stack()
-        .width(ACTION_BAR_WIDTH)
-        .height(ACTION_BAR_HEIGHT)
-        .child(action_bar_content.align(Align::Center))
-        // Keep the probe inside the same real frame so its telemetry describes
-        // the exact slot that is centered between the launcher insets.
-        .child(
-            Element::leaf()
-                .widget(ActionBarGeometryProbe::default())
-                .fill(),
-        )
-        .align(Align::Center)
-        .visible_when(move || show_results.get() && !action_mode.get());
-
-    let result_list_body = Element::host_signal(result_source, move |result| {
-        result_row(
-            result,
-            selected_for_rows,
-            selected_index_for_rows,
-            selection_touched_for_rows,
-            result_source,
-            icon_refresh_generation,
-            Rc::clone(&actions_for_rows),
-            action_items_for_rows,
-            action_index_for_rows,
-            action_scroll_pending,
-            action_mode_for_rows,
-            launcher_width_for_rows,
-            query_for_rows,
-            scroll_request_for_rows,
-            selection_color,
-            Arc::clone(&settings_for_rows),
-            Rc::clone(&history_for_rows),
-            history_mode_for_rows,
-            recycle_bin_confirmation,
-            settings_visible_for_rows,
-            Rc::clone(&window_size_slot_for_rows),
-        )
-    })
-    .width_match()
-    // Keep the result body transparent so the window remains one continuous
-    // Acrylic surface. Only individual result rows draw controls. The extra
-    // right inset is local to the scroll content: it keeps the thumb clear of
-    // row cards without changing the launcher window width.
-    .padding_edges(6, 6, 18, 6);
-    let result_list = Element::scroll()
-        .width_match()
-        .height(RESULT_VIEWPORT_HEIGHT)
-        .child(result_list_body)
-        .visible_when(move || show_results.get() && !action_mode.get());
-
-    let everything_prompt_for_close = everything_prompt_visible;
-    let everything_prompt_for_decline = everything_prompt_visible;
-    let everything_prompt_for_install = everything_prompt_visible;
-    let everything_status_for_prompt = everything_status;
-    let settings_for_everything_prompt_close = Arc::clone(&shared_settings);
-    let settings_for_everything_prompt_decline = Arc::clone(&shared_settings);
-    let settings_for_everything_prompt_install = Arc::clone(&shared_settings);
-    let everything_install_prompt = Element::dialog_glass_panel(
-        everything_prompt_visible,
-        "Install Everything",
-        400,
-        move |_| {
-            everything_prompt_for_close.set(false);
-            if let Ok(mut settings) = settings_for_everything_prompt_close.write() {
-                settings.everything_install_prompt_seen = true;
-                let _ = save_settings(&settings);
-            }
-        },
-        Element::col()
-            .spacing(10)
-            .child(
-                Element::label(
-                    "Everything is not installed. Install it now for fast indexed file and folder search?",
-                )
-                .font_size(13.0)
-                .fg(Color::rgba(245, 248, 255, 245)),
-            )
-            .child(
-                Element::label("Flux will run the official winget command: winget install -e --id voidtools.Everything")
-                    .font_size(11.0)
-                    .fg(Color::rgba(235, 241, 255, 180))
-                    .max_lines(2)
-                    .truncate(Truncate::End),
-            ),
-        Element::row()
-            .width_match()
-            .spacing(8)
-            .child(Element::flex_spacer())
-            .child(
-                Element::button("Not now")
-                    .neutral()
-                    .outline_soft()
-                    .on_click(move |_| {
-                        everything_prompt_for_decline.set(false);
-                        if let Ok(mut settings) = settings_for_everything_prompt_decline.write() {
-                            settings.everything_install_prompt_seen = true;
-                            let _ = save_settings(&settings);
-                        }
-                    }),
-            )
-            .child(
-                Element::button("Install Everything").on_click(move |ctx| {
-                    everything_prompt_for_install.set(false);
-                    if let Ok(mut settings) = settings_for_everything_prompt_install.write() {
-                        settings.everything_install_prompt_seen = true;
-                        let _ = save_settings(&settings);
-                    }
-                    match everything::launch_winget_install() {
-                        Ok(()) => {
-                            everything_status_for_prompt.set(String::from(
-                                "Everything installation started with winget.",
-                            ));
-                            ctx.toast_ok("Everything installation started");
-                        }
-                        Err(error) => {
-                            everything_status_for_prompt.set(error.clone());
-                            ctx.toast_ok(error);
-                        }
-                    }
-                }),
-            )
-            .padding_edges(0, 0, 0, 12),
+    let search_box = ui_search::build_search_box(
+        query,
+        query_caret_position,
+        inline_completion,
+        settings.smooth_caret,
+        settings.smooth_caret_duration_ms,
     );
 
-    let confirmation_for_close = recycle_bin_confirmation;
-    let confirmation_for_cancel = recycle_bin_confirmation;
-    let confirmation_for_empty = recycle_bin_confirmation;
-    let status_for_confirmation = status;
-    let recycle_bin_dialog = Element::dialog_panel(
+    let action_bar = ui_results::build_action_bar(show_results, action_mode);
+    let result_list = ui_results::build_result_list(
+        result_source,
+        selected_id,
+        selected_index,
+        selection_touched,
+        icon_refresh_generation,
+        Rc::clone(&plugin_actions),
+        action_items,
+        action_index,
+        action_scroll_pending,
+        action_mode,
+        launcher_width,
+        query,
+        scroll_request_for_rows,
+        selection_color,
+        Arc::clone(&shared_settings),
+        Rc::clone(&query_history),
+        history_mode,
         recycle_bin_confirmation,
-        "Empty Recycle Bin",
-        360,
-        move |_| confirmation_for_close.set(false),
-        Element::col()
-            .spacing(8)
-            .child(
-                Element::label("This permanently deletes all items in the Recycle Bin.")
-                    .font_size(13.0)
-                    .fg(Color::rgba(245, 248, 255, 245)),
-            )
-            .child(
-                Element::label("This action cannot be undone.")
-                    .font_size(12.0)
-                    .fg(Color::rgba(255, 190, 190, 235)),
-            ),
-        Element::row()
-            .width_match()
-            .spacing(8)
-            .child(Element::flex_spacer())
-            .child(
-                Element::button("Cancel")
-                    .neutral()
-                    .outline_soft()
-                    .on_click(move |_| confirmation_for_cancel.set(false)),
-            )
-            .child(
-                Element::button("Empty Recycle Bin")
-                    .danger()
-                    .on_click(move |_| {
-                        confirmation_for_empty.set(false);
-                        if launch::empty_recycle_bin() {
-                            status_for_confirmation.set(String::from("Recycle Bin emptied"));
-                        } else {
-                            status_for_confirmation
-                                .set(String::from("Could not empty the Recycle Bin"));
-                        }
-                    }),
-            ),
+        settings_visible,
+        Rc::clone(&action_window_slot),
+        show_results,
     );
 
-    let settings_for_action_list = Arc::clone(&shared_settings);
-    let priorities_for_action_list = priorities;
-    let providers_for_action_list = Rc::clone(&provider_results);
-    let query_for_action_list = query;
-    let action_list = Element::list_signal(
-        action_items_for_rows,
-        |item| item.id.clone(),
-        move |item| {
-            let item_id = item.id.clone();
-            let item_label = item.label.clone();
-            let item_kind = item.kind.clone();
-            let settings_for_item_action = Arc::clone(&settings_for_action_list);
-            let priorities_for_item_action = priorities_for_action_list;
-            let providers_for_item_action = Rc::clone(&providers_for_action_list);
-            let query_for_item_action = query_for_action_list;
-            Element::row()
-                .widget(ActionRowAnchor {
-                    item_index: action_items_for_rows
-                        .get()
-                        .iter()
-                        .position(|candidate| candidate.id == item_id)
-                        .unwrap_or_default(),
-                    action_index: action_index_for_rows,
-                    scroll_pending: action_scroll_pending,
-                    last_pointer: None,
-                    pressed: false,
-                    on_click: None,
-                })
-                .reactive()
-                .width_match()
-                .height(36)
-                .padding_xy(10, 4)
-                .corner(9.0)
-                .child(
-                    Element::label(item_label)
-                        .font_size(13.0)
-                        .fg(Color::rgba(250, 252, 255, 255))
-                        .max_lines(1)
-                        .truncate(Truncate::End)
-                        .width_match(),
-                )
-                .on_click({
-                    let action_window_slot = action_window_slot_for_rows.clone();
-                    move |ctx| {
-                        let executed = selected_result(
-                            &result_source.get(),
-                            &selected_for_rows.get(),
-                            selected_index_for_rows.get(),
-                        )
-                        .is_some_and(|result| {
-                            if matches!(item_kind, ActionKind::SetPriority) {
-                                let saved = set_result_priority(
-                                    &settings_for_item_action,
-                                    priorities_for_item_action,
-                                    &result,
-                                );
-                                if saved {
-                                    refresh_merged_results(
-                                        &providers_for_item_action,
-                                        query_for_item_action,
-                                        priorities_for_item_action,
-                                        result_source,
-                                    );
-                                }
-                                saved
-                            } else {
-                                execute_result_action(&result, &item_kind)
-                            }
-                        });
-                        if executed {
-                            ctx.hide_window();
-                        }
-                        action_mode_for_rows.set(false);
-                        if let Some(handle) = action_window_slot.borrow().as_ref() {
-                            handle.set(
-                                i32::from(launcher_width.get()),
-                                i32::from(launcher_height.get()),
-                            );
-                        }
-                    }
-                })
-        },
-    )
-    .height(174)
-    .corner(12.0)
-    .visible_signal(action_mode);
+    let everything_install_prompt = ui_dialogs::build_everything_install_prompt(
+        everything_prompt_visible,
+        everything_status,
+        Arc::clone(&shared_settings),
+    );
+
+    let recycle_bin_dialog = ui_dialogs::build_recycle_bin_dialog(recycle_bin_confirmation, status);
+
+    let action_list = ui_results::build_action_list(
+        action_items,
+        Arc::clone(&shared_settings),
+        priorities,
+        Rc::clone(&provider_results),
+        query,
+        result_source,
+        selected_id,
+        selected_index,
+        action_index,
+        action_scroll_pending,
+        Rc::clone(&action_window_slot),
+        action_mode,
+        launcher_width,
+        launcher_height,
+    );
 
     // The HWND itself owns the system Acrylic surface. Keep this root transparent so
     // the blur fills the complete client area instead of becoming an inset card. The
