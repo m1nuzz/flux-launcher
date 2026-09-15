@@ -99,37 +99,58 @@ pub(crate) fn visual_preview_position(
 ) -> (i32, i32) {
     #[cfg(windows)]
     {
-        let Some(bounds) = monitor::work_area(preference) else {
+        let Some((bounds, dpi)) = monitor::work_area_with_dpi(preference) else {
             return (0, 0);
         };
-        let (settings_x, settings_y) =
-            monitor::centered_position(preference, SETTINGS_WINDOW_WIDTH, SETTINGS_WINDOW_HEIGHT)
-                .unwrap_or((bounds.left, bounds.top));
-        let gap = 24;
-        let right_x = settings_x + SETTINGS_WINDOW_WIDTH + gap;
-        let left_x = settings_x - preview_width - gap;
-        // Prefer a fully visible side-by-side preview. On a small CI desktop there
-        // may be no non-overlapping rectangle for 720x520 Settings plus the selected
-        // preview size; keep the preview outside Settings and let Windows clip its
-        // off-screen portion rather than covering the controls being dragged.
-        let x = if right_x + preview_width <= bounds.right {
-            right_x
-        } else if left_x >= bounds.left {
-            left_x
-        } else {
-            right_x
-        };
-        let y = settings_y + (SETTINGS_WINDOW_HEIGHT - preview_height).max(0) / 2;
-        (
-            x,
-            y.clamp(bounds.top, (bounds.bottom - preview_height).max(bounds.top)),
-        )
+        visual_preview_position_in_bounds(bounds, dpi, preview_width, preview_height)
     }
     #[cfg(not(windows))]
     {
         let _ = (preference, preview_width, preview_height);
         (0, 0)
     }
+}
+
+/// Pure side-by-side placement of the launcher preview next to the centered Settings
+/// window, returned in **physical** screen pixels (the preview `App::position` and the
+/// monitor work area are both physical). `preview_width`/`preview_height` are logical
+/// (DIP) client dimensions, exactly as the Settings constants are logical, so every size
+/// is scaled by the monitor DPI here. Before this scaling existed the horizontal offset
+/// added a logical Settings width to a physical Settings origin, so at >100% scaling
+/// (4K) the preview slid left and covered the Settings menu; at 100% it only looked
+/// correct by coincidence.
+pub(crate) fn visual_preview_position_in_bounds(
+    bounds: monitor::MonitorBounds,
+    dpi: u32,
+    preview_width: i32,
+    preview_height: i32,
+) -> (i32, i32) {
+    let scale = dpi.max(96) as f32 / 96.0;
+    let to_physical = |logical: i32| (logical as f32 * scale).round() as i32;
+    let settings_phys_w = to_physical(SETTINGS_WINDOW_WIDTH);
+    let settings_phys_h = to_physical(SETTINGS_WINDOW_HEIGHT);
+    let preview_phys_w = to_physical(preview_width.max(1));
+    let preview_phys_h = to_physical(preview_height.max(1));
+    let gap = to_physical(24);
+    let (settings_x, settings_y) =
+        monitor::centered_position_in_bounds(bounds, settings_phys_w, settings_phys_h);
+    let right_x = settings_x + settings_phys_w + gap;
+    let left_x = settings_x - preview_phys_w - gap;
+    // Prefer a fully visible side-by-side preview. When neither side fits (a small or
+    // CI desktop), keep it on the right and let Windows clip the off-screen portion
+    // rather than cover the controls being dragged.
+    let x = if right_x + preview_phys_w <= bounds.right {
+        right_x
+    } else if left_x >= bounds.left {
+        left_x
+    } else {
+        right_x
+    };
+    let y = settings_y + (settings_phys_h - preview_phys_h).max(0) / 2;
+    (
+        x,
+        y.clamp(bounds.top, (bounds.bottom - preview_phys_h).max(bounds.top)),
+    )
 }
 
 pub(crate) fn dimension_slider_fraction(value: u16, min: u16, max: u16) -> f32 {
@@ -322,6 +343,37 @@ mod tests {
         assert_eq!(
             launcher_window_geometry_with_prompt(false, false, false, 640, 520),
             (640, COMPACT_WINDOW_HEIGHT)
+        );
+    }
+
+    #[test]
+    fn visual_preview_sits_to_the_right_of_settings_at_100_percent() {
+        let bounds = monitor::MonitorBounds {
+            left: 0,
+            top: 0,
+            right: 1920,
+            bottom: 1080,
+        };
+        // Settings 720 wide centered → left 600, right 1320; +24 gap = 1344.
+        let (x, y) = visual_preview_position_in_bounds(bounds, 96, 420, 200);
+        assert_eq!(x, 1344);
+        assert_eq!(y, 440, "vertically centered against Settings");
+    }
+
+    #[test]
+    fn visual_preview_clears_scaled_settings_at_150_percent_4k() {
+        let bounds = monitor::MonitorBounds {
+            left: 0,
+            top: 0,
+            right: 3840,
+            bottom: 2160,
+        };
+        let (x, _y) = visual_preview_position_in_bounds(bounds, 144, 420, 200);
+        // Settings physical width 720*1.5=1080 centered → left 1380, right 2460.
+        let settings_right = 1380 + (SETTINGS_WINDOW_WIDTH as f32 * 1.5).round() as i32;
+        assert!(
+            x >= settings_right,
+            "preview must start right of the DPI-scaled Settings edge ({settings_right}), got {x}"
         );
     }
 

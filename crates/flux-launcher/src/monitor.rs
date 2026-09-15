@@ -64,7 +64,7 @@ fn monitor_dpi(monitor: windows::Win32::Graphics::Gdi::HMONITOR) -> u32 {
 }
 
 #[cfg(windows)]
-fn work_area_with_dpi(preference: MonitorPreference) -> Option<(MonitorBounds, u32)> {
+pub(crate) fn work_area_with_dpi(preference: MonitorPreference) -> Option<(MonitorBounds, u32)> {
     use windows::Win32::Foundation::{LPARAM, POINT, RECT};
     use windows::Win32::Graphics::Gdi::{
         EnumDisplayMonitors, GetMonitorInfoW, HDC, HMONITOR, MONITORINFO, MONITOR_DEFAULTTONEAREST,
@@ -142,100 +142,6 @@ fn work_area_with_dpi(preference: MonitorPreference) -> Option<(MonitorBounds, u
                     }
                 }
                 windows::core::BOOL(1)
-            }
-
-            let mut state = EnumState {
-                primary: None,
-                first: None,
-            };
-            let _ = unsafe {
-                EnumDisplayMonitors(
-                    None,
-                    None,
-                    Some(callback),
-                    LPARAM(&mut state as *mut EnumState as isize),
-                )
-            };
-            state.primary.or(state.first)
-        }
-    }
-}
-
-#[cfg(windows)]
-pub(crate) fn work_area(preference: MonitorPreference) -> Option<MonitorBounds> {
-    use windows::core::BOOL;
-    use windows::Win32::Foundation::{LPARAM, POINT, RECT};
-    use windows::Win32::Graphics::Gdi::{
-        EnumDisplayMonitors, GetMonitorInfoW, HDC, HMONITOR, MONITORINFO, MONITOR_DEFAULTTONEAREST,
-    };
-    use windows::Win32::UI::WindowsAndMessaging::{
-        GetCursorPos, GetForegroundWindow, MONITORINFOF_PRIMARY,
-    };
-
-    fn bounds_for_monitor(monitor: HMONITOR) -> Option<(MonitorBounds, u32)> {
-        let mut info = MONITORINFO {
-            cbSize: std::mem::size_of::<MONITORINFO>() as u32,
-            ..Default::default()
-        };
-        if !unsafe { GetMonitorInfoW(monitor, &mut info).as_bool() } {
-            return None;
-        }
-        let rect = info.rcWork;
-        Some((
-            MonitorBounds {
-                left: rect.left,
-                top: rect.top,
-                right: rect.right,
-                bottom: rect.bottom,
-            },
-            info.dwFlags,
-        ))
-    }
-
-    match preference {
-        MonitorPreference::Cursor => {
-            let mut point = POINT::default();
-            if unsafe { GetCursorPos(&mut point) }.is_err() {
-                return work_area(MonitorPreference::Primary);
-            }
-            let monitor = unsafe {
-                windows::Win32::Graphics::Gdi::MonitorFromPoint(point, MONITOR_DEFAULTTONEAREST)
-            };
-            bounds_for_monitor(monitor).map(|(bounds, _)| bounds)
-        }
-        MonitorPreference::Foreground => {
-            let foreground = unsafe { GetForegroundWindow() };
-            if foreground.is_invalid() {
-                return work_area(MonitorPreference::Primary);
-            }
-            let monitor = unsafe {
-                windows::Win32::Graphics::Gdi::MonitorFromWindow(
-                    foreground,
-                    MONITOR_DEFAULTTONEAREST,
-                )
-            };
-            bounds_for_monitor(monitor).map(|(bounds, _)| bounds)
-        }
-        MonitorPreference::Primary => {
-            struct EnumState {
-                primary: Option<MonitorBounds>,
-                first: Option<MonitorBounds>,
-            }
-
-            unsafe extern "system" fn callback(
-                monitor: HMONITOR,
-                _dc: HDC,
-                _rect: *mut RECT,
-                data: LPARAM,
-            ) -> BOOL {
-                let state = &mut *(data.0 as *mut EnumState);
-                if let Some((bounds, flags)) = bounds_for_monitor(monitor) {
-                    state.first.get_or_insert(bounds);
-                    if flags & MONITORINFOF_PRIMARY != 0 {
-                        state.primary = Some(bounds);
-                    }
-                }
-                BOOL(1)
             }
 
             let mut state = EnumState {
