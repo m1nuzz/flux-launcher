@@ -16,6 +16,7 @@ mod history_priorities;
 mod host_protocol;
 mod hotkeys;
 mod input_keys;
+mod interval_tick;
 mod key_handlers;
 mod keyboard_layout;
 mod launch;
@@ -56,7 +57,7 @@ use flux_core::{
     MIN_LAUNCHER_HEIGHT, MIN_LAUNCHER_WIDTH,
 };
 use plugins::PluginAction;
-use std::cell::{Cell, RefCell};
+use std::cell::RefCell;
 use std::collections::HashMap;
 use std::rc::Rc;
 use std::sync::{atomic::Ordering, Arc, RwLock};
@@ -86,7 +87,6 @@ pub(crate) use window_geometry::*;
 
 pub(crate) use history_priorities::*;
 pub(crate) use launcher_icons::*;
-pub(crate) use provider_merge::*;
 pub(crate) use provider_snapshot::*;
 pub(crate) use result_actions::*;
 pub(crate) use shell_icon_cache::*;
@@ -139,9 +139,6 @@ fn main() {
             .filter(|tab| *tab < 4)
             .unwrap_or(0),
     );
-    let tray_settings_smoke_pending = Rc::new(Cell::new(
-        std::env::var_os("FLUX_SMOKE_TRAY_SETTINGS").is_some(),
-    ));
     let show_results = signal(false);
     let activation_key = signal(settings.activation_hotkey.key.clone());
     let activation_display = signal(hotkeys::display_config(&settings.activation_hotkey));
@@ -215,8 +212,7 @@ fn main() {
     let selection_color = signal(selection_color_for_settings(&settings));
     let caret_duration = signal(settings.smooth_caret_duration_ms.to_string());
 
-    let mut model = SearchModel::new();
-    let results = signal(model.results().to_vec());
+    let results = signal(SearchModel::new().results().to_vec());
     let provider_results = Rc::new(RefCell::new(ProviderResults::default()));
     let plugin_actions = Rc::new(RefCell::new(HashMap::<String, PluginAction>::new()));
     let result_source = results;
@@ -315,54 +311,6 @@ fn main() {
         .bg(Color::rgba(0, 0, 0, 0))
         .child(launcher_content.align(Align::Start));
 
-    let query_for_interval = query;
-    let results_for_interval = results;
-    let width_for_interval = launcher_width;
-    let height_for_interval = launcher_height;
-    let width_input_for_interval = launcher_width_input;
-    let height_input_for_interval = launcher_height_input;
-    let width_slider_for_interval = launcher_width_slider;
-    let height_slider_for_interval = launcher_height_slider;
-    let preview_text_for_interval = launcher_preview_text;
-    let icon_refresh_generation_for_interval = icon_refresh_generation;
-    let status_for_interval = status;
-    let show_results_for_interval = show_results;
-    let inline_completion_for_interval = inline_completion;
-    let selection_touched_for_interval = selection_touched;
-    let sequence_for_interval = current_sequence;
-    let providers_for_interval = Rc::clone(&provider_results);
-    let scroll_request_for_interval = scroll_request_for_rows;
-    let actions_for_interval = Rc::clone(&plugin_actions);
-    let auto_enable_everything_for_interval = auto_enable_everything;
-    let obsidian_enabled_for_interval = obsidian_enabled;
-    let obsidian_alias_for_interval = obsidian_alias;
-    let google_enabled_for_interval = google_enabled;
-    let google_alias_for_interval = google_alias;
-    let history_mode_for_interval = history_mode;
-    let settings_visible_for_interval = settings_visible;
-    let settings_tab_for_interval = settings_tab;
-    let everything_prompt_visible_for_interval = everything_prompt_visible;
-    let everything_installed_for_interval = everything_installed;
-    let everything_status_for_interval = everything_status;
-    let visual_preview_generation_for_interval = visual_preview_generation;
-    let visual_preview_smoke_for_interval =
-        std::env::var_os("FLUX_SMOKE_VISUAL_SETTINGS").is_some();
-    let everything_plugins_smoke_for_interval =
-        std::env::var_os("FLUX_SMOKE_EVERYTHING_PLUGINS").is_some();
-    let tray_settings_smoke_pending_for_interval = Rc::clone(&tray_settings_smoke_pending);
-    let mut last_icon_generation = icon_refresh_generation.get();
-    let mut last_launcher_width = launcher_width.get();
-    let mut last_launcher_height = launcher_height.get();
-    let mut last_settings_visible = settings_visible.get();
-    let mut last_everything_prompt_visible = everything_prompt_visible.get();
-    let mut last_query = String::new();
-    let mut visual_preview_process: Option<visual_preview::PreviewProcess> = None;
-    let mut last_visual_preview_request: Option<(u16, u16)> = None;
-    let mut last_visual_preview_generation = visual_preview_generation.get();
-    let mut last_visual_control_state: Option<(u16, u16, u32, u32)> = None;
-    let mut everything_plugins_smoke_reported = false;
-    let mut sequence = 0_u64;
-
     let settings_at_start = settings_visible.get();
     let initial_height = if settings_at_start {
         SETTINGS_WINDOW_HEIGHT
@@ -396,8 +344,6 @@ fn main() {
     }
     let window_size = app.window_size_handle();
     let window_position = app.window_position_handle();
-    let position_for_interval = window_position.clone();
-    let settings_for_interval_geometry = Arc::clone(&shared_settings);
     let window_op: WindowOpHandle = app.window_op_handle();
     let cursor_visibility: CursorVisibilityHandle = app.cursor_visibility_handle();
     let update_channels = background_tasks::register_update_channels(
@@ -418,11 +364,7 @@ fn main() {
     if update_checks_allowed && settings.update_checks_enabled && update_check_due(&settings) {
         request_update_check(update_sender.clone(), &update_check_in_flight);
     }
-    let settings_for_update_interval = Arc::clone(&shared_settings);
-    let update_sender_for_interval = update_sender.clone();
-    let update_check_in_flight_for_interval = Rc::clone(&update_check_in_flight);
     *action_window_slot.borrow_mut() = Some(window_size.clone());
-    let size_for_interval = window_size.clone();
     let size_for_visibility = window_size.clone();
     let application_worker = background_tasks::spawn_application_pipeline(
         &mut app,
@@ -690,6 +632,53 @@ fn main() {
             let _ = second_instance_sender_for_callback.send(());
         });
     }
+    let app = interval_tick::register_interval(
+        app,
+        query,
+        results,
+        launcher_width,
+        launcher_height,
+        launcher_width_input,
+        launcher_height_input,
+        launcher_width_slider,
+        launcher_height_slider,
+        launcher_preview_text,
+        icon_refresh_generation,
+        status,
+        show_results,
+        inline_completion,
+        selection_touched,
+        current_sequence,
+        Rc::clone(&provider_results),
+        scroll_request_for_rows,
+        Rc::clone(&plugin_actions),
+        auto_enable_everything,
+        obsidian_enabled,
+        obsidian_alias,
+        google_enabled,
+        google_alias,
+        history_mode,
+        settings_visible,
+        settings_tab,
+        everything_prompt_visible,
+        everything_installed,
+        everything_status,
+        visual_preview_generation,
+        selected_id,
+        selected_index,
+        action_mode,
+        action_index,
+        action_items,
+        Arc::clone(&shared_settings),
+        update_sender.clone(),
+        Rc::clone(&update_check_in_flight),
+        window_size.clone(),
+        window_position.clone(),
+        application_worker,
+        everything_worker,
+        plugin_worker,
+        native_plugin_worker,
+    );
     app.tray(tray)
         .hide_on_close()
         .hide_on_deactivate()
@@ -705,371 +694,6 @@ fn main() {
         .backdrop(Backdrop::Acrylic)
         .theme(launcher_theme())
         .content(content)
-        .on_interval(SEARCH_INTERVAL, move |ctx| {
-            let current_width = width_for_interval.get();
-            let current_height = height_for_interval.get();
-            let settings_is_visible = settings_visible_for_interval.get();
-            let prompt_is_visible = everything_prompt_visible_for_interval.get();
-            let visual_tab_is_visible = settings_tab_for_interval.get() == 1;
-            let plugins_tab_is_visible = settings_tab_for_interval.get() == 3;
-            let visual_preview_is_visible = settings_is_visible && visual_tab_is_visible;
-            if everything_plugins_smoke_for_interval
-                && settings_is_visible
-                && plugins_tab_is_visible
-                && !everything_plugins_smoke_reported
-            {
-                let installed = everything_installed_for_interval.get();
-                let auto_enable = auto_enable_everything_for_interval.get();
-                let status = everything_status_for_interval.get();
-                eprintln!(
-                    "Everything Plugins UI: tab_visible=true everything_section=true auto_enable_checkbox=true status_label=true install_button_label=Install_Everything already_installed_label=Everything_is_already_installed auto_enable={} installed={} install_button_visible={} already_installed_visible={} status={}",
-                    auto_enable,
-                    installed,
-                    !installed,
-                    installed,
-                    status.replace(' ', "_")
-                );
-                everything_plugins_smoke_reported = true;
-            }
-            if settings_is_visible && !last_settings_visible {
-                if let Ok(settings) = settings_for_interval_geometry.read() {
-                    request_monitor_position(
-                        &position_for_interval,
-                        settings.monitor_preference,
-                        SETTINGS_WINDOW_WIDTH,
-                        SETTINGS_WINDOW_HEIGHT,
-                    );
-                }
-                size_for_interval.set(SETTINGS_WINDOW_WIDTH, SETTINGS_WINDOW_HEIGHT);
-            }
-            if prompt_is_visible != last_everything_prompt_visible {
-                last_everything_prompt_visible = prompt_is_visible;
-                let (prompt_width, prompt_height) = launcher_window_geometry_with_prompt(
-                    settings_is_visible,
-                    prompt_is_visible,
-                    show_results_for_interval.get(),
-                    width_for_interval.get() as i32,
-                    height_for_interval.get() as i32,
-                );
-                if let Ok(settings) = settings_for_interval_geometry.read() {
-                    request_monitor_position(
-                        &position_for_interval,
-                        settings.monitor_preference,
-                        prompt_width,
-                        prompt_height,
-                    );
-                }
-                size_for_interval.set(prompt_width, prompt_height);
-            }
-            if visual_preview_is_visible {
-                let preference = settings_for_interval_geometry
-                    .read()
-                    .map(|settings| settings.monitor_preference)
-                    .unwrap_or(MonitorPreference::Cursor);
-                let child_exited = visual_preview_process
-                    .as_mut()
-                    .is_some_and(|preview| !preview.is_alive());
-                if child_exited {
-                    visual_preview_process.take();
-                    last_visual_preview_request = None;
-                }
-                if let Some(preview) = visual_preview_process.as_mut() {
-                    match preview.poll_ready() {
-                        Ok(_) => {}
-                        Err(error) => {
-                            eprintln!("Could not ready visual preview: {error}");
-                            visual_preview_process.take();
-                            last_visual_preview_request = None;
-                        }
-                    }
-                }
-                if visual_preview_process.is_none() {
-                    let preview_width = i32::from(current_width);
-                    let preview_height = i32::from(current_height);
-                    let (preview_x, preview_y) =
-                        visual_preview_position(preference, preview_width, preview_height);
-                    match visual_preview::PreviewProcess::start(
-                        preview_width,
-                        preview_height,
-                        preview_x,
-                        preview_y,
-                    ) {
-                        Ok(preview) => {
-                            visual_preview_process = Some(preview);
-                            last_visual_preview_request = None;
-                        }
-                        Err(error) => eprintln!("Could not start visual preview: {error}"),
-                    }
-                }
-            } else if let Some(preview) = visual_preview_process.as_mut() {
-                eprintln!(
-                    "Visual preview closing because Settings/Visual is hidden: pid={}",
-                    preview.pid()
-                );
-                visual_preview_process.take();
-                last_visual_preview_request = None;
-            }
-            last_settings_visible = settings_is_visible;
-            let slider_width = dimension_from_slider(
-                width_slider_for_interval.get(),
-                MIN_LAUNCHER_WIDTH,
-                MAX_LAUNCHER_WIDTH,
-            );
-            let slider_height = dimension_from_slider(
-                height_slider_for_interval.get(),
-                MIN_LAUNCHER_HEIGHT,
-                MAX_LAUNCHER_HEIGHT,
-            );
-            if visual_preview_smoke_for_interval {
-                let control_state = (
-                    width_for_interval.get(),
-                    height_for_interval.get(),
-                    (width_slider_for_interval.get() * 10_000.0).round() as u32,
-                    (height_slider_for_interval.get() * 10_000.0).round() as u32,
-                );
-                if last_visual_control_state != Some(control_state) {
-                    eprintln!(
-                        "Visual control state: width={} height={} width_slider={} height_slider={}",
-                        control_state.0, control_state.1, control_state.2, control_state.3
-                    );
-                    last_visual_control_state = Some(control_state);
-                }
-            }
-            let typed_width = parse_dimension_input(
-                &width_input_for_interval.get(),
-                MIN_LAUNCHER_WIDTH,
-                MAX_LAUNCHER_WIDTH,
-            );
-            let typed_height = parse_dimension_input(
-                &height_input_for_interval.get(),
-                MIN_LAUNCHER_HEIGHT,
-                MAX_LAUNCHER_HEIGHT,
-            );
-            let next_width = typed_width
-                .filter(|value| *value != current_width)
-                .unwrap_or(if slider_width != current_width {
-                    slider_width
-                } else {
-                    current_width
-                });
-            let next_height = typed_height
-                .filter(|value| *value != current_height)
-                .unwrap_or(if slider_height != current_height {
-                    slider_height
-                } else {
-                    current_height
-                });
-            if next_width != current_width || next_height != current_height {
-                width_for_interval.set(next_width);
-                height_for_interval.set(next_height);
-                width_input_for_interval.set(next_width.to_string());
-                height_input_for_interval.set(next_height.to_string());
-                width_slider_for_interval.set(dimension_slider_fraction(
-                    next_width,
-                    MIN_LAUNCHER_WIDTH,
-                    MAX_LAUNCHER_WIDTH,
-                ));
-                height_slider_for_interval.set(dimension_slider_fraction(
-                    next_height,
-                    MIN_LAUNCHER_HEIGHT,
-                    MAX_LAUNCHER_HEIGHT,
-                ));
-                preview_text_for_interval.set(format!(
-                    "Current launcher client area: {} × {} logical px (DIP)",
-                    next_width, next_height
-                ));
-                if !(settings_visible_for_interval.get() && settings_tab_for_interval.get() == 1) {
-                    apply_launcher_size(
-                        &size_for_interval,
-                        &position_for_interval,
-                        &settings_for_interval_geometry,
-                        next_width,
-                        next_height,
-                        false,
-                        show_results_for_interval.get(),
-                    );
-                }
-                if visual_preview_smoke_for_interval {
-                    eprintln!(
-                        "Visual preview dimension state: {}x{} logical px",
-                        next_width, next_height
-                    );
-                }
-                last_launcher_width = next_width;
-                last_launcher_height = next_height;
-            } else if current_width != last_launcher_width || current_height != last_launcher_height
-            {
-                last_launcher_width = current_width;
-                last_launcher_height = current_height;
-            }
-
-            let preview_generation = visual_preview_generation_for_interval.get();
-            if visual_preview_is_visible {
-                let requested = (width_for_interval.get(), height_for_interval.get());
-                let must_dispatch = last_visual_preview_request != Some(requested)
-                    || last_visual_preview_generation != preview_generation;
-                if must_dispatch {
-                    let preference = settings_for_interval_geometry
-                        .read()
-                        .map(|settings| settings.monitor_preference)
-                        .unwrap_or(MonitorPreference::Cursor);
-                    let (preview_x, preview_y) = visual_preview_position(
-                        preference,
-                        i32::from(requested.0),
-                        i32::from(requested.1),
-                    );
-                    let dispatch_result = if let Some(preview) = visual_preview_process.as_mut() {
-                        match preview.poll_ready() {
-                            Ok(true) => Some(preview.resize(
-                                i32::from(requested.0),
-                                i32::from(requested.1),
-                                preview_x,
-                                preview_y,
-                            )),
-                            Ok(false) => None,
-                            Err(error) => Some(Err(error)),
-                        }
-                    } else {
-                        None
-                    };
-                    match dispatch_result {
-                        Some(Ok(())) => {
-                            last_visual_preview_request = Some(requested);
-                            last_visual_preview_generation = preview_generation;
-                            eprintln!(
-                                "Visual preview IPC resize dispatched: {}x{}",
-                                requested.0, requested.1
-                            );
-                        }
-                        Some(Err(error)) => {
-                            eprintln!("Could not update visual preview: {error}");
-                            visual_preview_process.take();
-                            last_visual_preview_request = None;
-                        }
-                        None => {}
-                    }
-                }
-            } else {
-                last_visual_preview_request = None;
-                last_visual_preview_generation = preview_generation;
-            }
-
-            if let Ok(settings) = settings_for_update_interval.read() {
-                let update_checks_allowed = std::env::var("FLUX_DISABLE_UPDATE_CHECKS")
-                    .map(|value| value != "1")
-                    .unwrap_or(true);
-                if update_checks_allowed
-                    && settings.update_checks_enabled
-                    && update_check_due(&settings)
-                {
-                    request_update_check(
-                        update_sender_for_interval.clone(),
-                        &update_check_in_flight_for_interval,
-                    );
-                }
-            }
-            let completed_icon_generation =
-                SHELL_ICON_COMPLETION_GENERATION.load(Ordering::Acquire);
-            if icon_completion_generation_changed(last_icon_generation, completed_icon_generation) {
-                last_icon_generation = completed_icon_generation;
-                icon_refresh_generation_for_interval.set(completed_icon_generation);
-            }
-            if tray_settings_smoke_pending_for_interval.replace(false) {
-                // Exercise the same lifecycle order as the tray Settings item,
-                // without relying on brittle screen-coordinate tray automation.
-                settings_visible_for_interval.set(true);
-                ctx.show_window();
-                size_for_interval.set(SETTINGS_WINDOW_WIDTH, SETTINGS_WINDOW_HEIGHT);
-                return;
-            }
-            let next_query = query_for_interval.get();
-            if next_query == last_query {
-                return;
-            }
-
-            let has_query = !next_query.trim().is_empty();
-            history_mode_for_interval.set(false);
-            show_results_for_interval.set(has_query);
-            // Query cleanup also happens when hide-on-deactivate hides the
-            // launcher. Do not let that asynchronous query transition resize
-            // an already-open Settings panel back to the compact search strip.
-            let (target_width, target_height) = launcher_window_geometry_with_prompt(
-                settings_visible_for_interval.get(),
-                everything_prompt_visible_for_interval.get(),
-                has_query,
-                launcher_width.get() as i32,
-                launcher_height.get() as i32,
-            );
-            size_for_interval.set(target_width, target_height);
-            sequence = sequence.wrapping_add(1);
-            sequence_for_interval.set(sequence);
-            model.set_query(&next_query);
-            {
-                let mut built_in_results = model.results().to_vec();
-                normalize_built_in_executable_targets(&mut built_in_results);
-                let everything_expected = auto_enable_everything_for_interval.get()
-                    && next_query.trim().len() >= EVERYTHING_MIN_QUERY_LEN;
-                let mut providers = providers_for_interval.borrow_mut();
-                providers.reset(sequence, built_in_results.clone(), everything_expected);
-                let publish_initial_results = should_publish_initial_query_results(
-                    has_query,
-                    built_in_results.is_empty(),
-                    results_for_interval.get().is_empty(),
-                );
-                if publish_initial_results {
-                    selection_touched_for_interval.set(false);
-                    selected_index.set(0);
-                    selected_id.set(
-                        built_in_results
-                            .first()
-                            .map(|result| result.id.clone())
-                            .unwrap_or_default(),
-                    );
-                    // Built-in/system commands are synchronous and must be actionable
-                    // immediately. External providers still replace this snapshot once
-                    // their responses arrive for the same query sequence.
-                    results_for_interval.set(built_in_results);
-                }
-                // Do not derive or display completion from the previous query while
-                // the current provider generation is still pending.
-                inline_completion_for_interval.set(String::new());
-            }
-            request_scroll(scroll_request_for_interval);
-            action_mode.set(false);
-            action_index.set(0);
-            action_items.set(Vec::new());
-            actions_for_interval.borrow_mut().clear();
-            if !has_query {
-                inline_completion_for_interval.set(String::new());
-                status_for_interval.set(String::from("Ready"));
-            } else {
-                status_for_interval.set(String::from(
-                    "Searching applications, Everything and native Flow plugins...",
-                ));
-                application_worker.request(sequence, next_query.clone());
-                // Everything is the always-on file provider for every non-empty
-                // query. Native Everything syntax such as `ext:zip`, `parent:`,
-                // `file:`, and `dm:today` stays unchanged; a leading `.ext`
-                // shorthand is normalized only for this provider.
-                if auto_enable_everything_for_interval.get()
-                    && next_query.trim().len() >= EVERYTHING_MIN_QUERY_LEN
-                {
-                    everything_worker.request(sequence, normalize_everything_query(&next_query));
-                }
-                if next_query.trim().len() >= PLUGIN_MIN_QUERY_LEN {
-                    plugin_worker.request(
-                        sequence,
-                        next_query.clone(),
-                        obsidian_enabled_for_interval.get(),
-                        obsidian_alias_for_interval.get(),
-                        google_enabled_for_interval.get(),
-                        google_alias_for_interval.get(),
-                    );
-                    native_plugin_worker.request(sequence, next_query.clone());
-                }
-            }
-            last_query = next_query;
-        })
         .on_window_show({
             let settings = Arc::clone(&shared_settings);
             let cursor_visibility_for_show = cursor_visibility.clone();
