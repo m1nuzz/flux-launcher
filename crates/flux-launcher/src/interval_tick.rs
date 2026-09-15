@@ -7,11 +7,12 @@ use flux_core::{
     MonitorPreference, SearchModel, SearchResult, Settings, MAX_LAUNCHER_HEIGHT,
     MAX_LAUNCHER_WIDTH, MIN_LAUNCHER_HEIGHT, MIN_LAUNCHER_WIDTH,
 };
-use windui::app::{App, WindowPositionHandle, WindowSizeHandle};
+use windui::app::{App, WindowOpHandle, WindowPositionHandle, WindowSizeHandle};
 use windui::signal::Signal;
 
 use super::applications::ApplicationWorker;
 use super::everything::EverythingWorker;
+use super::launch;
 use super::plugins::{FlowPluginWorker, NativePluginWorker, PluginAction};
 use super::provider_merge::normalize_built_in_executable_targets;
 use super::provider_snapshot::{should_publish_initial_query_results, ProviderResults};
@@ -78,6 +79,8 @@ pub(crate) fn register_interval(
     everything_worker: EverythingWorker,
     plugin_worker: FlowPluginWorker,
     native_plugin_worker: NativePluginWorker,
+    recycle_bin_confirmation: Signal<bool>,
+    window_op: WindowOpHandle,
 ) -> App {
     let query_for_interval = query;
     let results_for_interval = results;
@@ -136,7 +139,64 @@ pub(crate) fn register_interval(
     let settings_for_update_interval = Arc::clone(&shared_settings);
     let update_sender_for_interval = update_sender.clone();
     let update_check_in_flight_for_interval = Rc::clone(&update_check_in_flight);
+    let recycle_bin_confirmation_for_interval = recycle_bin_confirmation;
+    let window_op_for_interval = window_op;
+    let mut recycle_confirm_child: Option<std::process::Child> = None;
     app.on_interval(SEARCH_INTERVAL, move |ctx| {
+        // The Recycle Bin confirmation is a standalone centered window owned by a short
+        // child process. Hide the launcher, launch it once, then empty (exit 0) or cancel
+        // based on its exit code. The in-launcher overlay used to render below the compact
+        // strip and could not be reached.
+        if recycle_bin_confirmation_for_interval.get() {
+            if recycle_confirm_child.is_none() {
+                match std::env::current_exe() {
+                    Ok(exe) => {
+                        window_op_for_interval.hide_window();
+                        match std::process::Command::new(exe)
+                            .arg("--empty-recycle-confirm")
+                            .spawn()
+                        {
+                            Ok(child) => recycle_confirm_child = Some(child),
+                            Err(error) => {
+                                eprintln!("Could not start Recycle Bin confirmation: {error}");
+                                window_op_for_interval.show_window();
+                                recycle_bin_confirmation_for_interval.set(false);
+                            }
+                        }
+                    }
+                    Err(error) => {
+                        eprintln!("Could not resolve the executable for confirmation: {error}");
+                        recycle_bin_confirmation_for_interval.set(false);
+                    }
+                }
+            } else if let Some(child) = recycle_confirm_child.as_mut() {
+                match child.try_wait() {
+                    Ok(Some(status)) => {
+                        recycle_confirm_child = None;
+                        if status.success() {
+                            if launch::empty_recycle_bin() {
+                                status_for_interval.set(String::from("Recycle Bin emptied"));
+                            } else {
+                                status_for_interval
+                                    .set(String::from("Could not empty the Recycle Bin"));
+                            }
+                        } else {
+                            status_for_interval.set(String::from("Ready"));
+                        }
+                        recycle_bin_confirmation_for_interval.set(false);
+                        window_op_for_interval.show_window();
+                    }
+                    Ok(None) => {}
+                    Err(error) => {
+                        eprintln!("Recycle Bin confirmation process error: {error}");
+                        recycle_confirm_child = None;
+                        recycle_bin_confirmation_for_interval.set(false);
+                        window_op_for_interval.show_window();
+                    }
+                }
+            }
+            return;
+        }
         let current_width = width_for_interval.get();
         let current_height = height_for_interval.get();
         let settings_is_visible = settings_visible_for_interval.get();

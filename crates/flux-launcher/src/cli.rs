@@ -1,5 +1,6 @@
 use super::launch;
 use super::native_host;
+use super::recycle_confirm;
 use super::shell_icon_cache::shortcut_icon_smoke;
 use super::ui_constants::SINGLE_INSTANCE_ID;
 use super::visual_preview;
@@ -57,6 +58,10 @@ pub(crate) fn handle_cli_modes() -> StartupAction {
         }
         visual_preview::run(values[0], values[1], values[2], values[3]);
         return StartupAction::Exit;
+    }
+    if mode.as_deref() == Some(std::ffi::OsStr::new("--empty-recycle-confirm")) {
+        // Standalone centered confirmation window; run() exits the process itself.
+        recycle_confirm::run();
     }
     if mode.as_deref() == Some(std::ffi::OsStr::new("--plugin-host")) {
         let root = args

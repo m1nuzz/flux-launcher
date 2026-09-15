@@ -30,6 +30,7 @@ mod plugin_transport;
 mod plugins;
 mod provider_merge;
 mod provider_snapshot;
+mod recycle_confirm;
 mod result_actions;
 mod result_row;
 mod result_widgets;
@@ -248,8 +249,6 @@ fn main() {
         Arc::clone(&shared_settings),
     );
 
-    let recycle_bin_dialog = ui_dialogs::build_recycle_bin_dialog(recycle_bin_confirmation, status);
-
     let action_list = ui_results::build_action_list(
         action_items,
         Arc::clone(&shared_settings),
@@ -292,7 +291,6 @@ fn main() {
         // add a weighted spacer: it creates a visible blank band for short queries.
         .child(action_bar)
         .child(action_list)
-        .child(recycle_bin_dialog)
         .child(everything_install_prompt);
     let launcher_surface = Element::stack()
         .fill()
@@ -623,6 +621,8 @@ fn main() {
         everything_worker,
         plugin_worker,
         native_plugin_worker,
+        recycle_bin_confirmation,
+        window_op.clone(),
     );
     app_shell::run_launcher(
         app,
