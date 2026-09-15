@@ -75,3 +75,64 @@ function StartupCommand(Param: String): String;
 begin
   Result := '"' + ExpandConstant('{app}\{#AppExeName}') + '" --startup';
 end;
+
+function NeedsVcRedist: Boolean;
+begin
+  // Flux is built with the MSVC toolchain and imports VCRUNTIME140.dll, which
+  // the per-user installer cannot assume is present on a clean machine. {sys}
+  // resolves to the 64-bit system folder under ArchitecturesInstallIn64BitMode.
+  Result := not FileExists(ExpandConstant('{sys}\vcruntime140.dll'));
+end;
+
+procedure CurStepChanged(CurStep: TSetupStep);
+var
+  Bytes: Int64;
+  ResultCode: Integer;
+  RedistPath: String;
+begin
+  if CurStep <> ssPostInstall then
+    Exit;
+  // Unattended installs (winget, silent self-update) already satisfy the runtime
+  // through the WinGet PackageDependency, so never block a silent install on a dialog.
+  if WizardSilent then
+    Exit;
+  if not NeedsVcRedist then
+    Exit;
+
+  if MsgBox('Flux Launcher needs the Microsoft Visual C++ 2015-2022 (x64) runtime, which is not installed on this PC.'#13#10#13#10 +
+    'Install it now? Flux will try to download it from Microsoft. Selecting No will continue without it, and Flux Launcher may fail to start.',
+    mbInformation, MB_YESNO) <> IDYES then
+    Exit;
+
+  RedistPath := ExpandConstant('{tmp}\VC_redist.x64.exe');
+  try
+    // Raises an exception on any network/server error. Empty SHA-256 means the
+    // current Microsoft build is accepted rather than pinned to one version.
+    Bytes := DownloadTemporaryFile('https://aka.ms/vs/17/release/vc_redist.x64.exe', 'VC_redist.x64.exe', '', nil);
+  except
+    if MsgBox('Flux Launcher could not download the Visual C++ runtime automatically (no internet connection or a Microsoft server error).'#13#10#13#10 +
+      'Open the official Microsoft download page in your web browser?',
+      mbError, MB_YESNO) = IDYES then
+      ShellExec('open', 'https://learn.microsoft.com/en-us/cpp/windows/latest-supported-vc-redist', '', '', SW_SHOW, ewNoWait, ResultCode);
+    Exit;
+  end;
+
+  if (Bytes <= 0) or (not FileExists(RedistPath)) then
+  begin
+    if MsgBox('Flux Launcher could not download the Visual C++ runtime automatically.'#13#10#13#10 +
+      'Open the official Microsoft download page in your web browser?', mbError, MB_YESNO) = IDYES then
+      ShellExec('open', 'https://learn.microsoft.com/en-us/cpp/windows/latest-supported-vc-redist', '', '', SW_SHOW, ewNoWait, ResultCode);
+    Exit;
+  end;
+
+  // The redist bootstrapper is requireAdministrator: verb 'open' raises the
+  // standard Microsoft UAC prompt, so the runtime install is not fully silent.
+  if ShellExec('open', RedistPath, '/install /quiet /norestart', '', SW_HIDE, ewWaitUntilTerminated, ResultCode) then
+  begin
+    // 0 = installed, 1638 = a runtime is already present, 3010 = installed, restart pending.
+    if not ((ResultCode = 0) or (ResultCode = 1638) or (ResultCode = 3010)) then
+      MsgBox('Flux Launcher was installed, but the Visual C++ runtime setup reported error ' + IntToStr(ResultCode) + '. Flux Launcher may fail to start until the Microsoft Visual C++ 2015-2022 Redistributable (x64) is installed.', mbError, MB_OK);
+  end
+  else
+    MsgBox('Flux Launcher could not launch the downloaded Visual C++ runtime installer. Please install it from the official Microsoft website.', mbError, MB_OK);
+end;

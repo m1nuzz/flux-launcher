@@ -55,6 +55,12 @@ winget install --id m1nuzz.FluxLauncher --exact
 
 If you do not want an installer, download the [latest portable build](https://github.com/m1nuzz/flux-launcher/releases/latest/download/FluxLauncher-Portable.exe) and run it directly. Portable mode uses the same startup preference; disable `Start Flux automatically with Windows` in Settings if you do not want it registered.
 
+Flux is built with the MSVC toolchain and requires the **Microsoft Visual C++ 2015–2022 Redistributable (x64)** (`VCRUNTIME140.dll`, version 14.38.33130 or later). The WinGet package declares this dependency and installs it automatically. When you run `FluxLauncher-Setup.exe` interactively on a PC that is missing the runtime, the installer offers to download it from Microsoft for you; if the download fails it points you to the official download page. The portable build does not install anything, so on a clean Windows install make sure the runtime is present, otherwise startup fails with `0xc0000135`:
+
+```powershell
+winget install -e --id Microsoft.VCRedist.2015+.x64
+```
+
 Flux does not require Everything, but Everything is recommended for indexed file and folder search. If it is not installed, Flux can offer the following command from Settings:
 
 ```powershell
