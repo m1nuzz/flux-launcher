@@ -5,6 +5,7 @@ mod app_hotkeys;
 mod app_identity;
 mod app_scan;
 mod applications;
+mod background_tasks;
 mod builtin;
 mod builtin_calc;
 mod builtin_obsidian;
@@ -50,16 +51,11 @@ mod updater;
 mod visual_preview;
 mod window_geometry;
 
-use applications::{ApplicationResponse, ApplicationWorker};
-use everything::{EverythingResponse, EverythingWorker, InstallationState};
 use flux_core::{
     MonitorPreference, SearchModel, Settings, MAX_LAUNCHER_HEIGHT, MAX_LAUNCHER_WIDTH,
     MIN_LAUNCHER_HEIGHT, MIN_LAUNCHER_WIDTH,
 };
-use plugins::{
-    FlowPluginWorker, NativePluginQueryResponse, NativePluginWorker, PluginAction,
-    PluginQueryResponse,
-};
+use plugins::PluginAction;
 use std::cell::{Cell, RefCell};
 use std::collections::HashMap;
 use std::rc::Rc;
@@ -404,86 +400,18 @@ fn main() {
     let settings_for_interval_geometry = Arc::clone(&shared_settings);
     let window_op: WindowOpHandle = app.window_op_handle();
     let cursor_visibility: CursorVisibilityHandle = app.cursor_visibility_handle();
-    let update_status_for_channel = update_status;
-    let update_available_for_channel = update_available;
-    let update_install_progress_for_channel = update_install_progress;
-    let update_installing_for_channel = update_installing;
-    let update_install_in_flight = Rc::new(Cell::new(false));
-    let update_install_in_flight_for_channel = Rc::clone(&update_install_in_flight);
-    let update_install_sender =
-        app.channel::<UpdateInstallResponse>(move |ctx, response| match response {
-            UpdateInstallResponse::Progress { version, progress } => {
-                update_install_progress_for_channel.set(Some((version.clone(), progress.clone())));
-                update_status_for_channel.set(format_update_progress(&version, &progress));
-            }
-            UpdateInstallResponse::Started { version } => {
-                update_install_in_flight_for_channel.set(false);
-                update_installing_for_channel.set(false);
-                update_install_progress_for_channel.set(None);
-                update_status_for_channel.set(format!(
-                    "Installing stable {version}; Flux Launcher is restarting"
-                ));
-                ctx.toast_ok(format!("Installing stable {version}"));
-                ctx.quit();
-            }
-            UpdateInstallResponse::Failed { version, error } => {
-                update_install_in_flight_for_channel.set(false);
-                update_installing_for_channel.set(false);
-                update_install_progress_for_channel.set(None);
-                update_status_for_channel.set(format!("Stable {version} update failed: {error}"));
-                ctx.toast_ok(format!("Update install failed: {error}"));
-            }
-        });
-    let update_install_sender_for_channel = update_install_sender.clone();
-    let settings_for_update_channel = Arc::clone(&shared_settings);
-    let update_check_in_flight = Rc::new(Cell::new(false));
-    let update_check_in_flight_for_channel = Rc::clone(&update_check_in_flight);
-    let update_install_in_flight_for_check_channel = Rc::clone(&update_install_in_flight);
-    let update_sender = app.channel::<updater::UpdateCheckResponse>(move |ctx, response| {
-        update_check_in_flight_for_channel.set(false);
-        if let Ok(mut settings) = settings_for_update_channel.write() {
-            settings.last_update_check_unix = response.checked_at;
-            let _ = save_settings(&settings);
-        }
-        match response.result {
-            Ok(Some(update)) => {
-                let message = format!("Stable {} is available", update.version);
-                update_status_for_channel.set(message.clone());
-                update_available_for_channel.set(Some(update.clone()));
-                let auto_install = settings_for_update_channel
-                    .read()
-                    .map(|settings| settings.auto_install_updates)
-                    .unwrap_or(false);
-                if auto_install {
-                    let relaunch_mode = relaunch_mode_for_auto_install();
-                    update_installing_for_channel.set(true);
-                    update_status_for_channel.set(format!(
-                        "Preparing stable {} for installation...",
-                        update.version
-                    ));
-                    if !request_update_install(
-                        update,
-                        update_install_sender_for_channel.clone(),
-                        &update_install_in_flight_for_check_channel,
-                        relaunch_mode,
-                    ) {
-                        update_installing_for_channel.set(false);
-                        update_status_for_channel
-                            .set(String::from("An update is already being installed"));
-                    }
-                } else {
-                    ctx.toast_ok(message);
-                }
-            }
-            Ok(None) => {
-                update_available_for_channel.set(None);
-                update_status_for_channel.set(format!("Flux {CURRENT_VERSION} is up to date"));
-            }
-            Err(error) => {
-                update_status_for_channel.set(format!("Stable update check failed: {error}"));
-            }
-        }
-    });
+    let update_channels = background_tasks::register_update_channels(
+        &mut app,
+        update_status,
+        update_available,
+        update_install_progress,
+        update_installing,
+        Arc::clone(&shared_settings),
+    );
+    let update_install_sender = update_channels.install_sender.clone();
+    let update_sender = update_channels.check_sender.clone();
+    let update_install_in_flight = Rc::clone(&update_channels.install_in_flight);
+    let update_check_in_flight = Rc::clone(&update_channels.check_in_flight);
     let update_checks_allowed = std::env::var("FLUX_DISABLE_UPDATE_CHECKS")
         .map(|value| value != "1")
         .unwrap_or(true);
@@ -496,232 +424,67 @@ fn main() {
     *action_window_slot.borrow_mut() = Some(window_size.clone());
     let size_for_interval = window_size.clone();
     let size_for_visibility = window_size.clone();
-    let query_for_applications = query;
-    let results_for_applications = results;
-    let inline_completion_for_applications = inline_completion;
-    let status_for_applications = status;
-    let selected_id_for_applications = selected_id;
-    let selected_index_for_applications = selected_index;
-    let selection_touched_for_applications = selection_touched;
-    let sequence_for_applications = current_sequence;
-    let providers_for_applications = Rc::clone(&provider_results);
-    let priorities_for_applications = priorities;
-    let application_sender = app.channel::<ApplicationResponse>(move |_, response| {
-        if response.sequence != sequence_for_applications.get()
-            || response.query != query_for_applications.get()
-        {
-            return;
-        }
-        let mut providers = providers_for_applications.borrow_mut();
-        if providers.sequence != response.sequence {
-            return;
-        }
-        providers.applications = response.results;
-        providers.applications_ready = true;
-        if providers.core_ready() {
-            let priorities = priorities_for_applications
-                .get()
-                .iter()
-                .map(|entry| entry.id.clone())
-                .collect::<Vec<_>>();
-            commit_provider_results(
-                &providers,
-                &query_for_applications.get(),
-                &priorities,
-                selected_id_for_applications,
-                selected_index_for_applications,
-                selection_touched_for_applications,
-                inline_completion_for_applications,
-                results_for_applications,
-            );
-        }
-        status_for_applications.set(response.status);
-    });
-    let application_worker = ApplicationWorker::spawn(application_sender);
+    let application_worker = background_tasks::spawn_application_pipeline(
+        &mut app,
+        query,
+        results,
+        inline_completion,
+        status,
+        selected_id,
+        selected_index,
+        selection_touched,
+        current_sequence,
+        Rc::clone(&provider_results),
+        priorities,
+    );
 
-    let query_for_everything = query;
-    let results_for_everything = results;
-    let inline_completion_for_everything = inline_completion;
-    let status_for_everything = status;
-    let selected_id_for_everything = selected_id;
-    let selected_index_for_everything = selected_index;
-    let selection_touched_for_everything = selection_touched;
-    let sequence_for_everything = current_sequence;
-    let providers_for_everything = Rc::clone(&provider_results);
-    let priorities_for_everything = priorities;
-    let auto_enable_everything_for_response = auto_enable_everything;
-    let everything_installed_for_response = everything_installed;
-    let everything_status_for_response = everything_status;
-    let everything_sender = app.channel::<EverythingResponse>(move |_, response| {
-        if !auto_enable_everything_for_response.get() {
-            everything_status_for_response.set(String::from(
-                "Everything auto-enable is disabled in Flux settings",
-            ));
-            return;
-        }
-        if response.sequence != sequence_for_everything.get()
-            || response.query != normalize_everything_query(&query_for_everything.get())
-        {
-            return;
-        }
-        let mut providers = providers_for_everything.borrow_mut();
-        if providers.sequence != response.sequence {
-            return;
-        }
-        providers.everything_ready = true;
-        if response.available {
-            everything_installed_for_response.set(true);
-            everything_status_for_response.set(String::from("Everything IPC is available"));
-            providers.everything = response.results;
-        } else if everything_installed_for_response.get() {
-            everything_status_for_response.set(String::from(
-                "Everything is installed but its local IPC is unavailable",
-            ));
-        } else {
-            everything_status_for_response.set(String::from(
-                "Everything is not installed. Install it with winget to enable file search.",
-            ));
-        }
-        if providers.core_ready() {
-            let priorities = priorities_for_everything
-                .get()
-                .iter()
-                .map(|entry| entry.id.clone())
-                .collect::<Vec<_>>();
-            commit_provider_results(
-                &providers,
-                &query_for_everything.get(),
-                &priorities,
-                selected_id_for_everything,
-                selected_index_for_everything,
-                selection_touched_for_everything,
-                inline_completion_for_everything,
-                results_for_everything,
-            );
-        }
-        status_for_everything.set(response.status);
-    });
-    let everything_worker = EverythingWorker::spawn(everything_sender);
-    if settings.auto_enable_everything {
-        match everything::start_background_if_installed() {
-            Ok(InstallationState::Installed(_)) => {
-                everything_installed.set(true);
-                everything_status.set(String::from(
-                    "Everything is already installed; Flux is enabling local IPC automatically",
-                ));
-            }
-            Ok(InstallationState::Missing) => {
-                everything_installed.set(false);
-                everything_status.set(String::from(
-                    "Everything is not installed. Install it with winget to enable file search.",
-                ));
-            }
-            Err(error) => {
-                everything_status.set(error);
-            }
-        }
-    } else {
-        everything_status.set(String::from(
-            "Everything auto-enable is disabled in Flux settings",
-        ));
-    }
+    let everything_worker = background_tasks::spawn_everything_pipeline(
+        &mut app,
+        query,
+        results,
+        inline_completion,
+        status,
+        selected_id,
+        selected_index,
+        selection_touched,
+        current_sequence,
+        Rc::clone(&provider_results),
+        priorities,
+        auto_enable_everything,
+        everything_installed,
+        everything_status,
+        settings.auto_enable_everything,
+    );
 
-    let query_for_plugins = query;
-    let results_for_plugins = results;
-    let inline_completion_for_plugins = inline_completion;
-    let status_for_plugins = status;
-    let selected_id_for_plugins = selected_id;
-    let selected_index_for_plugins = selected_index;
-    let selection_touched_for_plugins = selection_touched;
-    let sequence_for_plugins = current_sequence;
-    let providers_for_plugins = Rc::clone(&provider_results);
-    let priorities_for_plugins = priorities;
-    let actions_for_plugins = Rc::clone(&plugin_actions);
-    let plugin_sender = app.channel::<PluginQueryResponse>(move |_, response| {
-        if response.sequence != sequence_for_plugins.get()
-            || response.query != query_for_plugins.get()
-        {
-            return;
-        }
-        let mut providers = providers_for_plugins.borrow_mut();
-        if providers.sequence != response.sequence {
-            return;
-        }
-        if response.available {
-            providers.plugins = response.results;
-            *actions_for_plugins.borrow_mut() = response.actions;
-            if providers.core_ready() {
-                let priorities = priorities_for_plugins
-                    .get()
-                    .iter()
-                    .map(|entry| entry.id.clone())
-                    .collect::<Vec<_>>();
-                commit_provider_results(
-                    &providers,
-                    &query_for_plugins.get(),
-                    &priorities,
-                    selected_id_for_plugins,
-                    selected_index_for_plugins,
-                    selection_touched_for_plugins,
-                    inline_completion_for_plugins,
-                    results_for_plugins,
-                );
-            }
-        }
-        status_for_plugins.set(response.status);
-    });
-    let plugin_worker = FlowPluginWorker::spawn(plugin_sender);
+    let plugin_worker = background_tasks::spawn_plugin_pipeline(
+        &mut app,
+        query,
+        results,
+        inline_completion,
+        status,
+        selected_id,
+        selected_index,
+        selection_touched,
+        current_sequence,
+        Rc::clone(&provider_results),
+        priorities,
+        Rc::clone(&plugin_actions),
+    );
 
-    let query_for_native_plugins = query;
-    let results_for_native_plugins = results;
-    let inline_completion_for_native_plugins = inline_completion;
-    let status_for_native_plugins = status;
-    let selected_id_for_native_plugins = selected_id;
-    let selected_index_for_native_plugins = selected_index;
-    let selection_touched_for_native_plugins = selection_touched;
-    let sequence_for_native_plugins = current_sequence;
-    let providers_for_native_plugins = Rc::clone(&provider_results);
-    let priorities_for_native_plugins = priorities;
-    let actions_for_native_plugins = Rc::clone(&plugin_actions);
-    let native_sender = app.channel::<NativePluginQueryResponse>(move |_, response| {
-        if response.sequence != sequence_for_native_plugins.get()
-            || response.query != query_for_native_plugins.get()
-        {
-            return;
-        }
-        let mut providers = providers_for_native_plugins.borrow_mut();
-        if providers.sequence != response.sequence {
-            return;
-        }
-        let has_native_results = !response.results.is_empty();
-        providers.native_plugins = response.results;
-        if response.available {
-            actions_for_native_plugins
-                .borrow_mut()
-                .extend(response.actions);
-            if has_native_results {
-                status_for_native_plugins.set(response.status.clone());
-            }
-        }
-        if providers.core_ready() {
-            let priorities = priorities_for_native_plugins
-                .get()
-                .iter()
-                .map(|entry| entry.id.clone())
-                .collect::<Vec<_>>();
-            commit_provider_results(
-                &providers,
-                &query_for_native_plugins.get(),
-                &priorities,
-                selected_id_for_native_plugins,
-                selected_index_for_native_plugins,
-                selection_touched_for_native_plugins,
-                inline_completion_for_native_plugins,
-                results_for_native_plugins,
-            );
-        }
-    });
-    let native_plugin_worker = NativePluginWorker::spawn(native_sender);
+    let native_plugin_worker = background_tasks::spawn_native_pipeline(
+        &mut app,
+        query,
+        results,
+        inline_completion,
+        status,
+        selected_id,
+        selected_index,
+        selection_touched,
+        current_sequence,
+        Rc::clone(&provider_results),
+        priorities,
+        Rc::clone(&plugin_actions),
+    );
 
     let activation_handle = app_hotkeys::register_activation_hotkey(
         &mut app,
