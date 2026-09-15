@@ -100,6 +100,13 @@ mod tests {
     use super::*;
 
     #[test]
+    fn bundled_google_icon_decodes_to_32_pixel_rgba_bitmap() {
+        let icon = google_icon_rgba().expect("bundled Google icon should decode");
+        assert_eq!(icon.len(), 32 * 32 * 4);
+        assert!(icon.chunks_exact(4).any(|pixel| pixel[3] > 0));
+    }
+
+    #[test]
     fn bundled_obsidian_icon_decodes_to_32_pixel_rgba_bitmap() {
         let icon = obsidian_icon_rgba().expect("bundled Obsidian icon should decode");
         assert_eq!(icon.len(), 32 * 32 * 4);
