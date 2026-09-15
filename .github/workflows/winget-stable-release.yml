@@ -125,7 +125,7 @@ jobs:
           GITHUB_REPOSITORY: ${{ github.repository }}
         run: |
           $branch = "flux-launcher-$env:VERSION"
-          $existingPrJson = gh pr list --repo microsoft/winget-pkgs --state open --head "m1nuzz:$branch" --json number,url
+          $existingPrJson = gh pr list --repo microsoft/winget-pkgs --state open --author m1nuzz --head "$branch" --json number,url
           if ($LASTEXITCODE -ne 0) {
             throw "Unable to query official WinGet PRs for branch $branch."
           }
