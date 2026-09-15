@@ -93,20 +93,11 @@ pub fn open_recycle_bin() -> bool {
 #[cfg(windows)]
 pub fn empty_recycle_bin() -> bool {
     use windows::core::PCWSTR;
-    use windows::Win32::UI::Shell::{
-        SHEmptyRecycleBinW, SHERB_NOCONFIRMATION, SHERB_NOPROGRESSUI, SHERB_NOSOUND,
-    };
+    use windows::Win32::UI::Shell::{SHEmptyRecycleBinW, SHERB_NOPROGRESSUI, SHERB_NOSOUND};
 
-    // Flux shows its own centered confirmation window before calling this, so suppress
-    // the shell's native "Delete Multiple Items" prompt to avoid a double confirmation.
-    unsafe {
-        SHEmptyRecycleBinW(
-            None,
-            PCWSTR::null(),
-            SHERB_NOCONFIRMATION | SHERB_NOPROGRESSUI | SHERB_NOSOUND,
-        )
-        .is_ok()
-    }
+    // The shell's own "Delete Multiple Items" prompt is the confirmation UI: Flux does
+    // not show a separate dialog. Only the progress and sound overlays are suppressed.
+    unsafe { SHEmptyRecycleBinW(None, PCWSTR::null(), SHERB_NOPROGRESSUI | SHERB_NOSOUND).is_ok() }
 }
 
 #[cfg(windows)]

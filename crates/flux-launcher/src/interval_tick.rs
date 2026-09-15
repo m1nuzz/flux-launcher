@@ -143,10 +143,10 @@ pub(crate) fn register_interval(
     let window_op_for_interval = window_op;
     let mut recycle_confirm_child: Option<std::process::Child> = None;
     app.on_interval(SEARCH_INTERVAL, move |ctx| {
-        // The Recycle Bin confirmation is a standalone centered window owned by a short
-        // child process. Hide the launcher, launch it once, then empty (exit 0) or cancel
-        // based on its exit code. The in-launcher overlay used to render below the compact
-        // strip and could not be reached.
+        // Emptying the Recycle Bin uses the native Windows shell confirmation. The
+        // launcher hides itself and spawns a short-lived child process that runs the
+        // blocking shell prompt off the UI thread, then reshows when the child exits
+        // (exit 0 = emptied, non-zero = declined or failed).
         if recycle_bin_confirmation_for_interval.get() {
             if recycle_confirm_child.is_none() {
                 match std::env::current_exe() {

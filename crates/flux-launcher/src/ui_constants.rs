@@ -17,10 +17,6 @@ pub(crate) const ACTION_BAR_HEIGHT: i32 = 22;
 pub(crate) const ACTION_WINDOW_HEIGHT: i32 = 250;
 // Six 46-DIP result rows plus local scroll padding keep the footer close to the results.
 pub(crate) const RESULT_VIEWPORT_HEIGHT: i32 = 288;
-// The Recycle Bin confirmation is its own centered top-level window (a child process),
-// not an in-launcher overlay, so it is always fully visible and reachable.
-pub(crate) const RECYCLE_CONFIRM_WINDOW_WIDTH: i32 = 392;
-pub(crate) const RECYCLE_CONFIRM_WINDOW_HEIGHT: i32 = 184;
 pub(crate) const SETTINGS_WINDOW_HEIGHT: i32 = 520;
 pub(crate) const LAUNCHER_FONT_FAMILY: &str = "Segoe UI Variable";
 pub(crate) const SEARCH_INTERVAL: Duration = Duration::from_millis(40);
