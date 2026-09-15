@@ -9,6 +9,7 @@ mod builtin_calc;
 mod builtin_obsidian;
 mod everything;
 mod fullscreen;
+mod history_priorities;
 mod host_protocol;
 mod hotkeys;
 mod input_keys;
@@ -31,6 +32,7 @@ mod shell_icon_extract;
 mod startup;
 mod theme_text;
 mod ui_constants;
+mod update_tasks;
 mod updater;
 mod visual_preview;
 mod window_geometry;
@@ -38,16 +40,15 @@ mod window_geometry;
 use std::cell::{Cell, RefCell};
 use std::collections::HashMap;
 use std::rc::Rc;
-use std::sync::{atomic::Ordering, Arc, Mutex, OnceLock, RwLock};
+use std::sync::{atomic::Ordering, Arc, RwLock};
 use std::time::Duration;
 
 use applications::{ApplicationResponse, ApplicationWorker};
 use everything::{EverythingResponse, EverythingWorker, InstallationState};
 use flux_core::{
-    history_results, should_suppress_activation, HotkeyConfig, MonitorPreference, PriorityEntry,
-    ResultKind, SearchModel, SearchResult, Settings, DEFAULT_LAUNCHER_HEIGHT,
-    DEFAULT_LAUNCHER_WIDTH, MAX_LAUNCHER_HEIGHT, MAX_LAUNCHER_WIDTH, MIN_LAUNCHER_HEIGHT,
-    MIN_LAUNCHER_WIDTH,
+    history_results, should_suppress_activation, HotkeyConfig, MonitorPreference, SearchModel,
+    Settings, DEFAULT_LAUNCHER_HEIGHT, DEFAULT_LAUNCHER_WIDTH, MAX_LAUNCHER_HEIGHT,
+    MAX_LAUNCHER_WIDTH, MIN_LAUNCHER_HEIGHT, MIN_LAUNCHER_WIDTH,
 };
 use plugins::{
     native_plugin_install_path, FlowPluginWorker, NativePluginQueryResponse, NativePluginWorker,
@@ -78,6 +79,7 @@ fn request_scroll(scroll_pending: Signal<bool>) {
 
 pub(crate) use window_geometry::*;
 
+pub(crate) use history_priorities::*;
 pub(crate) use input_keys::*;
 pub(crate) use launcher_icons::*;
 pub(crate) use provider_merge::*;
@@ -87,301 +89,7 @@ pub(crate) use result_row::*;
 pub(crate) use result_widgets::*;
 pub(crate) use shell_icon_cache::*;
 pub(crate) use theme_text::*;
-
-fn game_mode_label(enabled: bool) -> String {
-    if enabled {
-        String::from("Game Mode: On")
-    } else {
-        String::from("Game Mode: Off")
-    }
-}
-
-fn relaunch_mode_for_auto_install() -> updater::RelaunchMode {
-    // Automatic updates must remain invisible: a restart should return to the
-    // tray and never reopen Search. Manual Install now uses Visible explicitly.
-    updater::RelaunchMode::Hidden
-}
-
-static SETTINGS_SAVE_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
-
-fn settings_save_lock() -> &'static Mutex<()> {
-    SETTINGS_SAVE_LOCK.get_or_init(|| Mutex::new(()))
-}
-
-fn save_settings(settings: &Settings) -> bool {
-    let Ok(_save_guard) = settings_save_lock().lock() else {
-        return false;
-    };
-    settings.save().is_ok()
-}
-
-fn request_update_check(
-    sender: Sender<updater::UpdateCheckResponse>,
-    in_flight: &Cell<bool>,
-) -> bool {
-    if in_flight.replace(true) {
-        return false;
-    }
-    spawn_update_check(sender);
-    true
-}
-
-fn spawn_update_check(sender: Sender<updater::UpdateCheckResponse>) {
-    let _ = std::thread::Builder::new()
-        .name(String::from("flux-update-check"))
-        .spawn(move || {
-            let checked_at = updater::unix_now();
-            let result = updater::check_stable(CURRENT_VERSION);
-            let _ = sender.send(updater::UpdateCheckResponse { checked_at, result });
-        });
-}
-
-#[derive(Clone, Debug)]
-enum UpdateInstallResponse {
-    Progress {
-        version: String,
-        progress: updater::DownloadProgress,
-    },
-    Started {
-        version: String,
-    },
-    Failed {
-        version: String,
-        error: String,
-    },
-}
-
-fn request_update_install(
-    update: updater::StableUpdate,
-    sender: Sender<UpdateInstallResponse>,
-    in_flight: &Cell<bool>,
-    relaunch_mode: updater::RelaunchMode,
-) -> bool {
-    if in_flight.replace(true) {
-        return false;
-    }
-    spawn_update_install(update, sender, relaunch_mode);
-    true
-}
-
-fn spawn_update_install(
-    update: updater::StableUpdate,
-    sender: Sender<UpdateInstallResponse>,
-    relaunch_mode: updater::RelaunchMode,
-) {
-    let _ = std::thread::Builder::new()
-        .name(String::from("flux-update-install"))
-        .spawn(move || {
-            let version = update.version.to_string();
-            trace_update_event(&format!("update-install-start\\t{version}"));
-            let installer_path =
-                std::env::temp_dir().join(format!("FluxLauncher-update-{}.exe", update.version));
-            let version_for_progress = version.clone();
-            let progress_sender = sender.clone();
-            let download =
-                updater::download_installer_to_path(&update, &installer_path, move |progress| {
-                    trace_update_event(&format!(
-                        "update-progress\t{}\t{}\t{:?}",
-                        version_for_progress, progress.received_bytes, progress.total_bytes
-                    ));
-                    let _ = progress_sender.send(UpdateInstallResponse::Progress {
-                        version: version_for_progress.clone(),
-                        progress,
-                    });
-                });
-            match download {
-                Ok(_) => match updater::handoff_installer(&installer_path, relaunch_mode) {
-                    Ok(()) => {
-                        trace_update_event(&format!("update-installer-started\\t{version}"));
-                        let _ = sender.send(UpdateInstallResponse::Started { version });
-                    }
-                    Err(error) => {
-                        trace_update_event(&format!("update-failed\\t{version}\\t{error}"));
-                        let _ = std::fs::remove_file(&installer_path);
-                        let _ = sender.send(UpdateInstallResponse::Failed { version, error });
-                    }
-                },
-                Err(error) => {
-                    trace_update_event(&format!("update-failed\\t{version}\\t{error}"));
-                    let _ = sender.send(UpdateInstallResponse::Failed { version, error });
-                }
-            }
-        });
-}
-
-fn format_bytes(bytes: u64) -> String {
-    const KIB: u64 = 1024;
-    const MIB: u64 = KIB * 1024;
-    if bytes >= MIB {
-        format!("{:.1} MiB", bytes as f64 / MIB as f64)
-    } else if bytes >= KIB {
-        format!("{:.0} KiB", bytes as f64 / KIB as f64)
-    } else {
-        format!("{bytes} B")
-    }
-}
-
-fn trace_update_event(event: &str) {
-    let Some(path) = std::env::var_os("FLUX_UPDATE_TRACE_FILE") else {
-        return;
-    };
-    if let Ok(mut file) = std::fs::OpenOptions::new()
-        .create(true)
-        .append(true)
-        .open(path)
-    {
-        use std::io::Write as _;
-        let _ = writeln!(file, "{event}");
-    }
-}
-
-fn update_check_due(settings: &Settings) -> bool {
-    let forced = std::env::var("FLUX_FORCE_UPDATE_CHECK")
-        .map(|value| value == "1")
-        .unwrap_or(false);
-    forced
-        || updater::should_check(
-            updater::unix_now(),
-            settings.last_update_check_unix,
-            settings.update_interval_hours,
-        )
-}
-
-fn format_update_progress(version: &str, progress: &updater::DownloadProgress) -> String {
-    match progress.total_bytes.filter(|total| *total > 0) {
-        Some(total) => {
-            let received = progress.received_bytes.min(total);
-            let percent = received.saturating_mul(100) / total;
-            let remaining = total.saturating_sub(received);
-            format!(
-                "Downloading stable {version}: {percent}% — {} / {} ({} remaining)",
-                format_bytes(received),
-                format_bytes(total),
-                format_bytes(remaining)
-            )
-        }
-        None => format!(
-            "Downloading stable {version}: {} received",
-            format_bytes(progress.received_bytes)
-        ),
-    }
-}
-
-fn save_settings_async(settings: &Arc<RwLock<Settings>>) {
-    let settings = Arc::clone(settings);
-    let _ = std::thread::Builder::new()
-        .name(String::from("flux-settings-save"))
-        .spawn(move || {
-            // Read the latest settings snapshot after waiting for any mutation.
-            if let Ok(settings_guard) = settings.read() {
-                let _ = save_settings(&settings_guard);
-            }
-        });
-}
-
-fn record_query_history(
-    settings: &Arc<RwLock<Settings>>,
-    history: &Rc<RefCell<Vec<String>>>,
-    query: &str,
-) {
-    let Ok(mut settings_guard) = settings.write() else {
-        return;
-    };
-    if !settings_guard.record_query(query) {
-        return;
-    }
-    *history.borrow_mut() = settings_guard.query_history.clone();
-    drop(settings_guard);
-    // Keep Enter→hide free of synchronous filesystem I/O.
-    save_settings_async(settings);
-}
-
-fn set_result_priority(
-    settings: &Arc<RwLock<Settings>>,
-    priorities: Signal<Vec<PriorityEntry>>,
-    result: &SearchResult,
-) -> bool {
-    let Some(target) = result.target.as_deref() else {
-        return false;
-    };
-    if !matches!(result.kind, ResultKind::Application) {
-        return false;
-    }
-    let Ok(mut settings_guard) = settings.write() else {
-        return false;
-    };
-    settings_guard.add_priority(PriorityEntry {
-        id: result.id.clone(),
-        title: result.title.clone(),
-        target: target.to_owned(),
-    });
-    let entries = settings_guard.priority_entries.clone();
-    let saved = save_settings(&settings_guard);
-    if saved {
-        priorities.set(entries);
-    }
-    saved
-}
-
-fn remove_priority_entry(
-    settings: &Arc<RwLock<Settings>>,
-    priorities: Signal<Vec<PriorityEntry>>,
-    id: &str,
-) -> bool {
-    let Ok(mut settings_guard) = settings.write() else {
-        return false;
-    };
-    if !settings_guard.remove_priority(id) {
-        return false;
-    }
-    let entries = settings_guard.priority_entries.clone();
-    let saved = save_settings(&settings_guard);
-    if saved {
-        priorities.set(entries);
-    }
-    saved
-}
-
-fn move_priority_entry(
-    settings: &Arc<RwLock<Settings>>,
-    priorities: Signal<Vec<PriorityEntry>>,
-    id: &str,
-    direction: i32,
-) -> bool {
-    let Ok(mut settings_guard) = settings.write() else {
-        return false;
-    };
-    let Some(index) = settings_guard
-        .priority_entries
-        .iter()
-        .position(|entry| entry.id == id)
-    else {
-        return false;
-    };
-    if !settings_guard.move_priority(index, direction) {
-        return false;
-    }
-    let entries = settings_guard.priority_entries.clone();
-    let saved = save_settings(&settings_guard);
-    if saved {
-        priorities.set(entries);
-    }
-    saved
-}
-
-fn set_game_mode(
-    settings: &Arc<RwLock<Settings>>,
-    game_mode: Signal<bool>,
-    status: Signal<String>,
-    enabled: bool,
-) {
-    if let Ok(mut settings) = settings.write() {
-        settings.game_mode = enabled;
-        game_mode.set(enabled);
-        status.set(game_mode_label(enabled));
-        let _ = save_settings(&settings);
-    }
-}
+pub(crate) use update_tasks::*;
 
 fn main() {
     #[cfg(windows)]
@@ -3433,10 +3141,7 @@ fn main() {
 
 #[cfg(test)]
 mod tests {
-    use super::{
-        format_bytes, format_update_progress, is_shutdown_mode, relaunch_mode_for_auto_install,
-        should_claim_single_instance,
-    };
+    use super::{is_shutdown_mode, should_claim_single_instance};
 
     #[test]
     fn plugin_host_mode_bypasses_main_single_instance_guard() {
@@ -3468,26 +3173,5 @@ mod tests {
         assert!(is_shutdown_mode(Some(std::ffi::OsStr::new("--shutdown"))));
         assert!(!is_shutdown_mode(Some(std::ffi::OsStr::new("--startup"))));
         assert!(!is_shutdown_mode(None));
-    }
-
-    #[test]
-    fn update_progress_text_exposes_percent_bytes_and_remaining_work() {
-        let progress = super::updater::DownloadProgress {
-            received_bytes: 512,
-            total_bytes: Some(1024),
-        };
-        assert_eq!(format_bytes(1024), "1 KiB");
-        assert_eq!(
-            format_update_progress("0.1.64", &progress),
-            "Downloading stable 0.1.64: 50% — 512 B / 1 KiB (512 B remaining)"
-        );
-    }
-
-    #[test]
-    fn automatic_update_always_restarts_hidden() {
-        assert_eq!(
-            relaunch_mode_for_auto_install(),
-            super::updater::RelaunchMode::Hidden
-        );
     }
 }
