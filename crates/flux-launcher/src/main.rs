@@ -1,6 +1,7 @@
 #![cfg_attr(windows, windows_subsystem = "windows")]
 
 mod accent;
+mod app_hotkeys;
 mod app_identity;
 mod app_scan;
 mod applications;
@@ -45,9 +46,9 @@ mod window_geometry;
 use applications::{ApplicationResponse, ApplicationWorker};
 use everything::{EverythingResponse, EverythingWorker, InstallationState};
 use flux_core::{
-    should_suppress_activation, HotkeyConfig, MonitorPreference, SearchModel, Settings,
-    DEFAULT_LAUNCHER_HEIGHT, DEFAULT_LAUNCHER_WIDTH, MAX_LAUNCHER_HEIGHT, MAX_LAUNCHER_WIDTH,
-    MIN_LAUNCHER_HEIGHT, MIN_LAUNCHER_WIDTH,
+    HotkeyConfig, MonitorPreference, SearchModel, Settings, DEFAULT_LAUNCHER_HEIGHT,
+    DEFAULT_LAUNCHER_WIDTH, MAX_LAUNCHER_HEIGHT, MAX_LAUNCHER_WIDTH, MIN_LAUNCHER_HEIGHT,
+    MIN_LAUNCHER_WIDTH,
 };
 use plugins::{
     native_plugin_install_path, FlowPluginWorker, NativePluginQueryResponse, NativePluginWorker,
@@ -82,7 +83,6 @@ fn request_scroll(scroll_pending: Signal<bool>) {
 pub(crate) use window_geometry::*;
 
 pub(crate) use history_priorities::*;
-pub(crate) use input_keys::*;
 pub(crate) use launcher_icons::*;
 pub(crate) use provider_merge::*;
 pub(crate) use provider_snapshot::*;
@@ -717,88 +717,37 @@ fn main() {
     });
     let native_plugin_worker = NativePluginWorker::spawn(native_sender);
 
-    let settings_for_activation = Arc::clone(&shared_settings);
-    let position_for_activation = window_position.clone();
-    let cursor_visibility_for_activation = cursor_visibility.clone();
-    let size_for_activation = window_size.clone();
-    let query_for_activation = query;
-    let results_for_activation = results;
-    let selected_id_for_activation = selected_id;
-    let selected_index_for_activation = selected_index;
-    let selection_touched_for_activation = selection_touched;
-    let show_results_for_activation = show_results;
-    let history_mode_for_activation = history_mode;
-    let history_cursor_for_activation = history_cursor;
-    let action_mode_for_activation = action_mode;
-    let action_index_for_activation = action_index;
-    let action_items_for_activation = action_items;
-    let inline_completion_for_activation = inline_completion;
-    let scroll_request_for_activation = scroll_request_for_rows;
-    let settings_visible_for_activation = settings_visible;
-    let activation_handle = app.hotkey_handle(activation_hotkey, move |ctx| {
-        let settings = settings_for_activation
-            .read()
-            .map(|settings| settings.clone())
-            .unwrap_or_default();
-        if !should_suppress_activation(&settings, fullscreen::foreground_is_fullscreen()) {
-            // Clear before toggling visibility. The previous implementation did
-            // this only from on_window_hide, which allowed the old query frame to
-            // survive in the compositor until the next repaint after re-show.
-            if settings.clear_query_on_activation {
-                query_for_activation.set(String::new());
-                results_for_activation.set(Vec::new());
-                selected_id_for_activation.set(String::new());
-                selected_index_for_activation.set(0);
-                selection_touched_for_activation.set(false);
-                show_results_for_activation.set(false);
-                history_mode_for_activation.set(false);
-                history_cursor_for_activation.set(None);
-                action_mode_for_activation.set(false);
-                action_index_for_activation.set(0);
-                action_items_for_activation.set(Vec::new());
-                inline_completion_for_activation.set(String::new());
-                scroll_request_for_activation.set(false);
-                let (compact_width, compact_height) = launcher_window_geometry_with_sizes(
-                    settings_visible_for_activation.get(),
-                    false,
-                    i32::from(launcher_width.get()),
-                    i32::from(launcher_height.get()),
-                );
-                size_for_activation.set(compact_width, compact_height);
-            }
-            let (width, height) = launcher_window_geometry_with_sizes(
-                settings_visible_for_activation.get(),
-                show_results_for_activation.get(),
-                i32::from(launcher_width.get()),
-                i32::from(launcher_height.get()),
-            );
-            request_monitor_position(
-                &position_for_activation,
-                settings.monitor_preference,
-                width,
-                height,
-            );
-            cursor_visibility_for_activation.show();
-            if should_show_launcher(launcher_is_foreground()) {
-                ctx.show_window();
-            } else {
-                ctx.hide_window();
-            }
-        }
-    });
+    let activation_handle = app_hotkeys::register_activation_hotkey(
+        &mut app,
+        activation_hotkey,
+        Arc::clone(&shared_settings),
+        window_position.clone(),
+        cursor_visibility.clone(),
+        window_size.clone(),
+        query,
+        results,
+        selected_id,
+        selected_index,
+        selection_touched,
+        show_results,
+        history_mode,
+        history_cursor,
+        action_mode,
+        action_index,
+        action_items,
+        inline_completion,
+        scroll_request_for_rows,
+        settings_visible,
+        launcher_width,
+        launcher_height,
+    );
 
-    let settings_for_game_hotkey = Arc::clone(&shared_settings);
-    let game_mode_for_hotkey = game_mode;
-    let game_mode_status_for_hotkey = game_mode_status;
-    app = app.hotkey(hotkeys::game_mode_toggle_hotkey(), move |_| {
-        let enabled = !game_mode_for_hotkey.get();
-        set_game_mode(
-            &settings_for_game_hotkey,
-            game_mode_for_hotkey,
-            game_mode_status_for_hotkey,
-            enabled,
-        );
-    });
+    app = app_hotkeys::register_game_mode_hotkey(
+        app,
+        Arc::clone(&shared_settings),
+        game_mode,
+        game_mode_status,
+    );
 
     app = key_handlers::register_key_handlers(
         app,
