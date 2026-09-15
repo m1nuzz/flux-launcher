@@ -207,7 +207,10 @@ pub(crate) fn register_key_handlers(
             };
             history_cursor_for_keys.set(Some(next));
             history_mode_for_keys.set(false);
-            query_for_keys.set(history[next].clone());
+            let recalled = history[next].clone();
+            let caret_end = recalled.chars().count();
+            query_for_keys.set(recalled);
+            query_caret_position_for_keys.set(caret_end);
             return true;
         }
         if !history_mode_for_keys.get()
@@ -219,7 +222,10 @@ pub(crate) fn register_key_handlers(
         {
             if let Some(latest) = history.last() {
                 history_cursor_for_keys.set(Some(history.len() - 1));
-                query_for_keys.set(latest.clone());
+                let recalled = latest.clone();
+                let caret_end = recalled.chars().count();
+                query_for_keys.set(recalled);
+                query_caret_position_for_keys.set(caret_end);
                 return true;
             }
         }
