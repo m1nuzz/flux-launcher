@@ -1441,6 +1441,8 @@ impl Element {
     }
 
     /// Mirror the text input caret position in character indices.
+    /// 绑定后同时把节点登记为响应式：`TextInput::on_update` 借此在每帧 layout 前把宿主
+    /// 从外部写入的光标值应用到控件（如回填历史查询时落到末尾）。仅绑定信号的输入会响应式化。
     #[track_caller]
     pub fn cursor_position(mut self, signal: Signal<usize>) -> Self {
         match self
@@ -1448,7 +1450,10 @@ impl Element {
             .as_any_mut()
             .and_then(|a| a.downcast_mut::<TextInput>())
         {
-            Some(input) => input.set_cursor_position_signal(signal),
+            Some(input) => {
+                input.set_cursor_position_signal(signal);
+                self.reactive = true;
+            }
             None => debug_assert!(
                 false,
                 "cursor_position() can only be used with Element::text_input(..)"

@@ -1921,6 +1921,21 @@ impl Widget for TextInput {
     fn set_composing(&mut self, composing: bool) {
         self.composing.set(composing);
     }
+    /// 宿主经 `cursor_position` 信号从外部改写光标时（如 Alt+↑/↓ 回填历史查询要把光标
+    /// 落到文本末尾），在每次 layout 前把内部光标同步过去。控件每次内部移动都会写回该
+    /// 信号，故稳态下二者相等、本回调空转，只响应真实的外部改写，不会与用户编辑相互回环。
+    fn on_update(&mut self, ctx: &mut EventCtx) {
+        if let Some(signal) = self.cursor_position {
+            let want = signal.get().min(self.char_count());
+            if want != self.cursor {
+                self.cursor = want;
+                self.anchor = None;
+                self.follow_cursor.set(true);
+                self.goal_x.set(None);
+                ctx.mark_dirty();
+            }
+        }
+    }
     fn reset_interaction(&mut self) {
         // 复用同一对话框切换编辑目标时（隐藏→再显示），清掉上一条残留的选区/拖选状态，
         // 光标落到（新填充文本的）文末，避免带着旧选区进入下一次编辑。
@@ -1987,6 +2002,45 @@ mod tests {
         assert_eq!(ti.anchor, None, "复位后不应残留选区锚点");
         assert!(ti.selection().is_none(), "复位后选区应清空");
         assert_eq!(ti.cursor, ti.char_count(), "光标应落到文末");
+    }
+
+    #[test]
+    fn on_update_applies_external_caret_to_end() {
+        use crate::core::Tree;
+        use crate::geometry::Size;
+        use crate::ui::Element;
+        // 回归：宿主（如 Alt+↑/↓ 回填历史）改写文本并把 cursor_position 推到末尾后，
+        // 响应式的 TextInput 应在下一帧把内部光标移到文末；稳态（信号==内部光标）空转不回环。
+        let text = signal(String::new());
+        let caret = signal(0usize);
+        let mut tree = Tree::new();
+        let id = Element::text_input(text, String::new())
+            .cursor_position(caret)
+            .build(&mut tree);
+        tree.root = Some(id);
+        let mut te = crate::text::NullTextEngine;
+        tree.layout_root(Size::new(240, 32), &mut te);
+
+        let query = "previous query";
+        text.set(query.to_string());
+        caret.set(query.chars().count());
+        tree.layout_root(Size::new(240, 32), &mut te);
+        {
+            let ti = tree
+                .get_mut(id)
+                .and_then(|n| n.widget.as_any_mut())
+                .and_then(|w| w.downcast_mut::<TextInput>())
+                .unwrap();
+            assert_eq!(ti.cursor, query.chars().count(), "外部信号应把光标移到文末");
+        }
+        // 再走一帧：信号未变，光标应保持，不因写回而抖动。
+        tree.layout_root(Size::new(240, 32), &mut te);
+        let ti = tree
+            .get_mut(id)
+            .and_then(|n| n.widget.as_any_mut())
+            .and_then(|w| w.downcast_mut::<TextInput>())
+            .unwrap();
+        assert_eq!(ti.cursor, query.chars().count(), "稳态应空转，光标不漂移");
     }
 
     // 每字符宽 10 的合成前缀，用于纯函数换行测试。
