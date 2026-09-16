@@ -1,6 +1,7 @@
 use std::sync::{Arc, RwLock};
 
 use flux_core::{ResultKind, SearchResult, Settings};
+use windui::app::ThemeHandle;
 use windui::core::EventCtx;
 use windui::event::Key;
 use windui::prelude::*;
@@ -97,12 +98,54 @@ pub(crate) fn hsv_to_selection_u32(hue: f32, saturation: f32, value: f32) -> u32
 /// mirroring the historical Apply behavior.
 pub(crate) fn resolve_selection_color(use_system_accent: bool, hex_text: &str) -> (u32, Color) {
     let rgb = parse_selection_color(hex_text).unwrap_or(0x4c8bf4);
-    let (r, g, b) = if use_system_accent {
-        accent::system_accent_rgb().unwrap_or_else(|| custom_selection_color_rgb(rgb))
-    } else {
-        custom_selection_color_rgb(rgb)
-    };
+    let (r, g, b) = effective_selection_rgb(use_system_accent, hex_text);
     (rgb, Color::rgba(r, g, b, 84))
+}
+
+/// Opaque RGB actually used for selection chrome: the Windows accent when the
+/// toggle is on (custom color as fallback), otherwise the custom color.
+pub(crate) fn effective_selection_rgb(use_system_accent: bool, hex_text: &str) -> (u8, u8, u8) {
+    let fallback = custom_selection_color_rgb(parse_selection_color(hex_text).unwrap_or(0x4c8bf4));
+    if use_system_accent {
+        accent::system_accent_rgb().unwrap_or(fallback)
+    } else {
+        fallback
+    }
+}
+
+/// Same as [`effective_selection_rgb`], read from stored settings.
+pub(crate) fn selection_rgb_for_settings(settings: &Settings) -> (u8, u8, u8) {
+    let fallback = custom_selection_color_rgb(settings.custom_selection_color);
+    if settings.use_system_accent {
+        accent::system_accent_rgb().unwrap_or(fallback)
+    } else {
+        fallback
+    }
+}
+
+/// Push one effective color to both the search-row highlight signal (translucent)
+/// and the runtime theme accent + text-input selection (opaque), so Primary
+/// buttons, the selected tab, checkboxes, sliders and toggles follow the same
+/// color instead of staying theme-blue. Triggers a repaint via the handle.
+pub(crate) fn push_selection_appearance(
+    theme: &ThemeHandle,
+    selection_color: Signal<Color>,
+    rgb: (u8, u8, u8),
+) {
+    selection_color.set(Color::rgba(rgb.0, rgb.1, rgb.2, 84));
+    // Primary buttons/tabs/checkboxes/sliders read bg from palette.accent but
+    // hover/press from the hand-tuned accent_hover/accent_active pair, which stay
+    // theme-blue unless updated too. Hover darkens the same hue and press darkens
+    // further (no lightening: a fixed-direction shift must stay visible, and a
+    // large darken factor keeps feedback perceptible even on very bright or very
+    // dim custom colors where a small lighten/darken dissolves).
+    let accent = Color::rgb(rgb.0, rgb.1, rgb.2);
+    theme.update(|t| {
+        t.palette.accent = accent;
+        t.palette.accent_hover = accent.darken(0.18);
+        t.palette.accent_active = accent.darken(0.32);
+        t.input.selection = Some(Color::rgba(rgb.0, rgb.1, rgb.2, 150));
+    });
 }
 
 /// Single staging path for the accent toggle + custom color used by both settings
@@ -113,19 +156,21 @@ pub(crate) fn stage_selection_color(
     use_system_accent: Signal<bool>,
     custom_selection_color: Signal<String>,
     selection_color: Signal<Color>,
+    theme: &ThemeHandle,
     shared_settings: &Arc<RwLock<Settings>>,
     ctx: &mut EventCtx,
 ) -> bool {
     let valid = parse_selection_color(&custom_selection_color.get()).is_some();
-    let (rgb, color) =
-        resolve_selection_color(use_system_accent.get(), &custom_selection_color.get());
+    let flag = use_system_accent.get();
+    let text = custom_selection_color.get();
+    let (rgb, _) = resolve_selection_color(flag, &text);
     let Ok(mut settings) = shared_settings.write() else {
         ctx.toast_ok("Could not lock Flux settings");
         return false;
     };
-    settings.use_system_accent = use_system_accent.get();
+    settings.use_system_accent = flag;
     settings.custom_selection_color = rgb;
-    selection_color.set(color);
+    push_selection_appearance(theme, selection_color, effective_selection_rgb(flag, &text));
     custom_selection_color.set(selection_color_hex(rgb));
     if !valid {
         ctx.toast_ok("Invalid hex color, restored default #4C8BF4");
@@ -137,6 +182,7 @@ pub(crate) fn selection_palette(
     custom_selection_color: Signal<String>,
     color_hsv: Signal<(f32, f32, f32)>,
     selection_color: Signal<Color>,
+    theme: &ThemeHandle,
 ) -> Element {
     const COLORS: &[u32] = &[
         0x4c8bf4, 0x0078d4, 0x00a4ef, 0x107c10, 0x498205, 0xffb900, 0xd83b01, 0xe74856, 0x8764b8,
@@ -159,10 +205,13 @@ pub(crate) fn selection_palette(
                 .corner(6.0)
                 .clickable()
                 .tooltip(label)
-                .on_click(move |_| {
-                    custom_selection_color.set(selection_color_hex(value));
-                    color_hsv.set((hue, saturation, brightness));
-                    selection_color.set(Color::rgba(r, g, b, 84));
+                .on_click({
+                    let theme = theme.clone();
+                    move |_| {
+                        custom_selection_color.set(selection_color_hex(value));
+                        color_hsv.set((hue, saturation, brightness));
+                        push_selection_appearance(&theme, selection_color, (r, g, b));
+                    }
                 }),
         );
     }

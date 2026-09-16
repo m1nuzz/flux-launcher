@@ -86,6 +86,22 @@ impl ToastState {
     }
 }
 
+/// Keep a toast panel fully inside the window. As long as it fits at its stacked
+/// position it stays there (top-stacked layout is unchanged for tall windows).
+/// When it would hang below the window edge — e.g. a toast in the 56px search
+/// strip right after Apply closes Settings — center it vertically instead of
+/// pinning it to the bottom edge, which reads as "slightly too low".
+/// Recomputed every frame from the current logical size, so a toast opened in
+/// Settings slides into view instead of being stranded off-screen when the
+/// window shrinks.
+fn clamp_panel_y(y: i32, panel_h: i32, window_h: i32) -> i32 {
+    if y + panel_h > window_h {
+        ((window_h - panel_h).max(0)) / 2
+    } else {
+        y
+    }
+}
+
 /// 宿主持有的轻提示浮层状态：活动条堆栈 + 每帧重算的命中矩形。
 #[derive(Default)]
 pub(super) struct ToastHost {
@@ -255,6 +271,10 @@ impl ToastHost {
                 .max(TOAST_MIN_W)
                 .min(panel_max_w);
             let panel_h = TOAST_PAD_Y + ts.h.max(icon_sz.h) + TOAST_PAD_Y;
+            // Keep the whole panel inside the window: y is recomputed every frame
+            // from the current logical size, so also update the running stack offset
+            // for the next toast.
+            y = clamp_panel_y(y, panel_h, ws.h);
             let x = ((ws.w - panel_w) / 2).max(0);
             let corner = tt.corner(&theme.metrics);
             // 柔和投影（透明度跟随淡入淡出）。参数与菜单浮层同源，见 ToastTheme::shadow。
@@ -347,6 +367,20 @@ mod tests {
             app.toast.items.last().unwrap().req.text,
             format!("t{}", TOAST_MAX + 1)
         );
+    }
+
+    #[test]
+    fn clamp_panel_y_keeps_toast_inside_compact_windows() {
+        // Tall window: top-stacked position unchanged.
+        assert_eq!(clamp_panel_y(16, 46, 520), 16);
+        // Compact 56px search strip after Apply closes Settings: 16+46 would
+        // hang 6px below the edge, so center vertically instead.
+        assert_eq!(clamp_panel_y(16, 46, 56), 5);
+        // Second stacked toast in the same strip centers on the same slot
+        // instead of going further off-screen.
+        assert_eq!(clamp_panel_y(72, 46, 56), 5);
+        // Degenerate window smaller than the panel: pin to the top edge.
+        assert_eq!(clamp_panel_y(16, 46, 30), 0);
     }
 
     #[test]

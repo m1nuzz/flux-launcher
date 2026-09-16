@@ -335,6 +335,7 @@ fn main() {
     let window_size = app.window_size_handle();
     let window_position = app.window_position_handle();
     let window_op: WindowOpHandle = app.window_op_handle();
+    let theme_handle = app.theme_handle();
     let cursor_visibility: CursorVisibilityHandle = app.cursor_visibility_handle();
     let update_channels = background_tasks::register_update_channels(
         &mut app,
@@ -535,6 +536,7 @@ fn main() {
         switch_to_english_layout,
         use_system_accent,
         selection_color,
+        theme_handle: theme_handle.clone(),
         custom_selection_color,
         color_hsv,
         caret_duration,
@@ -658,5 +660,6 @@ fn main() {
         cursor_visibility,
         Arc::clone(&shared_settings),
         selection_color,
+        theme_handle,
     );
 }

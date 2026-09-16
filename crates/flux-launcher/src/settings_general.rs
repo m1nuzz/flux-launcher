@@ -41,6 +41,7 @@ pub(crate) fn build_general_tab(ui: &SettingsUi) -> Element {
     let history_for_clear = Rc::clone(&ui.query_history);
     let history_cursor_for_clear = ui.history_cursor;
     let settings_for_apply = Arc::clone(&ui.shared_settings);
+    let theme_for_apply = ui.theme_handle.clone();
     let position_for_apply = ui.window_position.clone();
     let activation_handle_for_apply = ui.activation_handle.clone();
     let activation_recording_for_apply = ui.activation_recording;
@@ -322,6 +323,7 @@ pub(crate) fn build_general_tab(ui: &SettingsUi) -> Element {
                                         use_system_accent,
                                         custom_selection_color,
                                         selection_color,
+                                        &theme_for_apply,
                                         &settings_for_apply,
                                         &mut *ctx,
                                     );

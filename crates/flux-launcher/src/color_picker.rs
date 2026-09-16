@@ -1,21 +1,24 @@
 use std::sync::{Arc, RwLock};
 
 use flux_core::Settings;
+use windui::app::ThemeHandle;
 use windui::core::{EventCtx, Widget};
 use windui::event::{Event, Key, MouseButton, PointerKind};
-use windui::geometry::Rect;
+use windui::geometry::{Rect, Size};
 use windui::prelude::*;
 use windui::render::{Canvas, Gradient, Paint};
 use windui::style::Style;
+use windui::text::TextEngine;
 
-use super::theme_text::{hsv_to_rgb, hsv_to_selection_u32, rgb_to_hsv, selection_color_hex};
+use super::theme_text::{
+    hsv_to_rgb, hsv_to_selection_u32, push_selection_appearance, rgb_to_hsv, selection_color_hex,
+};
 use super::update_tasks::save_settings;
 
 pub(crate) const SV_PAD_WIDTH: i32 = 176;
 pub(crate) const SV_PAD_HEIGHT: i32 = 148;
 pub(crate) const HUE_STRIP_WIDTH: i32 = 22;
 pub(crate) const PREVIEW_SWATCH: i32 = 44;
-const SELECTION_ALPHA: u8 = 84;
 
 /// Pointer position to saturation/value fractions inside a pad, clamped.
 pub(crate) fn sv_at(x: f32, y: f32, width: f32, height: f32) -> (f32, f32) {
@@ -30,16 +33,8 @@ pub(crate) fn hue_at(y: f32, height: f32) -> f32 {
     (y / height.max(1.0)).clamp(0.0, 1.0) * 360.0
 }
 
-fn live_color_of(rgb: u32) -> Color {
-    Color::rgba(
-        ((rgb >> 16) & 0xff) as u8,
-        ((rgb >> 8) & 0xff) as u8,
-        (rgb & 0xff) as u8,
-        SELECTION_ALPHA,
-    )
-}
-
 fn commit_hsv(
+    theme: &ThemeHandle,
     hsv: Signal<(f32, f32, f32)>,
     hex: Signal<String>,
     live: Signal<Color>,
@@ -48,7 +43,15 @@ fn commit_hsv(
     let rgb = hsv_to_selection_u32(next.0, next.1, next.2);
     hsv.set(next);
     hex.set(selection_color_hex(rgb));
-    live.set(live_color_of(rgb));
+    push_selection_appearance(
+        theme,
+        live,
+        (
+            ((rgb >> 16) & 0xff) as u8,
+            ((rgb >> 8) & 0xff) as u8,
+            (rgb & 0xff) as u8,
+        ),
+    );
 }
 
 fn persist_current_color(
@@ -71,6 +74,7 @@ fn persist_current_color(
 /// Dragging updates the hex field and the live row highlight; releasing the
 /// pointer persists the choice so scrubbing does not rewrite settings.json.
 pub(crate) struct SaturationValuePad {
+    theme: ThemeHandle,
     hsv: Signal<(f32, f32, f32)>,
     hex: Signal<String>,
     live: Signal<Color>,
@@ -89,12 +93,21 @@ impl SaturationValuePad {
             bounds.h as f32,
         );
         let (hue, _, _) = self.hsv.get();
-        commit_hsv(self.hsv, self.hex, self.live, (hue, saturation, value));
+        commit_hsv(
+            &self.theme,
+            self.hsv,
+            self.hex,
+            self.live,
+            (hue, saturation, value),
+        );
         ctx.mark_dirty();
     }
 }
 
 impl Widget for SaturationValuePad {
+    fn measure(&self, _avail: Size, _style: &Style, _text: &mut dyn TextEngine) -> Size {
+        Size::new(SV_PAD_WIDTH, SV_PAD_HEIGHT)
+    }
     fn on_update(&mut self, ctx: &mut EventCtx) {
         // Repaint when the hex field, a preset, or the hue strip moved the
         // shared HSV state (e.g. typing a hex value must move this marker).
@@ -141,7 +154,7 @@ impl Widget for SaturationValuePad {
                     Key::Down => (hue, saturation, (value - step).max(0.0)),
                     _ => return false,
                 };
-                commit_hsv(self.hsv, self.hex, self.live, next);
+                commit_hsv(&self.theme, self.hsv, self.hex, self.live, next);
                 persist_current_color(self.hsv, self.hex, &self.shared_settings);
                 ctx.mark_dirty();
                 true
@@ -223,6 +236,7 @@ impl Widget for SaturationValuePad {
 
 /// Vertical hue strip (red to red through the spectrum) driving the shared HSV hue.
 pub(crate) struct HueStrip {
+    theme: ThemeHandle,
     hsv: Signal<(f32, f32, f32)>,
     hex: Signal<String>,
     live: Signal<Color>,
@@ -251,12 +265,22 @@ impl HueStrip {
         let bounds = ctx.bounds();
         let hue = hue_at(y - bounds.y as f32, bounds.h as f32);
         let (_, saturation, value) = self.hsv.get();
-        commit_hsv(self.hsv, self.hex, self.live, (hue, saturation, value));
+        commit_hsv(
+            &self.theme,
+            self.hsv,
+            self.hex,
+            self.live,
+            (hue, saturation, value),
+        );
         ctx.mark_dirty();
     }
 }
 
 impl Widget for HueStrip {
+    fn measure(&self, _avail: Size, _style: &Style, _text: &mut dyn TextEngine) -> Size {
+        Size::new(HUE_STRIP_WIDTH, SV_PAD_HEIGHT)
+    }
+
     fn on_update(&mut self, ctx: &mut EventCtx) {
         let (hue, _, _) = self.hsv.get();
         if (hue - self.last_hue).abs() > f32::EPSILON {
@@ -298,7 +322,7 @@ impl Widget for HueStrip {
                     Key::Down | Key::Right => ((hue + 3.0).rem_euclid(360.0), saturation, value),
                     _ => return false,
                 };
-                commit_hsv(self.hsv, self.hex, self.live, next);
+                commit_hsv(&self.theme, self.hsv, self.hex, self.live, next);
                 persist_current_color(self.hsv, self.hex, &self.shared_settings);
                 ctx.mark_dirty();
                 true
@@ -356,6 +380,10 @@ pub(crate) struct ColorPreview {
 }
 
 impl Widget for ColorPreview {
+    fn measure(&self, _avail: Size, _style: &Style, _text: &mut dyn TextEngine) -> Size {
+        Size::new(PREVIEW_SWATCH, PREVIEW_SWATCH)
+    }
+
     fn on_update(&mut self, ctx: &mut EventCtx) {
         let current = self.live.get();
         if current != self.last {
@@ -394,12 +422,13 @@ impl Widget for ColorPreview {
 }
 
 /// Photoshop-style picker row: saturation/value square, hue strip, live preview.
-/// Appended after the Visual Apply button so existing smoke coordinates above it
-/// do not move.
+/// Lives inside the Selection color section so the hex field, presets and the
+/// 2D picker stay together.
 pub(crate) fn build_color_picker(
     custom_selection_color: Signal<String>,
     color_hsv: Signal<(f32, f32, f32)>,
     selection_color: Signal<Color>,
+    theme: &ThemeHandle,
     shared_settings: Arc<RwLock<Settings>>,
 ) -> Element {
     Element::col()
@@ -417,6 +446,7 @@ pub(crate) fn build_color_picker(
                 .child(
                     Element::leaf()
                         .widget(SaturationValuePad {
+                            theme: theme.clone(),
                             hsv: color_hsv,
                             hex: custom_selection_color,
                             live: selection_color,
@@ -431,6 +461,7 @@ pub(crate) fn build_color_picker(
                 .child(
                     Element::leaf()
                         .widget(HueStrip {
+                            theme: theme.clone(),
                             hsv: color_hsv,
                             hex: custom_selection_color,
                             live: selection_color,

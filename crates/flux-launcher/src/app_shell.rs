@@ -1,14 +1,13 @@
 use std::sync::{Arc, RwLock};
 
 use flux_core::{Settings, MIN_LAUNCHER_WIDTH};
-use windui::app::{App, CursorVisibilityHandle, WindowOpHandle, WindowSizeHandle};
+use windui::app::{App, CursorVisibilityHandle, ThemeHandle, WindowOpHandle, WindowSizeHandle};
 use windui::platform::{Backdrop, Renderer};
 use windui::prelude::*;
 use windui::signal::Signal;
 
 use super::keyboard_layout;
 use super::launch;
-use super::theme_text::selection_color_for_settings;
 use super::ui_constants::{
     COMPACT_WINDOW_HEIGHT, CURRENT_VERSION, LAUNCHER_FONT_FAMILY, SETTINGS_WINDOW_HEIGHT,
     SETTINGS_WINDOW_WIDTH,
@@ -72,6 +71,7 @@ pub(crate) fn run_launcher(
     cursor_visibility: CursorVisibilityHandle,
     shared_settings: Arc<RwLock<Settings>>,
     selection_color: Signal<Color>,
+    theme: ThemeHandle,
 ) {
     let mut app = if startup_launch {
         app.start_hidden()
@@ -118,10 +118,17 @@ pub(crate) fn run_launcher(
             let cursor_visibility_for_show = cursor_visibility.clone();
             let settings_visible_for_show = settings_visible;
             let size_for_show = window_size.clone();
+            let theme_for_show = theme.clone();
             move || {
                 cursor_visibility_for_show.show();
                 if let Ok(settings) = settings.read() {
-                    selection_color.set(selection_color_for_settings(&settings));
+                    // Runs after .theme(), so the handle keeps the effective
+                    // accent instead of being reset to the theme default.
+                    super::theme_text::push_selection_appearance(
+                        &theme_for_show,
+                        selection_color,
+                        super::theme_text::selection_rgb_for_settings(&settings),
+                    );
                 }
                 // Tray activation can show the HWND before the first interval pass.
                 // Apply the Settings client size in this lifecycle callback too, so

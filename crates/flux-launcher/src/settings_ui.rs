@@ -3,7 +3,7 @@ use std::rc::Rc;
 use std::sync::{Arc, RwLock};
 
 use flux_core::{PriorityEntry, SearchResult, Settings};
-use windui::app::{HotkeyHandle, WindowPositionHandle, WindowSizeHandle};
+use windui::app::{HotkeyHandle, ThemeHandle, WindowPositionHandle, WindowSizeHandle};
 use windui::prelude::{Color, Sender};
 use windui::signal::Signal;
 
@@ -44,6 +44,7 @@ pub(crate) struct SettingsUi {
     pub(crate) switch_to_english_layout: Signal<bool>,
     pub(crate) use_system_accent: Signal<bool>,
     pub(crate) selection_color: Signal<Color>,
+    pub(crate) theme_handle: ThemeHandle,
     pub(crate) custom_selection_color: Signal<String>,
     pub(crate) color_hsv: Signal<(f32, f32, f32)>,
     pub(crate) caret_duration: Signal<String>,

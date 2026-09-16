@@ -8,7 +8,9 @@ use windui::prelude::*;
 
 use super::color_picker;
 use super::settings_ui::SettingsUi;
-use super::theme_text::{resolve_selection_color, selection_palette, stage_selection_color};
+use super::theme_text::{
+    effective_selection_rgb, push_selection_appearance, selection_palette, stage_selection_color,
+};
 use super::ui_constants::{COMPACT_WINDOW_HEIGHT, VISUAL_SLIDER_WIDTH};
 use super::update_tasks::save_settings;
 use super::window_geometry::{
@@ -19,6 +21,7 @@ pub(crate) fn build_visual_tab(ui: &SettingsUi) -> Element {
     let visual_preview_generation_for_width_reset = ui.visual_preview_generation;
     let visual_preview_generation_for_height_reset = ui.visual_preview_generation;
     let settings_for_visual_apply = Arc::clone(&ui.shared_settings);
+    let theme_for_visual_apply = ui.theme_handle.clone();
     let size_for_visual_apply = ui.window_size.clone();
     let position_for_visual_apply = ui.window_position.clone();
     let settings_visible_for_visual_apply = ui.settings_visible;
@@ -70,17 +73,21 @@ pub(crate) fn build_visual_tab(ui: &SettingsUi) -> Element {
                                 "Use the Windows 11 system accent color when available",
                                 use_system_accent,
                             )
-                            .on_toggle(move |_| {
-                                // on_toggle replaces the default flip: apply it
-                                // manually, then refresh rows immediately while
-                                // Apply remains the persist point.
-                                let next = !use_system_accent.get();
-                                use_system_accent.set(next);
-                                let (_, color) = resolve_selection_color(
-                                    next,
-                                    &custom_selection_color.get(),
-                                );
-                                selection_color.set(color);
+                            .on_toggle({
+                                let theme = ui.theme_handle.clone();
+                                move |_| {
+                                    // on_toggle replaces the default flip: apply it
+                                    // manually, then refresh rows and chrome
+                                    // immediately while Apply remains the persist point.
+                                    let next = !use_system_accent.get();
+                                    use_system_accent.set(next);
+                                    let text = custom_selection_color.get();
+                                    push_selection_appearance(
+                                        &theme,
+                                        selection_color,
+                                        effective_selection_rgb(next, &text),
+                                    );
+                                }
                             }),
                         ))
                         .child(Element::label("Windows accent is read from the current user profile; the custom color is used as a safe fallback.").font_size(10.0).fg(Color::rgba(235, 241, 255, 150)).max_lines(2).truncate(Truncate::End))
@@ -98,11 +105,13 @@ pub(crate) fn build_visual_tab(ui: &SettingsUi) -> Element {
                                     custom_selection_color,
                                     color_hsv,
                                     selection_color,
+                                    &ui.theme_handle,
                                 ))
                                 .child(color_picker::build_color_picker(
                                     custom_selection_color,
                                     color_hsv,
                                     selection_color,
+                                    &ui.theme_handle,
                                     Arc::clone(&ui.shared_settings),
                                 )),
                         )
@@ -228,6 +237,7 @@ pub(crate) fn build_visual_tab(ui: &SettingsUi) -> Element {
                                     use_system_accent,
                                     custom_selection_color,
                                     selection_color,
+                                    &theme_for_visual_apply,
                                     &settings_for_visual_apply,
                                     &mut *ctx,
                                 );
