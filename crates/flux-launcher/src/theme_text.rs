@@ -1,4 +1,7 @@
+use std::sync::{Arc, RwLock};
+
 use flux_core::{ResultKind, SearchResult, Settings};
+use windui::core::EventCtx;
 use windui::event::Key;
 use windui::prelude::*;
 
@@ -34,7 +37,107 @@ pub(crate) fn parse_selection_color(value: &str) -> Option<u32> {
         .flatten()
 }
 
-pub(crate) fn selection_palette(custom_selection_color: Signal<String>) -> Element {
+/// RGB (0-255) to HSV with hue in degrees [0, 360) and saturation/value in [0, 1].
+/// Achromatic colors report hue 0 by convention.
+pub(crate) fn rgb_to_hsv(red: u8, green: u8, blue: u8) -> (f32, f32, f32) {
+    let r = f32::from(red) / 255.0;
+    let g = f32::from(green) / 255.0;
+    let b = f32::from(blue) / 255.0;
+    let max = r.max(g).max(b);
+    let min = r.min(g).min(b);
+    let delta = max - min;
+    let hue = if delta <= f32::EPSILON {
+        0.0
+    } else if max == r {
+        60.0 * (((g - b) / delta) % 6.0)
+    } else if max == g {
+        60.0 * (((b - r) / delta) + 2.0)
+    } else {
+        60.0 * (((r - g) / delta) + 4.0)
+    };
+    let hue = if hue < 0.0 { hue + 360.0 } else { hue };
+    let saturation = if max <= f32::EPSILON {
+        0.0
+    } else {
+        delta / max
+    };
+    (hue, saturation, max)
+}
+
+/// HSV (hue degrees, saturation/value in [0, 1]) to RGB (0-255), rounded.
+pub(crate) fn hsv_to_rgb(hue: f32, saturation: f32, value: f32) -> (u8, u8, u8) {
+    let h = hue.rem_euclid(360.0);
+    let s = saturation.clamp(0.0, 1.0);
+    let v = value.clamp(0.0, 1.0);
+    let c = v * s;
+    let x = c * (1.0 - ((h / 60.0) % 2.0 - 1.0).abs());
+    let m = v - c;
+    let (r, g, b) = match (h / 60.0).floor() as u32 {
+        0 => (c, x, 0.0),
+        1 => (x, c, 0.0),
+        2 => (0.0, c, x),
+        3 => (0.0, x, c),
+        4 => (x, 0.0, c),
+        _ => (c, 0.0, x),
+    };
+    (
+        ((r + m) * 255.0).round() as u8,
+        ((g + m) * 255.0).round() as u8,
+        ((b + m) * 255.0).round() as u8,
+    )
+}
+
+pub(crate) fn hsv_to_selection_u32(hue: f32, saturation: f32, value: f32) -> u32 {
+    let (r, g, b) = hsv_to_rgb(hue, saturation, value);
+    (u32::from(r) << 16) | (u32::from(g) << 8) | u32::from(b)
+}
+
+/// Resolve the effective selection color from the Visual-tab controls without
+/// touching stored settings: invalid hex falls back to the built-in default,
+/// mirroring the historical Apply behavior.
+pub(crate) fn resolve_selection_color(use_system_accent: bool, hex_text: &str) -> (u32, Color) {
+    let rgb = parse_selection_color(hex_text).unwrap_or(0x4c8bf4);
+    let (r, g, b) = if use_system_accent {
+        accent::system_accent_rgb().unwrap_or_else(|| custom_selection_color_rgb(rgb))
+    } else {
+        custom_selection_color_rgb(rgb)
+    };
+    (rgb, Color::rgba(r, g, b, 84))
+}
+
+/// Single staging path for the accent toggle + custom color used by both settings
+/// tabs. Writes the flag and parsed color into stored settings, refreshes the
+/// live selection signal (result rows repaint from it) and normalizes the hex
+/// field. Callers keep their own save call so each Apply writes exactly once.
+pub(crate) fn stage_selection_color(
+    use_system_accent: Signal<bool>,
+    custom_selection_color: Signal<String>,
+    selection_color: Signal<Color>,
+    shared_settings: &Arc<RwLock<Settings>>,
+    ctx: &mut EventCtx,
+) -> bool {
+    let valid = parse_selection_color(&custom_selection_color.get()).is_some();
+    let (rgb, color) =
+        resolve_selection_color(use_system_accent.get(), &custom_selection_color.get());
+    let Ok(mut settings) = shared_settings.write() else {
+        ctx.toast_ok("Could not lock Flux settings");
+        return false;
+    };
+    settings.use_system_accent = use_system_accent.get();
+    settings.custom_selection_color = rgb;
+    selection_color.set(color);
+    custom_selection_color.set(selection_color_hex(rgb));
+    if !valid {
+        ctx.toast_ok("Invalid hex color, restored default #4C8BF4");
+    }
+    true
+}
+
+pub(crate) fn selection_palette(
+    custom_selection_color: Signal<String>,
+    color_hsv: Signal<(f32, f32, f32)>,
+    selection_color: Signal<Color>,
+) -> Element {
     const COLORS: &[u32] = &[
         0x4c8bf4, 0x0078d4, 0x00a4ef, 0x107c10, 0x498205, 0xffb900, 0xd83b01, 0xe74856, 0x8764b8,
         0x744da9, 0x038387, 0x605e5c,
@@ -42,6 +145,8 @@ pub(crate) fn selection_palette(custom_selection_color: Signal<String>) -> Eleme
     let mut row = Element::row().spacing(6).width_match();
     for &value in COLORS {
         let label = selection_color_hex(value);
+        let (r, g, b) = custom_selection_color_rgb(value);
+        let (hue, saturation, brightness) = rgb_to_hsv(r, g, b);
         row = row.child(
             Element::col()
                 .width(24)
@@ -54,7 +159,11 @@ pub(crate) fn selection_palette(custom_selection_color: Signal<String>) -> Eleme
                 .corner(6.0)
                 .clickable()
                 .tooltip(label)
-                .on_click(move |_| custom_selection_color.set(selection_color_hex(value))),
+                .on_click(move |_| {
+                    custom_selection_color.set(selection_color_hex(value));
+                    color_hsv.set((hue, saturation, brightness));
+                    selection_color.set(Color::rgba(r, g, b, 84));
+                }),
         );
     }
     row
@@ -293,5 +402,41 @@ mod tests {
         assert!(displayed.starts_with("finish"));
         assert!(displayed.contains("Timeline"));
         assert!(displayed.chars().count() <= 26);
+    }
+
+    #[test]
+    fn hsv_round_trips_through_primary_and_neutral_colors() {
+        for (r, g, b) in [
+            (255, 0, 0),
+            (0, 255, 0),
+            (0, 0, 255),
+            (255, 255, 255),
+            (0, 0, 0),
+            (128, 128, 128),
+            (76, 139, 244),
+        ] {
+            let (h, s, v) = rgb_to_hsv(r, g, b);
+            let (rr, gg, bb) = hsv_to_rgb(h, s, v);
+            assert!(
+                (i16::from(rr) - i16::from(r)).abs() <= 1
+                    && (i16::from(gg) - i16::from(g)).abs() <= 1
+                    && (i16::from(bb) - i16::from(b)).abs() <= 1,
+                "round trip drifted for ({r},{g},{b})"
+            );
+        }
+        let (h, _, _) = rgb_to_hsv(255, 0, 0);
+        assert!((h - 0.0).abs() < 0.5 || (h - 360.0).abs() < 0.5);
+        let (_, s, _) = rgb_to_hsv(128, 128, 128);
+        assert_eq!(s, 0.0);
+    }
+
+    #[test]
+    fn resolve_selection_color_prefers_valid_hex_and_falls_back() {
+        let (rgb, color) = resolve_selection_color(false, "#4C8BF4");
+        assert_eq!(rgb, 0x4c8bf4);
+        assert_eq!(color, Color::rgba(0x4c, 0x8b, 0xf4, 84));
+        let (fallback_rgb, _) = resolve_selection_color(false, "not-a-color");
+        assert_eq!(fallback_rgb, 0x4c8bf4);
+        assert_eq!(selection_color_hex(fallback_rgb), "#4C8BF4");
     }
 }

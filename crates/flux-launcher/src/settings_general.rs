@@ -12,7 +12,7 @@ use super::history_priorities::game_mode_label;
 use super::hotkeys;
 use super::settings_ui::SettingsUi;
 use super::startup;
-use super::theme_text::{parse_selection_color, selection_color_for_settings, selection_color_hex};
+use super::theme_text::stage_selection_color;
 use super::ui_constants::{COMPACT_WINDOW_HEIGHT, CURRENT_VERSION};
 use super::update_tasks::{
     request_update_check, request_update_install, save_settings, update_check_due,
@@ -318,8 +318,13 @@ pub(crate) fn build_general_tab(ui: &SettingsUi) -> Element {
                                         meta: activation_meta.get(),
                                         key: activation_key.get(),
                                     };
-                                    let custom_color = parse_selection_color(&custom_selection_color.get())
-                                        .unwrap_or(0x4c8bf4);
+                                    stage_selection_color(
+                                        use_system_accent,
+                                        custom_selection_color,
+                                        selection_color,
+                                        &settings_for_apply,
+                                        &mut *ctx,
+                                    );
                                     let configured_width = parse_dimension_input(
                                         &launcher_width_input.get(),
                                         MIN_LAUNCHER_WIDTH,
@@ -338,8 +343,6 @@ pub(crate) fn build_general_tab(ui: &SettingsUi) -> Element {
                                         settings.game_mode = game_mode.get();
                                         settings.smooth_caret = smooth_caret.get();
                                         settings.switch_to_english_layout = switch_to_english_layout.get();
-                                        settings.use_system_accent = use_system_accent.get();
-                                        settings.custom_selection_color = custom_color;
                                         settings.launcher_width = configured_width;
                                         settings.launcher_height = configured_height;
                                         settings.clear_query_on_activation = clear_query_on_activation.get();
@@ -365,8 +368,6 @@ pub(crate) fn build_general_tab(ui: &SettingsUi) -> Element {
                                         activation_recording_for_apply.set(false);
                                         activation_display_for_apply
                                             .set(hotkeys::display_config(&settings.activation_hotkey));
-                                        selection_color.set(selection_color_for_settings(&settings));
-                                        custom_selection_color.set(selection_color_hex(settings.custom_selection_color));
                                         launcher_width.set(settings.launcher_width);
                                         launcher_height.set(settings.launcher_height);
                                         launcher_width_input.set(settings.launcher_width.to_string());

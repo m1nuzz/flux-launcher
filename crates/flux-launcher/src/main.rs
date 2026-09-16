@@ -11,6 +11,7 @@ mod builtin;
 mod builtin_calc;
 mod builtin_obsidian;
 mod cli;
+mod color_picker;
 mod everything;
 mod fullscreen;
 mod history_priorities;
@@ -141,6 +142,9 @@ fn main() {
     let switch_to_english_layout = signal(settings.switch_to_english_layout);
     let use_system_accent = signal(settings.use_system_accent);
     let custom_selection_color = signal(selection_color_hex(settings.custom_selection_color));
+    let color_hsv = signal(color_picker::hsv_for_selection_u32(
+        settings.custom_selection_color,
+    ));
     let launcher_width = signal(settings.launcher_width);
     let launcher_height = signal(settings.launcher_height);
     let launcher_width_input = signal(settings.launcher_width.to_string());
@@ -532,6 +536,7 @@ fn main() {
         use_system_accent,
         selection_color,
         custom_selection_color,
+        color_hsv,
         caret_duration,
         launcher_width,
         launcher_height,

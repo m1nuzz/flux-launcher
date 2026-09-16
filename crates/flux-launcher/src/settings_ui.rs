@@ -45,6 +45,7 @@ pub(crate) struct SettingsUi {
     pub(crate) use_system_accent: Signal<bool>,
     pub(crate) selection_color: Signal<Color>,
     pub(crate) custom_selection_color: Signal<String>,
+    pub(crate) color_hsv: Signal<(f32, f32, f32)>,
     pub(crate) caret_duration: Signal<String>,
     pub(crate) launcher_width: Signal<u16>,
     pub(crate) launcher_height: Signal<u16>,

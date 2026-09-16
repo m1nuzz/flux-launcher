@@ -2749,30 +2749,57 @@ try {
                 throw "Visual Settings reset smoke failed: the native preview did not report logical 420 width and 382 height after Reset callbacks."
             }
 
-            # The Visual page owns an explicit Apply dimensions action. Scroll the
-            # Visual form to its lower action area, then locate the button by observing
-            # the app's own callback marker instead of assuming a focus order that can
-            # vary when the native scroll viewport changes.
+            # The Visual page owns an explicit Apply dimensions action. The color
+            # picker below the Selection color row grows the scrolled content, so
+            # Apply no longer sits at a fixed viewport offset. Scroll extra ticks,
+            # then sweep the lower viewport bottom-up and stop at the first click
+            # that produces the Apply callback marker: self-calibrating, immune to
+            # future layout growth above Apply. Apply is the lowest interactive
+            # control, so the sweep cannot overshoot into sliders or checkboxes.
             [FluxWallpaper]::SetForegroundWindow($settingsHwnd) | Out-Null
             $shell.AppActivate($settingsProcess.Id) | Out-Null
             $scrollX = $settingsRect.Left + [int]($settingsRect.Right - $settingsRect.Left) / 2
             $scrollY = $settingsRect.Bottom - 48
             [FluxWallpaper]::SetCursorPos($scrollX, $scrollY) | Out-Null
-            [FluxWallpaper]::mouse_event(0x0800, 0, 0, [uint32]4294965376, [UIntPtr]::Zero)
-            Start-Sleep -Milliseconds 450
+            for ($tick = 0; $tick -lt 4; $tick++) {
+                [FluxWallpaper]::mouse_event(0x0800, 0, 0, [uint32]4294965376, [UIntPtr]::Zero)
+                Start-Sleep -Milliseconds 150
+            }
+            Start-Sleep -Milliseconds 300
             Save-Screenshot "settings-visual-apply.png"
             $applyX = $settingsRect.Left + [int][Math]::Round(118 * $settingsScale)
-            $applyY = $settingsRect.Top + [int][Math]::Round(463 * $settingsScale)
-            $applyPointClass = [FluxWallpaper]::WindowClassAtPoint($applyX, $applyY)
-            Write-Host "Visual Apply direct probe: x=$applyX y=$applyY windowClass=$applyPointClass"
-            [FluxWallpaper]::SetCursorPos($applyX, $applyY) | Out-Null
-            [FluxWallpaper]::mouse_event(0x0002, 0, 0, 0, [UIntPtr]::Zero)
-            [FluxWallpaper]::mouse_event(0x0004, 0, 0, 0, [UIntPtr]::Zero)
+            $applyMarker = "Visual Apply dimensions clicked: 420x382"
+            $applyBaseline = ([regex]::Matches(
+                (Get-Content $settingsStderrPath -Raw),
+                [regex]::Escape($applyMarker)
+            )).Count
+            $applyFoundY = 0
+            for ($sweep = 0; $sweep -lt 16; $sweep++) {
+                $probeY = $settingsRect.Bottom - 40 - ($sweep * 14)
+                if ($probeY -lt ($settingsRect.Top + 80)) { break }
+                [FluxWallpaper]::SetCursorPos($applyX, $probeY) | Out-Null
+                [FluxWallpaper]::mouse_event(0x0002, 0, 0, 0, [UIntPtr]::Zero)
+                [FluxWallpaper]::mouse_event(0x0004, 0, 0, 0, [UIntPtr]::Zero)
+                Start-Sleep -Milliseconds 400
+                $probeCount = ([regex]::Matches(
+                    (Get-Content $settingsStderrPath -Raw),
+                    [regex]::Escape($applyMarker)
+                )).Count
+                if ($probeCount -gt $applyBaseline) {
+                    $applyFoundY = $probeY
+                    break
+                }
+            }
+            if ($applyFoundY -eq 0) {
+                Save-Screenshot "settings-visual-apply-failed.png"
+                throw "Visual Apply smoke could not activate the Apply dimensions button via viewport sweep."
+            }
+            Write-Host "Visual Apply activated at y=$applyFoundY"
             Start-Sleep -Milliseconds 800
             $applyLog = Get-Content $settingsStderrPath -Raw
             if ($applyLog -notmatch "Visual Apply dimensions clicked: 420x382") {
                 Save-Screenshot "settings-visual-apply-failed.png"
-                throw "Visual Apply smoke could not activate the Apply dimensions button at x=$applyX y=$applyY (windowClass=$applyPointClass)."
+                throw "Visual Apply smoke lost the callback marker after activating at y=$applyFoundY."
             }
             Start-Sleep -Milliseconds 1200
             $settingsPath = Join-Path $env:APPDATA "FluxLauncher\settings.json"

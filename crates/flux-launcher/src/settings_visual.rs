@@ -6,8 +6,9 @@ use flux_core::{
 };
 use windui::prelude::*;
 
+use super::color_picker;
 use super::settings_ui::SettingsUi;
-use super::theme_text::selection_palette;
+use super::theme_text::{resolve_selection_color, selection_palette, stage_selection_color};
 use super::ui_constants::{COMPACT_WINDOW_HEIGHT, VISUAL_SLIDER_WIDTH};
 use super::update_tasks::save_settings;
 use super::window_geometry::{
@@ -25,6 +26,8 @@ pub(crate) fn build_visual_tab(ui: &SettingsUi) -> Element {
     let smooth_caret = ui.smooth_caret;
     let caret_duration = ui.caret_duration;
     let use_system_accent = ui.use_system_accent;
+    let selection_color = ui.selection_color;
+    let color_hsv = ui.color_hsv;
     let custom_selection_color = ui.custom_selection_color;
     let launcher_width = ui.launcher_width;
     let launcher_height = ui.launcher_height;
@@ -66,7 +69,19 @@ pub(crate) fn build_visual_tab(ui: &SettingsUi) -> Element {
                             Element::checkbox(
                                 "Use the Windows 11 system accent color when available",
                                 use_system_accent,
-                            ),
+                            )
+                            .on_toggle(move |_| {
+                                // on_toggle replaces the default flip: apply it
+                                // manually, then refresh rows immediately while
+                                // Apply remains the persist point.
+                                let next = !use_system_accent.get();
+                                use_system_accent.set(next);
+                                let (_, color) = resolve_selection_color(
+                                    next,
+                                    &custom_selection_color.get(),
+                                );
+                                selection_color.set(color);
+                            }),
                         ))
                         .child(Element::label("Windows accent is read from the current user profile; the custom color is used as a safe fallback.").font_size(10.0).fg(Color::rgba(235, 241, 255, 150)).max_lines(2).truncate(Truncate::End))
                         .child(Element::label("The exact native preview window opens beside Settings when this Visual tab is active."
@@ -79,7 +94,17 @@ pub(crate) fn build_visual_tab(ui: &SettingsUi) -> Element {
                                     Element::text_input(custom_selection_color, "#4C8BF4")
                                         .width_match(),
                                 )
-                                .child(selection_palette(custom_selection_color)),
+                                .child(selection_palette(
+                                    custom_selection_color,
+                                    color_hsv,
+                                    selection_color,
+                                ))
+                                .child(color_picker::build_color_picker(
+                                    custom_selection_color,
+                                    color_hsv,
+                                    selection_color,
+                                    Arc::clone(&ui.shared_settings),
+                                )),
                         )
                         .child(Element::field(
                             "Launcher width",
@@ -199,6 +224,13 @@ pub(crate) fn build_visual_tab(ui: &SettingsUi) -> Element {
                                     .parse::<u16>()
                                     .unwrap_or(95)
                                     .clamp(60, 160);
+                                stage_selection_color(
+                                    use_system_accent,
+                                    custom_selection_color,
+                                    selection_color,
+                                    &settings_for_visual_apply,
+                                    &mut *ctx,
+                                );
                                 let Ok(mut settings) = settings_for_visual_apply.write() else {
                                     ctx.toast_ok("Could not lock Flux settings");
                                     return;
