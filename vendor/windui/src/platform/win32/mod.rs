@@ -823,9 +823,11 @@ unsafe fn apply_acrylic_policy(hwnd: HWND) {
     let mut policy = AccentPolicy {
         state: ACCENT_ENABLE_ACRYLICBLURBEHIND,
         flags: 0,
-        // A restrained dark tint keeps text readable while allowing the desktop
-        // and adjacent windows to contribute to the translucent material.
-        gradient_color: 0x66101828,
+        // A restrained neutral dark tint keeps text readable while allowing the
+        // desktop and adjacent windows to contribute to the translucent
+        // material. Channels are equal (R=G=B) so DWM does not add a warm
+        // cast on dark or black wallpapers. Format is 0xAABBGGRR.
+        gradient_color: 0x66141414,
         animation_id: 0,
     };
     let mut data = WindowCompositionAttributeData {
