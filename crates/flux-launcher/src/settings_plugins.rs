@@ -4,7 +4,7 @@ use windui::prelude::*;
 
 use super::everything::{self, InstallationState};
 use super::plugins::native_plugin_install_path;
-use super::settings_shell::settings_scroll_gutter;
+use super::settings_shell::{settings_scroll_gutter, settings_section_header};
 use super::settings_ui::SettingsUi;
 
 pub(crate) fn build_plugins_tab(ui: &SettingsUi) -> Element {
@@ -30,21 +30,40 @@ pub(crate) fn build_plugins_tab(ui: &SettingsUi) -> Element {
                     Element::col()
                         .weight(1.0)
                         .spacing(12)
-                        .child(Element::label("Everything").font_size(17.0).fg(Color::WHITE))
+                        .child(settings_section_header("Native plugins"))
                         .child(
-                            Element::label("Everything provides fast indexed file and folder search. Configure its automatic use here, alongside the other plugins.")
+                            Element::label("Native Flow plugins: %APPDATA%\\FluxLauncher\\Plugins or FLUX_PLUGIN_DIR")
+                                .font_size(12.0)
+                                .fg(Color::rgba(235, 241, 255, 235)),
+                        )
+                        .child(
+                            Element::label("Built-in providers run inside Flux. Community Rust DLL plugins run in one isolated shared worker spawned from this same flux-launcher.exe.")
                                 .font_size(11.0)
-                                .fg(Color::rgba(235, 241, 255, 180))
+                                .fg(Color::rgba(235, 241, 255, 235))
                                 .max_lines(3)
                                 .truncate(Truncate::End),
                         )
-                        .child(Element::field(
+                        .child(
+                            Element::label(format!("Community plugin folder: {}", native_plugin_install_path()))
+                                .font_size(11.0)
+                                .fg(Color::rgba(235, 241, 255, 235))
+                                .max_lines(2)
+                                .truncate(Truncate::End),
+                        )
+                        .child(Element::divider())
+                        .child(settings_section_header("Everything"))
+                        .child(
+                            Element::label("Everything provides fast indexed file and folder search. Configure its automatic use here, alongside the other plugins.")
+                                .font_size(11.0)
+                                .fg(Color::rgba(235, 241, 255, 235))
+                                .max_lines(3)
+                                .truncate(Truncate::End),
+                        )
+                        .child(Element::setting_row_desc(
                             "Everything",
-                            Element::checkbox(
-                                "Auto-enable Everything when installed",
-                                auto_enable_everything,
-                            )
-                            .on_toggle(move |_| {
+                            "Auto-enable Everything when installed",
+                            Element::checkbox("", auto_enable_everything)
+                                .on_toggle(move |_| {
                                 let enabled = auto_enable_everything_for_toggle.get();
                                 if let Ok(mut settings) = settings_for_everything_toggle.write() {
                                     settings.auto_enable_everything = enabled;
@@ -89,20 +108,21 @@ pub(crate) fn build_plugins_tab(ui: &SettingsUi) -> Element {
                         .child(
                             Element::label_signal(everything_status)
                                 .font_size(11.0)
-                                .fg(Color::rgba(235, 241, 255, 190))
+                                .fg(Color::rgba(235, 241, 255, 235))
                                 .max_lines(2)
                                 .truncate(Truncate::End)
                                 .width_match(),
                         )
                         .child(
                             Element::label("Command: winget install -e --id voidtools.Everything")
-                                .font_size(10.0)
-                                .fg(Color::rgba(235, 241, 255, 155))
+                                .font_size(11.0)
+                                .fg(Color::rgba(235, 241, 255, 235))
                                 .visible_when(move || !everything_installed_for_ui.get())
                                 .width_match(),
                         )
                         .child(
                             Element::button("Install Everything")
+                                .small()
                                 .visible_when(move || !everything_installed_for_ui.get())
                                 .on_click(move |ctx| {
                                     match everything::launch_winget_install() {
@@ -119,55 +139,41 @@ pub(crate) fn build_plugins_tab(ui: &SettingsUi) -> Element {
                                     }
                                 }),
                         )
-                        .child(Element::label("Native plugins").font_size(17.0).fg(Color::WHITE))
-                        .child(
-                            Element::label("Built-in providers run inside Flux. Community Rust DLL plugins run in one isolated shared worker spawned from this same flux-launcher.exe.")
-                                .font_size(11.0)
-                                .fg(Color::rgba(235, 241, 255, 180))
-                                .max_lines(3)
-                                .truncate(Truncate::End),
-                        )
-                        .child(
-                            Element::label(format!("Community plugin folder: {}", native_plugin_install_path()))
-                                .font_size(10.0)
-                                .fg(Color::rgba(235, 241, 255, 150))
-                                .max_lines(2)
-                                .truncate(Truncate::End),
-                        )
-                        .child(
-                            Element::label("Configure built-in native Rust plugins without Python or C# runtimes.")
-                                .font_size(11.0)
-                                .fg(Color::rgba(235, 241, 255, 180))
-                                .max_lines(2)
-                                .truncate(Truncate::End),
-                        )
-                        .child(Element::field(
+                        .child(Element::divider())
+                        .child(settings_section_header("Obsidian"))
+                        .child(Element::setting_row_desc(
                             "Obsidian",
-                            Element::checkbox("Enable Obsidian vault search", obsidian_enabled),
+                            "Enable Obsidian vault search",
+                            Element::checkbox("", obsidian_enabled),
                         ))
-                        .child(Element::field(
+                        .child(Element::setting_row_desc(
                             "Action keyword",
-                            Element::text_input(obsidian_alias, "ob").width_match(),
+                            "Prefix typed before the vault query",
+                            Element::text_input(obsidian_alias, "ob").width(180),
                         ))
                         .child(
                             Element::label("Search notes and vault files with the configured keyword, for example: ob meeting. Use `ob create project` to create a new note.")
                                 .font_size(11.0)
-                                .fg(Color::rgba(235, 241, 255, 175))
+                                .fg(Color::rgba(235, 241, 255, 235))
                                 .max_lines(3)
                                 .truncate(Truncate::End),
                         )
-                        .child(Element::field(
+                        .child(Element::divider())
+                        .child(settings_section_header("Google Search"))
+                        .child(Element::setting_row_desc(
                             "Google Search",
-                            Element::checkbox("Enable Google web search", google_enabled),
+                            "Enable Google web search",
+                            Element::checkbox("", google_enabled),
                         ))
-                        .child(Element::field(
+                        .child(Element::setting_row_desc(
                             "Action keyword",
-                            Element::text_input(google_alias, "g").width_match(),
+                            "Prefix typed before the web query",
+                            Element::text_input(google_alias, "g").width(180),
                         ))
                         .child(
                             Element::label("Search the web with the configured keyword, for example: g space exploration. The result opens in your default browser.")
                                 .font_size(11.0)
-                                .fg(Color::rgba(235, 241, 255, 175))
+                                .fg(Color::rgba(235, 241, 255, 235))
                                 .max_lines(3)
                                 .truncate(Truncate::End),
                         )

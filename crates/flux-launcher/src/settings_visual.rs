@@ -7,7 +7,7 @@ use flux_core::{
 use windui::prelude::*;
 
 use super::color_picker;
-use super::settings_shell::settings_scroll_gutter;
+use super::settings_shell::{settings_scroll_gutter, settings_section_header};
 use super::settings_ui::SettingsUi;
 use super::theme_text::{
     effective_selection_rgb, push_selection_appearance, selection_palette, stage_selection_color,
@@ -51,33 +51,24 @@ pub(crate) fn build_visual_tab(ui: &SettingsUi) -> Element {
                     Element::col()
                         .weight(1.0)
                         .spacing(12)
-                        .child(Element::label("Visual appearance").font_size(17.0).fg(Color::WHITE))
-                        .child(
-                            Element::label("The live preview is a separate native windui window. Its client area is resized directly in realtime; the Settings window stays centered and stable while dragging.")
-                                .font_size(11.0)
-                                .fg(Color::rgba(235, 241, 255, 180))
-                                .max_lines(3)
-                                .truncate(Truncate::End),
-                        )
-                        .child(Element::field(
-                            "Smooth Caret",
+                        .child(settings_section_header("Caret"))
+                        .child(Element::setting_row_desc(
+                            "Smooth caret",
+                            "Animate search caret movement",
                             Element::row()
-                                .width_match()
                                 .spacing(8)
-                                .child(
-                                    Element::checkbox("Animate search caret movement", smooth_caret)
-                                        .width_match(),
-                                )
+                                .cross(Align::Center)
+                                .child(Element::checkbox("", smooth_caret))
                                 .child(Element::text_input(caret_duration, "95").width(76))
                                 .child(Element::label("ms").font_size(11.0)),
                         ))
-                        .child(Element::field(
+                        .child(Element::divider())
+                        .child(settings_section_header("Selection color"))
+                        .child(Element::setting_row_desc(
                             "Selection color",
-                            Element::checkbox(
-                                "Use the Windows 11 system accent color when available",
-                                use_system_accent,
-                            )
-                            .on_toggle({
+                            "Use the Windows 11 system accent color when available",
+                            Element::checkbox("", use_system_accent)
+                                .on_toggle({
                                 let theme = ui.theme_handle.clone();
                                 move |_| {
                                     // on_toggle replaces the default flip: apply it
@@ -94,9 +85,9 @@ pub(crate) fn build_visual_tab(ui: &SettingsUi) -> Element {
                                 }
                             }),
                         ))
-                        .child(Element::label("Windows accent is read from the current user profile; the custom color is used as a safe fallback.").font_size(10.0).fg(Color::rgba(235, 241, 255, 150)).max_lines(2).truncate(Truncate::End))
+                        .child(Element::label("Windows accent is read from the current user profile; the custom color is used as a safe fallback.").font_size(11.0).fg(Color::rgba(235, 241, 255, 235)).max_lines(2).truncate(Truncate::End))
                         .child(Element::label("The exact native preview window opens beside Settings when this Visual tab is active."
-).font_size(10.0).fg(Color::rgba(235, 241, 255, 170)).max_lines(2).truncate(Truncate::End))
+).font_size(11.0).fg(Color::rgba(235, 241, 255, 235)).max_lines(2).truncate(Truncate::End))
                         .child(
                             Element::col()
                                 .spacing(8)
@@ -119,11 +110,14 @@ pub(crate) fn build_visual_tab(ui: &SettingsUi) -> Element {
                                     Arc::clone(&ui.shared_settings),
                                 )),
                         )
+                        .child(Element::divider())
+                        .child(settings_section_header("Launcher size"))
                         .child(Element::field(
                             "Launcher width",
                             Element::row()
                                 .width_match()
                                 .spacing(8)
+                                .cross(Align::Center)
                                 .child(Element::slider(launcher_width_slider).width(VISUAL_SLIDER_WIDTH))
                                 .child(
                                     Element::text_input(launcher_width_input, "420")
@@ -161,14 +155,15 @@ pub(crate) fn build_visual_tab(ui: &SettingsUi) -> Element {
                                 "Safe range: {}–{} logical px (DIP)",
                                 MIN_LAUNCHER_WIDTH, MAX_LAUNCHER_WIDTH
                             ))
-                            .font_size(10.0)
-                            .fg(Color::rgba(235, 241, 255, 150)),
+                            .font_size(11.0)
+                            .fg(Color::rgba(235, 241, 255, 235)),
                         )
                         .child(Element::field(
                             "Results height",
                             Element::row()
                                 .width_match()
                                 .spacing(8)
+                                .cross(Align::Center)
                                 .child(Element::slider(launcher_height_slider).width(VISUAL_SLIDER_WIDTH))
                                 .child(
                                     Element::text_input(launcher_height_input, "382")
@@ -206,18 +201,22 @@ pub(crate) fn build_visual_tab(ui: &SettingsUi) -> Element {
                                 "Safe range: {}–{} logical px (DIP)",
                                 MIN_LAUNCHER_HEIGHT, MAX_LAUNCHER_HEIGHT
                             ))
-                            .font_size(10.0)
-                            .fg(Color::rgba(235, 241, 255, 150)),
+                            .font_size(11.0)
+                            .fg(Color::rgba(235, 241, 255, 235)),
                         )
+                        .child(Element::divider())
+                        .child(settings_section_header("Live preview"))
                         .child(Element::label_signal(launcher_preview_text).font_size(12.0).fg(Color::WHITE))
                         .child(
                             Element::label("The native preview uses the exact requested logical client dimensions. Physical GetClientRect pixels scale with the preview monitor DPI; Apply saves the values.")
                                 .font_size(11.0)
-                                .fg(Color::rgba(235, 241, 255, 175))
+                                .fg(Color::rgba(235, 241, 255, 235))
                                 .max_lines(2)
                                 .truncate(Truncate::End),
                         )
-                        .child(
+                        .child(Element::setting_row_desc(
+                            "Apply dimensions",
+                            "Save launcher size and appearance",
                             Element::button("Apply dimensions").on_click(move |ctx| {
                                 let mut width = parse_dimension_input(
                                     &launcher_width_input.get(),
@@ -295,6 +294,7 @@ pub(crate) fn build_visual_tab(ui: &SettingsUi) -> Element {
                                 size_for_visual_apply.set(i32::from(width), target_height);
                                 ctx.toast_ok("Visual dimensions applied");
                             }),
+                        )
                         )
                     )
                     .child(settings_scroll_gutter())

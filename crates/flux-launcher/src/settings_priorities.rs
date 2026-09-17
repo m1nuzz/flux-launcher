@@ -5,7 +5,7 @@ use windui::prelude::*;
 
 use super::history_priorities::{move_priority_entry, remove_priority_entry};
 use super::provider_snapshot::refresh_merged_results;
-use super::settings_shell::settings_scroll_gutter;
+use super::settings_shell::{settings_scroll_gutter, settings_section_header};
 use super::settings_ui::SettingsUi;
 
 pub(crate) fn build_priority_list(ui: &SettingsUi) -> Element {
@@ -66,8 +66,8 @@ pub(crate) fn build_priority_list(ui: &SettingsUi) -> Element {
                         )
                         .child(
                             Element::label(target)
-                                .font_size(10.0)
-                                .fg(Color::rgba(235, 241, 255, 170))
+                                .font_size(11.0)
+                                .fg(Color::rgba(235, 241, 255, 235))
                                 .max_lines(1)
                                 .truncate(Truncate::End),
                         ),
@@ -135,7 +135,7 @@ pub(crate) fn build_priorities_empty(ui: &SettingsUi) -> Element {
         "No explicit priorities yet. Select an application, press Right, then choose Set as priority.",
     )
     .font_size(12.0)
-    .fg(Color::rgba(235, 241, 255, 185))
+    .fg(Color::rgba(235, 241, 255, 235))
     .max_lines(2)
     .truncate(Truncate::End)
     .visible_when(move || priorities.get().is_empty())
@@ -157,15 +157,11 @@ pub(crate) fn build_priorities_tab(
                     Element::col()
                         .weight(1.0)
                         .spacing(10)
-                        .child(
-                            Element::label("Explicit application priorities")
-                                .font_size(17.0)
-                                .fg(Color::WHITE),
-                        )
+                        .child(settings_section_header("Priorities"))
                         .child(
                             Element::label("Only applications explicitly added with Set as priority appear here. Rank 1 is searched first.")
                                 .font_size(11.0)
-                                .fg(Color::rgba(235, 241, 255, 180))
+                                .fg(Color::rgba(235, 241, 255, 235))
                                 .max_lines(2)
                                 .truncate(Truncate::End),
                         )

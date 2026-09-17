@@ -67,7 +67,7 @@ pub(crate) fn build_settings_panel(
                         .child(
                             Element::label("Changes apply immediately and are saved atomically")
                                 .font_size(12.0)
-                                .fg(Color::rgba(235, 241, 255, 180)),
+                                .fg(Color::rgba(235, 241, 255, 235)),
                         ),
                 )
                 .child(Element::segmented(

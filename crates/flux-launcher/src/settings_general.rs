@@ -131,7 +131,7 @@ pub(crate) fn build_general_tab(ui: &SettingsUi) -> Element {
                             .child(
                                 Element::label("Click Record key, then press one key or a key combination")
                                     .font_size(11.0)
-                                    .fg(Color::rgba(235, 241, 255, 170))
+                                    .fg(Color::rgba(235, 241, 255, 235))
                                     .visible_when(move || activation_recording_for_record_button.get()),
                             ),
                     ))
@@ -242,7 +242,7 @@ pub(crate) fn build_general_tab(ui: &SettingsUi) -> Element {
                                             .child(
                                                 Element::label_signal(update_status)
                                                     .font_size(11.0)
-                                                    .fg(Color::rgba(235, 241, 255, 190))
+                                                    .fg(Color::rgba(235, 241, 255, 235))
                                                     .max_lines(2)
                                                     .truncate(Truncate::End)
                                                     .width_match(),
@@ -308,13 +308,6 @@ pub(crate) fn build_general_tab(ui: &SettingsUi) -> Element {
                                     history_cursor_for_clear.set(None);
                                     ctx.toast_ok("Query history cleared");
                                 }))
-                            )
-                            .child(Element::divider())
-                            .child(settings_section_header("Plugins"))
-                            .child(
-                                Element::label("Native Flow plugins: %APPDATA%\\FluxLauncher\\Plugins or FLUX_PLUGIN_DIR")
-                                    .font_size(12.0)
-                                    .fg(Color::rgba(235, 241, 255, 160)),
                             )
                             .child(Element::divider())
                             .child(Element::setting_row_desc(

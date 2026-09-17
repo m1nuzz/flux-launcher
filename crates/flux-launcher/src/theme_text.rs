@@ -383,6 +383,11 @@ pub(crate) fn launcher_theme() -> Theme {
     // opaque; reserve accent blue for selection/focus feedback only.
     theme.palette.text = Color::rgba(250, 252, 255, 255);
     theme.palette.placeholder = Color::rgba(238, 243, 255, 230);
+    // Tertiary row descriptions (setting_row_desc, field hints) must stay
+    // readable over bright Acrylic samples. Vendor dark default (0x76808F)
+    // sinks into light blur, so use a bright gray instead; hierarchy
+    // against white titles is carried by size.
+    theme.palette.text_subtle = Color::hex(0xBCC4D4);
     theme.input.bg = Some(Color::rgba(29, 30, 32, 188));
     theme.input.border = Some(Color::rgba(255, 255, 255, 24));
     theme.input.border_focus = Some(Color::rgba(133, 181, 255, 135));
