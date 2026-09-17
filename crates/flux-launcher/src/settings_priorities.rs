@@ -5,6 +5,7 @@ use windui::prelude::*;
 
 use super::history_priorities::{move_priority_entry, remove_priority_entry};
 use super::provider_snapshot::refresh_merged_results;
+use super::settings_shell::settings_scroll_gutter;
 use super::settings_ui::SettingsUi;
 
 pub(crate) fn build_priority_list(ui: &SettingsUi) -> Element {
@@ -150,8 +151,11 @@ pub(crate) fn build_priorities_tab(
         .weight(1.0)
         .visible_when(move || settings_tab.get() == 2)
         .child(
+            Element::row()
+                .width_match()
+                .child(
                     Element::col()
-                        .width_match()
+                        .weight(1.0)
                         .spacing(10)
                         .child(
                             Element::label("Explicit application priorities")
@@ -166,6 +170,8 @@ pub(crate) fn build_priorities_tab(
                                 .truncate(Truncate::End),
                         )
                         .child(priorities_empty)
-                        .child(priority_list),
-                )
+                        .child(priority_list)
+                    )
+                    .child(settings_scroll_gutter())
+        )
 }

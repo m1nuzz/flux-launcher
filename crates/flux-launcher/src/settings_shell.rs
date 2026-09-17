@@ -6,6 +6,29 @@ use super::settings_ui::SettingsUi;
 use super::ui_constants::COMPACT_WINDOW_HEIGHT;
 use super::window_geometry::request_monitor_position;
 
+/// A settings group title: semibold, slightly larger than row text, no fill so
+/// the Acrylic backdrop stays untouched. Pair with `Element::divider()` between
+/// groups; keep controls off the header line so the eye parses sections first.
+pub(crate) fn settings_section_header(title: &str) -> Element {
+    Element::label(title)
+        .font_size(15.0)
+        .font_weight(600)
+        .fg(Color::WHITE)
+}
+
+/// Right gutter for settings tab scroll content.
+///
+/// windui's overlay scrollbar reserves only TRACK_W + MARGIN + CONTENT_GAP
+/// for layout while its grab zone (HIT_W) is wider, so controls glued to the
+/// content edge feel overlapped by the thumb. Wrap the tab body as
+/// `scroll > row[width_match] > col[weight(1.0)] + gutter`: the fixed spacer
+/// keeps right-edge controls (checkboxes, buttons) clear of the thumb and
+/// its hit zone, gives breathing room against the panel edge when the tab
+/// does not overflow, and leaves the left edge aligned with the header.
+pub(crate) fn settings_scroll_gutter() -> Element {
+    Element::leaf().size(12, 1)
+}
+
 pub(crate) fn build_settings_panel(
     ui: &SettingsUi,
     tab_general: Element,
@@ -34,6 +57,8 @@ pub(crate) fn build_settings_panel(
         .child(
             Element::row()
                 .width_match()
+                .spacing(12)
+                .cross(Align::Center)
                 .child(
                     Element::col()
                         .weight(1.0)
@@ -49,23 +74,28 @@ pub(crate) fn build_settings_panel(
                     vec!["General", "Visual", "Priorities", "Plugins"],
                     settings_tab,
                 ))
-                .child(Element::button("Back").neutral().on_click(move |_| {
-                    settings_visible.set(false);
-                    let height = if show_results_for_back.get() {
-                        launcher_height.get() as i32
-                    } else {
-                        COMPACT_WINDOW_HEIGHT
-                    };
-                    if let Ok(settings) = settings_for_back_position.read() {
-                        request_monitor_position(
-                            &position_for_back,
-                            settings.monitor_preference,
-                            launcher_width.get() as i32,
-                            height,
-                        );
-                    }
-                    size_for_back.set(launcher_width.get() as i32, height);
-                })),
+                .child(
+                    Element::button("Back")
+                        .neutral()
+                        .outline_soft()
+                        .on_click(move |_| {
+                            settings_visible.set(false);
+                            let height = if show_results_for_back.get() {
+                                launcher_height.get() as i32
+                            } else {
+                                COMPACT_WINDOW_HEIGHT
+                            };
+                            if let Ok(settings) = settings_for_back_position.read() {
+                                request_monitor_position(
+                                    &position_for_back,
+                                    settings.monitor_preference,
+                                    launcher_width.get() as i32,
+                                    height,
+                                );
+                            }
+                            size_for_back.set(launcher_width.get() as i32, height);
+                        }),
+                ),
         )
         .child(tab_general)
         .child(tab_plugins)

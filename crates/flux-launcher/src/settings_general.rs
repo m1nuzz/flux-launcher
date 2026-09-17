@@ -10,6 +10,7 @@ use windui::prelude::*;
 use super::everything::{self, InstallationState};
 use super::history_priorities::game_mode_label;
 use super::hotkeys;
+use super::settings_shell::{settings_scroll_gutter, settings_section_header};
 use super::settings_ui::SettingsUi;
 use super::startup;
 use super::theme_text::stage_selection_color;
@@ -94,9 +95,13 @@ pub(crate) fn build_general_tab(ui: &SettingsUi) -> Element {
         .weight(1.0)
         .visible_when(move || settings_tab.get() == 0)
         .child(
-                Element::col()
-                    .width_match()
-                    .spacing(12)
+            Element::row()
+                .width_match()
+                .child(
+                    Element::col()
+                        .weight(1.0)
+                        .spacing(12)
+                    .child(settings_section_header("Activation"))
                     .child(Element::field(
                         "Activation key",
                         Element::col()
@@ -139,37 +144,36 @@ pub(crate) fn build_general_tab(ui: &SettingsUi) -> Element {
                             .child(Element::checkbox("Shift", activation_shift))
                             .child(Element::checkbox("Windows", activation_meta)),
                     )
-                    .child(Element::field(
+                    .child(Element::setting_row_desc(
                         "Fullscreen protection",
-                        Element::checkbox("Ignore activation while another app is fullscreen", ignore_fullscreen),
+                        "Ignore activation while another app is fullscreen",
+                        Element::checkbox("", ignore_fullscreen),
                     ))
-                    .child(Element::field(
+                    .child(Element::divider())
+                    .child(settings_section_header("Behavior"))
+                    .child(Element::setting_row_desc(
                         "Game Mode",
-                        Element::checkbox("Suppress the launcher until manually disabled", game_mode),
+                        "Suppress the launcher until manually disabled",
+                        Element::checkbox("", game_mode),
                     ))
-                    .child(Element::field(
+                    .child(Element::setting_row_desc(
                         "Keyboard layout",
-                        Element::checkbox(
-                            "Start typing in English and restore the previous layout on hide",
-                            switch_to_english_layout,
-                        ),
+                        "Start typing in English and restore the previous layout on hide",
+                        Element::checkbox("", switch_to_english_layout),
                     ))
-                    .child(Element::field(
+                    .child(Element::setting_row_desc(
                         "Query on activation",
-                        Element::checkbox(
-                            "Clear the previous query when opened with the global hotkey",
-                            clear_query_on_activation,
-                        ),
+                        "Clear the previous query when opened with the global hotkey",
+                        Element::checkbox("", clear_query_on_activation),
                     ))
-                    .child(Element::field(
+                    .child(Element::setting_row_desc(
                         "Windows startup",
-                        Element::checkbox(
-                            "Start Flux automatically with Windows",
-                            start_with_windows,
-                        ),
+                        "Start Flux automatically with Windows",
+                        Element::checkbox("", start_with_windows),
                     ))
-                    .child(Element::field(
+                    .child(Element::setting_row_desc(
                         "Open launcher on",
+                        "The launcher window appears on the chosen display",
                         Element::col()
                             .spacing(6)
                             .child(Element::radio(
@@ -188,55 +192,66 @@ pub(crate) fn build_general_tab(ui: &SettingsUi) -> Element {
                                 2,
                             )),
                     ))
+                    .child(Element::divider())
+                    .child(settings_section_header("Updates"))
                     .child(
                         Element::col()
                             .width_match()
                             .spacing(8)
-                            .child(Element::field(
+                            .child(Element::setting_row_desc(
                                 "Updates",
-                                Element::checkbox(
-                                    "Check stable GitHub releases automatically",
-                                    update_checks_enabled,
-                                ),
+                                "Check stable GitHub releases automatically",
+                                Element::checkbox("", update_checks_enabled),
                             ))
                             .child(
                                 Element::row()
                                     .width_match()
                                     .spacing(8)
+                                    .cross(Align::Center)
                                     .child(
                                         Element::text_input(update_interval_hours, "24")
-                                            .width_match(),
+                                            .width(76),
                                     )
                                     .child(Element::label("hours between checks").font_size(11.0)),
                             )
                             .child(
                                 Element::row()
-                                    .width_match()
                                     .spacing(8)
-                                    .child(Element::label("Update action").width_match())
-                                    .child(
-                                        Element::label(format!("Current version: {CURRENT_VERSION}"))
-                                            .font_size(11.0)
-                                            .fg(Color::rgba(235, 241, 255, 190)),
-                                    ),
+                                    .cross(Align::Center)
+                                    .child(Element::label("Update action"))
+                                    .child(Element::badge_intent(
+                                        format!("Current version: {CURRENT_VERSION}"),
+                                        Intent::Neutral,
+                                    )),
                             )
-                            .child(Element::checkbox(
+                            .child(Element::setting_row_desc(
+                                "Automatic install",
                                 "Install stable updates automatically",
-                                auto_install_updates,
+                                Element::checkbox("", auto_install_updates),
                             ))
                             .child(
                                 Element::row()
                                     .width_match()
-                                    .spacing(8)
+                                    .cross(Align::Center)
+                                    .spacing(12)
                                     .child(
-                                        Element::label_signal(update_status)
-                                            .font_size(11.0)
-                                            .fg(Color::rgba(235, 241, 255, 190))
-                                            .max_lines(2)
-                                            .truncate(Truncate::End)
-                                            .width_match(),
+                                        Element::col()
+                                            .weight(1.0)
+                                            .spacing(2)
+                                            .child(Element::label("Update status"))
+                                            .child(
+                                                Element::label_signal(update_status)
+                                                    .font_size(11.0)
+                                                    .fg(Color::rgba(235, 241, 255, 190))
+                                                    .max_lines(2)
+                                                    .truncate(Truncate::End)
+                                                    .width_match(),
+                                            ),
                                     )
-                                    .child(Element::button("Check for updates").on_click(move |ctx| {
+                                    .child(
+                                        Element::button("Check for updates")
+                                            .small()
+                                            .on_click(move |ctx| {
                                         update_status_for_apply.set(String::from(
                                             "Checking stable GitHub releases...",
                                         ));
@@ -248,6 +263,7 @@ pub(crate) fn build_general_tab(ui: &SettingsUi) -> Element {
                                     }))
                                     .child(
                                         Element::button("Install now")
+                                            .small()
                                             .visible_when(move || {
                                                 update_available_for_install.get().is_some()
                                                     && !update_installing_for_ui.get()
@@ -276,35 +292,34 @@ pub(crate) fn build_general_tab(ui: &SettingsUi) -> Element {
                                                         ctx.toast_ok("An update is already being installed");
                                                     }
                                                 }
-                                            }),
-                                    ),
+                                            }))
                             )
-                            .child(
-                                Element::row()
-                                    .width_match()
-                                    .spacing(10)
-                                    .child(
-                                        Element::label("Query history: Ctrl+H recalls committed searches")
-                                            .font_size(11.0)
-                                            .fg(Color::rgba(235, 241, 255, 175))
-                                            .width_match(),
-                                    )
-                                    .child(Element::button("Clear history").on_click(move |ctx| {
-                                        if let Ok(mut settings) = settings_for_clear_history.write() {
-                                            settings.clear_query_history();
-                                            let _ = save_settings(&settings);
-                                        }
-                                        history_for_clear.borrow_mut().clear();
-                                        history_cursor_for_clear.set(None);
-                                        ctx.toast_ok("Query history cleared");
-                                    })),
+                            .child(Element::divider())
+                            .child(settings_section_header("History"))
+                            .child(Element::setting_row_desc(
+                                "Query history",
+                                "Ctrl+H recalls committed searches",
+                                Element::button("Clear history").small().on_click(move |ctx| {
+                                    if let Ok(mut settings) = settings_for_clear_history.write() {
+                                        settings.clear_query_history();
+                                        let _ = save_settings(&settings);
+                                    }
+                                    history_for_clear.borrow_mut().clear();
+                                    history_cursor_for_clear.set(None);
+                                    ctx.toast_ok("Query history cleared");
+                                }))
                             )
+                            .child(Element::divider())
+                            .child(settings_section_header("Plugins"))
                             .child(
                                 Element::label("Native Flow plugins: %APPDATA%\\FluxLauncher\\Plugins or FLUX_PLUGIN_DIR")
                                     .font_size(12.0)
                                     .fg(Color::rgba(235, 241, 255, 160)),
                             )
-                            .child(
+                            .child(Element::divider())
+                            .child(Element::setting_row_desc(
+                                "Save settings",
+                                "Write all changes to disk and apply them",
                                 Element::button("Apply settings").on_click(move |ctx| {
                                     let duration = caret_duration
                                         .get()
@@ -445,7 +460,10 @@ pub(crate) fn build_general_tab(ui: &SettingsUi) -> Element {
                                     size_for_apply.set(applied_width, target_height);
                                     ctx.toast_ok("Settings applied");
                                 }),
-                            ),
-            ),
-        )
+                            )
+                            )
+                            )
+                            )
+                    .child(settings_scroll_gutter())
+                )
 }

@@ -7,6 +7,7 @@ use flux_core::{
 use windui::prelude::*;
 
 use super::color_picker;
+use super::settings_shell::settings_scroll_gutter;
 use super::settings_ui::SettingsUi;
 use super::theme_text::{
     effective_selection_rgb, push_selection_appearance, selection_palette, stage_selection_color,
@@ -44,8 +45,11 @@ pub(crate) fn build_visual_tab(ui: &SettingsUi) -> Element {
         .weight(1.0)
         .visible_when(move || settings_tab.get() == 1)
         .child(
+            Element::row()
+                .width_match()
+                .child(
                     Element::col()
-                        .width_match()
+                        .weight(1.0)
                         .spacing(12)
                         .child(Element::label("Visual appearance").font_size(17.0).fg(Color::WHITE))
                         .child(
@@ -291,6 +295,8 @@ pub(crate) fn build_visual_tab(ui: &SettingsUi) -> Element {
                                 size_for_visual_apply.set(i32::from(width), target_height);
                                 ctx.toast_ok("Visual dimensions applied");
                             }),
-                        ),
+                        )
+                    )
+                    .child(settings_scroll_gutter())
                 )
 }

@@ -4,6 +4,7 @@ use windui::prelude::*;
 
 use super::everything::{self, InstallationState};
 use super::plugins::native_plugin_install_path;
+use super::settings_shell::settings_scroll_gutter;
 use super::settings_ui::SettingsUi;
 
 pub(crate) fn build_plugins_tab(ui: &SettingsUi) -> Element {
@@ -23,8 +24,11 @@ pub(crate) fn build_plugins_tab(ui: &SettingsUi) -> Element {
         .weight(1.0)
         .visible_when(move || settings_tab.get() == 3)
         .child(
+            Element::row()
+                .width_match()
+                .child(
                     Element::col()
-                        .width_match()
+                        .weight(1.0)
                         .spacing(12)
                         .child(Element::label("Everything").font_size(17.0).fg(Color::WHITE))
                         .child(
@@ -166,6 +170,8 @@ pub(crate) fn build_plugins_tab(ui: &SettingsUi) -> Element {
                                 .fg(Color::rgba(235, 241, 255, 175))
                                 .max_lines(3)
                                 .truncate(Truncate::End),
-                        ),
+                        )
+                    )
+                    .child(settings_scroll_gutter())
                 )
 }
