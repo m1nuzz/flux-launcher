@@ -12,15 +12,17 @@ use super::provider_merge::{
 use super::ui_constants::MAX_VISIBLE_RESULTS;
 
 /// Keep the previous result list visible while asynchronous providers compute a
-/// new non-empty query. Immediate publication is safe for the home page and for
-/// actionable synchronous built-in results, but publishing an empty vector for
-/// every keystroke creates a visible blank frame and makes the list flicker.
+/// new non-empty query. Immediate publication is safe for the home page (empty
+/// query clears) and for the first paint (nothing displayed yet), but swapping
+/// in a builtins-only list on every keystroke and replacing it again on the
+/// applications commit flashes the whole list twice per keystroke. The
+/// applications scan is local and lands milliseconds later, so holding the
+/// previous list is strictly calmer.
 pub(crate) fn should_publish_initial_query_results(
     has_query: bool,
-    built_in_results_are_empty: bool,
     displayed_results_are_empty: bool,
 ) -> bool {
-    !has_query || !built_in_results_are_empty || displayed_results_are_empty
+    !has_query || displayed_results_are_empty
 }
 
 #[derive(Default)]
@@ -91,16 +93,25 @@ pub(crate) fn commit_provider_results(
     results: Signal<Vec<SearchResult>>,
 ) {
     let merged = providers.merged(query, priorities);
+    // distinctUntilChanged: an identical snapshot must not rebuild the row
+    // tree or jump the highlight, so write each signal only when its value
+    // would actually change. Element and order both matter: a reorder alone
+    // still needs a publish.
+    let first_id = merged
+        .first()
+        .map(|result| result.id.clone())
+        .unwrap_or_default();
     if !selection_touched.get() {
-        selected_index.set(0);
-        selected_id.set(
-            merged
-                .first()
-                .map(|result| result.id.clone())
-                .unwrap_or_default(),
-        );
+        if selected_index.get() != 0 {
+            selected_index.set(0);
+        }
+        if selected_id.get() != first_id {
+            selected_id.set(first_id);
+        }
     }
-    results.set(merged);
+    if merged != results.get() {
+        results.set(merged);
+    }
 }
 
 pub(crate) fn refresh_merged_results(
@@ -131,14 +142,18 @@ mod tests {
 
     #[test]
     fn pending_non_empty_query_keeps_previous_result_list_visible() {
-        assert!(!should_publish_initial_query_results(true, true, false));
-        assert!(should_publish_initial_query_results(true, true, true));
+        assert!(!should_publish_initial_query_results(true, false));
+        assert!(should_publish_initial_query_results(true, true));
+        assert!(should_publish_initial_query_results(false, false));
     }
 
     #[test]
-    fn synchronous_built_in_results_can_replace_list_immediately() {
-        assert!(should_publish_initial_query_results(true, false, false));
-        assert!(should_publish_initial_query_results(false, true, false));
+    fn builtin_only_snapshot_waits_for_apps_commit_when_list_shown() {
+        // Even with synchronous built-in results ready, a shown list is left
+        // alone: the applications commit lands milliseconds later and swaps
+        // once instead of flashing builtins-then-full.
+        assert!(!should_publish_initial_query_results(true, false));
+        assert!(should_publish_initial_query_results(false, true));
     }
 
     #[test]
@@ -160,6 +175,79 @@ mod tests {
         providers.reset(8, Vec::new(), false);
         providers.applications_ready = true;
         assert!(providers.core_ready());
+    }
+
+    #[test]
+    fn identical_commit_writes_no_signals() {
+        use windui::signal::signal;
+        let app = SearchResult {
+            id: String::from("app:perplexity"),
+            title: String::from("Perplexity"),
+            subtitle: String::new(),
+            kind: ResultKind::Application,
+            source: ResultSource::ApplicationCatalog,
+            target: None,
+        };
+        let mut providers = ProviderResults::default();
+        providers.reset(1, Vec::new(), false);
+        providers.applications = vec![app.clone()];
+        providers.applications_ready = true;
+        let selected_id = signal(String::from("app:perplexity"));
+        let selected_index = signal(0_usize);
+        let selection_touched = signal(false);
+        let results = signal(vec![app]);
+        let (v_results, v_id, v_idx) = (
+            results.version(),
+            selected_id.version(),
+            selected_index.version(),
+        );
+        commit_provider_results(
+            &providers,
+            "perp",
+            &[],
+            selected_id,
+            selected_index,
+            selection_touched,
+            results,
+        );
+        // Same elements, same order, same selection: no signal may be
+        // re-set, otherwise the row tree rebuilds and the frame shimmers.
+        assert_eq!(results.version(), v_results, "results must not re-set");
+        assert_eq!(selected_id.version(), v_id, "selection must not re-set");
+        assert_eq!(selected_index.version(), v_idx, "index must not re-set");
+    }
+
+    #[test]
+    fn changed_commit_reselects_first_result() {
+        use windui::signal::signal;
+        let app = SearchResult {
+            id: String::from("app:perplexity"),
+            title: String::from("Perplexity"),
+            subtitle: String::new(),
+            kind: ResultKind::Application,
+            source: ResultSource::ApplicationCatalog,
+            target: None,
+        };
+        let mut providers = ProviderResults::default();
+        providers.reset(1, Vec::new(), false);
+        providers.applications = vec![app.clone()];
+        providers.applications_ready = true;
+        let selected_id = signal(String::from("stale-id"));
+        let selected_index = signal(3_usize);
+        let selection_touched = signal(false);
+        let results = signal(Vec::new());
+        commit_provider_results(
+            &providers,
+            "perp",
+            &[],
+            selected_id,
+            selected_index,
+            selection_touched,
+            results,
+        );
+        assert_eq!(selected_id.get(), "app:perplexity");
+        assert_eq!(selected_index.get(), 0);
+        assert_eq!(results.get(), vec![app]);
     }
 
     #[test]

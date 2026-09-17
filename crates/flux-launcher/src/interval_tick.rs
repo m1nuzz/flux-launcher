@@ -23,7 +23,7 @@ use super::shell_icon_cache::{
 use super::theme_text::normalize_everything_query;
 use super::ui_constants::{
     EVERYTHING_MIN_QUERY_LEN, PLUGIN_MIN_QUERY_LEN, SEARCH_INTERVAL, SETTINGS_WINDOW_HEIGHT,
-    SETTINGS_WINDOW_WIDTH,
+    SETTINGS_WINDOW_WIDTH, SLOW_PROVIDER_DEBOUNCE_MS,
 };
 use super::update_tasks::{request_update_check, update_check_due};
 use super::visual_preview;
@@ -126,6 +126,8 @@ pub(crate) fn register_interval(
     let mut last_settings_visible = settings_visible.get();
     let mut last_everything_prompt_visible = everything_prompt_visible.get();
     let mut last_query = String::new();
+    let mut last_query_change_ms: u64 = 0;
+    let mut slow_sent_sequence: u64 = 0;
     let mut visual_preview_process: Option<visual_preview::PreviewProcess> = None;
     let mut last_visual_preview_request: Option<(u16, u16)> = None;
     let mut last_visual_preview_generation = visual_preview_generation.get();
@@ -474,11 +476,48 @@ pub(crate) fn register_interval(
             return;
         }
         let next_query = query_for_interval.get();
-        if next_query == last_query {
+        let now_ms = ctx.now_ms();
+        let query_changed = next_query != last_query;
+        let has_query = !next_query.trim().is_empty();
+        if query_changed {
+            last_query = next_query.clone();
+            last_query_change_ms = now_ms;
+        } else {
+            // Settled tick: fire debounced slow providers at most once per
+            // query generation; everything else already ran on change.
+            if has_query
+                && slow_providers_due(
+                    now_ms,
+                    last_query_change_ms,
+                    slow_sent_sequence,
+                    sequence,
+                    SLOW_PROVIDER_DEBOUNCE_MS,
+                )
+            {
+                slow_sent_sequence = sequence;
+                // Everything is the always-on file provider for every non-empty
+                // query. Native Everything syntax such as `ext:zip`, `parent:`,
+                // `file:`, and `dm:today` stays unchanged; a leading `.ext`
+                // shorthand is normalized only for this provider.
+                if auto_enable_everything_for_interval.get()
+                    && next_query.trim().len() >= EVERYTHING_MIN_QUERY_LEN
+                {
+                    everything_worker.request(sequence, normalize_everything_query(&next_query));
+                }
+                if next_query.trim().len() >= PLUGIN_MIN_QUERY_LEN {
+                    plugin_worker.request(
+                        sequence,
+                        next_query.clone(),
+                        obsidian_enabled_for_interval.get(),
+                        obsidian_alias_for_interval.get(),
+                        google_enabled_for_interval.get(),
+                        google_alias_for_interval.get(),
+                    );
+                    native_plugin_worker.request(sequence, next_query.clone());
+                }
+            }
             return;
         }
-
-        let has_query = !next_query.trim().is_empty();
         history_mode_for_interval.set(false);
         show_results_for_interval.set(has_query);
         // Query cleanup also happens when hide-on-deactivate hides the
@@ -519,7 +558,6 @@ pub(crate) fn register_interval(
             providers.reset(sequence, built_in_results.clone(), everything_expected);
             let publish_initial_results = should_publish_initial_query_results(
                 has_query,
-                built_in_results.is_empty(),
                 results_for_interval.get().is_empty(),
             );
             if publish_initial_results {
@@ -549,28 +587,43 @@ pub(crate) fn register_interval(
             status_for_interval.set(String::from(
                 "Searching applications, Everything and native Flow plugins...",
             ));
+            // Applications stay immediate so the top row answers within a
+            // single tick; slow providers follow through the debounced path.
             application_worker.request(sequence, next_query.clone());
-            // Everything is the always-on file provider for every non-empty
-            // query. Native Everything syntax such as `ext:zip`, `parent:`,
-            // `file:`, and `dm:today` stays unchanged; a leading `.ext`
-            // shorthand is normalized only for this provider.
-            if auto_enable_everything_for_interval.get()
-                && next_query.trim().len() >= EVERYTHING_MIN_QUERY_LEN
-            {
-                everything_worker.request(sequence, normalize_everything_query(&next_query));
-            }
-            if next_query.trim().len() >= PLUGIN_MIN_QUERY_LEN {
-                plugin_worker.request(
-                    sequence,
-                    next_query.clone(),
-                    obsidian_enabled_for_interval.get(),
-                    obsidian_alias_for_interval.get(),
-                    google_enabled_for_interval.get(),
-                    google_alias_for_interval.get(),
-                );
-                native_plugin_worker.request(sequence, next_query.clone());
-            }
         }
-        last_query = next_query;
     })
+}
+
+/// Debounce gate for slow providers (Flow-style switchMap): an expensive
+/// search fires only for a query generation that survived settled without
+/// further keystrokes, at most once per generation.
+pub(crate) fn slow_providers_due(
+    now_ms: u64,
+    last_change_ms: u64,
+    sent_sequence: u64,
+    sequence: u64,
+    debounce_ms: u64,
+) -> bool {
+    sent_sequence != sequence && now_ms.saturating_sub(last_change_ms) >= debounce_ms
+}
+
+#[cfg(test)]
+mod tests {
+    use super::slow_providers_due;
+
+    #[test]
+    fn slow_providers_wait_for_settled_generation_once() {
+        // Fresh change: not due no matter the sequence.
+        assert!(!slow_providers_due(1000, 1000, 0, 1, 150));
+        // Settled and unsent: due (boundary inclusive).
+        assert!(slow_providers_due(1150, 1000, 0, 1, 150));
+        assert!(slow_providers_due(5000, 1000, 0, 1, 150));
+        // Already sent for this generation: never again.
+        assert!(!slow_providers_due(5000, 1000, 1, 1, 150));
+        // New generation resets the gate but still waits out the debounce.
+        assert!(!slow_providers_due(1200, 1200, 1, 2, 150));
+        assert!(slow_providers_due(1350, 1200, 1, 2, 150));
+        // Clock warp saturates instead of underflowing.
+        assert!(!slow_providers_due(100, 5000, 0, 1, 150));
+    }
 }
