@@ -687,6 +687,60 @@ const SEL_EOL_EXTRA: i32 = 6;
 /// 插入光标宽度（逻辑 px）。反色渲染在此宽度内翻转字形笔画：过窄则压在笔画上时
 /// 断口不够醒目，过宽会啃掉字形。1px 与系统插入符一致。
 const CARET_W: i32 = 1;
+/// Caret stays solid for this long after any interaction before blinking.
+const CARET_STEADY_MS: u64 = 1000;
+/// Blink half-period: visible 530ms, hidden 530ms (Windows default cadence).
+const CARET_BLINK_HALF_MS: u64 = 530;
+
+/// Decide which ghost suffix to draw and which rails to store.
+/// Returns `(shown, full, last_signal)`.
+///
+/// `full` is the last adopted completed title (`query + suffix`). While the
+/// user keeps typing along it (or backspaces back onto it), the suffix is
+/// derived synchronously in paint instead of waiting for the next async
+/// recompute, which lags up to a whole interval behind every keystroke and
+/// flashes a stale, one-character-too-long suffix (the rightward jerk).
+/// Anything off-rails draws nothing until Flux publishes a fresh suffix.
+fn resolve_ghost(
+    query: &str,
+    signal: &str,
+    last_signal: &str,
+    full: &str,
+) -> (String, String, String) {
+    let mut new_full = full.to_string();
+    let mut new_last = last_signal.to_string();
+    if signal != last_signal {
+        // Flux published something new: adopt it as the new rails. An empty
+        // publish clears the rails so a stale title can never strand.
+        if signal.is_empty() {
+            new_full.clear();
+        } else {
+            new_full = format!("{query}{signal}");
+        }
+        new_last = signal.to_string();
+    }
+    let query_chars = query.chars().count();
+    let shown = if !query.is_empty()
+        && new_full.starts_with(query)
+        && new_full.chars().count() > query_chars
+    {
+        new_full.chars().skip(query_chars).collect()
+    } else {
+        String::new()
+    };
+    (shown, new_full, new_last)
+}
+
+/// Blink phase: solid during the steady window after activity, then toggling
+/// every half period starting visible. Pure function of the frame clock, so it
+/// is unit-testable without a paint harness.
+fn caret_blink_on(now_ms: u64, last_activity_ms: u64) -> bool {
+    let elapsed = now_ms.saturating_sub(last_activity_ms);
+    if elapsed < CARET_STEADY_MS {
+        return true;
+    }
+    (elapsed.saturating_sub(CARET_STEADY_MS) / CARET_BLINK_HALF_MS).is_multiple_of(2)
+}
 /// 密码掩码字符（U+2022 BULLET）。
 const PASSWORD_MASK: char = '\u{2022}';
 
@@ -782,6 +836,22 @@ pub struct TextInput {
     caret_x: Cell<Transition<f32>>,
     /// Prevents the first paint from animating the caret in from x=0.
     caret_primed: Cell<bool>,
+    /// Frame-clock timestamp of the last caret activity (text/cursor/focus
+    /// change, detected in paint). Drives the blink phase; see `caret_blink_on`.
+    caret_activity_ms: Cell<u64>,
+    /// Focus state on the previous paint; a transition counts as activity so
+    /// the caret appears steady immediately on focus instead of mid-blink.
+    caret_prev_focused: Cell<bool>,
+    /// Cursor index and text length on the previous paint; any difference
+    /// counts as activity (covers typing, IME commits, and external rewrites
+    /// with no event plumbing).
+    caret_last_cursor: Cell<usize>,
+    caret_last_len: Cell<usize>,
+    /// Last adopted ghost completion (`query + suffix`) and the signal value
+    /// it was adopted from. Lets paint derive the exact suffix while typing
+    /// along the rails; see `resolve_ghost`.
+    ghost_full: RefCell<String>,
+    ghost_last_signal: RefCell<String>,
 }
 
 impl TextInput {
@@ -807,6 +877,12 @@ impl TextInput {
             composing: Cell::new(false),
             caret_x: Cell::new(Transition::new(0.0)),
             caret_primed: Cell::new(false),
+            caret_activity_ms: Cell::new(0),
+            caret_prev_focused: Cell::new(false),
+            caret_last_cursor: Cell::new(0),
+            caret_last_len: Cell::new(0),
+            ghost_full: RefCell::new(String::new()),
+            ghost_last_signal: RefCell::new(String::new()),
         }
     }
 
@@ -1427,6 +1503,20 @@ impl Widget for TextInput {
         }
         let wrap = self.config.wrap && multiline;
         let cursor = self.cursor.min(disp.chars().count());
+        // Caret blink bookkeeping: any text/cursor/focus change restarts the
+        // steady window. Detected here so typing, IME commits, and external
+        // signal rewrites all count without event plumbing.
+        let now_ms = crate::anim::clock_ms();
+        if focused != self.caret_prev_focused.get() {
+            self.caret_prev_focused.set(focused);
+            self.caret_activity_ms.set(now_ms);
+        }
+        let text_len = disp.chars().count();
+        if cursor != self.caret_last_cursor.get() || text_len != self.caret_last_len.get() {
+            self.caret_last_cursor.set(cursor);
+            self.caret_last_len.set(text_len);
+            self.caret_activity_ms.set(now_ms);
+        }
 
         // 重建视觉行布局缓存。
         self.rebuild_layout(canvas, &disp, &crate::text::TextStyle::of(style), inner.w);
@@ -1548,23 +1638,29 @@ impl Widget for TextInput {
         let ly = first_line_y + cl as i32 * line_h;
         let target_cxx = base_x + cx_in;
         if focused && !multiline && cursor == chars.len() && self.selection().is_none() {
-            let completion = self
-                .config
-                .inline_completion
-                .as_ref()
-                .map(|signal| signal.get())
-                .unwrap_or_default();
-            if !completion.is_empty() {
-                let completion_rect = Rect::new(target_cxx, ly, NO_WRAP_W, line_h);
-                super::draw_text_with_halo(
-                    canvas,
-                    &completion,
-                    completion_rect,
-                    Color::rgba(225, 235, 250, 118),
-                    Align::Start,
-                    ts,
-                    style.text_shadow,
+            if let Some(signal) = self.config.inline_completion.as_ref() {
+                let signal_suffix = signal.get();
+                let query_text: String = chars.iter().collect();
+                let (shown, new_full, new_last) = resolve_ghost(
+                    &query_text,
+                    &signal_suffix,
+                    &self.ghost_last_signal.borrow(),
+                    &self.ghost_full.borrow(),
                 );
+                *self.ghost_full.borrow_mut() = new_full;
+                *self.ghost_last_signal.borrow_mut() = new_last;
+                if !shown.is_empty() {
+                    let completion_rect = Rect::new(target_cxx, ly, NO_WRAP_W, line_h);
+                    super::draw_text_with_halo(
+                        canvas,
+                        &shown,
+                        completion_rect,
+                        Color::rgba(225, 235, 250, 118),
+                        Align::Start,
+                        ts,
+                        style.text_shadow,
+                    );
+                }
             }
         }
         let target_cxx_f = target_cxx as f32;
@@ -1587,7 +1683,16 @@ impl Widget for TextInput {
         self.caret_x.set(caret_x);
         // 组合态期间不画自绘光标：系统组合浮层自带随组合进度前进的光标，
         // 两者并存会显得我们的光标"卡在组合开始前"。
-        if focused && !self.composing.get() {
+        // Caret blink: solid right after interaction, toggling when idle.
+        // Frames are driven only while focused (damage is scoped to this
+        // node); with global animation off the caret stays solid and costs
+        // no frames, respecting reduced-motion settings.
+        if focused && crate::anim::enabled() {
+            crate::anim::request_repaint();
+        }
+        let caret_shown =
+            !crate::anim::enabled() || caret_blink_on(now_ms, self.caret_activity_ms.get());
+        if focused && !self.composing.get() && caret_shown {
             // 反色光标：先铺光标条，再裁到光标矩形、用输入框底色把本行文字重画一遍。
             // 于是压在字形笔画上的那一段翻成浅色（等同经典 XOR 插入符的观感），
             // 光标不会沉进深色文字里认不出位置；笔画之外仍是纯粹的光标条。
@@ -1932,6 +2037,9 @@ impl Widget for TextInput {
                 self.anchor = None;
                 self.follow_cursor.set(true);
                 self.goal_x.set(None);
+                // Programmatic jumps (activation clear, history recall) must
+                // land instantly instead of smooth-sliding from the old spot.
+                self.caret_primed.set(false);
                 ctx.mark_dirty();
             }
         }
@@ -2002,6 +2110,180 @@ mod tests {
         assert_eq!(ti.anchor, None, "复位后不应残留选区锚点");
         assert!(ti.selection().is_none(), "复位后选区应清空");
         assert_eq!(ti.cursor, ti.char_count(), "光标应落到文末");
+    }
+
+    #[test]
+    fn caret_blink_is_steady_after_activity_then_toggles() {
+        use super::caret_blink_on;
+        // Fresh activity: solid through the whole steady window.
+        assert!(caret_blink_on(0, 0));
+        assert!(caret_blink_on(999, 0));
+        // Idle: visible [1000,1530), hidden [1530,2060), visible again after.
+        assert!(caret_blink_on(1000, 0));
+        assert!(caret_blink_on(1529, 0));
+        assert!(!caret_blink_on(1530, 0));
+        assert!(!caret_blink_on(2059, 0));
+        assert!(caret_blink_on(2060, 0));
+        // Clock wrap / older activity timestamp: saturates, stays visible.
+        assert!(caret_blink_on(100, 5000));
+        // Any later activity restarts the steady window.
+        assert!(caret_blink_on(5000, 4500));
+    }
+
+    #[test]
+    fn on_update_snaps_caret_instead_of_sliding() {
+        use crate::core::Tree;
+        use crate::geometry::Size;
+        use crate::ui::Element;
+        // External rewrites (activation clear, history recall) must land the
+        // painted caret instantly: settling the primed flag forces the next
+        // paint through the snap path instead of the smooth retarget path.
+        let text = signal(String::from("old query"));
+        let caret = signal(9usize);
+        let mut tree = Tree::new();
+        let id = Element::text_input(text, String::new())
+            .cursor_position(caret)
+            .build(&mut tree);
+        tree.root = Some(id);
+        let mut te = crate::text::NullTextEngine;
+        tree.layout_root(Size::new(240, 32), &mut te);
+        {
+            let ti = tree
+                .get_mut(id)
+                .and_then(|n| n.widget.as_any_mut())
+                .and_then(|w| w.downcast_mut::<TextInput>())
+                .unwrap();
+            ti.caret_primed.set(true);
+        }
+        text.set(String::new());
+        caret.set(0);
+        tree.layout_root(Size::new(240, 32), &mut te);
+        let ti = tree
+            .get_mut(id)
+            .and_then(|n| n.widget.as_any_mut())
+            .and_then(|w| w.downcast_mut::<TextInput>())
+            .unwrap();
+        assert_eq!(ti.cursor, 0, "外部改写应同步光标");
+        assert!(
+            !ti.caret_primed.get(),
+            "外部改写应复位 primed, 下一帧走 snap 而非滑动"
+        );
+    }
+
+    fn paint_input_tree(tree: &crate::core::Tree, w: u32, h: u32) -> tiny_skia::Pixmap {
+        let mut pm = tiny_skia::Pixmap::new(w, h).unwrap();
+        let mut te = crate::text::NullTextEngine;
+        let mut canvas = crate::render::SkiaCanvas::with_text(&mut pm, &mut te, 1.0);
+        tree.paint(&mut canvas);
+        pm
+    }
+
+    #[test]
+    fn caret_blink_paints_and_hides_with_clock() {
+        use crate::anim::set_clock_ms;
+        use crate::core::Tree;
+        use crate::geometry::Size;
+        use crate::ui::Element;
+        let text = signal(String::from("hi"));
+        let mut tree = Tree::new();
+        let id = Element::text_input(text, String::new()).build(&mut tree);
+        tree.root = Some(id);
+        tree.set_focused(Some(id), None);
+        let mut te = crate::text::NullTextEngine;
+        tree.layout_root(Size::new(240, 32), &mut te);
+        set_clock_ms(0);
+        let pm = paint_input_tree(&tree, 240, 32);
+        let (pos, h) = tree.caret_of(id).expect("paint records caret");
+        let probe = |pm: &tiny_skia::Pixmap| {
+            let x = pos.x.clamp(0, 239) as u32;
+            let y = (pos.y + h / 2).clamp(0, 31) as u32;
+            pm.pixel(x, y).unwrap()
+        };
+        let on_px = probe(&pm);
+        // Past the steady window, inside an OFF half-period.
+        set_clock_ms(1600);
+        let pm = paint_input_tree(&tree, 240, 32);
+        let off_px = probe(&pm);
+        assert_ne!(on_px, off_px, "blink OFF phase must hide the caret pixels");
+        // Next ON half-period restores them.
+        set_clock_ms(2100);
+        let pm = paint_input_tree(&tree, 240, 32);
+        assert_eq!(
+            probe(&pm),
+            on_px,
+            "blink ON phase must restore caret pixels"
+        );
+    }
+
+    #[test]
+    fn external_rewrite_paint_snaps_without_midflight_transition() {
+        use crate::anim::set_clock_ms;
+        use crate::core::Tree;
+        use crate::geometry::Size;
+        use crate::ui::Element;
+        // Smooth caret on: internal moves would animate, but an external
+        // rewrite must settle instantly on the very next paint.
+        let text = signal(String::from("old query"));
+        let caret = signal(9usize);
+        let mut tree = Tree::new();
+        let id = Element::text_input(text, String::new())
+            .smooth_caret(true, 95)
+            .cursor_position(caret)
+            .build(&mut tree);
+        tree.root = Some(id);
+        let mut te = crate::text::NullTextEngine;
+        set_clock_ms(5000);
+        tree.layout_root(Size::new(240, 32), &mut te);
+        paint_input_tree(&tree, 240, 32);
+        text.set(String::new());
+        caret.set(0);
+        tree.layout_root(Size::new(240, 32), &mut te);
+        paint_input_tree(&tree, 240, 32);
+        let ti = tree
+            .get_mut(id)
+            .and_then(|n| n.widget.as_any_mut())
+            .and_then(|w| w.downcast_mut::<TextInput>())
+            .unwrap();
+        assert!(
+            !ti.caret_x.get().is_active(),
+            "snap paint must leave no mid-flight transition"
+        );
+    }
+
+    #[test]
+    fn ghost_rails_derive_suffix_synchronously_while_typing() {
+        use super::resolve_ghost;
+        // Fresh publish adopts the rails and shows the suffix.
+        let (shown, full, last) = resolve_ghost("perp", "lexity", "", "");
+        assert_eq!(shown, "lexity");
+        assert_eq!(full, "perplexity");
+        assert_eq!(last, "lexity");
+        // Typing along the rails derives the exact suffix with no recompute.
+        let (shown, full, last) = resolve_ghost("perpl", "lexity", &last, &full);
+        assert_eq!(shown, "exity");
+        assert_eq!(full, "perplexity");
+        // Backspacing back onto the rails recovers instantly too.
+        let (shown, _, _) = resolve_ghost("perp", "lexity", &last, &full);
+        assert_eq!(shown, "lexity");
+        // Diverging off the rails draws nothing until Flux republishes.
+        let (shown, _, _) = resolve_ghost("perpx", "lexity", &last, &full);
+        assert_eq!(shown, "");
+        // Exact match completes nothing.
+        let (shown, _, _) = resolve_ghost("perplexity", "lexity", &last, &full);
+        assert_eq!(shown, "");
+        // Fresh publish for a new title re-adopts.
+        let (shown, full, last) = resolve_ghost("phot", "oshop", "lexity", &full);
+        assert_eq!(shown, "oshop");
+        assert_eq!(full, "photoshop");
+        assert_eq!(last, "oshop");
+        // Empty publish clears the rails so stale titles cannot strand.
+        let (shown, full, last) = resolve_ghost("xyz", "", &last, &full);
+        assert_eq!(shown, "");
+        assert_eq!(full, "");
+        assert_eq!(last, "");
+        // Empty query never draws, even with rails present.
+        let (shown, _, _) = resolve_ghost("", "lexity", "", "perplexity");
+        assert_eq!(shown, "");
     }
 
     #[test]
