@@ -337,24 +337,52 @@ pub(crate) fn normalize_everything_query(query: &str) -> String {
     }
 }
 
-pub(crate) fn inline_completion_suffix(query: &str, results: &[SearchResult]) -> String {
+/// Ghost completion suffix, Flow-style: a pure function of the query, the
+/// selected id, and the application list. Only a selected application whose
+/// title extends the query produces a suffix; anything else (including a
+/// stale selection from a previous query) yields empty, so callers never
+/// clear proactively and typing cannot flash the hint off and on.
+///
+/// The application list — not the merged list — is the source on purpose:
+/// every provider pipeline commits per keystroke, and the merged top flips
+/// between applications and files as each of them lands. Applications commit
+/// exactly once per query generation, so the hint can only change when the
+/// query or the selection genuinely changes.
+pub(crate) fn inline_completion_suffix(
+    query: &str,
+    applications: &[SearchResult],
+    selected_id: &str,
+) -> String {
     let trimmed = query.trim();
     if trimmed.is_empty() {
         return String::new();
     }
+    let Some(result) = applications.iter().find(|result| result.id == selected_id) else {
+        return String::new();
+    };
+    if !matches!(result.kind, ResultKind::Application) {
+        return String::new();
+    }
     let query_lower = trimmed.to_lowercase();
-    let query_len = trimmed.chars().count();
-    results
-        .iter()
-        .filter(|result| matches!(result.kind, ResultKind::Application))
-        .find_map(|result| {
-            let title_lower = result.title.to_lowercase();
-            if !title_lower.starts_with(&query_lower) {
-                return None;
-            }
-            Some(result.title.chars().skip(query_len).collect())
-        })
-        .unwrap_or_default()
+    if !result.title.to_lowercase().starts_with(&query_lower) {
+        return String::new();
+    }
+    result.title.chars().skip(trimmed.chars().count()).collect()
+}
+
+/// Publish a ghost suffix only when it actually changed: pipelines and ticks
+/// recompute often, and redundant sets would repaint and shimmer the hint
+/// even when its text is identical.
+pub(crate) fn refresh_inline_completion(
+    completion: Signal<String>,
+    query: &str,
+    applications: &[SearchResult],
+    selected_id: &str,
+) {
+    let next = inline_completion_suffix(query, applications, selected_id);
+    if completion.get() != next {
+        completion.set(next);
+    }
 }
 
 pub(crate) fn history_cursor_step(
@@ -419,6 +447,69 @@ mod tests {
         cursor = history_cursor_step(4, cursor, Key::Down);
         assert_eq!(cursor, Some(3));
         assert_eq!(history_cursor_step(0, cursor, Key::Up), None);
+    }
+
+    fn app_result(id: &str, title: &str) -> SearchResult {
+        SearchResult {
+            id: id.to_string(),
+            title: title.to_string(),
+            subtitle: String::new(),
+            kind: ResultKind::Application,
+            source: flux_core::ResultSource::ApplicationCatalog,
+            target: None,
+        }
+    }
+
+    #[test]
+    fn ghost_suffix_comes_from_selected_application_only() {
+        let apps = vec![app_result("app:perplexity", "Perplexity")];
+        // Match: remainder after the typed prefix.
+        assert_eq!(
+            inline_completion_suffix("perp", &apps, "app:perplexity"),
+            "lexity"
+        );
+        // Case-insensitive, keeps the result's own casing.
+        assert_eq!(
+            inline_completion_suffix("Perp", &apps, "app:perplexity"),
+            "lexity"
+        );
+        // Exact match: nothing to complete.
+        assert_eq!(
+            inline_completion_suffix("Perplexity", &apps, "app:perplexity"),
+            ""
+        );
+        // Prefix mismatch (stale selection): empty, never stale text.
+        assert_eq!(inline_completion_suffix("xyz", &apps, "app:perplexity"), "");
+        // Empty query / unknown selection / empty list: empty.
+        assert_eq!(inline_completion_suffix("  ", &apps, "app:perplexity"), "");
+        assert_eq!(inline_completion_suffix("perp", &apps, "app:other"), "");
+        assert_eq!(inline_completion_suffix("perp", &[], "app:perplexity"), "");
+        // Non-application entry never completes, even on prefix match.
+        let file = SearchResult {
+            id: "file:x".to_string(),
+            title: "Perplexity".to_string(),
+            subtitle: String::new(),
+            kind: ResultKind::File,
+            source: flux_core::ResultSource::Everything,
+            target: None,
+        };
+        assert_eq!(
+            inline_completion_suffix("perp", std::slice::from_ref(&file), "file:x"),
+            ""
+        );
+    }
+
+    #[test]
+    fn ghost_refresh_sets_only_on_change() {
+        use windui::signal::signal;
+        let apps = vec![app_result("app:perplexity", "Perplexity")];
+        let completion = signal(String::from("lexity"));
+        refresh_inline_completion(completion, "perp", &apps, "app:perplexity");
+        assert_eq!(completion.get(), "lexity");
+        refresh_inline_completion(completion, "perpl", &apps, "app:perplexity");
+        assert_eq!(completion.get(), "exity");
+        refresh_inline_completion(completion, "xyz", &apps, "app:perplexity");
+        assert_eq!(completion.get(), "");
     }
 
     #[test]

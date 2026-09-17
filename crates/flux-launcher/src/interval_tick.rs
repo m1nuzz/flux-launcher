@@ -495,6 +495,21 @@ pub(crate) fn register_interval(
         sequence = sequence.wrapping_add(1);
         sequence_for_interval.set(sequence);
         model.set_query(&next_query);
+        // Ghost completion is a pure function of (query, applications,
+        // selection): derive it synchronously from the previous generation
+        // instead of clearing it, so typing never flashes the hint off and
+        // on. The prefix check inside drops stale suggestions on its own,
+        // and applications are the single writer per generation, so partial
+        // provider commits cannot flip the hint.
+        {
+            let providers = providers_for_interval.borrow();
+            super::refresh_inline_completion(
+                inline_completion_for_interval,
+                &next_query,
+                &providers.applications,
+                &selected_id.get(),
+            );
+        }
         {
             let mut built_in_results = model.results().to_vec();
             normalize_built_in_executable_targets(&mut built_in_results);
@@ -521,9 +536,6 @@ pub(crate) fn register_interval(
                 // their responses arrive for the same query sequence.
                 results_for_interval.set(built_in_results);
             }
-            // Do not derive or display completion from the previous query while
-            // the current provider generation is still pending.
-            inline_completion_for_interval.set(String::new());
         }
         request_scroll(scroll_request_for_interval);
         action_mode.set(false);

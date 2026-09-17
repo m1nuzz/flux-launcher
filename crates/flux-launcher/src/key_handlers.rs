@@ -18,7 +18,7 @@ use super::result_actions::{
     actions_for_result, copy_result_file, copy_result_path, execute_result_action, selected_result,
     ActionItem, ActionKind,
 };
-use super::theme_text::history_cursor_step;
+use super::theme_text::{history_cursor_step, refresh_inline_completion};
 use super::ui_constants::{ACTION_WINDOW_HEIGHT, SETTINGS_WINDOW_HEIGHT, SETTINGS_WINDOW_WIDTH};
 use super::{plugins, request_scroll};
 
@@ -263,6 +263,13 @@ pub(crate) fn register_key_handlers(
             selected_index_for_keys.set(next);
             if let Some(result) = current_results.get(next) {
                 selected_id_for_keys.set(result.id.clone());
+                let providers = providers_for_keys.borrow();
+                refresh_inline_completion(
+                    inline_completion_for_keys,
+                    &query,
+                    &providers.applications,
+                    &result.id,
+                );
             }
             // Keep the existing row tree intact while changing only selection.
             // Rebuilding the DynList here resets row geometry and prevents the
@@ -426,6 +433,13 @@ pub(crate) fn register_key_handlers(
                 selected_index_for_keys.set(next);
                 if let Some(result) = current_results.get(next) {
                     selected_id_for_keys.set(result.id.clone());
+                    let providers = providers_for_keys.borrow();
+                    refresh_inline_completion(
+                        inline_completion_for_keys,
+                        &query,
+                        &providers.applications,
+                        &result.id,
+                    );
                 }
                 // Preserve the current row geometry so scroll_into_view can
                 // move the viewport after the selected result changes.

@@ -88,7 +88,6 @@ pub(crate) fn commit_provider_results(
     selected_id: Signal<String>,
     selected_index: Signal<usize>,
     selection_touched: Signal<bool>,
-    inline_completion: Signal<String>,
     results: Signal<Vec<SearchResult>>,
 ) {
     let merged = providers.merged(query, priorities);
@@ -101,7 +100,6 @@ pub(crate) fn commit_provider_results(
                 .unwrap_or_default(),
         );
     }
-    inline_completion.set(super::inline_completion_suffix(query, &merged));
     results.set(merged);
 }
 

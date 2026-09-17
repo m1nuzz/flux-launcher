@@ -175,8 +175,17 @@ pub(crate) fn spawn_application_pipeline(
                 selected_id_for_applications,
                 selected_index_for_applications,
                 selection_touched_for_applications,
-                inline_completion_for_applications,
                 results_for_applications,
+            );
+            // Ghost completion has a single writer per query generation (this
+            // pipeline). Refreshing it in every pipeline would flip the hint
+            // as each provider's commit reshuffles the merged top.
+            let ghost_selected = selected_id_for_applications.get();
+            super::refresh_inline_completion(
+                inline_completion_for_applications,
+                &query_for_applications.get(),
+                &providers.applications,
+                &ghost_selected,
             );
         }
         status_for_applications.set(response.status);
@@ -204,7 +213,7 @@ pub(crate) fn spawn_everything_pipeline(
 ) -> EverythingWorker {
     let query_for_everything = query;
     let results_for_everything = results;
-    let inline_completion_for_everything = inline_completion;
+    let _inline_completion_for_everything = inline_completion;
     let status_for_everything = status;
     let selected_id_for_everything = selected_id;
     let selected_index_for_everything = selected_index;
@@ -258,7 +267,6 @@ pub(crate) fn spawn_everything_pipeline(
                 selected_id_for_everything,
                 selected_index_for_everything,
                 selection_touched_for_everything,
-                inline_completion_for_everything,
                 results_for_everything,
             );
         }
@@ -308,7 +316,7 @@ pub(crate) fn spawn_plugin_pipeline(
 ) -> FlowPluginWorker {
     let query_for_plugins = query;
     let results_for_plugins = results;
-    let inline_completion_for_plugins = inline_completion;
+    let _inline_completion_for_plugins = inline_completion;
     let status_for_plugins = status;
     let selected_id_for_plugins = selected_id;
     let selected_index_for_plugins = selected_index;
@@ -343,7 +351,6 @@ pub(crate) fn spawn_plugin_pipeline(
                     selected_id_for_plugins,
                     selected_index_for_plugins,
                     selection_touched_for_plugins,
-                    inline_completion_for_plugins,
                     results_for_plugins,
                 );
             }
@@ -370,7 +377,7 @@ pub(crate) fn spawn_native_pipeline(
 ) -> NativePluginWorker {
     let query_for_native_plugins = query;
     let results_for_native_plugins = results;
-    let inline_completion_for_native_plugins = inline_completion;
+    let _inline_completion_for_native_plugins = inline_completion;
     let status_for_native_plugins = status;
     let selected_id_for_native_plugins = selected_id;
     let selected_index_for_native_plugins = selected_index;
@@ -412,7 +419,6 @@ pub(crate) fn spawn_native_pipeline(
                 selected_id_for_native_plugins,
                 selected_index_for_native_plugins,
                 selection_touched_for_native_plugins,
-                inline_completion_for_native_plugins,
                 results_for_native_plugins,
             );
         }
