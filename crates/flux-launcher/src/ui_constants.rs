@@ -19,12 +19,12 @@ pub(crate) const ACTION_WINDOW_HEIGHT: i32 = 250;
 pub(crate) const RESULT_VIEWPORT_HEIGHT: i32 = 288;
 pub(crate) const SETTINGS_WINDOW_HEIGHT: i32 = 520;
 pub(crate) const LAUNCHER_FONT_FAMILY: &str = "Segoe UI Variable";
-pub(crate) const SEARCH_INTERVAL: Duration = Duration::from_millis(40);
-// Slow providers (Everything/plugins/native) fire only for a query that
-// survived this long without further keystrokes (Flow's SearchDelayTime
-// default is 150ms). Applications stay immediate so the top row answers
-// within a single 40ms tick.
-pub(crate) const SLOW_PROVIDER_DEBOUNCE_MS: u64 = 150;
+pub(crate) const SEARCH_INTERVAL: Duration = Duration::from_millis(16);
+// Slow providers (Everything/plugins/native) fire for a settled query
+// generation (Flow's SearchDelayTime default is 150ms). Zero disables the
+// wait: every generation fans out on the next tick; the commit guards still
+// suppress duplicate publishes. Applications always stay immediate.
+pub(crate) const SLOW_PROVIDER_DEBOUNCE_MS: u64 = 0;
 pub(crate) const EVERYTHING_MIN_QUERY_LEN: usize = 1;
 pub(crate) const PLUGIN_MIN_QUERY_LEN: usize = 2;
 pub(crate) const MAX_VISIBLE_RESULTS: usize = 16;
