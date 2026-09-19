@@ -2841,7 +2841,10 @@ try {
             }
             Start-Sleep -Milliseconds 300
             Save-Screenshot "settings-visual-apply.png"
-            $applyX = $settingsRect.Left + [int][Math]::Round(118 * $settingsScale)
+            # Apply lives on the right side of its setting row (measured
+            # 2026-09-19: button fill x=666..816 at window left=152, i.e. the
+            # old label-column x no longer hits it since the tab unification).
+            $applyX = $settingsRect.Left + [int][Math]::Round(589 * $settingsScale)
             $applyMarker = "Visual Apply dimensions clicked: 420x382"
             $applyBaseline = ([regex]::Matches(
                 (Get-Content $settingsStderrPath -Raw),
