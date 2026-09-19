@@ -2011,8 +2011,38 @@ try {
     if ([FluxWallpaper]::GetForegroundWindow() -ne $launcherHandle) {
         throw "Enter launch smoke could not restore Flux as the foreground window before selection."
     }
+    # The deterministic query renders two rows: the Start Menu application
+    # fixture (index 0) plus the always-answering native Flow fixture (index 1,
+    # a target-less plugin row). Wait for both rows before navigating: Down sent
+    # while the plugin row is still in flight would wrap on a single-row list,
+    # and Enter on the plugin row silently runs plugins::execute_async (which
+    # traces nothing) instead of the shell launch asserted below. Home only
+    # moves the caret (it has no selection arm in key_handlers), so Down then Up
+    # exercises keyboard selection and deterministically returns to index 0.
+    $iconProbeBeforeEnter = if (Test-Path $iconProbePath) { @(Get-Content $iconProbePath).Count } else { 0 }
+    $enterReadyDeadline = (Get-Date).AddSeconds(10)
+    $enterRowsReady = $false
+    while ((Get-Date) -lt $enterReadyDeadline) {
+        $enterProbeLines = if (Test-Path $iconProbePath) {
+            @(Get-Content $iconProbePath | Select-Object -Skip $iconProbeBeforeEnter)
+        } else {
+            @()
+        }
+        $enterAppObserved = @($enterProbeLines | Where-Object { $_ -match "title=Zq7LaunchProbe" }).Count -gt 0
+        $enterPluginObserved = @($enterProbeLines | Where-Object { $_ -match "title=Native Flow fixture" }).Count -gt 0
+        if ($enterAppObserved -and $enterPluginObserved) {
+            $enterRowsReady = $true
+            break
+        }
+        Start-Sleep -Milliseconds 200
+    }
+    if (!$enterRowsReady) {
+        throw "Enter launch smoke could not observe the application and native plugin rows before selection."
+    }
     [FluxWallpaper]::SendMessage($launcherHandle, $wmKeyDown, [UIntPtr]::new(0x24), [IntPtr]::Zero) | Out-Null
     [FluxWallpaper]::SendMessage($launcherHandle, $wmKeyDown, [UIntPtr]::new(0x28), [IntPtr]::Zero) | Out-Null
+    Start-Sleep -Milliseconds 150
+    [FluxWallpaper]::SendMessage($launcherHandle, $wmKeyDown, [UIntPtr]::new(0x26), [IntPtr]::Zero) | Out-Null
     Start-Sleep -Milliseconds 350
     Save-Screenshot "keyboard-selection.png"
     Start-Sleep -Milliseconds 100
