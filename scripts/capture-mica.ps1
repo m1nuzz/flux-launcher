@@ -2566,6 +2566,12 @@ try {
 
             # Settings has stable 18px page padding + 24px panel padding, a 110px
             # field-label column, a 200px slider, a 76px numeric field, and a Reset button.
+            # Measured 2026-09-19 (dpi 96, scale 1.0): width thumb center (336, 560)
+            # in screen pixels with the Settings window at (152, 100), i.e. track
+            # offsets x=184 / y=460. The height row sits ~78px lower, below the
+            # fold, so scroll the settings view down 2 wheel notches first
+            # (windui ScrollWidget moves exactly 48px per -120 notch) and probe
+            # post-scroll coordinates: width thumb screen y ~464, height ~549.
             Save-Screenshot "settings-visual-discovery.png"
             [ordered]@{
                 SettingsLeft = $settingsRect.Left
@@ -2574,12 +2580,25 @@ try {
                 SettingsBottom = $settingsRect.Bottom
                 SettingsDpi = $settingsDpi
                 SettingsScale = $settingsScale
-                SliderCandidateXOffsets = @(140, 150, 160, 170, 180, 190, 200)
-                SliderCandidateYOffsets = @(200, 212, 224, 236, 248, 260, 272, 284, 296, 308, 320, 332, 344, 356, 368, 380, 392, 404, 416, 428, 440, 452, 464, 476, 488, 500, 512, 524, 536, 548, 560)
+                SliderCandidateXOffsets = @(160, 180, 200, 220, 240, 260, 280, 300, 320)
+                SliderCandidateYOffsets = @(332, 344, 356, 368, 380, 392, 404, 416)
             } | ConvertTo-Json | Set-Content -Encoding utf8 (Join-Path $OutputDirectory "visual-discovery-geometry.json")
-            $directSliderLeft = $settingsRect.Left + [int][Math]::Round(175 * $settingsScale)
-            $directSliderRight = $directSliderLeft + [int][Math]::Round(180 * $settingsScale)
-            $directSliderY = $settingsRect.Top + [int][Math]::Round(360 * $settingsScale)
+            # Focus Settings via an inert caption click (wheel goes to the focused
+            # window), then scroll the content up 96px so both slider rows are
+            # on-screen for the probes below.
+            [FluxWallpaper]::SetCursorPos(($settingsRect.Left + 60), ($settingsRect.Top + 15)) | Out-Null
+            [FluxWallpaper]::mouse_event(0x0002, 0, 0, 0, [UIntPtr]::Zero)
+            [FluxWallpaper]::mouse_event(0x0004, 0, 0, 0, [UIntPtr]::Zero)
+            Start-Sleep -Milliseconds 300
+            [FluxWallpaper]::SetCursorPos(($settingsRect.Left + 360), ($settingsRect.Top + 260)) | Out-Null
+            [FluxWallpaper]::mouse_event(0x0800, 0, 0, -120, [UIntPtr]::Zero)
+            Start-Sleep -Milliseconds 250
+            [FluxWallpaper]::mouse_event(0x0800, 0, 0, -120, [UIntPtr]::Zero)
+            Start-Sleep -Milliseconds 600
+            Save-Screenshot "settings-visual-scrolled.png"
+            $directSliderLeft = $settingsRect.Left + [int][Math]::Round(184 * $settingsScale)
+            $directSliderRight = $directSliderLeft + [int][Math]::Round(146 * $settingsScale)
+            $directSliderY = $settingsRect.Top + [int][Math]::Round(364 * $settingsScale)
             $directPointClass = [FluxWallpaper]::WindowClassAtPoint($directSliderLeft, $directSliderY)
             Write-Host "Visual slider direct probe: left=$directSliderLeft right=$directSliderRight y=$directSliderY windowClass=$directPointClass"
             $directStateBefore = if (Test-Path $settingsStderrPath) { Get-Content $settingsStderrPath -Raw } else { "" }
@@ -2614,10 +2633,10 @@ try {
                 $widthSliderY = 0
             }
             if (!$directWidthChanged) {
-                foreach ($sliderOffset in (140, 150, 160, 170, 180, 190, 200)) {
+                foreach ($sliderOffset in (160, 180, 200, 220, 240, 260, 280, 300, 320)) {
                     $candidateLeft = $settingsRect.Left + [int][Math]::Round($sliderOffset * $settingsScale)
                     $candidateRight = $candidateLeft + [int][Math]::Round(190 * $settingsScale)
-                    foreach ($candidateOffset in (200..560 | Where-Object { $_ % 12 -eq 8 })) {
+                    foreach ($candidateOffset in (320..420 | Where-Object { $_ % 12 -eq 8 })) {
                         $candidateY = $settingsRect.Top + [int][Math]::Round($candidateOffset * $settingsScale)
                         [FluxWallpaper]::SetCursorPos($candidateLeft, $candidateY) | Out-Null
                         [FluxWallpaper]::mouse_event(0x0002, 0, 0, 0, [UIntPtr]::Zero)
@@ -2651,7 +2670,7 @@ try {
                 throw "Visual Settings smoke could not identify the width slider from native preview geometry telemetry."
             }
 
-            $heightDirectY = $settingsRect.Top + [int][Math]::Round(438 * $settingsScale)
+            $heightDirectY = $settingsRect.Top + [int][Math]::Round(449 * $settingsScale)
             $heightDirectPointClass = [FluxWallpaper]::WindowClassAtPoint($sliderLeft, $heightDirectY)
             Write-Host "Visual results-height direct probe: left=$sliderLeft right=$sliderRight y=$heightDirectY windowClass=$heightDirectPointClass"
             [FluxWallpaper]::SetCursorPos($sliderRight, $heightDirectY) | Out-Null
@@ -2678,7 +2697,7 @@ try {
             }
             $heightSliderY = if ($heightDirectChanged) { $heightDirectY } else { 0 }
             if (!$heightDirectChanged) {
-                foreach ($candidateOffset in (300..560 | Where-Object { $_ % 8 -eq 4 })) {
+                foreach ($candidateOffset in (380..520 | Where-Object { $_ % 4 -eq 0 })) {
                     $candidateY = $settingsRect.Top + [int][Math]::Round($candidateOffset * $settingsScale)
                     [FluxWallpaper]::SetCursorPos($sliderLeft, $candidateY) | Out-Null
                     [FluxWallpaper]::mouse_event(0x0002, 0, 0, 0, [UIntPtr]::Zero)
