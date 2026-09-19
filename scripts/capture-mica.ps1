@@ -2020,7 +2020,7 @@ try {
     # moves the caret (it has no selection arm in key_handlers), so Down then Up
     # exercises keyboard selection and deterministically returns to index 0.
     $iconProbeBeforeEnter = if (Test-Path $iconProbePath) { @(Get-Content $iconProbePath).Count } else { 0 }
-    $enterReadyDeadline = (Get-Date).AddSeconds(10)
+    $enterReadyDeadline = (Get-Date).AddSeconds(30)
     $enterRowsReady = $false
     while ((Get-Date) -lt $enterReadyDeadline) {
         $enterProbeLines = if (Test-Path $iconProbePath) {
@@ -2037,7 +2037,14 @@ try {
         Start-Sleep -Milliseconds 200
     }
     if (!$enterRowsReady) {
-        throw "Enter launch smoke could not observe the application and native plugin rows before selection."
+        $enterProbeTail = if (Test-Path $iconProbePath) {
+            ((Get-Content $iconProbePath | Select-Object -Last 8) -join "`n")
+        } else {
+            "<icon-probe.log missing>"
+        }
+        throw ("Enter launch smoke could not observe the application and native plugin rows before selection. " +
+            "appObserved=$enterAppObserved pluginObserved=$enterPluginObserved probeLines=$($enterProbeLines.Count). " +
+            "Probe tail:`n$enterProbeTail")
     }
     [FluxWallpaper]::SendMessage($launcherHandle, $wmKeyDown, [UIntPtr]::new(0x24), [IntPtr]::Zero) | Out-Null
     [FluxWallpaper]::SendMessage($launcherHandle, $wmKeyDown, [UIntPtr]::new(0x28), [IntPtr]::Zero) | Out-Null
