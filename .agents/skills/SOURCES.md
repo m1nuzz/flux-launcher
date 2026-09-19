@@ -6,9 +6,9 @@ Third-party Agent Skills vendored into this repo. Do not edit vendored files; up
 |---|---|---|---|
 | `rust-skills` | https://github.com/leonardomso/rust-skills | `fd2a861` | MIT (`rust-skills/LICENSE`) |
 | `powershell-expert` | https://github.com/jorgeasaurus/agent-skills | `fde4237` | MIT (declared in upstream README; no LICENSE file upstream) |
-| `conventional-commit` | https://github.com/rlespinasse/agent-skills | `22ec9d1` | MIT (`rlespinasse-LICENSE`) |
-| `pin-github-actions` | https://github.com/rlespinasse/agent-skills | `22ec9d1` | MIT (`rlespinasse-LICENSE`) |
-| `verify-pr-logs` | https://github.com/rlespinasse/agent-skills | `22ec9d1` | MIT (`rlespinasse-LICENSE`) |
+| `conventional-commit` | https://github.com/rlespinasse/agent-skills | `22ec9d1` | MIT (declared upstream; no LICENSE file vendored) |
+| `pin-github-actions` | https://github.com/rlespinasse/agent-skills | `22ec9d1` | MIT (declared upstream; no LICENSE file vendored) |
+| `verify-pr-logs` | https://github.com/rlespinasse/agent-skills | `22ec9d1` | MIT (declared upstream; no LICENSE file vendored) |
 
 Notes:
 
