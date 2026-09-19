@@ -2011,39 +2011,56 @@ try {
     if ([FluxWallpaper]::GetForegroundWindow() -ne $launcherHandle) {
         throw "Enter launch smoke could not restore Flux as the foreground window before selection."
     }
-    # The deterministic query renders two rows: the Start Menu application
-    # fixture (index 0) plus the always-answering native Flow fixture (index 1,
-    # a target-less plugin row). Wait for both rows before navigating: Down sent
-    # while the plugin row is still in flight would wrap on a single-row list,
-    # and Enter on the plugin row silently runs plugins::execute_async (which
-    # traces nothing) instead of the shell launch asserted below. Home only
-    # moves the caret (it has no selection arm in key_handlers), so Down then Up
-    # exercises keyboard selection and deterministically returns to index 0.
-    $iconProbeBeforeEnter = if (Test-Path $iconProbePath) { @(Get-Content $iconProbePath).Count } else { 0 }
-    $enterReadyDeadline = (Get-Date).AddSeconds(30)
-    $enterRowsReady = $false
-    while ((Get-Date) -lt $enterReadyDeadline) {
+    # The deterministic query renders the Start Menu application fixture at
+    # index 0; the native Flow fixture may add a target-less plugin row at
+    # index 1, but only when the native worker answers in time (on a loaded
+    # runner its cold process spawn can exceed the product QUERY_TIMEOUT, so
+    # the plugin row is legitimately absent for the whole run). Never gate on
+    # the plugin row: instead wait for a STABLE list (app row observed plus no
+    # new icon-probe lines for 3s, 60s budget). Navigation is then
+    # deterministic in both states: on a single-row list Down/Up wrap in place
+    # (index 0 = app fixture), on a two-row list Down then Up returns to index
+    # 0. Home only moves the caret (it has no selection arm in key_handlers),
+    # so Down then Up exercises keyboard selection. Enter on the plugin row
+    # would silently run plugins::execute_async (which traces nothing) instead
+    # of the shell launch asserted below, hence the return to index 0.
+    $enterBudget = (Get-Date).AddSeconds(60)
+    $enterAppSeen = $false
+    $enterPluginSeen = $false
+    $enterLastCount = -1
+    $enterLastChange = Get-Date
+    $enterReady = $false
+    $enterProbeLines = @()
+    while ((Get-Date) -lt $enterBudget) {
         $enterProbeLines = if (Test-Path $iconProbePath) {
-            @(Get-Content $iconProbePath | Select-Object -Skip $iconProbeBeforeEnter)
+            @(Get-Content $iconProbePath)
         } else {
             @()
         }
-        $enterAppObserved = @($enterProbeLines | Where-Object { $_ -match "title=Zq7LaunchProbe" }).Count -gt 0
-        $enterPluginObserved = @($enterProbeLines | Where-Object { $_ -match "title=Native Flow fixture" }).Count -gt 0
-        if ($enterAppObserved -and $enterPluginObserved) {
-            $enterRowsReady = $true
+        if (@($enterProbeLines | Where-Object { $_ -match "title=Zq7LaunchProbe" }).Count -gt 0) {
+            $enterAppSeen = $true
+        }
+        if (@($enterProbeLines | Where-Object { $_ -match "title=Native Flow fixture" }).Count -gt 0) {
+            $enterPluginSeen = $true
+        }
+        if ($enterProbeLines.Count -ne $enterLastCount) {
+            $enterLastCount = $enterProbeLines.Count
+            $enterLastChange = Get-Date
+        }
+        if ($enterAppSeen -and (((Get-Date) - $enterLastChange).TotalSeconds -ge 3)) {
+            $enterReady = $true
             break
         }
-        Start-Sleep -Milliseconds 200
+        Start-Sleep -Milliseconds 500
     }
-    if (!$enterRowsReady) {
+    if (!$enterReady) {
         $enterProbeTail = if (Test-Path $iconProbePath) {
             ((Get-Content $iconProbePath | Select-Object -Last 8) -join "`n")
         } else {
             "<icon-probe.log missing>"
         }
-        throw ("Enter launch smoke could not observe the application and native plugin rows before selection. " +
-            "appObserved=$enterAppObserved pluginObserved=$enterPluginObserved probeLines=$($enterProbeLines.Count). " +
+        throw ("Enter launch smoke could not observe a stable result list before selection. " +
+            "appSeen=$enterAppSeen pluginSeen=$enterPluginSeen probeLines=$($enterProbeLines.Count). " +
             "Probe tail:`n$enterProbeTail")
     }
     [FluxWallpaper]::SendMessage($launcherHandle, $wmKeyDown, [UIntPtr]::new(0x24), [IntPtr]::Zero) | Out-Null
