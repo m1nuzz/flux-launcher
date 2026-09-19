@@ -2591,9 +2591,10 @@ try {
             [FluxWallpaper]::mouse_event(0x0004, 0, 0, 0, [UIntPtr]::Zero)
             Start-Sleep -Milliseconds 300
             [FluxWallpaper]::SetCursorPos(($settingsRect.Left + 360), ($settingsRect.Top + 260)) | Out-Null
-            [FluxWallpaper]::mouse_event(0x0800, 0, 0, -120, [UIntPtr]::Zero)
+            # mouse_event dwData is UInt32: one notch down = -120 as two's complement (0xFFFFFF88).
+            [FluxWallpaper]::mouse_event(0x0800, 0, 0, 4294967176, [UIntPtr]::Zero)
             Start-Sleep -Milliseconds 250
-            [FluxWallpaper]::mouse_event(0x0800, 0, 0, -120, [UIntPtr]::Zero)
+            [FluxWallpaper]::mouse_event(0x0800, 0, 0, 4294967176, [UIntPtr]::Zero)
             Start-Sleep -Milliseconds 600
             Save-Screenshot "settings-visual-scrolled.png"
             $directSliderLeft = $settingsRect.Left + [int][Math]::Round(184 * $settingsScale)
