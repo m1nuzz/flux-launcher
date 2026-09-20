@@ -51,6 +51,7 @@ pub(crate) fn run_launcher(
     content: Element,
     settings_visible: Signal<bool>,
     query: Signal<String>,
+    query_caret_position: Signal<usize>,
     results: Signal<Vec<flux_core::SearchResult>>,
     selected_id: Signal<String>,
     selected_index: Signal<usize>,
@@ -78,7 +79,55 @@ pub(crate) fn run_launcher(
     } else {
         app
     };
-    let second_instance_sender = app.channel::<()>(|ctx, ()| {
+    let clear_for_second_instance = clear_query_on_activation;
+    let settings_for_second_instance = Arc::clone(&shared_settings);
+    let query_for_second_instance = query;
+    let caret_for_second_instance = query_caret_position;
+    let results_for_second_instance = results;
+    let selected_id_for_second_instance = selected_id;
+    let selected_index_for_second_instance = selected_index;
+    let selection_touched_for_second_instance = selection_touched;
+    let show_results_for_second_instance = show_results;
+    let history_mode_for_second_instance = history_mode;
+    let history_cursor_for_second_instance = history_cursor;
+    let action_mode_for_second_instance = action_mode;
+    let action_index_for_second_instance = action_index;
+    let action_items_for_second_instance = action_items;
+    let inline_completion_for_second_instance = inline_completion;
+    let scroll_request_for_second_instance = scroll_request;
+    let settings_visible_for_second_instance = settings_visible;
+    let launcher_width_for_second_instance = launcher_width;
+    let launcher_height_for_second_instance = launcher_height;
+    let size_for_second_instance = size_for_visibility.clone();
+    let second_instance_sender = app.channel::<()>(move |ctx, ()| {
+        // Same clear-before-show contract as the activation hotkey: a second
+        // launch must never present a stale query frame.
+        let clear_query = settings_for_second_instance
+            .read()
+            .map(|settings| settings.clear_query_on_activation)
+            .unwrap_or(clear_for_second_instance.get());
+        if clear_query {
+            super::activation_clear::clear_query_for_activation(
+                query_for_second_instance,
+                caret_for_second_instance,
+                results_for_second_instance,
+                selected_id_for_second_instance,
+                selected_index_for_second_instance,
+                selection_touched_for_second_instance,
+                show_results_for_second_instance,
+                history_mode_for_second_instance,
+                history_cursor_for_second_instance,
+                action_mode_for_second_instance,
+                action_index_for_second_instance,
+                action_items_for_second_instance,
+                inline_completion_for_second_instance,
+                scroll_request_for_second_instance,
+                settings_visible_for_second_instance,
+                launcher_width_for_second_instance,
+                launcher_height_for_second_instance,
+                size_for_second_instance.clone(),
+            );
+        }
         ctx.show_window();
     });
     let second_instance_sender_for_callback = second_instance_sender.clone();

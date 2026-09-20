@@ -1,6 +1,7 @@
 #![cfg_attr(windows, windows_subsystem = "windows")]
-
 mod accent;
+
+mod activation_clear;
 mod app_hotkeys;
 mod app_identity;
 mod app_scan;
@@ -427,6 +428,7 @@ fn main() {
         cursor_visibility.clone(),
         window_size.clone(),
         query,
+        query_caret_position,
         results,
         selected_id,
         selected_index,
@@ -495,6 +497,19 @@ fn main() {
         game_mode,
         game_mode_status,
         settings_visible,
+        query,
+        query_caret_position,
+        results,
+        selected_id,
+        selected_index,
+        selection_touched,
+        history_mode,
+        history_cursor,
+        action_mode,
+        action_index,
+        action_items,
+        inline_completion,
+        scroll_request_for_rows,
         show_results,
         window_size.clone(),
         window_position.clone(),
@@ -640,6 +655,7 @@ fn main() {
         content,
         settings_visible,
         query,
+        query_caret_position,
         results,
         selected_id,
         selected_index,
