@@ -1406,6 +1406,12 @@ unsafe extern "system" fn wnd_proc(
                     state.handler.on_window_deactivated();
                     state.handler.on_window_hide();
                 }
+                // Present the post-clear state while still visible, then hide:
+                // the frozen hidden surface must never hold a stale query frame
+                // that DWM would sample between SW_SHOW and the first post-show
+                // present on re-show.
+                let _ = InvalidateRect(Some(hwnd), None, false);
+                let _ = UpdateWindow(hwnd);
                 set_interval_timers(hwnd, false);
                 let _ = ShowWindow(hwnd, SW_HIDE);
                 apply_window_geometry_requests(hwnd);
@@ -2061,22 +2067,29 @@ unsafe fn run_window_op(hwnd: HWND, op: Option<WindowOp>) {
         }
         Some(WindowOp::Show) => show_and_activate(hwnd),
         Some(WindowOp::Hide) => {
-            set_interval_timers(hwnd, false);
-            let _ = ShowWindow(hwnd, SW_HIDE);
+            // App hide callback first so the cleared state exists, then present
+            // it synchronously while still visible (see WM_APP_DEACTIVATION_CHECK):
+            // the frozen hidden surface must never hold a stale query frame.
             if let Some(state) = state_from(hwnd) {
                 state.handler.on_window_hide();
             }
+            let _ = InvalidateRect(Some(hwnd), None, false);
+            let _ = UpdateWindow(hwnd);
+            set_interval_timers(hwnd, false);
+            let _ = ShowWindow(hwnd, SW_HIDE);
             // Apply the hide callback's compact geometry while the HWND is
             // hidden, and never let WM_SIZE Present a hidden DComp surface.
             apply_window_geometry_requests(hwnd);
         }
         Some(WindowOp::ToggleVisibility) => {
             if IsWindowVisible(hwnd).as_bool() {
-                set_interval_timers(hwnd, false);
-                let _ = ShowWindow(hwnd, SW_HIDE);
                 if let Some(state) = state_from(hwnd) {
                     state.handler.on_window_hide();
                 }
+                let _ = InvalidateRect(Some(hwnd), None, false);
+                let _ = UpdateWindow(hwnd);
+                set_interval_timers(hwnd, false);
+                let _ = ShowWindow(hwnd, SW_HIDE);
                 apply_window_geometry_requests(hwnd);
             } else {
                 show_and_activate(hwnd);
