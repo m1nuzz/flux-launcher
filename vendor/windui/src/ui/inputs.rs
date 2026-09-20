@@ -1320,6 +1320,11 @@ impl TextInput {
         self.cursor += added;
         self.anchor = None;
         self.goal_x.set(None);
+        // Every other edit path mirrors the caret into the bound signal so
+        // on_update stays a no-op. Without this, on_update mistakes the fresh
+        // internal caret for drift and yanks it back to the stale signal
+        // value (e.g. paste into an empty field snaps the caret to 0).
+        self.sync_cursor_position();
         ctx.mark_dirty();
     }
 }
@@ -1503,6 +1508,14 @@ impl Widget for TextInput {
         }
         let wrap = self.config.wrap && multiline;
         let cursor = self.cursor.min(disp.chars().count());
+        // The internal cursor can overshoot the current text when an external
+        // shrink (activation clear) lands without an on_update sync because
+        // the first paint after re-show precedes the next layout. A clamped
+        // caret has no valid origin to animate from: force the snap path so
+        // it never smooth-slides from the stale position.
+        if self.cursor != cursor {
+            self.caret_primed.set(false);
+        }
         // Caret blink bookkeeping: any text/cursor/focus change restarts the
         // steady window. Detected here so typing, IME commits, and external
         // signal rewrites all count without event plumbing.
@@ -2323,6 +2336,100 @@ mod tests {
             .and_then(|w| w.downcast_mut::<TextInput>())
             .unwrap();
         assert_eq!(ti.cursor, query.chars().count(), "稳态应空转，光标不漂移");
+    }
+
+    #[test]
+    fn paste_syncs_caret_signal_to_end() {
+        use crate::core::Tree;
+        use crate::event::{Key, KeyEvent};
+        use crate::geometry::Size;
+        use crate::ui::Element;
+        struct TestClip(std::rc::Rc<std::cell::RefCell<String>>);
+        impl crate::core::ClipboardProvider for TestClip {
+            fn get_text(&self) -> Option<String> {
+                Some(self.0.borrow().clone())
+            }
+            fn set_text(&self, text: &str) {
+                *self.0.borrow_mut() = text.to_string();
+            }
+        }
+        // Regression: Ctrl+V into an empty field left the caret signal stale
+        // at 0, so the next on_update yanked the internal caret from the end
+        // of the pasted text back to the start.
+        let text = signal(String::new());
+        let caret = signal(0usize);
+        let mut tree = Tree::new();
+        let id = Element::text_input(text, String::new())
+            .cursor_position(caret)
+            .build(&mut tree);
+        tree.root = Some(id);
+        tree.set_focused(Some(id), None);
+        tree.clipboard = Some(Box::new(TestClip(std::rc::Rc::new(
+            std::cell::RefCell::new(String::from("pasted")),
+        ))));
+        let mut te = crate::text::NullTextEngine;
+        tree.layout_root(Size::new(240, 32), &mut te);
+        tree.dispatch_key(
+            KeyEvent {
+                key: Key::Other(0x56),
+                pressed: true,
+                shift: false,
+                ctrl: true,
+            },
+            Some(id),
+        );
+        assert_eq!(text.get(), "pasted");
+        assert_eq!(
+            caret.get(),
+            6,
+            "paste must mirror the caret to the end of the inserted text"
+        );
+        tree.layout_root(Size::new(240, 32), &mut te);
+        let ti = tree
+            .get_mut(id)
+            .and_then(|n| n.widget.as_any_mut())
+            .and_then(|w| w.downcast_mut::<TextInput>())
+            .unwrap();
+        assert_eq!(
+            ti.cursor, 6,
+            "on_update must not yank the caret back to the stale signal value"
+        );
+    }
+
+    #[test]
+    fn paint_after_external_clear_without_layout_snaps_caret() {
+        use crate::core::Tree;
+        use crate::geometry::Size;
+        use crate::ui::Element;
+        // Regression: after an activation clear, the first paint after re-show
+        // can precede the next layout, so on_update never syncs the stale
+        // internal cursor. The clamped caret must land instantly instead of
+        // smooth-sliding right-to-left from the stale position.
+        let text = signal(String::from("old query"));
+        let caret = signal(9usize);
+        let mut tree = Tree::new();
+        let id = Element::text_input(text, String::new())
+            .smooth_caret(true, 95)
+            .cursor_position(caret)
+            .build(&mut tree);
+        tree.root = Some(id);
+        tree.set_focused(Some(id), None);
+        let mut te = crate::text::NullTextEngine;
+        tree.layout_root(Size::new(240, 32), &mut te);
+        paint_input_tree(&tree, 240, 32);
+        // External clear without touching the caret signal and, crucially,
+        // without an intervening layout.
+        text.set(String::new());
+        paint_input_tree(&tree, 240, 32);
+        let ti = tree
+            .get_mut(id)
+            .and_then(|n| n.widget.as_any_mut())
+            .and_then(|w| w.downcast_mut::<TextInput>())
+            .unwrap();
+        assert!(
+            !ti.caret_x.get().is_active(),
+            "clamped caret after external clear must snap, not animate"
+        );
     }
 
     // 每字符宽 10 的合成前缀，用于纯函数换行测试。
