@@ -1017,6 +1017,80 @@ impl TextInput {
         self.goal_x.set(None);
         ctx.mark_dirty();
     }
+    /// Word-boundary scan for Ctrl+Backspace / Ctrl+Delete / Ctrl+Left /
+    /// Ctrl+Right. First skips whitespace adjacent to the cursor, then walks
+    /// one `CharClass` run (same classes as double-click word selection), so
+    /// `ext:zip` steps as `zip` -> `:` -> `ext`.
+    fn word_left(&self, from: usize) -> usize {
+        self.text.with(|t| {
+            let chars: Vec<char> = t.chars().collect();
+            let mut i = from.min(chars.len());
+            while i > 0 && classify(chars[i - 1]) == CharClass::Space {
+                i -= 1;
+            }
+            if i == 0 {
+                return 0;
+            }
+            let class = classify(chars[i - 1]);
+            while i > 0 && classify(chars[i - 1]) == class {
+                i -= 1;
+            }
+            i
+        })
+    }
+    fn word_right(&self, from: usize) -> usize {
+        self.text.with(|t| {
+            let chars: Vec<char> = t.chars().collect();
+            let n = chars.len();
+            let mut i = from.min(n);
+            while i < n && classify(chars[i]) == CharClass::Space {
+                i += 1;
+            }
+            if i == n {
+                return n;
+            }
+            let class = classify(chars[i]);
+            while i < n && classify(chars[i]) == class {
+                i += 1;
+            }
+            i
+        })
+    }
+    fn delete_word_backward(&mut self, ctx: &mut EventCtx) {
+        self.clamp_cursor();
+        if self.cursor == 0 {
+            return;
+        }
+        let cursor = self.cursor;
+        let target = self.word_left(cursor);
+        if target == cursor {
+            return;
+        }
+        self.text.update(|s| {
+            let bs = char_to_byte(s, target);
+            let be = char_to_byte(s, cursor);
+            s.replace_range(bs..be, "");
+        });
+        self.cursor = target;
+        self.sync_cursor_position();
+        self.goal_x.set(None);
+        ctx.mark_dirty();
+    }
+    fn delete_word_forward(&mut self, ctx: &mut EventCtx) {
+        self.clamp_cursor();
+        let cursor = self.cursor;
+        let target = self.word_right(cursor);
+        if target == cursor {
+            return;
+        }
+        self.text.update(|s| {
+            let bs = char_to_byte(s, cursor);
+            let be = char_to_byte(s, target);
+            s.replace_range(bs..be, "");
+        });
+        self.goal_x.set(None);
+        ctx.mark_dirty();
+    }
     /// 移动光标到 target；shift=true 时扩展选区，否则清选区。
     fn move_to(&mut self, ctx: &mut EventCtx, target: usize, shift: bool) {
         if shift {
@@ -1922,13 +1996,21 @@ impl Widget for TextInput {
                     }
                     Key::Backspace => {
                         if !self.delete_selection(ctx) {
-                            self.backspace(ctx);
+                            if k.ctrl {
+                                self.delete_word_backward(ctx);
+                            } else {
+                                self.backspace(ctx);
+                            }
                         }
                         true
                     }
                     Key::Delete => {
                         if !self.delete_selection(ctx) {
-                            self.delete_forward(ctx);
+                            if k.ctrl {
+                                self.delete_word_forward(ctx);
+                            } else {
+                                self.delete_forward(ctx);
+                            }
                         }
                         true
                     }
@@ -1947,6 +2029,12 @@ impl Widget for TextInput {
                         true
                     }
                     Key::Left => {
+                        // Ctrl+Left: jump one word left (Shift extends by word).
+                        if k.ctrl {
+                            let target = self.word_left(self.cursor);
+                            self.move_to(ctx, target, k.shift);
+                            return true;
+                        }
                         if !k.shift {
                             if let Some((s, _)) = self.selection() {
                                 self.cursor = s;
@@ -1959,6 +2047,12 @@ impl Widget for TextInput {
                         true
                     }
                     Key::Right => {
+                        // Ctrl+Right: jump one word right (Shift extends by word).
+                        if k.ctrl {
+                            let target = self.word_right(self.cursor);
+                            self.move_to(ctx, target, k.shift);
+                            return true;
+                        }
                         if !k.shift {
                             if let Some((_, e)) = self.selection() {
                                 self.cursor = e;
@@ -2083,11 +2177,59 @@ impl Widget for TextInput {
 #[cfg(test)]
 mod tests {
     use super::{word_run, wrap_paragraph, TextConfig, TextInput, TextLayout, VisLine};
-    use crate::signal::signal;
+    use crate::core::{NodeId, Tree};
+    use crate::event::{Key, KeyEvent};
+    use crate::signal::{signal, Signal};
 
     fn run(s: &str, idx: usize) -> (usize, usize) {
         let chars: Vec<char> = s.chars().collect();
         word_run(&chars, idx)
+    }
+
+    /// Build a focused single-line input containing `s` with the caret pinned
+    /// to `cursor`, so each test starts from a known editing state.
+    fn word_input(s: &str, cursor: usize) -> (Tree, NodeId, Signal<String>) {
+        use crate::geometry::Size;
+        use crate::ui::Element;
+        let text = signal(String::from(s));
+        let mut tree = Tree::new();
+        let id = Element::text_input(text, String::new()).build(&mut tree);
+        tree.root = Some(id);
+        tree.set_focused(Some(id), None);
+        let mut te = crate::text::NullTextEngine;
+        tree.layout_root(Size::new(240, 32), &mut te);
+        input_set_caret(&mut tree, id, None, cursor);
+        (tree, id, text)
+    }
+
+    fn input_set_caret(tree: &mut Tree, id: NodeId, anchor: Option<usize>, cursor: usize) {
+        let ti = tree
+            .get_mut(id)
+            .and_then(|n| n.widget.as_any_mut())
+            .and_then(|w| w.downcast_mut::<TextInput>())
+            .unwrap();
+        ti.anchor = anchor;
+        ti.cursor = cursor;
+    }
+
+    fn input_cursor(tree: &mut Tree, id: NodeId) -> usize {
+        tree.get_mut(id)
+            .and_then(|n| n.widget.as_any_mut())
+            .and_then(|w| w.downcast_mut::<TextInput>())
+            .unwrap()
+            .cursor
+    }
+
+    fn press(tree: &mut Tree, id: NodeId, key: Key, ctrl: bool, shift: bool) {
+        tree.dispatch_key(
+            KeyEvent {
+                key,
+                pressed: true,
+                shift,
+                ctrl,
+            },
+            Some(id),
+        );
     }
 
     #[test]
@@ -2393,6 +2535,176 @@ mod tests {
         assert_eq!(
             ti.cursor, 6,
             "on_update must not yank the caret back to the stale signal value"
+        );
+    }
+
+    #[test]
+    fn ctrl_backspace_deletes_previous_word() {
+        use crate::event::Key;
+        let (mut tree, id, text) = word_input("hello world", 11);
+        press(&mut tree, id, Key::Backspace, true, false);
+        assert_eq!(
+            text.get(),
+            "hello ",
+            "Ctrl+Backspace must delete the whole previous word"
+        );
+        assert_eq!(input_cursor(&mut tree, id), 6);
+        press(&mut tree, id, Key::Backspace, true, false);
+        assert_eq!(
+            text.get(),
+            "",
+            "the next press eats the remaining word together with its gap space"
+        );
+        assert_eq!(input_cursor(&mut tree, id), 0);
+        // Nothing left: an empty field must stay a no-op.
+        press(&mut tree, id, Key::Backspace, true, false);
+        assert_eq!(text.get(), "");
+        assert_eq!(input_cursor(&mut tree, id), 0);
+    }
+
+    #[test]
+    fn ctrl_delete_deletes_next_word() {
+        use crate::event::Key;
+        // From a gap position the gap space and the next word go together.
+        let (mut tree, id, text) = word_input("hello world", 5);
+        press(&mut tree, id, Key::Delete, true, false);
+        assert_eq!(text.get(), "hello");
+        assert_eq!(input_cursor(&mut tree, id), 5);
+        // From the very start only the first class run goes; the gap stays.
+        let (mut tree, id, text) = word_input("hello world", 0);
+        press(&mut tree, id, Key::Delete, true, false);
+        assert_eq!(text.get(), " world");
+        assert_eq!(input_cursor(&mut tree, id), 0);
+    }
+
+    #[test]
+    fn ctrl_backspace_steps_punctuation_classes() {
+        use crate::event::Key;
+        let (mut tree, id, text) = word_input("ext:zip", 7);
+        press(&mut tree, id, Key::Backspace, true, false);
+        assert_eq!(text.get(), "ext:", "word class goes first");
+        assert_eq!(input_cursor(&mut tree, id), 4);
+        press(&mut tree, id, Key::Backspace, true, false);
+        assert_eq!(text.get(), "ext", "punctuation is its own word");
+        assert_eq!(input_cursor(&mut tree, id), 3);
+        press(&mut tree, id, Key::Backspace, true, false);
+        assert_eq!(text.get(), "", "remaining word class is removed");
+        assert_eq!(input_cursor(&mut tree, id), 0);
+    }
+
+    #[test]
+    fn ctrl_backspace_prefers_selection_over_word_delete() {
+        use crate::event::Key;
+        let (mut tree, id, text) = word_input("hello world", 5);
+        input_set_caret(&mut tree, id, Some(0), 5);
+        press(&mut tree, id, Key::Backspace, true, false);
+        assert_eq!(
+            text.get(),
+            " world",
+            "an active selection must be deleted as-is before any word logic"
+        );
+        assert_eq!(input_cursor(&mut tree, id), 0);
+    }
+
+    #[test]
+    fn plain_delete_keys_still_remove_single_chars() {
+        use crate::event::Key;
+        let (mut tree, id, text) = word_input("ab", 2);
+        press(&mut tree, id, Key::Backspace, false, false);
+        assert_eq!(
+            text.get(),
+            "a",
+            "plain Backspace stays a single-char delete"
+        );
+        assert_eq!(input_cursor(&mut tree, id), 1);
+        let (mut tree, id, text) = word_input("ab", 0);
+        press(&mut tree, id, Key::Delete, false, false);
+        assert_eq!(text.get(), "b", "plain Delete stays a single-char delete");
+        assert_eq!(input_cursor(&mut tree, id), 0);
+    }
+
+    #[test]
+    fn ctrl_arrows_jump_by_word() {
+        use crate::event::Key;
+        let (mut tree, id, _text) = word_input("hello world", 11);
+        press(&mut tree, id, Key::Left, true, false);
+        assert_eq!(input_cursor(&mut tree, id), 6, "to current word start");
+        press(&mut tree, id, Key::Left, true, false);
+        assert_eq!(input_cursor(&mut tree, id), 0, "over the gap to word start");
+        press(&mut tree, id, Key::Right, true, false);
+        assert_eq!(input_cursor(&mut tree, id), 5, "to first word end");
+        press(&mut tree, id, Key::Right, true, false);
+        assert_eq!(
+            input_cursor(&mut tree, id),
+            11,
+            "over the gap to next word end"
+        );
+        press(&mut tree, id, Key::Right, true, false);
+        assert_eq!(input_cursor(&mut tree, id), 11, "clamped at the text end");
+    }
+
+    #[test]
+    fn ctrl_shift_right_extends_selection_by_word() {
+        use crate::event::Key;
+        let (mut tree, id, _text) = word_input("hello world", 0);
+        press(&mut tree, id, Key::Right, true, true);
+        {
+            let ti = tree
+                .get_mut(id)
+                .and_then(|n| n.widget.as_any_mut())
+                .and_then(|w| w.downcast_mut::<TextInput>())
+                .unwrap();
+            assert_eq!(ti.selection(), Some((0, 5)), "first word becomes selected");
+        }
+        press(&mut tree, id, Key::Right, true, true);
+        {
+            let ti = tree
+                .get_mut(id)
+                .and_then(|n| n.widget.as_any_mut())
+                .and_then(|w| w.downcast_mut::<TextInput>())
+                .unwrap();
+            assert_eq!(
+                ti.selection(),
+                Some((0, 11)),
+                "shift+ctrl+right keeps extending across the gap"
+            );
+        }
+    }
+
+    #[test]
+    fn ctrl_c_still_copies_selection_after_word_delete_change() {
+        use crate::core::ClipboardProvider;
+        use crate::geometry::Size;
+        use crate::ui::Element;
+        struct TestClip(std::rc::Rc<std::cell::RefCell<String>>);
+        impl ClipboardProvider for TestClip {
+            fn get_text(&self) -> Option<String> {
+                Some(self.0.borrow().clone())
+            }
+            fn set_text(&self, text: &str) {
+                *self.0.borrow_mut() = text.to_string();
+            }
+        }
+        let text = signal(String::from("hello world"));
+        let mut tree = Tree::new();
+        let id = Element::text_input(text, String::new()).build(&mut tree);
+        tree.root = Some(id);
+        tree.set_focused(Some(id), None);
+        let clip = std::rc::Rc::new(std::cell::RefCell::new(String::new()));
+        tree.clipboard = Some(Box::new(TestClip(clip.clone())));
+        let mut te = crate::text::NullTextEngine;
+        tree.layout_root(Size::new(240, 32), &mut te);
+        input_set_caret(&mut tree, id, Some(0), 5);
+        press(&mut tree, id, Key::Other(0x43), true, false);
+        assert_eq!(
+            clip.borrow().as_str(),
+            "hello",
+            "Ctrl+C must still copy the selected text"
+        );
+        assert_eq!(
+            text.get(),
+            "hello world",
+            "copying must not modify the text"
         );
     }
 

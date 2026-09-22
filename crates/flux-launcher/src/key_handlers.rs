@@ -447,6 +447,11 @@ pub(crate) fn register_key_handlers(
                 true
             }
             Key::Right => {
+                // Ctrl+Right is the input's word-jump: never open the action
+                // bar with it, even when the caret sits at the query end.
+                if event.ctrl {
+                    return false;
+                }
                 if query_caret_position_for_keys.get() != query_for_keys.get().chars().count() {
                     return false;
                 }

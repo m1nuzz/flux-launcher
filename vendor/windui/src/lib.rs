@@ -7,6 +7,9 @@
 #![allow(clippy::too_many_arguments)]
 #![allow(unknown_lints)]
 #![allow(clippy::chunks_exact_to_as_chunks)]
+// clippy 1.98 flags thread_local! blocks as "can be made const" even when every
+// initializer already uses `const {}`; reproduces only under --target *-pc-windows-gnu.
+#![allow(clippy::missing_const_for_thread_local)]
 
 pub mod anim;
 pub mod app;
