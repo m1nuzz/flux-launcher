@@ -1,3 +1,4 @@
+use std::rc::Rc;
 use std::sync::{Arc, RwLock};
 
 use flux_core::Settings;
@@ -5,6 +6,8 @@ use windui::prelude::*;
 use windui::signal::Signal;
 
 use super::everything;
+use super::settings_stats::clear_history_state;
+use super::settings_ui::SettingsUi;
 use super::update_tasks::save_settings;
 
 pub(crate) fn build_everything_install_prompt(
@@ -83,6 +86,66 @@ pub(crate) fn build_everything_install_prompt(
                     }
                 }),
             )
+            .padding_edges(0, 0, 0, 12),
+    )
+}
+
+/// Clear-history confirmation dialog, shared by the Stats and General tabs.
+/// Confirm forgets remembered queries and top-opened counts, saves, and
+/// refreshes the Stats display; Cancel and the × button only hide.
+pub(crate) fn build_clear_history_confirm(visible: Signal<bool>, ui: &SettingsUi) -> Element {
+    let visible_for_close = visible;
+    let visible_for_cancel = visible;
+    let visible_for_clear = visible;
+    let settings_for_clear = Arc::clone(&ui.shared_settings);
+    let history_for_clear = Rc::clone(&ui.query_history);
+    let history_cursor_for_clear = ui.history_cursor;
+    let usage_for_clear = ui.stats_usage;
+    let top_for_clear = ui.stats_top;
+    Element::dialog_glass_panel(
+        visible,
+        "Clear history",
+        400,
+        move |_| {
+            visible_for_close.set(false);
+        },
+        Element::col().spacing(10).child(
+            Element::label(
+                "Forget all remembered queries and top-opened counts? This cannot be undone.",
+            )
+            .font_size(13.0)
+            .fg(Color::rgba(245, 248, 255, 245)),
+        ),
+        Element::row()
+            .width_match()
+            .spacing(8)
+            .child(Element::flex_spacer())
+            .child(
+                Element::button("Cancel")
+                    .neutral()
+                    .outline_soft()
+                    .on_click(move |_| {
+                        visible_for_cancel.set(false);
+                    }),
+            )
+            .child(Element::button("Clear history").on_click(move |ctx| {
+                visible_for_clear.set(false);
+                let cleared = clear_history_state(
+                    &settings_for_clear,
+                    &history_for_clear,
+                    history_cursor_for_clear,
+                    usage_for_clear,
+                    top_for_clear,
+                );
+                if !cleared {
+                    ctx.toast_ok("Could not clear history");
+                    return;
+                }
+                if let Ok(settings) = settings_for_clear.read() {
+                    let _ = save_settings(&settings);
+                }
+                ctx.toast_ok("Query history cleared");
+            }))
             .padding_edges(0, 0, 0, 12),
     )
 }

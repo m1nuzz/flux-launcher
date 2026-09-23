@@ -1,3 +1,5 @@
+use std::collections::HashMap;
+
 use serde::{Deserialize, Serialize};
 
 const DEFAULT_CARET_DURATION_MS: u16 = 95;
@@ -92,6 +94,15 @@ pub struct PriorityEntry {
     pub target: String,
 }
 
+/// Lifetime launch counter for one opened result, keyed by result id in
+/// `Settings.launch_counts`. The title refreshes on every launch so renames
+/// heal; the count never resets except with history clear.
+#[derive(Clone, Debug, Deserialize, PartialEq, Eq, Serialize)]
+pub struct LaunchCount {
+    pub title: String,
+    pub count: u64,
+}
+
 #[derive(Clone, Debug, Deserialize, PartialEq, Eq, Serialize)]
 #[serde(default)]
 pub struct Settings {
@@ -144,6 +155,11 @@ pub struct Settings {
     pub query_history: Vec<String>,
     #[serde(default)]
     pub total_queries_committed: u64,
+    /// Lifetime launch counts by result id. Unlike the bounded history ring,
+    /// counts are never pruned: the top-opened list stays meaningful even
+    /// after old queries leave the ring. Cleared together with history.
+    #[serde(default)]
+    pub launch_counts: HashMap<String, LaunchCount>,
     #[serde(default)]
     pub priority_entries: Vec<PriorityEntry>,
 }
@@ -176,6 +192,7 @@ impl Default for Settings {
             smooth_caret_duration_ms: DEFAULT_CARET_DURATION_MS,
             query_history: Vec::new(),
             total_queries_committed: 0,
+            launch_counts: HashMap::new(),
             priority_entries: Vec::new(),
         }
     }
@@ -274,8 +291,34 @@ impl Settings {
         true
     }
 
+    /// Record one launch of a result for the top-opened list. The title
+    /// refreshes on every launch so renames heal; empty ids or titles are
+    /// ignored (special rows like confirmations carry no launchable item).
+    pub fn record_launch(&mut self, id: &str, title: &str) {
+        let id = id.trim();
+        let title = title.trim();
+        if id.is_empty() || title.is_empty() {
+            return;
+        }
+        let entry = self
+            .launch_counts
+            .entry(id.to_owned())
+            .or_insert(LaunchCount {
+                title: String::new(),
+                count: 0,
+            });
+        entry.title = title.to_owned();
+        entry.count += 1;
+    }
+
     pub fn clear_query_history(&mut self) {
         self.query_history.clear();
+        // Launch counts carry opened item titles, so clearing history must
+        // clear them too; otherwise Clear would not actually forget anything.
+        self.launch_counts.clear();
+        // A confirmed clear is a clean slate: the lifetime total resets too,
+        // otherwise Usage would keep showing runs for forgotten queries.
+        self.total_queries_committed = 0;
     }
 
     fn normalize_query_history(&mut self) {
@@ -441,7 +484,30 @@ mod tests {
         assert!(settings.record_query("steam"));
         assert_eq!(settings.total_queries_committed, 2);
         settings.clear_query_history();
-        assert_eq!(settings.total_queries_committed, 2);
+        assert_eq!(settings.total_queries_committed, 0);
+    }
+
+    #[test]
+    fn launch_counts_track_titles_and_clear_forgets_them() {
+        let mut settings = Settings::default();
+        assert!(settings.record_query("Steam"));
+        assert!(settings.record_query("steam"));
+        assert!(settings.record_query("ext:zip"));
+        assert_eq!(settings.total_queries_committed, 3);
+        settings.record_launch("application:steam", "Steam");
+        settings.record_launch("application:steam", "Steam Renamed");
+        settings.record_launch("file:notes", "notes.txt");
+        settings.record_launch("", "No Id");
+        settings.record_launch("no-title", "   ");
+        let steam = &settings.launch_counts["application:steam"];
+        assert_eq!(steam.title, "Steam Renamed");
+        assert_eq!(steam.count, 2);
+        assert_eq!(settings.launch_counts["file:notes"].count, 1);
+        assert_eq!(settings.launch_counts.len(), 2);
+        settings.clear_query_history();
+        assert!(settings.launch_counts.is_empty());
+        assert!(settings.query_history.is_empty());
+        assert_eq!(settings.total_queries_committed, 0);
     }
 
     #[test]

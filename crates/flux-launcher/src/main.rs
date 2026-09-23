@@ -113,6 +113,7 @@ fn main() {
     let action_index = signal(0_usize);
     let action_scroll_pending = signal(false);
     let recycle_bin_confirmation = signal(false);
+    let clear_history_confirm = signal(false);
     let action_items = signal(Vec::<ActionItem>::new());
     let action_window_slot = Rc::new(RefCell::new(None::<WindowSizeHandle>));
     let status = signal(String::from("Ready"));
@@ -131,10 +132,10 @@ fn main() {
             .filter(|tab| *tab < 5)
             .unwrap_or(0),
     );
-    let (stats_usage_text, stats_recent_text) =
-        settings_stats::stats_texts(&settings.query_history, settings.total_queries_committed);
+    let (stats_usage_text, stats_top_text) =
+        settings_stats::stats_texts(&settings.launch_counts, settings.total_queries_committed);
     let stats_usage = signal(stats_usage_text);
-    let stats_recent = signal(stats_recent_text);
+    let stats_top = signal(stats_top_text);
     let show_results = signal(false);
     let activation_key = signal(settings.activation_hotkey.key.clone());
     let activation_display = signal(hotkeys::display_config(&settings.activation_hotkey));
@@ -247,7 +248,7 @@ fn main() {
         Arc::clone(&shared_settings),
         Rc::clone(&query_history),
         stats_usage,
-        stats_recent,
+        stats_top,
         history_mode,
         recycle_bin_confirmation,
         settings_visible,
@@ -487,7 +488,7 @@ fn main() {
         settings_visible,
         Rc::clone(&query_history),
         stats_usage,
-        stats_recent,
+        stats_top,
         history_mode,
         history_cursor,
         Arc::clone(&shared_settings),
@@ -533,7 +534,8 @@ fn main() {
         shared_settings: Arc::clone(&shared_settings),
         query_history: Rc::clone(&query_history),
         stats_usage,
-        stats_recent,
+        stats_top,
+        clear_history_confirm,
         history_cursor,
         priorities,
         update_status,
@@ -606,8 +608,15 @@ fn main() {
         settings_stats::build_stats_tab(&settings_ui),
     );
 
-    let content =
-        app_shell::build_shell_content(launcher_surface, settings_panel, settings_visible);
+    let clear_history_dialog =
+        ui_dialogs::build_clear_history_confirm(clear_history_confirm, &settings_ui);
+
+    let content = app_shell::build_shell_content(
+        launcher_surface,
+        settings_panel,
+        settings_visible,
+        clear_history_dialog,
+    );
 
     let app = interval_tick::register_interval(
         app,

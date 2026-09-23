@@ -20,7 +20,7 @@ pub(crate) fn record_query_history(
     history: &Rc<RefCell<Vec<String>>>,
     query: &str,
     stats_usage: Signal<String>,
-    stats_recent: Signal<String>,
+    stats_top: Signal<String>,
 ) {
     let Ok(mut settings_guard) = settings.write() else {
         return;
@@ -30,9 +30,30 @@ pub(crate) fn record_query_history(
     }
     *history.borrow_mut() = settings_guard.query_history.clone();
     let total = settings_guard.total_queries_committed;
-    let snapshot = settings_guard.query_history.clone();
+    let counts = settings_guard.launch_counts.clone();
     drop(settings_guard);
-    super::settings_stats::refresh_stats_texts(&snapshot, total, stats_usage, stats_recent);
+    super::settings_stats::refresh_stats_texts(&counts, total, stats_usage, stats_top);
+    // Keep Enter→hide free of synchronous filesystem I/O.
+    save_settings_async(settings);
+}
+
+/// Record one launch of an opened result for the top-opened list. Call it
+/// wherever the launcher actually opens something (Enter on a result, row
+/// click, run-as-admin, open-location); pure action executions without an
+/// open and confirmation rows stay out.
+pub(crate) fn record_launch(
+    settings: &Arc<RwLock<Settings>>,
+    id: &str,
+    title: &str,
+    stats_top: Signal<String>,
+) {
+    let Ok(mut settings_guard) = settings.write() else {
+        return;
+    };
+    settings_guard.record_launch(id, title);
+    let counts = settings_guard.launch_counts.clone();
+    drop(settings_guard);
+    stats_top.set(super::settings_stats::top_launches_block(&counts));
     // Keep Enter→hide free of synchronous filesystem I/O.
     save_settings_async(settings);
 }

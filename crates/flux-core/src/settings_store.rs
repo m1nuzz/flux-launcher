@@ -105,6 +105,13 @@ mod tests {
                 target: String::from("C:/Steam.lnk"),
             }],
             total_queries_committed: 41,
+            launch_counts: std::collections::HashMap::from([(
+                String::from("application:steam"),
+                crate::settings::LaunchCount {
+                    title: String::from("Steam"),
+                    count: 7,
+                },
+            )]),
         };
 
         expected.save_to(&path).unwrap();

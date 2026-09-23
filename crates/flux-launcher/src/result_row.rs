@@ -18,7 +18,8 @@ use super::result_actions::{actions_for_result, ActionItem};
 use super::result_widgets::{ResultIconView, ResultRowAnchor};
 use super::ui_constants::{LAUNCHER_FONT_FAMILY, SETTINGS_WINDOW_HEIGHT, SETTINGS_WINDOW_WIDTH};
 use super::{
-    launch, record_query_history, request_shell_icon, title_match_doc, trace_result_icon_probe,
+    launch, record_launch, record_query_history, request_shell_icon, title_match_doc,
+    trace_result_icon_probe,
 };
 
 #[derive(Default)]
@@ -74,7 +75,7 @@ pub(crate) fn result_row(
     settings: Arc<RwLock<Settings>>,
     query_history: Rc<RefCell<Vec<String>>>,
     stats_usage: Signal<String>,
-    stats_recent: Signal<String>,
+    stats_top: Signal<String>,
     history_mode: Signal<bool>,
     recycle_bin_confirmation: Signal<bool>,
     settings_visible: Signal<bool>,
@@ -195,7 +196,7 @@ pub(crate) fn result_row(
                 &query_history,
                 &query.get(),
                 stats_usage,
-                stats_recent,
+                stats_top,
             );
             selected_id.set(id.clone());
             selection_touched.set(true);
@@ -218,6 +219,7 @@ pub(crate) fn result_row(
                 ctx.hide_window();
                 return;
             }
+            record_launch(&settings, &id, &title, stats_top);
             if let Some(target) = target.as_deref() {
                 launch::open_path_async(target);
                 ctx.hide_window();
