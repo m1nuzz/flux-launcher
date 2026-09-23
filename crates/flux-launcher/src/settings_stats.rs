@@ -285,13 +285,12 @@ pub(crate) fn paint_space_background(pixmap: &mut tiny_skia::Pixmap) {
 
     // Deterministic starfield: fixed seed, same sky on every render.
     // Stars inside text zones are dimmed and shrunk so small type stays
-    // legible: header, left hero block, right top list, footer strip.
+    // legible: left hero block, right top list, footer strip.
     let in_text_zone = |x: f32, y: f32| {
-        let header = (60.0..=1150.0).contains(&x) && (30.0..=120.0).contains(&y);
         let hero = (80.0..=730.0).contains(&x) && (140.0..=480.0).contains(&y);
         let list = (720.0..=1150.0).contains(&x) && (80.0..=540.0).contains(&y);
         let footer = (60.0..=1150.0).contains(&x) && (530.0..=610.0).contains(&y);
-        header || hero || list || footer
+        hero || list || footer
     };
     let mut rng: u64 = 0x9E3779B97F4A7C15;
     let mut next = move || {
@@ -392,12 +391,6 @@ pub(crate) fn build_share_card(total: u64, version: &str, top: &[(String, u64)])
         .padding_edges(64, 56, 60, 56)
         .spacing(22)
         .child(
-            Element::label("FLUX LAUNCHER")
-                .font_size(22.0)
-                .font_weight(700)
-                .fg(Color::rgb(180, 195, 230)),
-        )
-        .child(
             Element::row()
                 .width_match()
                 .weight(1.0)
@@ -406,18 +399,18 @@ pub(crate) fn build_share_card(total: u64, version: &str, top: &[(String, u64)])
                 .child(
                     Element::col()
                         .weight(1.0)
-                        .spacing(14)
+                        .spacing(10)
+                        .child(
+                            Element::label("TOTAL SEARCHES")
+                                .font_size(22.0)
+                                .font_weight(700)
+                                .fg(Color::rgb(180, 195, 230)),
+                        )
                         .child(
                             Element::label(format_count(total))
                                 .font_size(hero_font_size(total))
                                 .font_weight(700)
                                 .fg(Color::WHITE),
-                        )
-                        .child(
-                            Element::label("QUERIES RUN")
-                                .font_size(22.0)
-                                .font_weight(700)
-                                .fg(Color::rgb(180, 195, 230)),
                         ),
                 )
                 .child(list),
@@ -692,7 +685,8 @@ mod tests {
             (String::from("calculator"), 8),
             (String::from("spotify"), 5),
         ];
-        let png = render_share_card_png(1284, "0.1.128", &top).expect("share card should render");
+        let png =
+            render_share_card_png(1284, CURRENT_VERSION, &top).expect("share card should render");
         let decoded = tiny_skia::Pixmap::decode_png(&png).expect("valid PNG output");
         assert_eq!(decoded.width(), SHARE_CARD_WIDTH);
         assert_eq!(decoded.height(), SHARE_CARD_HEIGHT);
@@ -709,7 +703,8 @@ mod tests {
             (String::from("Google Chrome"), 1),
             (String::from("Perplexity"), 1),
         ];
-        let png = render_share_card_png(4, "0.1.128", &top).expect("share card should render");
+        let png =
+            render_share_card_png(4, CURRENT_VERSION, &top).expect("share card should render");
         let path = std::env::temp_dir().join("flux-stats-card-mock-small.png");
         std::fs::write(&path, &png).unwrap();
         eprintln!("CARD_MOCK_SMALL={}", path.display());
