@@ -35,6 +35,7 @@ pub(crate) fn build_settings_panel(
     tab_visual: Element,
     tab_priorities: Element,
     tab_plugins: Element,
+    tab_stats: Element,
 ) -> Element {
     let settings_tab = ui.settings_tab;
     let settings_visible = ui.settings_visible;
@@ -71,7 +72,7 @@ pub(crate) fn build_settings_panel(
                         ),
                 )
                 .child(Element::segmented(
-                    vec!["General", "Visual", "Priorities", "Plugins"],
+                    vec!["General", "Visual", "Priorities", "Plugins", "Stats"],
                     settings_tab,
                 ))
                 .child(
@@ -101,4 +102,5 @@ pub(crate) fn build_settings_panel(
         .child(tab_plugins)
         .child(tab_visual)
         .child(tab_priorities)
+        .child(tab_stats)
 }

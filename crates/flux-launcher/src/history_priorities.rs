@@ -19,6 +19,8 @@ pub(crate) fn record_query_history(
     settings: &Arc<RwLock<Settings>>,
     history: &Rc<RefCell<Vec<String>>>,
     query: &str,
+    stats_usage: Signal<String>,
+    stats_recent: Signal<String>,
 ) {
     let Ok(mut settings_guard) = settings.write() else {
         return;
@@ -27,7 +29,10 @@ pub(crate) fn record_query_history(
         return;
     }
     *history.borrow_mut() = settings_guard.query_history.clone();
+    let total = settings_guard.total_queries_committed;
+    let snapshot = settings_guard.query_history.clone();
     drop(settings_guard);
+    super::settings_stats::refresh_stats_texts(&snapshot, total, stats_usage, stats_recent);
     // Keep Enter→hide free of synchronous filesystem I/O.
     save_settings_async(settings);
 }

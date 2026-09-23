@@ -40,6 +40,8 @@ pub(crate) fn build_general_tab(ui: &SettingsUi) -> Element {
     let update_check_in_flight_for_check_now = Rc::clone(&ui.update_check_in_flight);
     let settings_for_clear_history = Arc::clone(&ui.shared_settings);
     let history_for_clear = Rc::clone(&ui.query_history);
+    let stats_usage_for_clear = ui.stats_usage;
+    let stats_recent_for_clear = ui.stats_recent;
     let history_cursor_for_clear = ui.history_cursor;
     let settings_for_apply = Arc::clone(&ui.shared_settings);
     let theme_for_apply = ui.theme_handle.clone();
@@ -306,6 +308,16 @@ pub(crate) fn build_general_tab(ui: &SettingsUi) -> Element {
                                     }
                                     history_for_clear.borrow_mut().clear();
                                     history_cursor_for_clear.set(None);
+                                    let total = settings_for_clear_history
+                                        .read()
+                                        .map(|settings| settings.total_queries_committed)
+                                        .unwrap_or(0);
+                                    super::settings_stats::refresh_stats_texts(
+                                        &history_for_clear.borrow(),
+                                        total,
+                                        stats_usage_for_clear,
+                                        stats_recent_for_clear,
+                                    );
                                     ctx.toast_ok("Query history cleared");
                                 }))
                             )

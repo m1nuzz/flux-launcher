@@ -40,6 +40,7 @@ mod settings_general;
 mod settings_plugins;
 mod settings_priorities;
 mod settings_shell;
+mod settings_stats;
 mod settings_ui;
 mod settings_visual;
 mod shell_icon_cache;
@@ -127,9 +128,13 @@ fn main() {
         std::env::var("FLUX_SMOKE_SETTINGS_TAB")
             .ok()
             .and_then(|value| value.parse::<usize>().ok())
-            .filter(|tab| *tab < 4)
+            .filter(|tab| *tab < 5)
             .unwrap_or(0),
     );
+    let (stats_usage_text, stats_recent_text) =
+        settings_stats::stats_texts(&settings.query_history, settings.total_queries_committed);
+    let stats_usage = signal(stats_usage_text);
+    let stats_recent = signal(stats_recent_text);
     let show_results = signal(false);
     let activation_key = signal(settings.activation_hotkey.key.clone());
     let activation_display = signal(hotkeys::display_config(&settings.activation_hotkey));
@@ -241,6 +246,8 @@ fn main() {
         selection_color,
         Arc::clone(&shared_settings),
         Rc::clone(&query_history),
+        stats_usage,
+        stats_recent,
         history_mode,
         recycle_bin_confirmation,
         settings_visible,
@@ -479,6 +486,8 @@ fn main() {
         inline_completion,
         settings_visible,
         Rc::clone(&query_history),
+        stats_usage,
+        stats_recent,
         history_mode,
         history_cursor,
         Arc::clone(&shared_settings),
@@ -523,6 +532,8 @@ fn main() {
     let settings_ui = settings_ui::SettingsUi {
         shared_settings: Arc::clone(&shared_settings),
         query_history: Rc::clone(&query_history),
+        stats_usage,
+        stats_recent,
         history_cursor,
         priorities,
         update_status,
@@ -592,6 +603,7 @@ fn main() {
             settings_priorities::build_priority_list(&settings_ui),
         ),
         settings_plugins::build_plugins_tab(&settings_ui),
+        settings_stats::build_stats_tab(&settings_ui),
     );
 
     let content =

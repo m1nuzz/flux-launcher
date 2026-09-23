@@ -49,6 +49,8 @@ pub(crate) fn register_key_handlers(
     inline_completion: Signal<String>,
     settings_visible: Signal<bool>,
     query_history: Rc<RefCell<Vec<String>>>,
+    stats_usage: Signal<String>,
+    stats_recent: Signal<String>,
     history_mode: Signal<bool>,
     history_cursor: Signal<Option<usize>>,
     shared_settings: Arc<RwLock<Settings>>,
@@ -85,6 +87,8 @@ pub(crate) fn register_key_handlers(
     let inline_completion_for_keys = inline_completion;
     let settings_visible_for_keys = settings_visible;
     let query_history_for_keys = Rc::clone(&query_history);
+    let stats_usage_for_keys = stats_usage;
+    let stats_recent_for_keys = stats_recent;
     let history_mode_for_keys = history_mode;
     let history_cursor_for_keys = history_cursor;
     let settings_for_history_for_keys = Arc::clone(&shared_settings);
@@ -294,6 +298,8 @@ pub(crate) fn register_key_handlers(
                 &settings_for_history_for_keys,
                 &query_history_for_keys,
                 &query,
+                stats_usage_for_keys,
+                stats_recent_for_keys,
             );
             if let Some(result) = selected_result(
                 &current_results,
@@ -354,6 +360,8 @@ pub(crate) fn register_key_handlers(
                         &settings_for_history_for_keys,
                         &query_history_for_keys,
                         &query,
+                        stats_usage_for_keys,
+                        stats_recent_for_keys,
                     );
                     if let Some(result) = selected_result(
                         &current_results,
@@ -404,6 +412,8 @@ pub(crate) fn register_key_handlers(
                 &settings_for_history_for_keys,
                 &query_history_for_keys,
                 &query,
+                stats_usage_for_keys,
+                stats_recent_for_keys,
             );
             if let Some(result) = selected_result(
                 &current_results,
@@ -488,6 +498,8 @@ pub(crate) fn register_key_handlers(
                     &settings_for_history_for_keys,
                     &query_history_for_keys,
                     &query,
+                    stats_usage_for_keys,
+                    stats_recent_for_keys,
                 );
                 if let Some(result) = selected_result(
                     &current_results,

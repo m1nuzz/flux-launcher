@@ -3,7 +3,7 @@ use serde::{Deserialize, Serialize};
 const DEFAULT_CARET_DURATION_MS: u16 = 95;
 const MIN_CARET_DURATION_MS: u16 = 60;
 const MAX_CARET_DURATION_MS: u16 = 160;
-const MAX_QUERY_HISTORY: usize = 32;
+pub const MAX_QUERY_HISTORY: usize = 32;
 const MAX_PRIORITY_ENTRIES: usize = 64;
 pub(crate) const DEFAULT_UPDATE_INTERVAL_HOURS: u32 = 24;
 const MIN_UPDATE_INTERVAL_HOURS: u32 = 1;
@@ -143,6 +143,8 @@ pub struct Settings {
     #[serde(default)]
     pub query_history: Vec<String>,
     #[serde(default)]
+    pub total_queries_committed: u64,
+    #[serde(default)]
     pub priority_entries: Vec<PriorityEntry>,
 }
 
@@ -173,6 +175,7 @@ impl Default for Settings {
             monitor_preference: MonitorPreference::default(),
             smooth_caret_duration_ms: DEFAULT_CARET_DURATION_MS,
             query_history: Vec::new(),
+            total_queries_committed: 0,
             priority_entries: Vec::new(),
         }
     }
@@ -267,6 +270,7 @@ impl Settings {
         }
         self.query_history.push(query.to_owned());
         self.normalize_query_history();
+        self.total_queries_committed += 1;
         true
     }
 
@@ -425,6 +429,19 @@ mod tests {
         assert_eq!(settings.query_history.last().unwrap(), "q39");
         settings.clear_query_history();
         assert!(settings.query_history.is_empty());
+    }
+
+    #[test]
+    fn total_queries_counter_counts_commits_not_empty_input() {
+        let mut settings = Settings::default();
+        assert_eq!(settings.total_queries_committed, 0);
+        assert!(!settings.record_query("   "));
+        assert_eq!(settings.total_queries_committed, 0);
+        assert!(settings.record_query("steam"));
+        assert!(settings.record_query("steam"));
+        assert_eq!(settings.total_queries_committed, 2);
+        settings.clear_query_history();
+        assert_eq!(settings.total_queries_committed, 2);
     }
 
     #[test]

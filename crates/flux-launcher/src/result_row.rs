@@ -73,6 +73,8 @@ pub(crate) fn result_row(
     selection_color: Signal<Color>,
     settings: Arc<RwLock<Settings>>,
     query_history: Rc<RefCell<Vec<String>>>,
+    stats_usage: Signal<String>,
+    stats_recent: Signal<String>,
     history_mode: Signal<bool>,
     recycle_bin_confirmation: Signal<bool>,
     settings_visible: Signal<bool>,
@@ -188,7 +190,13 @@ pub(crate) fn result_row(
                 history_mode.set(false);
                 return;
             }
-            record_query_history(&settings, &query_history, &query.get());
+            record_query_history(
+                &settings,
+                &query_history,
+                &query.get(),
+                stats_usage,
+                stats_recent,
+            );
             selected_id.set(id.clone());
             selection_touched.set(true);
             if let Some(index) = rows_refresh.get().iter().position(|result| result.id == id) {

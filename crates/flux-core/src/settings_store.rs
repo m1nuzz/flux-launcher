@@ -104,6 +104,7 @@ mod tests {
                 title: String::from("Steam"),
                 target: String::from("C:/Steam.lnk"),
             }],
+            total_queries_committed: 41,
         };
 
         expected.save_to(&path).unwrap();
