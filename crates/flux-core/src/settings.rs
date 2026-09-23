@@ -327,7 +327,23 @@ impl Settings {
     }
 
     pub fn load_or_default() -> Self {
-        Self::load_from(&Self::config_path()).unwrap_or_default()
+        Self::load_from_or_default(&Self::config_path())
+    }
+
+    /// 加载配置并回退默认值。
+    ///
+    /// 文件不存在（首次运行）静默回退；JSON 损坏或 IO 错误向 stderr 输出
+    /// 一行诊断（仓库规则允许 stderr 不翻译），避免损坏配置被下次保存
+    /// 整体覆盖而无任何线索。
+    pub fn load_from_or_default(path: &Path) -> Self {
+        match Self::load_from(path) {
+            Ok(settings) => settings,
+            Err(error) if error.kind() == io::ErrorKind::NotFound => Self::default(),
+            Err(error) => {
+                eprintln!("flux: failed to load settings {}: {error}", path.display());
+                Self::default()
+            }
+        }
     }
 
     pub fn load_from(path: &Path) -> io::Result<Self> {
@@ -460,6 +476,21 @@ mod tests {
 
         expected.save_to(&path).unwrap();
         assert_eq!(Settings::load_from(&path).unwrap(), expected);
+        fs::remove_file(path).unwrap();
+    }
+
+    #[test]
+    fn load_from_or_default_silently_defaults_for_missing_file() {
+        let path = temporary_path("settings-missing");
+        let _ = fs::remove_file(&path);
+        assert_eq!(Settings::load_from_or_default(&path), Settings::default());
+    }
+
+    #[test]
+    fn load_from_or_default_falls_back_on_corrupt_json() {
+        let path = temporary_path("settings-corrupt");
+        fs::write(&path, "{\"game_mode\": tru").unwrap();
+        assert_eq!(Settings::load_from_or_default(&path), Settings::default());
         fs::remove_file(path).unwrap();
     }
 
