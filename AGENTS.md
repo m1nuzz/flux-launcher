@@ -168,7 +168,7 @@ crates/flux-launcher/locales/zh-CN.yml
 * 启动时使用 `sys-locale` 检测系统语言，并通过 `rust_i18n::set_locale` 设置；未知语言回退到 `en`。
 * 保持现有 `i18n!("locales", fallback = "en")` 路径不变，除非同步调整相关配置。
 * 版本号、内部标识符、颜色、常量及 stderr 诊断信息无需翻译。
-* 当前没有自动校验两份翻译键一致性的脚本、测试或 CI 步骤，键一致暂以人工核对为发现方式；若后续引入校验，本条随之更新。
+* 键一致性由 `scripts/validate-i18n-keys.ps1` 校验（双向缺键、同文件重复键、空值叶子键与不可解析行逐条报错），本地按第 14 节执行，CI 的「校验 i18n 键一致性」步骤强制；发现方式即该脚本与该 CI 步骤。
 
 ---
 
@@ -221,7 +221,7 @@ crates/flux-launcher/locales/zh-CN.yml
 
 * Rust 改动：执行下方全部 cargo 检查。
 * 仅文档改动：执行 `git diff --check`。
-* PowerShell / workflow 改动：执行下方「PowerShell 脚本验证」与「workflow / 脚本校验」。
+* PowerShell / workflow / locales 改动：执行下方「PowerShell 脚本验证」与「CI 校验脚本」。
 
 ```powershell
 cargo fmt --all
@@ -269,20 +269,21 @@ if ($parseErrors.Count -gt 0) {
 }
 ```
 
-### workflow / 脚本校验
+### CI 校验脚本
 
-改动 `.github/workflows/` 或 `scripts/*.ps1` 时执行（对应 CI 的三个校验步骤）：
+改动 `.github/workflows/`、`scripts/*.ps1` 或 `crates/flux-launcher/locales/` 时执行（对应 CI 的四个校验步骤）：
 
 ```powershell
 ./scripts/validate-workflow-secret-references.ps1 -WorkflowDirectory .github/workflows
 ./scripts/validate-powershell-command-references.ps1 -ScriptsDirectory scripts
 ./scripts/validate-workflow-input-interpolation.ps1 -WorkflowDirectory .github/workflows
+./scripts/validate-i18n-keys.ps1 -LocalesDirectory crates/flux-launcher/locales
 ```
 
-* 未改动任何 PowerShell 内容时不强制「PowerShell 脚本验证」；只要改动 workflow 或 `scripts/*.ps1`，仍须执行上面三个校验。
+* 未改动任何 PowerShell 内容时不强制「PowerShell 脚本验证」；只要改动 workflow、`scripts/*.ps1` 或 locales，仍须执行上面四个校验。
 * 改动 `PSScriptAnalyzerSettings.psd1` 本身时必须全量复扫，并逐条说明新增例外的理由。
 * 禁止为绕过告警新增 ExcludeRules 或内联抑制；确需排除必须在设置文件内以注释写明理由（现有 `PSAvoidUsingWriteHost` 例外即此先例）。
-* 上述检查已在 `ci.yml` 的「验证 PowerShell 脚本」与三个「校验 …」步骤中强制；未经本地检查即推送会导致 CI 失败。
+* 上述检查已在 `ci.yml` 的「验证 PowerShell 脚本」与四个「校验 …」步骤中强制；未经本地检查即推送会导致 CI 失败。
 
 任何检查失败都必须先分析日志并判断原因；仅在确认属于环境或瞬时问题后才可重跑，不能因“看起来无关”而忽略失败。
 
@@ -308,7 +309,7 @@ if ($parseErrors.Count -gt 0) {
 
 ### Workflow
 
-* workflow 改动必须先做本地可验证的部分（`scripts/*.ps1` AST 解析、PSSA、第 14 节的三个 `validate-*.ps1` 校验脚本），再推送。
+* workflow 改动必须先做本地可验证的部分（`scripts/*.ps1` AST 解析、PSSA、第 14 节的四个 `validate-*.ps1` 校验脚本），再推送。
 * 嵌入 workflow 的 PowerShell 片段受第 14 节 PowerShell 检查约束。
 * 新增 workflow 输入须同步默认值、调用方与文档；不得留下只在 CI 中可用而无法本地复现的开关。
 * CI 目标平台即为本地检查目标平台，二者必须一致，不得要求本地执行 CI 无法执行的检查。
