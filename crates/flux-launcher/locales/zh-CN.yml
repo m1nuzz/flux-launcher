@@ -63,6 +63,7 @@ settings:
   record_key: 录制按键
   press_desired_key: 请按下所需的激活按键
   record_hint: 点击"录制按键"后，按下单个按键或组合键
+  modifier_required: 热键须包含 Ctrl、Alt、Shift 或 Win 修饰键；不带修饰键将回退为 Alt+Space
   modifier:
     ctrl: Ctrl
     alt: Alt

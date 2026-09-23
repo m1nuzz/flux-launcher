@@ -63,6 +63,7 @@ settings:
   record_key: Record key
   press_desired_key: Press the desired activation key
   record_hint: Click Record key, then press one key or a key combination
+  modifier_required: The hotkey must include Ctrl, Alt, Shift or Win; a bare key falls back to Alt+Space
   modifier:
     ctrl: Ctrl
     alt: Alt

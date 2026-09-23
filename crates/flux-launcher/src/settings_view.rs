@@ -672,16 +672,18 @@ pub(crate) fn restore_saved_settings(saved: &Settings, s: &SettingsRestoreSignal
     apply_configured_locale(saved.language);
     s.i18n_hub.refresh();
 
-    s.activation_key.set(saved.activation_hotkey.key.clone());
-    s.activation_ctrl.set(saved.activation_hotkey.ctrl);
-    s.activation_alt.set(saved.activation_hotkey.alt);
-    s.activation_shift.set(saved.activation_hotkey.shift);
-    s.activation_meta.set(saved.activation_hotkey.meta);
+    // 裸键配置回退为默认热键，保证显示、勾选与注册一致。
+    let activation = hotkeys::sanitize_activation_config(&saved.activation_hotkey);
+    s.activation_key.set(activation.key.clone());
+    s.activation_ctrl.set(activation.ctrl);
+    s.activation_alt.set(activation.alt);
+    s.activation_shift.set(activation.shift);
+    s.activation_meta.set(activation.meta);
     s.activation_display
-        .set(hotkeys::display_config(&saved.activation_hotkey));
+        .set(hotkeys::display_config(&activation));
     s.activation_recording.set(false);
     s.activation_handle
-        .set(hotkeys::activation_hotkey(&saved.activation_hotkey));
+        .set(hotkeys::activation_hotkey(&activation));
     s.activation_handle.set_enabled(true);
 
     s.ignore_fullscreen.set(saved.ignore_hotkeys_in_fullscreen);
@@ -898,6 +900,14 @@ pub(crate) fn settings_panel(context: SettingsPanelContext) -> Element {
                                     .visible_when(move || {
                                         activation_recording_for_record_button.get()
                                     }),
+                                )
+                                .child(
+                                    Element::label(
+                                        i18n_hub
+                                            .tr(|| t!("settings.modifier_required").into_owned()),
+                                    )
+                                    .font_size(11.0)
+                                    .fg(Color::rgba(235, 241, 255, 170)),
                                 ),
                         ))
                         .child(
@@ -1175,13 +1185,15 @@ pub(crate) fn settings_panel(context: SettingsPanelContext) -> Element {
                                         .parse::<u16>()
                                         .unwrap_or(95)
                                         .clamp(60, 160);
-                                    let configuration = HotkeyConfig {
-                                        ctrl: activation_ctrl.get(),
-                                        alt: activation_alt.get(),
-                                        shift: activation_shift.get(),
-                                        meta: activation_meta.get(),
-                                        key: activation_key.get(),
-                                    };
+                                    // 裸键配置回退为默认热键（Alt+Space），写入前规范化。
+                                    let configuration =
+                                        hotkeys::sanitize_activation_config(&HotkeyConfig {
+                                            ctrl: activation_ctrl.get(),
+                                            alt: activation_alt.get(),
+                                            shift: activation_shift.get(),
+                                            meta: activation_meta.get(),
+                                            key: activation_key.get(),
+                                        });
                                     let custom_color =
                                         parse_selection_color(&custom_selection_color.get())
                                             .unwrap_or(0x4c8bf4);
@@ -1247,6 +1259,13 @@ pub(crate) fn settings_panel(context: SettingsPanelContext) -> Element {
                                         activation_display_for_apply.set(hotkeys::display_config(
                                             &settings.activation_hotkey,
                                         ));
+                                        // 裸键已回退为默认热键，同步勾选框与键名信号，
+                                        // 避免显示值与复选状态不一致。
+                                        activation_ctrl.set(settings.activation_hotkey.ctrl);
+                                        activation_alt.set(settings.activation_hotkey.alt);
+                                        activation_shift.set(settings.activation_hotkey.shift);
+                                        activation_meta.set(settings.activation_hotkey.meta);
+                                        activation_key.set(settings.activation_hotkey.key.clone());
                                         selection_color
                                             .set(selection_color_for_settings(&settings));
                                         custom_selection_color.set(selection_color_hex(

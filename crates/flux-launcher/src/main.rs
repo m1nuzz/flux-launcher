@@ -205,13 +205,15 @@ fn init_launcher_state(
     let settings_visible = settings_ui.visible;
     let settings_tab = settings_ui.tab;
     let show_results = signal(false);
-    let activation_key = signal(settings.activation_hotkey.key.clone());
-    let activation_display = signal(hotkeys::display_config(&settings.activation_hotkey));
+    // 裸键配置回退为默认热键（Alt+Space），显示与勾选状态保持一致。
+    let activation_config = hotkeys::sanitize_activation_config(&settings.activation_hotkey);
+    let activation_key = signal(activation_config.key.clone());
+    let activation_display = signal(hotkeys::display_config(&activation_config));
     let activation_recording = signal(false);
-    let activation_ctrl = signal(settings.activation_hotkey.ctrl);
-    let activation_alt = signal(settings.activation_hotkey.alt);
-    let activation_shift = signal(settings.activation_hotkey.shift);
-    let activation_meta = signal(settings.activation_hotkey.meta);
+    let activation_ctrl = signal(activation_config.ctrl);
+    let activation_alt = signal(activation_config.alt);
+    let activation_shift = signal(activation_config.shift);
+    let activation_meta = signal(activation_config.meta);
     let ignore_fullscreen = signal(settings.ignore_hotkeys_in_fullscreen);
     let smooth_caret = signal(settings.smooth_caret);
     let switch_to_english_layout = signal(settings.switch_to_english_layout);

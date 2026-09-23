@@ -2,7 +2,24 @@ use flux_core::HotkeyConfig;
 use windui::event::{Key as EventKey, KeyEvent};
 use windui::prelude::{Hotkey, Key};
 
+/// 激活热键必须包含至少一个修饰键（Ctrl/Alt/Shift/Win）；裸键（如单独 `F8`）
+/// 在游戏 / 打字场景极易误触呼出启动器（审查发现 4）。
+pub fn has_modifier(config: &HotkeyConfig) -> bool {
+    config.ctrl || config.alt || config.shift || config.meta
+}
+
+/// 裸键配置回退到 `HotkeyConfig::default()`（`Alt+Space`），含修饰键的原样保留。
+/// 注册、显示与持久化统一经过此规范化，保证三者一致。
+pub fn sanitize_activation_config(config: &HotkeyConfig) -> HotkeyConfig {
+    if has_modifier(config) {
+        config.clone()
+    } else {
+        HotkeyConfig::default()
+    }
+}
+
 pub fn activation_hotkey(config: &HotkeyConfig) -> Hotkey {
+    let config = sanitize_activation_config(config);
     let mut hotkey = Hotkey::new(parse_key(&config.key));
     if config.ctrl {
         hotkey = hotkey.ctrl();
@@ -187,7 +204,10 @@ fn function_key(value: &str) -> Option<u32> {
 
 #[cfg(test)]
 mod tests {
-    use super::{capture_config, display_config, function_key, key_name, parse_key};
+    use super::{
+        capture_config, display_config, function_key, key_name, parse_key,
+        sanitize_activation_config,
+    };
     use windui::event::{Key, KeyEvent};
     use windui::prelude::Key as HotkeyKey;
 
@@ -247,5 +267,44 @@ mod tests {
         };
         assert!(capture_config(&event, true, false).is_none());
         assert_eq!(key_name(Key::Other(0x65)).as_deref(), Some("Numpad5"));
+    }
+
+    #[test]
+    fn bare_key_hotkey_falls_back_to_default() {
+        let bare = flux_core::HotkeyConfig {
+            ctrl: false,
+            alt: false,
+            shift: false,
+            meta: false,
+            key: String::from("F8"),
+        };
+        assert_eq!(
+            sanitize_activation_config(&bare),
+            flux_core::HotkeyConfig::default()
+        );
+        assert_eq!(
+            display_config(&sanitize_activation_config(&bare)),
+            "Alt + Space"
+        );
+    }
+
+    #[test]
+    fn modified_hotkey_config_is_preserved() {
+        let shift_config = flux_core::HotkeyConfig {
+            ctrl: false,
+            alt: false,
+            shift: true,
+            meta: false,
+            key: String::from("Space"),
+        };
+        assert_eq!(sanitize_activation_config(&shift_config), shift_config);
+        let ctrl_config = flux_core::HotkeyConfig {
+            ctrl: true,
+            alt: false,
+            shift: false,
+            meta: false,
+            key: String::from("F8"),
+        };
+        assert_eq!(sanitize_activation_config(&ctrl_config), ctrl_config);
     }
 }
