@@ -66,7 +66,7 @@ pub(crate) fn build_settings_panel(
                         .spacing(3)
                         .child(Element::label("Settings").font_size(25.0).fg(Color::WHITE))
                         .child(
-                            Element::label("Changes apply immediately and are saved atomically")
+                            Element::label("Review changes, then press Apply to save")
                                 .font_size(12.0)
                                 .fg(Color::rgba(235, 241, 255, 235)),
                         ),
