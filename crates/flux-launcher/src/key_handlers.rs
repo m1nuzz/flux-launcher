@@ -148,6 +148,15 @@ pub(crate) fn register_key_handlers(
             ) {
                 eprintln!("Ctrl+Shift+C target={:?}", result.target);
                 if copy_result_file(&result) {
+                    // Copying a hit is as much a committed search as running
+                    // it, so the typed query has to come back on Alt+Up.
+                    record_query_history(
+                        &settings_for_history_for_keys,
+                        &query_history_for_keys,
+                        &query_for_keys.get(),
+                        stats_usage_for_keys,
+                        stats_top_for_keys,
+                    );
                     return true;
                 }
             }
@@ -167,6 +176,13 @@ pub(crate) fn register_key_handlers(
                 selected_index_for_keys.get(),
             ) {
                 if copy_result_path(&result) {
+                    record_query_history(
+                        &settings_for_history_for_keys,
+                        &query_history_for_keys,
+                        &query_for_keys.get(),
+                        stats_usage_for_keys,
+                        stats_top_for_keys,
+                    );
                     return true;
                 }
             }
