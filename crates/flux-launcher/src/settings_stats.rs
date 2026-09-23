@@ -186,6 +186,32 @@ pub(crate) fn build_stats_tab(ui: &SettingsUi) -> Element {
 pub(crate) const SHARE_CARD_WIDTH: u32 = 1200;
 pub(crate) const SHARE_CARD_HEIGHT: u32 = 630;
 
+/// Hero number size adapts to magnitude so both total=2 and total=1284000
+/// fill their column without clipping or dwarfing.
+pub(crate) fn hero_font_size(total: u64) -> f32 {
+    if total < 100 {
+        190.0
+    } else if total < 10_000 {
+        150.0
+    } else {
+        115.0
+    }
+}
+
+/// Full length of the inline share bar in the top list.
+pub(crate) const BAR_TRACK_WIDTH: i32 = 170;
+
+/// Fill length of one share bar, scaled against the busiest row so bars
+/// compare with each other: (42, 42, 170) -> 170, (21, 42, 170) -> 85.
+/// A nonzero count never rounds away to zero.
+pub(crate) fn bar_fill_width(count: u64, max: u64, track: i32) -> i32 {
+    if max == 0 || track <= 0 {
+        return 0;
+    }
+    let scaled = (count as f32 / max as f32 * track as f32).round() as i32;
+    scaled.clamp(1, track)
+}
+
 /// Thousands separator for hero numbers: 1284 -> "1,284".
 pub(crate) fn format_count(value: u64) -> String {
     let digits = value.to_string();
@@ -199,124 +225,216 @@ pub(crate) fn format_count(value: u64) -> String {
     out
 }
 
-fn share_tile(value: String, caption: String, value_size: f32) -> Element {
-    Element::col()
-        .bg(Color::rgb(22, 33, 58))
-        .corner(20.0)
-        .padding_xy(28, 22)
-        .spacing(4)
-        .child(
-            Element::label(value)
-                .font_size(value_size)
-                .font_weight(700)
-                .fg(Color::WHITE),
-        )
-        .child(
-            Element::label(caption)
-                .font_size(18.0)
-                .fg(Color::rgb(142, 162, 200)),
-        )
+/// Procedural deep-space backdrop: vertical base gradient, two nebula
+/// glows, one deterministic starfield. Pure raster work, no platform or
+/// text engine involved, so this is unit-testable anywhere.
+pub(crate) fn paint_space_background(pixmap: &mut tiny_skia::Pixmap) {
+    use tiny_skia::{
+        BlendMode, Color as SkColor, FillRule, GradientStop, LinearGradient, Paint as SkPaint,
+        PathBuilder, Point, RadialGradient, Rect, Shader, SpreadMode, Transform,
+    };
+
+    let w = pixmap.width() as f32;
+    let h = pixmap.height() as f32;
+    let full = Rect::from_xywh(0.0, 0.0, w, h).expect("share card has nonzero size");
+    let identity = Transform::identity();
+    let mut paint = SkPaint {
+        blend_mode: BlendMode::SourceOver,
+        anti_alias: true,
+        ..SkPaint::default()
+    };
+
+    // Base: midnight top melting into deep blue.
+    let base = LinearGradient::new(
+        Point::from_xy(0.0, 0.0),
+        Point::from_xy(0.0, h),
+        vec![
+            GradientStop::new(0.0, SkColor::from_rgba8(4, 7, 22, 255)),
+            GradientStop::new(1.0, SkColor::from_rgba8(13, 22, 54, 255)),
+        ],
+        SpreadMode::Pad,
+        identity,
+    )
+    .expect("two stops always build");
+    paint.shader = base;
+    pixmap.fill_rect(full, &paint, identity, None);
+
+    // Nebula glows: violet upper-right, teal lower-left. Transparent edge +
+    // Pad spread keeps the falloff seamless.
+    for (cx, cy, radius, r, g, b, alpha) in [
+        (950.0, 130.0, 380.0, 96u8, 110u8, 255u8, 64u8),
+        (170.0, 520.0, 330.0, 46u8, 150u8, 225u8, 52u8),
+    ] {
+        let glow = RadialGradient::new(
+            Point::from_xy(cx, cy),
+            0.0,
+            Point::from_xy(cx, cy),
+            radius,
+            vec![
+                GradientStop::new(0.0, SkColor::from_rgba8(r, g, b, alpha)),
+                GradientStop::new(1.0, SkColor::from_rgba8(r, g, b, 0)),
+            ],
+            SpreadMode::Pad,
+            identity,
+        );
+        if let Some(shader) = glow {
+            paint.shader = shader;
+            pixmap.fill_rect(full, &paint, identity, None);
+        }
+    }
+
+    // Deterministic starfield: fixed seed, same sky on every render.
+    // Stars inside text zones are dimmed and shrunk so small type stays
+    // legible: header, left hero block, right top list, footer strip.
+    let in_text_zone = |x: f32, y: f32| {
+        let header = (60.0..=1150.0).contains(&x) && (30.0..=120.0).contains(&y);
+        let hero = (80.0..=730.0).contains(&x) && (140.0..=480.0).contains(&y);
+        let list = (720.0..=1150.0).contains(&x) && (80.0..=540.0).contains(&y);
+        let footer = (60.0..=1150.0).contains(&x) && (530.0..=610.0).contains(&y);
+        header || hero || list || footer
+    };
+    let mut rng: u64 = 0x9E3779B97F4A7C15;
+    let mut next = move || {
+        rng ^= rng << 13;
+        rng ^= rng >> 7;
+        rng ^= rng << 17;
+        rng
+    };
+    for _ in 0..130 {
+        let x = (next() % 1200) as f32;
+        let y = (next() % 630) as f32;
+        let (mut radius, mut alpha): (f32, u8) = match next() % 10 {
+            0..=5 => (0.8, 110u8),
+            6..=7 => (1.2, 160u8),
+            8 => (1.7, 205u8),
+            _ => (2.2, 235u8),
+        };
+        if in_text_zone(x, y) {
+            radius = radius.min(1.2);
+            alpha = alpha.min(80);
+        }
+        if let Some(circle) = PathBuilder::from_circle(x, y, radius) {
+            paint.shader = Shader::SolidColor(SkColor::from_rgba8(255, 255, 255, alpha));
+            pixmap.fill_path(&circle, &paint, FillRule::Winding, identity, None);
+        }
+    }
 }
 
-/// Share card layout. Text lives on flat surfaces only; the single gradient
-/// accent band carries no text (Wrapped rule: legibility over effects).
-/// `top` holds up to MAX_TOP_QUERIES (display text, run count) pairs.
+/// Share card layout: one hero total, the top opened list, one footer line.
+/// The backdrop is painted procedurally (see `paint_space_background`), so the
+/// tree only carries text and the hairline. The middle band grows to absorb
+/// leftover height and centers its columns, so slack splits above and below
+/// the content instead of pooling under it — the footer stays on the last line.
 pub(crate) fn build_share_card(total: u64, version: &str, top: &[(String, u64)]) -> Element {
-    let mut top_col = Element::col().width(400).spacing(10).child(
-        Element::label("TOP OPENED")
-            .font_size(22.0)
-            .font_weight(600)
-            .fg(Color::rgb(142, 162, 200)),
-    );
+    let max_count = top.iter().map(|(_, count)| *count).max().unwrap_or(0);
+    let mut list = Element::col().width(560).spacing(18);
     if top.is_empty() {
-        top_col = top_col.child(
+        list = list.child(
             Element::label("No data yet.")
-                .font_size(26.0)
-                .fg(Color::rgb(142, 162, 200)),
+                .font_size(28.0)
+                .fg(Color::rgb(180, 195, 230)),
         );
     }
-    for (i, (query, count)) in top.iter().enumerate() {
-        top_col = top_col.child(
-            Element::label(format!("{}. {query}: {count}", i + 1))
-                .font_size(26.0)
-                .fg(Color::WHITE)
-                .max_lines(1)
-                .truncate(Truncate::End),
-        );
-    }
-    Element::row()
-        .width(SHARE_CARD_WIDTH as i32)
-        .height(SHARE_CARD_HEIGHT as i32)
-        .bg(Color::rgb(11, 18, 32))
-        .child(
-            Element::leaf()
-                .width(28)
-                .height(SHARE_CARD_HEIGHT as i32)
-                .bg_gradient(Gradient::linear(
-                    (0.0, 0.0),
-                    (0.0, 1.0),
-                    vec![
-                        (0.0, Color::rgb(76, 139, 244)),
-                        (1.0, Color::rgb(37, 78, 216)),
-                    ],
-                )),
-        )
-        .child(
-            Element::col()
-                .weight(1.0)
-                .padding_edges(64, 52, 60, 48)
-                .spacing(20)
+    for (title, count) in top {
+        // Every slot has a fixed width (300 + 14 + 170 + 14 + 60 = the list
+        // width): a flexible title would absorb the differing count widths
+        // and slide the track sideways from row to row.
+        let fill = bar_fill_width(*count, max_count, BAR_TRACK_WIDTH);
+        list = list.child(
+            Element::row()
+                .width_match()
+                .cross(Align::Center)
+                .spacing(14)
+                .child(
+                    Element::label(title.clone())
+                        .font_size(30.0)
+                        .font_weight(600)
+                        .fg(Color::WHITE)
+                        .max_lines(1)
+                        .truncate(Truncate::End)
+                        .width(300),
+                )
                 .child(
                     Element::row()
-                        .width_match()
+                        .width(BAR_TRACK_WIDTH)
+                        .height(8)
                         .cross(Align::Center)
+                        .bg(Color::rgba(255, 255, 255, 26))
+                        .corner(4.0)
                         .child(
-                            Element::label("FLUX LAUNCHER")
-                                .font_size(20.0)
-                                .font_weight(600)
-                                .fg(Color::rgb(142, 162, 200)),
-                        )
-                        .child(Element::flex_spacer())
-                        .child(
-                            Element::label("MY STATS")
-                                .font_size(20.0)
-                                .font_weight(600)
-                                .fg(Color::rgb(142, 162, 200)),
+                            Element::leaf()
+                                .width(fill)
+                                .height(8)
+                                .corner(4.0)
+                                .bg_gradient(Gradient::linear(
+                                    (0.0, 0.0),
+                                    (1.0, 0.0),
+                                    vec![
+                                        (0.0, Color::rgb(105, 155, 255)),
+                                        (1.0, Color::rgb(140, 110, 255)),
+                                    ],
+                                )),
                         ),
                 )
                 .child(
-                    Element::row()
-                        .width_match()
-                        .spacing(48)
-                        .child(
-                            Element::col()
-                                .weight(1.0)
-                                .spacing(16)
-                                .child(
-                                    Element::label(format_count(total))
-                                        .font_size(140.0)
-                                        .font_weight(700)
-                                        .fg(Color::WHITE),
-                                )
-                                .child(
-                                    Element::label("QUERIES RUN")
-                                        .font_size(22.0)
-                                        .font_weight(600)
-                                        .fg(Color::rgb(142, 162, 200)),
-                                )
-                                .child(share_tile(
-                                    format!("v{version}"),
-                                    String::from("VERSION"),
-                                    56.0,
-                                )),
-                        )
-                        .child(top_col),
-                )
-                .child(
-                    Element::label("github.com/m1nuzz/flux-launcher")
-                        .font_size(20.0)
-                        .fg(Color::rgb(91, 107, 140)),
+                    Element::label(format_count(*count))
+                        .font_size(30.0)
+                        .font_weight(700)
+                        .fg(Color::rgb(143, 176, 255))
+                        .width(60)
+                        .text_align(Align::End),
                 ),
+        );
+    }
+    Element::col()
+        .width(SHARE_CARD_WIDTH as i32)
+        .height(SHARE_CARD_HEIGHT as i32)
+        .padding_edges(64, 56, 60, 56)
+        .spacing(22)
+        .child(
+            Element::label("FLUX LAUNCHER")
+                .font_size(22.0)
+                .font_weight(700)
+                .fg(Color::rgb(180, 195, 230)),
+        )
+        .child(
+            Element::row()
+                .width_match()
+                .weight(1.0)
+                .cross(Align::Center)
+                .spacing(56)
+                .child(
+                    Element::col()
+                        .weight(1.0)
+                        .spacing(14)
+                        .child(
+                            Element::label(format_count(total))
+                                .font_size(hero_font_size(total))
+                                .font_weight(700)
+                                .fg(Color::WHITE),
+                        )
+                        .child(
+                            Element::label("QUERIES RUN")
+                                .font_size(22.0)
+                                .font_weight(700)
+                                .fg(Color::rgb(180, 195, 230)),
+                        ),
+                )
+                .child(list),
+        )
+        .child(
+            Element::leaf()
+                .width_match()
+                .height(1)
+                .bg(Color::rgba(255, 255, 255, 30)),
+        )
+        .child(
+            Element::label(format!(
+                "Flux Launcher v{version} • github.com/m1nuzz/flux-launcher"
+            ))
+            .font_size(22.0)
+            .font_weight(600)
+            .fg(Color::rgb(160, 175, 210)),
         )
 }
 /// Render the share card offscreen (Windows only: needs the platform text
@@ -338,6 +456,7 @@ fn render_share_card_pixmap(
         &mut engine,
     );
     let mut pixmap = tiny_skia::Pixmap::new(SHARE_CARD_WIDTH, SHARE_CARD_HEIGHT)?;
+    paint_space_background(&mut pixmap);
     {
         let mut target = windui::render::PixmapTarget {
             pixmap: &mut pixmap,
@@ -483,6 +602,21 @@ mod tests {
     }
 
     #[test]
+    fn hero_font_size_adapts_to_digit_count() {
+        assert_eq!(hero_font_size(2), 190.0);
+        assert_eq!(hero_font_size(1284), 150.0);
+        assert_eq!(hero_font_size(1_000_000), 115.0);
+    }
+
+    #[test]
+    fn bar_fill_width_scales_against_top_row() {
+        assert_eq!(bar_fill_width(42, 42, BAR_TRACK_WIDTH), BAR_TRACK_WIDTH);
+        assert_eq!(bar_fill_width(21, 42, BAR_TRACK_WIDTH), 85);
+        assert_eq!(bar_fill_width(1, 1_000, BAR_TRACK_WIDTH), 1);
+        assert_eq!(bar_fill_width(5, 0, BAR_TRACK_WIDTH), 0);
+    }
+
+    #[test]
     fn unpremultiply_rgba_restores_straight_channels() {
         assert_eq!(unpremultiply_rgba(&[10, 20, 30, 0]), vec![0, 0, 0, 0]);
         assert_eq!(
@@ -491,6 +625,35 @@ mod tests {
         );
         // Half-transparent red (128,0,0,128) straightens back to (255,0,0,255).
         assert_eq!(unpremultiply_rgba(&[128, 0, 0, 128]), vec![255, 0, 0, 255]);
+    }
+
+    fn channel_near(actual: u8, expected: u8, tolerance: u8) -> bool {
+        (actual as i16 - expected as i16).abs() <= tolerance as i16
+    }
+
+    #[test]
+    fn space_background_has_gradient_nebula_and_stars() {
+        let mut pixmap = tiny_skia::Pixmap::new(SHARE_CARD_WIDTH, SHARE_CARD_HEIGHT).unwrap();
+        paint_space_background(&mut pixmap);
+        // Base vertical gradient: near-black navy top, deep blue bottom.
+        let top = pixmap.pixel(600, 4).unwrap();
+        assert!(channel_near(top.red(), 5, 4));
+        assert!(channel_near(top.green(), 8, 4));
+        assert!(channel_near(top.blue(), 26, 6));
+        let bottom = pixmap.pixel(600, 625).unwrap();
+        assert!(channel_near(bottom.red(), 13, 4));
+        assert!(channel_near(bottom.green(), 22, 4));
+        assert!(channel_near(bottom.blue(), 54, 6));
+        // Violet nebula core lifts the blue channel well above the base.
+        let glow = pixmap.pixel(950, 130).unwrap();
+        assert!(glow.blue() > 60, "nebula core should glow, got {:?}", glow);
+        // Deterministic starfield: white dots exist somewhere.
+        let data = pixmap.data();
+        let bright = data
+            .chunks_exact(4)
+            .filter(|px| px[0] > 150 && px[1] > 150 && px[2] > 150)
+            .count();
+        assert!(bright > 30, "expected star pixels, got {bright}");
     }
 
     #[test]
@@ -536,5 +699,19 @@ mod tests {
         let path = std::env::temp_dir().join("flux-stats-card-mock.png");
         std::fs::write(&path, &png).unwrap();
         eprintln!("CARD_MOCK={}", path.display());
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn share_card_mock_small_data_writes_png_for_review() {
+        let top = vec![
+            (String::from("Grok"), 2),
+            (String::from("Google Chrome"), 1),
+            (String::from("Perplexity"), 1),
+        ];
+        let png = render_share_card_png(4, "0.1.128", &top).expect("share card should render");
+        let path = std::env::temp_dir().join("flux-stats-card-mock-small.png");
+        std::fs::write(&path, &png).unwrap();
+        eprintln!("CARD_MOCK_SMALL={}", path.display());
     }
 }
