@@ -1,5 +1,4 @@
 #[cfg(windows)]
-#[allow(dead_code)]
 pub fn foreground_is_fullscreen() -> bool {
     use flux_core::{matches_display_bounds, WindowBounds};
     use std::ffi::c_void;

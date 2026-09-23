@@ -1,5 +1,4 @@
 use std::collections::HashMap;
-use std::ffi::OsString;
 use std::fs::OpenOptions;
 use std::io::Write;
 use std::path::{Path, PathBuf};
@@ -699,9 +698,6 @@ fn collect_files(_root: &Path, _depth: usize, _candidates: &mut Vec<SearchResult
 
 #[cfg(not(windows))]
 fn collect_app_paths(_candidates: &mut Vec<SearchResult>) {}
-
-#[allow(dead_code)]
-fn _keep_os_string_type_available(_: OsString) {}
 
 #[cfg(test)]
 mod tests {
