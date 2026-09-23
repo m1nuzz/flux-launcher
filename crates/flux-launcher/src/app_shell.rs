@@ -18,6 +18,7 @@ pub(crate) fn build_shell_content(
     launcher_surface: Element,
     settings_panel: Element,
     settings_visible: Signal<bool>,
+    clear_history_dialog: Element,
 ) -> Element {
     let launcher_page = Element::stack()
         .fill()
@@ -39,6 +40,7 @@ pub(crate) fn build_shell_content(
         .font_family(LAUNCHER_FONT_FAMILY)
         .child(launcher_page)
         .child(settings_page)
+        .child(clear_history_dialog)
 }
 
 #[allow(clippy::too_many_arguments)]

@@ -115,6 +115,15 @@ pub mod scrollbar {
 pub trait ClipboardProvider {
     fn get_text(&self) -> Option<String>;
     fn set_text(&self, text: &str);
+    /// 写入图片（直排 RGBA8）。默认空实现：图片分享在不支持的后端静默跳过。
+    fn set_image(&self, _width: u32, _height: u32, _rgba: &[u8]) {}
+    /// 一次会话内同时写入文本与图片（分享场景）：打开一次、清空一次、两种
+    /// 格式都放入，避免分两次调用时后一次清空前一次的内容。默认实现退化为
+    /// 文本 + 图片两次调用（无图片的后端只剩文本）。
+    fn set_text_and_image(&self, text: &str, width: u32, height: u32, rgba: &[u8]) {
+        self.set_text(text);
+        self.set_image(width, height, rgba);
+    }
 }
 
 /// 代际索引：删除节点后 generation 自增，旧 id 自然失效。
@@ -1428,6 +1437,13 @@ impl EventCtx<'_> {
     pub fn clipboard_set(&self, text: &str) {
         if let Some(c) = self.tree.clipboard.as_ref() {
             c.set_text(text);
+        }
+    }
+    /// 一次会话内同时写入剪贴板文本与图片（直排 RGBA8；无剪贴板实现或后端
+    /// 不支持图片时退化为纯文本）。
+    pub fn clipboard_set_text_and_image(&self, text: &str, width: u32, height: u32, rgba: &[u8]) {
+        if let Some(c) = self.tree.clipboard.as_ref() {
+            c.set_text_and_image(text, width, height, rgba);
         }
     }
     /// 请求在 `pos`（逻辑坐标）弹出浮层菜单。宿主接管渲染、命中与项激活。

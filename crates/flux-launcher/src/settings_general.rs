@@ -38,9 +38,7 @@ pub(crate) fn build_general_tab(ui: &SettingsUi) -> Element {
     let update_sender_for_check_now = update_sender_for_apply.clone();
     let update_check_in_flight_for_apply = Rc::clone(&ui.update_check_in_flight);
     let update_check_in_flight_for_check_now = Rc::clone(&ui.update_check_in_flight);
-    let settings_for_clear_history = Arc::clone(&ui.shared_settings);
-    let history_for_clear = Rc::clone(&ui.query_history);
-    let history_cursor_for_clear = ui.history_cursor;
+    let clear_history_confirm_for_button = ui.clear_history_confirm;
     let settings_for_apply = Arc::clone(&ui.shared_settings);
     let theme_for_apply = ui.theme_handle.clone();
     let position_for_apply = ui.window_position.clone();
@@ -299,14 +297,8 @@ pub(crate) fn build_general_tab(ui: &SettingsUi) -> Element {
                             .child(Element::setting_row_desc(
                                 "Query history",
                                 "Ctrl+H recalls committed searches",
-                                Element::button("Clear history").small().on_click(move |ctx| {
-                                    if let Ok(mut settings) = settings_for_clear_history.write() {
-                                        settings.clear_query_history();
-                                        let _ = save_settings(&settings);
-                                    }
-                                    history_for_clear.borrow_mut().clear();
-                                    history_cursor_for_clear.set(None);
-                                    ctx.toast_ok("Query history cleared");
+                                Element::button("Clear history").small().on_click(move |_| {
+                                    clear_history_confirm_for_button.set(true);
                                 }))
                             )
                             .child(Element::divider())

@@ -346,6 +346,7 @@ dependencies = [
  "serde",
  "serde_json",
  "sha2",
+ "tiny-skia",
  "toml 0.8.23",
  "ureq",
  "windows",

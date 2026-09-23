@@ -35,6 +35,7 @@ pub(crate) fn build_settings_panel(
     tab_visual: Element,
     tab_priorities: Element,
     tab_plugins: Element,
+    tab_stats: Element,
 ) -> Element {
     let settings_tab = ui.settings_tab;
     let settings_visible = ui.settings_visible;
@@ -65,13 +66,13 @@ pub(crate) fn build_settings_panel(
                         .spacing(3)
                         .child(Element::label("Settings").font_size(25.0).fg(Color::WHITE))
                         .child(
-                            Element::label("Changes apply immediately and are saved atomically")
+                            Element::label("Review changes, then press Apply to save")
                                 .font_size(12.0)
                                 .fg(Color::rgba(235, 241, 255, 235)),
                         ),
                 )
                 .child(Element::segmented(
-                    vec!["General", "Visual", "Priorities", "Plugins"],
+                    vec!["General", "Visual", "Priorities", "Plugins", "Stats"],
                     settings_tab,
                 ))
                 .child(
@@ -101,4 +102,5 @@ pub(crate) fn build_settings_panel(
         .child(tab_plugins)
         .child(tab_visual)
         .child(tab_priorities)
+        .child(tab_stats)
 }

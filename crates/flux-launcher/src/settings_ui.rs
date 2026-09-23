@@ -16,6 +16,9 @@ use super::updater;
 pub(crate) struct SettingsUi {
     pub(crate) shared_settings: Arc<RwLock<Settings>>,
     pub(crate) query_history: Rc<RefCell<Vec<String>>>,
+    pub(crate) stats_usage: Signal<String>,
+    pub(crate) stats_top: Signal<String>,
+    pub(crate) clear_history_confirm: Signal<bool>,
     pub(crate) history_cursor: Signal<Option<usize>>,
     pub(crate) priorities: Signal<Vec<PriorityEntry>>,
     pub(crate) update_status: Signal<String>,

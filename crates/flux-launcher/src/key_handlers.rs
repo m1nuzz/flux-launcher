@@ -8,7 +8,7 @@ use windui::app::{App, CursorVisibilityHandle, HotkeyHandle, WindowOpHandle, Win
 use windui::event::{Key, KeyEvent};
 use windui::signal::Signal;
 
-use super::history_priorities::{record_query_history, set_result_priority};
+use super::history_priorities::{record_launch, record_query_history, set_result_priority};
 use super::hotkeys;
 use super::input_keys::{alt_key_is_down, is_run_as_admin_key, shift_key_is_down};
 use super::launch;
@@ -49,6 +49,8 @@ pub(crate) fn register_key_handlers(
     inline_completion: Signal<String>,
     settings_visible: Signal<bool>,
     query_history: Rc<RefCell<Vec<String>>>,
+    stats_usage: Signal<String>,
+    stats_top: Signal<String>,
     history_mode: Signal<bool>,
     history_cursor: Signal<Option<usize>>,
     shared_settings: Arc<RwLock<Settings>>,
@@ -85,6 +87,8 @@ pub(crate) fn register_key_handlers(
     let inline_completion_for_keys = inline_completion;
     let settings_visible_for_keys = settings_visible;
     let query_history_for_keys = Rc::clone(&query_history);
+    let stats_usage_for_keys = stats_usage;
+    let stats_top_for_keys = stats_top;
     let history_mode_for_keys = history_mode;
     let history_cursor_for_keys = history_cursor;
     let settings_for_history_for_keys = Arc::clone(&shared_settings);
@@ -144,6 +148,15 @@ pub(crate) fn register_key_handlers(
             ) {
                 eprintln!("Ctrl+Shift+C target={:?}", result.target);
                 if copy_result_file(&result) {
+                    // Copying a hit is as much a committed search as running
+                    // it, so the typed query has to come back on Alt+Up.
+                    record_query_history(
+                        &settings_for_history_for_keys,
+                        &query_history_for_keys,
+                        &query_for_keys.get(),
+                        stats_usage_for_keys,
+                        stats_top_for_keys,
+                    );
                     return true;
                 }
             }
@@ -163,6 +176,13 @@ pub(crate) fn register_key_handlers(
                 selected_index_for_keys.get(),
             ) {
                 if copy_result_path(&result) {
+                    record_query_history(
+                        &settings_for_history_for_keys,
+                        &query_history_for_keys,
+                        &query_for_keys.get(),
+                        stats_usage_for_keys,
+                        stats_top_for_keys,
+                    );
                     return true;
                 }
             }
@@ -294,6 +314,8 @@ pub(crate) fn register_key_handlers(
                 &settings_for_history_for_keys,
                 &query_history_for_keys,
                 &query,
+                stats_usage_for_keys,
+                stats_top_for_keys,
             );
             if let Some(result) = selected_result(
                 &current_results,
@@ -301,6 +323,12 @@ pub(crate) fn register_key_handlers(
                 selected_index_for_keys.get(),
             ) {
                 if let Some(target) = result.target.as_deref() {
+                    record_launch(
+                        &settings_for_history_for_keys,
+                        &result.id,
+                        &result.title,
+                        stats_top_for_keys,
+                    );
                     let _ = launch::open_file_location(target);
                 }
             }
@@ -354,6 +382,8 @@ pub(crate) fn register_key_handlers(
                         &settings_for_history_for_keys,
                         &query_history_for_keys,
                         &query,
+                        stats_usage_for_keys,
+                        stats_top_for_keys,
                     );
                     if let Some(result) = selected_result(
                         &current_results,
@@ -384,6 +414,16 @@ pub(crate) fn register_key_handlers(
                                 execute_result_action(&result, &action.kind)
                             };
                             if executed {
+                                // Priority assignment opens nothing; every other
+                                // executed action runs its result.
+                                if !matches!(action.kind, ActionKind::SetPriority) {
+                                    record_launch(
+                                        &settings_for_history_for_keys,
+                                        &result.id,
+                                        &result.title,
+                                        stats_top_for_keys,
+                                    );
+                                }
                                 window_op_for_keys.hide_window();
                             }
                         }
@@ -404,6 +444,8 @@ pub(crate) fn register_key_handlers(
                 &settings_for_history_for_keys,
                 &query_history_for_keys,
                 &query,
+                stats_usage_for_keys,
+                stats_top_for_keys,
             );
             if let Some(result) = selected_result(
                 &current_results,
@@ -412,6 +454,12 @@ pub(crate) fn register_key_handlers(
             ) {
                 if let Some(target) = result.target.as_deref() {
                     if launch::run_as_admin(target) {
+                        record_launch(
+                            &settings_for_history_for_keys,
+                            &result.id,
+                            &result.title,
+                            stats_top_for_keys,
+                        );
                         window_op_for_keys.hide_window();
                     }
                 }
@@ -488,6 +536,8 @@ pub(crate) fn register_key_handlers(
                     &settings_for_history_for_keys,
                     &query_history_for_keys,
                     &query,
+                    stats_usage_for_keys,
+                    stats_top_for_keys,
                 );
                 if let Some(result) = selected_result(
                     &current_results,
@@ -500,14 +550,32 @@ pub(crate) fn register_key_handlers(
                         settings_visible_for_keys.set(true);
                         size_for_keys.set(SETTINGS_WINDOW_WIDTH, SETTINGS_WINDOW_HEIGHT);
                     } else if result.id == "open-recycle-bin" {
+                        record_launch(
+                            &settings_for_history_for_keys,
+                            &result.id,
+                            &result.title,
+                            stats_top_for_keys,
+                        );
                         launch::open_recycle_bin_async();
                         window_op_for_keys.hide_window();
                     } else if let Some(target) = result.target.as_deref() {
+                        record_launch(
+                            &settings_for_history_for_keys,
+                            &result.id,
+                            &result.title,
+                            stats_top_for_keys,
+                        );
                         launch::open_path_async(target);
                         window_op_for_keys.hide_window();
                     } else if let Some(action) =
                         plugin_actions_for_keys.borrow().get(&result.id).cloned()
                     {
+                        record_launch(
+                            &settings_for_history_for_keys,
+                            &result.id,
+                            &result.title,
+                            stats_top_for_keys,
+                        );
                         plugins::execute_async(action);
                         window_op_for_keys.hide_window();
                     }
