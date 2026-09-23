@@ -2932,11 +2932,42 @@ try {
 
             $reopenDpi = [FluxWallpaper]::GetDpiForWindow($reopenedSettingsHwnd)
             if ($reopenDpi -eq 0) { $reopenDpi = 96 }
-            $reopenBackX = $reopenedSettingsRect.Right - [int][Math]::Round(42 * ($reopenDpi / 96.0)) - [int][Math]::Round(30 * ($reopenDpi / 96.0))
-            $reopenBackY = $reopenedSettingsRect.Top + [int][Math]::Round(58 * ($reopenDpi / 96.0))
-            [FluxWallpaper]::SetCursorPos($reopenBackX, $reopenBackY) | Out-Null
-            [FluxWallpaper]::mouse_event(0x0002, 0, 0, 0, [UIntPtr]::Zero)
-            [FluxWallpaper]::mouse_event(0x0004, 0, 0, 0, [UIntPtr]::Zero)
+            # The Back button follows the header row, whose height depends on how the
+            # subtitle wraps and on how many tabs the segmented control carries, so a
+            # fixed offset silently misses it. Sweep the header band instead and accept
+            # the first probe that collapses Settings back to the compact launcher - a
+            # tab or field click cannot produce that transition, so the sweep cannot
+            # settle on a false positive.
+            $backProbeXOffsets = @(72, 54, 90, 110, 130)
+            $backProbeYOffsets = @(58, 76, 94, 112, 130, 40)
+            $backFoundX = 0
+            $backFoundY = 0
+            foreach ($probeX in $backProbeXOffsets) {
+                if ($backFoundY -ne 0) { break }
+                foreach ($probeY in $backProbeYOffsets) {
+                    $candidateX = $reopenedSettingsRect.Right - [int][Math]::Round($probeX * ($reopenDpi / 96.0))
+                    $candidateY = $reopenedSettingsRect.Top + [int][Math]::Round($probeY * ($reopenDpi / 96.0))
+                    [FluxWallpaper]::SetCursorPos($candidateX, $candidateY) | Out-Null
+                    [FluxWallpaper]::mouse_event(0x0002, 0, 0, 0, [UIntPtr]::Zero)
+                    [FluxWallpaper]::mouse_event(0x0004, 0, 0, 0, [UIntPtr]::Zero)
+                    Start-Sleep -Milliseconds 400
+                    $collapsedRect = New-Object FluxWallpaper+RECT
+                    $collapsed = $true
+                    if ([FluxWallpaper]::GetWindowRect($reopenedSettingsHwnd, [ref]$collapsedRect)) {
+                        $collapsed = ($collapsedRect.Bottom - $collapsedRect.Top) -lt 200
+                    }
+                    if ($collapsed) {
+                        $backFoundX = $candidateX
+                        $backFoundY = $candidateY
+                        break
+                    }
+                }
+            }
+            if ($backFoundY -eq 0) {
+                Save-Screenshot "settings-back-cleanup-failed.png"
+                throw "Visual Back cleanup smoke could not activate the Back button via header sweep."
+            }
+            Write-Host "Visual Back activated at x=$backFoundX y=$backFoundY"
             Start-Sleep -Milliseconds 700
             $reopenedPreviewAlive = $false
             try {
