@@ -71,7 +71,7 @@ jobs:
         run: ./scripts/validate-workflow-input-interpolation.ps1 -WorkflowDirectory .github/workflows
 
   # 编译与运行类检查保留在单个 job 内串行执行：clippy / test / release 构建共享同一
-  # Cargo 缓存，拆成多个 job 会让三者各自冷启动并争抢缓存条目。检查项与第 15 节一一对应。
+  # Cargo 缓存，拆成多个 job 会让三者各自冷启动并争抢缓存条目。检查项与第 14 节一一对应。
   rust:
     runs-on: windows-latest
     timeout-minutes: 30

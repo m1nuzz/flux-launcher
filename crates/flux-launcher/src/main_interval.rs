@@ -3,7 +3,7 @@
 //! 从 `main.rs` 整体外移（阶段十一 步骤 5 的 interval 部分）。回调内含一批
 //! 只在闭包内部演化的可变状态（预览进程、图标代次、上一次查询等），
 //! 集中在 [`IntervalTickState`]；跨帧共享的信号与句柄在 [`IntervalTickContext`]。
-//! 行为约束（§8）：本回调只做信号读写、尺寸/位置请求与后台探测，
+//! 行为约束（§3）：本回调只做信号读写、尺寸/位置请求与后台探测，
 //! 不直接调用 `show_window` / `hide_window`。
 
 use std::cell::{Cell, RefCell};

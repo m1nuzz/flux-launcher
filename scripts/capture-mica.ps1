@@ -2578,7 +2578,7 @@ try {
     try {
         if ($TraySettingsSmoke) {
             # 真实托盘生命周期：子进程以 --startup 隐藏启动（等同常驻托盘的启动器），
-            # 唯一的显示路径是托盘右键菜单里的 Settings。这里同时锁定第 11 节不变量
+            # 唯一的显示路径是托盘右键菜单里的 Settings。这里同时锁定第 4 节不变量
             # （首个可见帧必须是完整设置面板，不得先闪紧凑搜索条）与实际尺寸。
             $settingsHandle = Get-LauncherWindowHandle $settingsProcess
             if ($settingsHandle -eq [IntPtr]::Zero) {

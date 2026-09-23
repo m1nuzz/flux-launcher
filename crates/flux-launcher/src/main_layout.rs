@@ -2,7 +2,7 @@
 //!
 //! 从 `main.rs` 整体外移（阶段十一 步骤 4）。这里只构造 Element 树并把
 //! `*_for_rows` 句柄别名收敛为局部变量；窗口材质与显示/隐藏生命周期仍由
-//! `main.rs` 的 app 链负责（§8、§11 不变）。
+//! `main.rs` 的 app 链负责（§3、§4 不变）。
 
 use std::cell::{Cell, RefCell};
 use std::collections::HashMap;

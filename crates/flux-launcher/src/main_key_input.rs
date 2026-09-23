@@ -4,7 +4,7 @@
 //! 个句柄，因此这里用一个 `KeyInputContext` 结构聚合：`Signal` 是 Copy 句柄，
 //! `Rc`/`Arc`/窗口句柄按引用访问，函数体内按同名字段解构，保持原实现逐行可对照。
 //!
-//! 行为约束（§8）：本模块只读取与写入信号，不调用 `show_window` / `hide_window`
+//! 行为约束（§3）：本模块只读取与写入信号，不调用 `show_window` / `hide_window`
 //! 之外的生命周期入口；窗口显示/隐藏仍由调用方与既有回调负责。
 
 use std::cell::RefCell;
