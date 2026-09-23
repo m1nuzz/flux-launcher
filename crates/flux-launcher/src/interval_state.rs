@@ -9,6 +9,7 @@ use crate::query::{
     normalize_built_in_executable_targets, should_publish_initial_query_results, ProviderResults,
 };
 use flux_core::{SearchModel, SearchResult};
+use rust_i18n::t;
 use windui::prelude::Signal;
 
 #[allow(clippy::too_many_arguments)]
@@ -83,9 +84,7 @@ pub(crate) fn dispatch_query(
         status.set(ready_status.get());
         return;
     }
-    status.set(String::from(
-        "Searching applications, Everything and native Flow plugins...",
-    ));
+    status.set(t!("status.searching").into_owned());
     application_worker.request(current_sequence, query.to_owned());
     if auto_enable_everything.get() && query.trim().len() >= crate::EVERYTHING_MIN_QUERY_LEN {
         everything_worker.request(
