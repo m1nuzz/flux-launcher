@@ -17,7 +17,7 @@ use rust_i18n::t;
 use windui::app::{WindowPositionHandle, WindowSizeHandle};
 use windui::prelude::{Sender, Signal};
 
-use crate::i18n::{configured_locale, language_preference_from_index, I18nHub};
+use crate::i18n::{configured_locale, language_preference_from_index};
 use crate::icons::{
     icon_completion_generation_changed, prewarm_icon_targets, request_shell_icon,
     SHELL_ICON_COMPLETION_GENERATION,
@@ -86,7 +86,6 @@ pub(crate) struct IntervalTickContext {
     pub(crate) update_sender_for_interval: Sender<crate::updater::UpdateCheckResponse>,
     pub(crate) update_check_in_flight_for_interval: Rc<Cell<bool>>,
     pub(crate) size_for_interval: WindowSizeHandle,
-    pub(crate) i18n_hub: I18nHub,
     pub(crate) application_worker: crate::applications::ApplicationWorker,
     pub(crate) everything_worker: crate::everything::EverythingWorker,
     pub(crate) plugin_worker: crate::plugins::FlowPluginWorker,
@@ -167,7 +166,6 @@ pub(crate) fn handle_interval_tick(
         ref update_sender_for_interval,
         ref update_check_in_flight_for_interval,
         ref size_for_interval,
-        ref i18n_hub,
         ref application_worker,
         ref everything_worker,
         ref plugin_worker,
@@ -521,7 +519,6 @@ pub(crate) fn handle_interval_tick(
         action_items,
         Rc::clone(actions_for_interval),
         status_for_interval,
-        i18n_hub.tr(|| t!("status.ready").into_owned()),
         application_worker,
         everything_worker,
         plugin_worker,

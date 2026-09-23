@@ -1038,7 +1038,6 @@ fn main() {
         action_mode,
         action_index,
         action_items,
-        i18n_hub: i18n_hub.clone(),
         application_worker,
         everything_worker,
         plugin_worker,

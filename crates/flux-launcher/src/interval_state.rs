@@ -36,7 +36,6 @@ pub(crate) fn dispatch_query(
     action_items: Signal<Vec<crate::actions::ActionItem>>,
     plugin_actions: Rc<RefCell<HashMap<String, PluginAction>>>,
     status: Signal<String>,
-    ready_status: Signal<String>,
     application_worker: &ApplicationWorker,
     everything_worker: &EverythingWorker,
     plugin_worker: &FlowPluginWorker,
@@ -81,7 +80,7 @@ pub(crate) fn dispatch_query(
     plugin_actions.borrow_mut().clear();
     if !has_query {
         inline_completion.set(String::new());
-        status.set(ready_status.get());
+        status.set(t!("status.ready").into_owned());
         return;
     }
     status.set(t!("status.searching").into_owned());
