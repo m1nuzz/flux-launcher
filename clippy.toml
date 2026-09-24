@@ -1,0 +1,6 @@
+# clippy::too_many_lines 的单函数行数上限（配合各成员 crate 的 `[lints.clippy]` deny）。
+#
+# 该阈值只降不升：收紧必须与对应的函数拆分同批提交（AGENTS.md 第 12 节「函数规模」）。
+# 当前取值置于现有最长函数之上，保证引入门槛当日 CI 为绿；随 main.rs（run_launcher）、
+# settings_view.rs、main_interval.rs、main_key_input.rs 等拆分逐步下调，目标值 100。
+too-many-lines-threshold = 870

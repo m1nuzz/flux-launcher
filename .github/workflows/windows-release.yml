@@ -103,10 +103,10 @@ jobs:
         uses: Swatinem/rust-cache@v2
         with:
           # 与 CI 的缓存区分，避免两类运行互相挤占缓存条目。
-          # key 编码 profile 身份：lto 等构建配置变更会使缓存产物失效而 key 不变，
-          # 而 GitHub 缓存同 key 不可覆盖，此时必须同步 bump 此 key，否则旧缓存
-          # 永远无法替换，导致每次全量重编（2026-09-20 实测教训）。
-          key: windows-release-lto-thin
+          # key 编码 profile 与 lint 配置身份：lto、manifest 的 [lints] 等构建配置变更
+          # 会使缓存产物失效而 key 不变，而 GitHub 缓存同 key 不可覆盖，此时必须同步
+          # bump 此 key，否则旧缓存永远无法替换，导致每次全量重编（2026-09-20、2026-09-24 实测教训）。
+          key: windows-release-lto-thin-lints
 
       - name: 读取并校验应用版本
         shell: pwsh

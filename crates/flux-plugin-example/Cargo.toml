@@ -8,6 +8,10 @@ publish = false
 
 description = "Example native Rust community plugin for Flux Launcher."
 
+# 继承 workspace 的公共 lint 门槛。
+[lints]
+workspace = true
+
 [lib]
 crate-type = ["cdylib"]
 

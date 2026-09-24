@@ -17,6 +17,15 @@ license = "MIT"
 authors = ["lvxingqi <lvxingqi2000@gmail.com>"]
 repository = "https://github.com/lvxingqi/flux-launcher-cn"
 
+# 成员 crate 的公共 lint 门槛，由各成员以 `[lints] workspace = true` 选择性启用。
+# 作用域仅限声明它的包，路径依赖（vendor/windui）不受影响——这是不用命令行 `-D` 的原因。
+# unused_qualifications：已导入却仍写完整路径；too_many_lines 的阈值见根 clippy.toml。
+[workspace.lints.rust]
+unused_qualifications = "deny"
+
+[workspace.lints.clippy]
+too_many_lines = "deny"
+
 [profile.release]
 opt-level = "z"
 # 使用 thin LTO：fat LTO（true）在 codegen-units = 1 下对最终二进制做单线程位码优化，

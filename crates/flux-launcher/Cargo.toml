@@ -8,6 +8,10 @@ authors.workspace = true
 repository.workspace = true
 description = "A lightweight Windows launcher built with Rust and windui."
 
+# 继承 workspace 的公共 lint 门槛（AGENTS.md 第 12 节：导入与调用风格 / 函数规模）。
+[lints]
+workspace = true
+
 [dependencies]
 flux-core = { path = "../flux-core" }
 flux-plugin-sdk = { path = "../flux-plugin-sdk" }

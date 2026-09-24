@@ -6,5 +6,9 @@ rust-version.workspace = true
 license.workspace = true
 publish = false
 
+# 继承 workspace 的公共 lint 门槛。
+[lints]
+workspace = true
+
 [dependencies]
 serde_json = "1"
