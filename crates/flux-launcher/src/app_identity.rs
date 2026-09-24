@@ -44,7 +44,41 @@ pub(crate) fn canonical_application_id(target: &str) -> Option<String> {
     canonical_target_key(target).map(|identity| format!("application:target:{identity}"))
 }
 
+/// Resolving a shortcut target costs a COM object creation, a file load and a
+/// shell Resolve - measured at about 1.4 ms per shortcut on a real catalog. The
+/// merge runs on every provider commit, so without a cache one keystroke paid
+/// for the same shortcuts several times, on the UI thread. The application
+/// catalog is loaded once per process and never re-scanned, so a cached answer
+/// cannot be staler than the catalog it describes.
+const MAX_CANONICAL_KEY_CACHE_ENTRIES: usize = 4096;
+
+fn canonical_key_cache() -> &'static std::sync::Mutex<HashMap<String, Option<String>>> {
+    static CACHE: std::sync::OnceLock<std::sync::Mutex<HashMap<String, Option<String>>>> =
+        std::sync::OnceLock::new();
+    CACHE.get_or_init(|| std::sync::Mutex::new(HashMap::new()))
+}
+
 pub(crate) fn canonical_target_key(target: &str) -> Option<String> {
+    let target = target.trim();
+    if target.is_empty() {
+        return None;
+    }
+    if let Ok(cache) = canonical_key_cache().lock() {
+        if let Some(cached) = cache.get(target) {
+            return cached.clone();
+        }
+    }
+    let computed = compute_canonical_target_key(target);
+    if let Ok(mut cache) = canonical_key_cache().lock() {
+        if cache.len() >= MAX_CANONICAL_KEY_CACHE_ENTRIES {
+            cache.clear();
+        }
+        cache.insert(target.to_owned(), computed.clone());
+    }
+    computed
+}
+
+fn compute_canonical_target_key(target: &str) -> Option<String> {
     let target = target.trim();
     if target.is_empty() {
         return None;
