@@ -58,11 +58,21 @@ impl ProviderResults {
         self.everything_ready = !everything_expected;
     }
 
-    pub(crate) fn core_ready(&self) -> bool {
+    pub(crate) fn core_ready(&self, query: &str) -> bool {
+        if !self.applications_ready {
+            return false;
+        }
         // Built-in/system results must be actionable without waiting for the
         // asynchronous Everything response. When a query has no built-in result,
         // retain the atomic application+Everything snapshot behavior.
-        self.applications_ready && (self.everything_ready || !self.built_in.is_empty())
+        if self.everything_ready || !self.built_in.is_empty() {
+            return true;
+        }
+        // The atomic snapshot is still incomplete. Holding it back only buys one
+        // fewer swap, and that is worth it solely while the displayed list already
+        // belongs to this query: showing rows from an earlier keystroke to avoid a
+        // second swap is the worse trade.
+        self.published_query != query
     }
 
     pub(crate) fn merged(&self, query: &str, priorities: &[String]) -> Vec<SearchResult> {
@@ -193,13 +203,38 @@ mod tests {
     fn core_provider_snapshot_waits_for_both_search_providers() {
         let mut providers = ProviderResults::default();
         providers.reset(7, Vec::new(), true);
-        assert!(!providers.core_ready());
+        providers.published_query = String::from("chat");
+        assert!(!providers.core_ready("chat"));
 
         providers.applications_ready = true;
-        assert!(!providers.core_ready());
+        assert!(!providers.core_ready("chat"));
 
         providers.everything_ready = true;
-        assert!(providers.core_ready());
+        assert!(providers.core_ready("chat"));
+    }
+
+    #[test]
+    fn incomplete_snapshot_publishes_when_shown_list_is_stale() {
+        // Everything has not answered yet. Holding the snapshot only avoids a
+        // second swap while the screen already shows this query; showing the
+        // previous keystroke is the defect the user reports.
+        let mut providers = ProviderResults::default();
+        providers.reset(11, Vec::new(), true);
+        providers.applications_ready = true;
+        providers.published_query = String::from("cha");
+        assert!(providers.core_ready("chat"));
+
+        providers.published_query = String::from("chat");
+        assert!(!providers.core_ready("chat"));
+    }
+
+    #[test]
+    fn nothing_published_yet_publishes_without_everything() {
+        let providers = ProviderResults {
+            applications_ready: true,
+            ..Default::default()
+        };
+        assert!(providers.core_ready("chat"));
     }
 
     #[test]
@@ -207,7 +242,7 @@ mod tests {
         let mut providers = ProviderResults::default();
         providers.reset(8, Vec::new(), false);
         providers.applications_ready = true;
-        assert!(providers.core_ready());
+        assert!(providers.core_ready("chat"));
     }
 
     #[test]
@@ -329,7 +364,7 @@ mod tests {
             true,
         );
         providers.applications_ready = true;
-        assert!(providers.core_ready());
+        assert!(providers.core_ready("wifi"));
         assert!(!providers.everything_ready);
     }
 }

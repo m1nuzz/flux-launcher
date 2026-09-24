@@ -162,7 +162,7 @@ pub(crate) fn spawn_application_pipeline(
         }
         providers.applications = response.results;
         providers.applications_ready = true;
-        if providers.core_ready() {
+        if providers.core_ready(&query_for_applications.get()) {
             let priorities = priorities_for_applications
                 .get()
                 .iter()
@@ -254,7 +254,7 @@ pub(crate) fn spawn_everything_pipeline(
                 "Everything is not installed. Install it with winget to enable file search.",
             ));
         }
-        if providers.core_ready() {
+        if providers.core_ready(&query_for_everything.get()) {
             let priorities = priorities_for_everything
                 .get()
                 .iter()
@@ -338,7 +338,7 @@ pub(crate) fn spawn_plugin_pipeline(
         if response.available {
             providers.plugins = response.results;
             *actions_for_plugins.borrow_mut() = response.actions;
-            if providers.core_ready() {
+            if providers.core_ready(&query_for_plugins.get()) {
                 let priorities = priorities_for_plugins
                     .get()
                     .iter()
@@ -406,7 +406,7 @@ pub(crate) fn spawn_native_pipeline(
                 status_for_native_plugins.set(response.status.clone());
             }
         }
-        if providers.core_ready() {
+        if providers.core_ready(&query_for_native_plugins.get()) {
             let priorities = priorities_for_native_plugins
                 .get()
                 .iter()
