@@ -668,6 +668,7 @@ mod tests {
         assert_eq!(cursor.get(), None);
         assert!(settings.read().unwrap().query_history.is_empty());
         assert!(settings.read().unwrap().launch_counts.is_empty());
+        assert!(settings.read().unwrap().history_selections.is_empty());
         assert_eq!(
             usage.get(),
             "No committed searches yet. Run a search to see stats here."

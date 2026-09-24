@@ -400,6 +400,56 @@ pub(crate) fn history_cursor_step(
     })
 }
 
+/// Selection step through a visible result list. Up from the first row wraps to
+/// the last and Down from the last wraps to the first, so a short list (the
+/// Ctrl+H history rows) stays fully reachable without dead ends. `count` must
+/// be nonzero; callers guard against an empty list.
+pub(crate) fn list_cursor_step(count: usize, current: usize, key: Key) -> usize {
+    match key {
+        Key::Up => current.checked_sub(1).unwrap_or(count - 1),
+        Key::Down => (current + 1) % count,
+        _ => current,
+    }
+}
+
+/// Put a recalled query into the search field: text, caret after it, history mode
+/// off. Every recall path goes through this so they cannot drift apart.
+///
+/// When the user earlier chose a row for this query, that row is selected again
+/// and marked touched, because an untouched selection is snapped back to the
+/// first result by the next provider commit. Without a remembered row the list
+/// starts at the top.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn recall_history_row(
+    title: &str,
+    settings: &Arc<RwLock<Settings>>,
+    query: Signal<String>,
+    caret: Signal<usize>,
+    history_mode: Signal<bool>,
+    selected_index: Signal<usize>,
+    selected_id: Signal<String>,
+    selection_touched: Signal<bool>,
+) {
+    query.set(title.to_owned());
+    caret.set(title.chars().count());
+    history_mode.set(false);
+    let remembered = settings
+        .read()
+        .ok()
+        .and_then(|guard| guard.history_selection_for(title).map(str::to_owned));
+    match remembered {
+        Some(id) => {
+            selection_touched.set(true);
+            selected_id.set(id);
+        }
+        None => {
+            selection_touched.set(false);
+            selected_index.set(0);
+            selected_id.set(String::new());
+        }
+    }
+}
+
 pub(crate) fn launcher_theme() -> Theme {
     let mut theme = Theme::dark();
     theme.palette.bg = Color::rgba(0, 0, 0, 0);
@@ -447,6 +497,76 @@ mod tests {
         cursor = history_cursor_step(4, cursor, Key::Down);
         assert_eq!(cursor, Some(3));
         assert_eq!(history_cursor_step(0, cursor, Key::Up), None);
+    }
+
+    #[test]
+    fn list_cursor_wraps_at_both_ends() {
+        assert_eq!(list_cursor_step(3, 1, Key::Down), 2);
+        assert_eq!(list_cursor_step(3, 1, Key::Up), 0);
+        assert_eq!(list_cursor_step(3, 0, Key::Up), 2);
+        assert_eq!(list_cursor_step(3, 2, Key::Down), 0);
+        assert_eq!(list_cursor_step(1, 0, Key::Up), 0);
+        assert_eq!(list_cursor_step(1, 0, Key::Down), 0);
+        assert_eq!(list_cursor_step(3, 1, Key::Enter), 1);
+    }
+
+    #[test]
+    fn recalling_a_query_selects_the_row_chosen_for_it() {
+        let mut stored = Settings::default();
+        stored.record_query("counter");
+        stored.remember_history_selection("counter", "application:csgo");
+        let settings = Arc::new(RwLock::new(stored));
+        let query = windui::signal::signal(String::from("other"));
+        let caret = windui::signal::signal(0_usize);
+        let history_mode = windui::signal::signal(true);
+        let index = windui::signal::signal(0_usize);
+        let id = windui::signal::signal(String::new());
+        let touched = windui::signal::signal(false);
+
+        recall_history_row(
+            "counter",
+            &settings,
+            query,
+            caret,
+            history_mode,
+            index,
+            id,
+            touched,
+        );
+
+        assert_eq!(query.get(), "counter");
+        assert_eq!(caret.get(), 7, "the caret belongs after the recalled text");
+        assert!(!history_mode.get());
+        assert!(touched.get(), "a recalled row must survive the next commit");
+        assert_eq!(id.get(), "application:csgo");
+    }
+
+    #[test]
+    fn recalling_a_query_never_chosen_starts_at_the_first_row() {
+        let settings = Arc::new(RwLock::new(Settings::default()));
+        let query = windui::signal::signal(String::from("other"));
+        let caret = windui::signal::signal(0_usize);
+        let history_mode = windui::signal::signal(true);
+        let index = windui::signal::signal(4_usize);
+        let id = windui::signal::signal(String::from("application:steam"));
+        let touched = windui::signal::signal(true);
+
+        recall_history_row(
+            "counter",
+            &settings,
+            query,
+            caret,
+            history_mode,
+            index,
+            id,
+            touched,
+        );
+
+        assert_eq!(query.get(), "counter");
+        assert!(!history_mode.get());
+        assert!(!touched.get());
+        assert_eq!(index.get(), 0);
+        assert_eq!(id.get(), "");
     }
 
     fn app_result(id: &str, title: &str) -> SearchResult {

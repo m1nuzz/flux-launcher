@@ -18,7 +18,9 @@ use super::result_actions::{
     actions_for_result, copy_result_file, copy_result_path, execute_result_action, selected_result,
     ActionItem, ActionKind,
 };
-use super::theme_text::{history_cursor_step, refresh_inline_completion};
+use super::theme_text::{
+    history_cursor_step, list_cursor_step, recall_history_row, refresh_inline_completion,
+};
 use super::ui_constants::{ACTION_WINDOW_HEIGHT, SETTINGS_WINDOW_HEIGHT, SETTINGS_WINDOW_WIDTH};
 use super::{plugins, request_scroll};
 
@@ -154,6 +156,7 @@ pub(crate) fn register_key_handlers(
                         &settings_for_history_for_keys,
                         &query_history_for_keys,
                         &query_for_keys.get(),
+                        &selected_id_for_keys.get(),
                         stats_usage_for_keys,
                         stats_top_for_keys,
                     );
@@ -180,6 +183,7 @@ pub(crate) fn register_key_handlers(
                         &settings_for_history_for_keys,
                         &query_history_for_keys,
                         &query_for_keys.get(),
+                        &selected_id_for_keys.get(),
                         stats_usage_for_keys,
                         stats_top_for_keys,
                     );
@@ -226,11 +230,17 @@ pub(crate) fn register_key_handlers(
                 return false;
             };
             history_cursor_for_keys.set(Some(next));
-            history_mode_for_keys.set(false);
             let recalled = history[next].clone();
-            let caret_end = recalled.chars().count();
-            query_for_keys.set(recalled);
-            query_caret_position_for_keys.set(caret_end);
+            recall_history_row(
+                &recalled,
+                &settings_for_history_for_keys,
+                query_for_keys,
+                query_caret_position_for_keys,
+                history_mode_for_keys,
+                selected_index_for_keys,
+                selected_id_for_keys,
+                selection_touched_for_keys,
+            );
             return true;
         }
         if !history_mode_for_keys.get()
@@ -243,14 +253,24 @@ pub(crate) fn register_key_handlers(
             if let Some(latest) = history.last() {
                 history_cursor_for_keys.set(Some(history.len() - 1));
                 let recalled = latest.clone();
-                let caret_end = recalled.chars().count();
-                query_for_keys.set(recalled);
-                query_caret_position_for_keys.set(caret_end);
+                recall_history_row(
+                    &recalled,
+                    &settings_for_history_for_keys,
+                    query_for_keys,
+                    query_caret_position_for_keys,
+                    history_mode_for_keys,
+                    selected_index_for_keys,
+                    selected_id_for_keys,
+                    selection_touched_for_keys,
+                );
                 return true;
             }
         }
         drop(history);
-        if query.trim().is_empty() {
+        // An empty field is how the Ctrl+H list is normally opened, so it must
+        // not bail out here: that guard used to swallow the arrow keys and
+        // Enter for the history rows.
+        if query.trim().is_empty() && !history_mode_for_keys.get() {
             return false;
         }
         let current_results = results_for_keys.get();
@@ -305,8 +325,17 @@ pub(crate) fn register_key_handlers(
                     &selected_id_for_keys.get(),
                     selected_index_for_keys.get(),
                 ) {
-                    query_for_keys.set(result.title.clone());
-                    history_mode_for_keys.set(false);
+                    recall_history_row(
+                        &result.title,
+                        &settings_for_history_for_keys,
+                        query_for_keys,
+                        query_caret_position_for_keys,
+                        history_mode_for_keys,
+                        selected_index_for_keys,
+                        selected_id_for_keys,
+                        selection_touched_for_keys,
+                    );
+                    request_scroll(scroll_request_for_keys);
                 }
                 return true;
             }
@@ -314,6 +343,7 @@ pub(crate) fn register_key_handlers(
                 &settings_for_history_for_keys,
                 &query_history_for_keys,
                 &query,
+                &selected_id_for_keys.get(),
                 stats_usage_for_keys,
                 stats_top_for_keys,
             );
@@ -373,8 +403,17 @@ pub(crate) fn register_key_handlers(
                             &selected_id_for_keys.get(),
                             selected_index_for_keys.get(),
                         ) {
-                            query_for_keys.set(result.title.clone());
-                            history_mode_for_keys.set(false);
+                            recall_history_row(
+                                &result.title,
+                                &settings_for_history_for_keys,
+                                query_for_keys,
+                                query_caret_position_for_keys,
+                                history_mode_for_keys,
+                                selected_index_for_keys,
+                                selected_id_for_keys,
+                                selection_touched_for_keys,
+                            );
+                            request_scroll(scroll_request_for_keys);
                         }
                         return true;
                     }
@@ -382,6 +421,7 @@ pub(crate) fn register_key_handlers(
                         &settings_for_history_for_keys,
                         &query_history_for_keys,
                         &query,
+                        &selected_id_for_keys.get(),
                         stats_usage_for_keys,
                         stats_top_for_keys,
                     );
@@ -444,6 +484,7 @@ pub(crate) fn register_key_handlers(
                 &settings_for_history_for_keys,
                 &query_history_for_keys,
                 &query,
+                &selected_id_for_keys.get(),
                 stats_usage_for_keys,
                 stats_top_for_keys,
             );
@@ -469,14 +510,7 @@ pub(crate) fn register_key_handlers(
         match event.key {
             Key::Up | Key::Down => {
                 let count = current_results.len();
-                let next = match event.key {
-                    Key::Up => selected_index_for_keys
-                        .get()
-                        .checked_sub(1)
-                        .unwrap_or(count - 1),
-                    Key::Down => (selected_index_for_keys.get() + 1) % count,
-                    _ => 0,
-                };
+                let next = list_cursor_step(count, selected_index_for_keys.get(), event.key);
                 selection_touched_for_keys.set(true);
                 selected_index_for_keys.set(next);
                 if let Some(result) = current_results.get(next) {
@@ -498,6 +532,12 @@ pub(crate) fn register_key_handlers(
                 // Ctrl+Right is the input's word-jump: never open the action
                 // bar with it, even when the caret sits at the query end.
                 if event.ctrl {
+                    return false;
+                }
+                // History rows carry no actions, and opening the bar over them
+                // would leave the arrows driving action items while Enter still
+                // commits a query.
+                if history_mode_for_keys.get() {
                     return false;
                 }
                 if query_caret_position_for_keys.get() != query_for_keys.get().chars().count() {
@@ -527,8 +567,17 @@ pub(crate) fn register_key_handlers(
                         &selected_id_for_keys.get(),
                         selected_index_for_keys.get(),
                     ) {
-                        query_for_keys.set(result.title.clone());
-                        history_mode_for_keys.set(false);
+                        recall_history_row(
+                            &result.title,
+                            &settings_for_history_for_keys,
+                            query_for_keys,
+                            query_caret_position_for_keys,
+                            history_mode_for_keys,
+                            selected_index_for_keys,
+                            selected_id_for_keys,
+                            selection_touched_for_keys,
+                        );
+                        request_scroll(scroll_request_for_keys);
                     }
                     return true;
                 }
@@ -536,6 +585,7 @@ pub(crate) fn register_key_handlers(
                     &settings_for_history_for_keys,
                     &query_history_for_keys,
                     &query,
+                    &selected_id_for_keys.get(),
                     stats_usage_for_keys,
                     stats_top_for_keys,
                 );

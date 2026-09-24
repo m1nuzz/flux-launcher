@@ -19,6 +19,7 @@ pub(crate) fn record_query_history(
     settings: &Arc<RwLock<Settings>>,
     history: &Rc<RefCell<Vec<String>>>,
     query: &str,
+    selected_id: &str,
     stats_usage: Signal<String>,
     stats_top: Signal<String>,
 ) {
@@ -28,6 +29,8 @@ pub(crate) fn record_query_history(
     if !settings_guard.record_query(query) {
         return;
     }
+    // Remember which row answered this query, so the next recall lands on it.
+    settings_guard.remember_history_selection(query, selected_id);
     *history.borrow_mut() = settings_guard.query_history.clone();
     let total = settings_guard.total_queries_committed;
     let counts = settings_guard.launch_counts.clone();

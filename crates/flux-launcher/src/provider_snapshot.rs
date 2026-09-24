@@ -108,6 +108,34 @@ pub(crate) fn commit_provider_results(
         if selected_id.get() != first_id {
             selected_id.set(first_id);
         }
+    } else if let Some(position) = merged
+        .iter()
+        .position(|result| result.id == selected_id.get())
+    {
+        // A recalled row is chosen by id, so keep the index pointing at it: the
+        // viewport and Enter must agree with what the highlight shows.
+        if selected_index.get() != position {
+            selected_index.set(position);
+        }
+    } else {
+        // The remembered id is gone - a provider dropped it or the list was
+        // truncated. Follow the clamped index instead of leaving a highlight
+        // that matches no visible row.
+        let index = if merged.is_empty() {
+            0
+        } else {
+            selected_index.get().min(merged.len() - 1)
+        };
+        if selected_index.get() != index {
+            selected_index.set(index);
+        }
+        let id = merged
+            .get(index)
+            .map(|result| result.id.clone())
+            .unwrap_or_default();
+        if selected_id.get() != id {
+            selected_id.set(id);
+        }
     }
     if merged != results.get() {
         results.set(merged);

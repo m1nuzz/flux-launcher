@@ -195,6 +195,7 @@ pub(crate) fn result_row(
                 &settings,
                 &query_history,
                 &query.get(),
+                &id,
                 stats_usage,
                 stats_top,
             );

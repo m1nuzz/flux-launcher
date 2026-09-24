@@ -99,6 +99,10 @@ mod tests {
             monitor_preference: MonitorPreference::Foreground,
             smooth_caret_duration_ms: 120,
             query_history: vec![String::from("steam"), String::from("ext:zip")],
+            history_selections: std::collections::HashMap::from([(
+                String::from("steam"),
+                String::from("application:steam"),
+            )]),
             priority_entries: vec![PriorityEntry {
                 id: String::from("application:steam"),
                 title: String::from("Steam"),

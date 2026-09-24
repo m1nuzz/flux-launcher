@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use serde::{Deserialize, Serialize};
 
@@ -153,6 +153,12 @@ pub struct Settings {
     pub smooth_caret_duration_ms: u16,
     #[serde(default)]
     pub query_history: Vec<String>,
+    /// The result row chosen for a committed query, keyed by the trimmed
+    /// lowercased query. Recalling a query then lands on the same row even after
+    /// a restart, instead of always starting at the top of the list. Pruned to
+    /// the history ring, so it cannot outlive the queries it belongs to.
+    #[serde(default)]
+    pub history_selections: HashMap<String, String>,
     #[serde(default)]
     pub total_queries_committed: u64,
     /// Lifetime launch counts by result id. Unlike the bounded history ring,
@@ -191,6 +197,7 @@ impl Default for Settings {
             monitor_preference: MonitorPreference::default(),
             smooth_caret_duration_ms: DEFAULT_CARET_DURATION_MS,
             query_history: Vec::new(),
+            history_selections: HashMap::new(),
             total_queries_committed: 0,
             launch_counts: HashMap::new(),
             priority_entries: Vec::new(),
@@ -313,6 +320,7 @@ impl Settings {
 
     pub fn clear_query_history(&mut self) {
         self.query_history.clear();
+        self.history_selections.clear();
         // Launch counts carry opened item titles, so clearing history must
         // clear them too; otherwise Clear would not actually forget anything.
         self.launch_counts.clear();
@@ -339,6 +347,38 @@ impl Settings {
             normalized.drain(..start);
         }
         self.query_history = normalized;
+        self.prune_history_selections();
+    }
+
+    /// Record which row the user chose for a committed query. Empty query or
+    /// empty id stores nothing, so system rows that were never really picked
+    /// cannot poison the lookup.
+    pub fn remember_history_selection(&mut self, query: &str, result_id: &str) {
+        let key = query.trim().to_ascii_lowercase();
+        let result_id = result_id.trim();
+        if key.is_empty() || result_id.is_empty() {
+            return;
+        }
+        self.history_selections.insert(key, result_id.to_owned());
+        self.prune_history_selections();
+    }
+
+    /// The row previously chosen for this query, matched the same
+    /// case-insensitive way the history ring deduplicates entries.
+    pub fn history_selection_for(&self, query: &str) -> Option<&str> {
+        self.history_selections
+            .get(&query.trim().to_ascii_lowercase())
+            .map(String::as_str)
+    }
+
+    fn prune_history_selections(&mut self) {
+        let live: HashSet<String> = self
+            .query_history
+            .iter()
+            .map(|query| query.to_ascii_lowercase())
+            .collect();
+        self.history_selections
+            .retain(|query, _| live.contains(query));
     }
 }
 
@@ -455,6 +495,48 @@ mod tests {
         settings.normalize();
         assert_eq!(settings.launcher_width, MAX_LAUNCHER_WIDTH);
         assert_eq!(settings.launcher_height, MIN_LAUNCHER_HEIGHT);
+    }
+
+    #[test]
+    fn history_selection_follows_its_query_and_dies_with_it() {
+        let mut settings = Settings::default();
+        assert!(settings.record_query("Counter"));
+        settings.remember_history_selection("counter", "application:csgo");
+        assert_eq!(
+            settings.history_selection_for("  COUNTER "),
+            Some("application:csgo")
+        );
+
+        // A row choice may not outlive the query it belongs to, so evicting the
+        // query out of the ring has to evict the choice with it.
+        settings
+            .query_history
+            .extend((0..40).map(|i| format!("q{i}")));
+        settings.normalize();
+        assert!(!settings.query_history.iter().any(|q| q == "Counter"));
+        assert!(settings.history_selection_for("counter").is_none());
+
+        settings.record_query("counter");
+        settings.remember_history_selection("counter", "application:csgo");
+        settings.clear_query_history();
+        assert!(settings.history_selections.is_empty());
+    }
+
+    #[test]
+    fn history_selection_ignores_empty_inputs() {
+        let mut settings = Settings::default();
+        settings.record_query("steam");
+        settings.remember_history_selection("steam", "   ");
+        settings.remember_history_selection("   ", "application:steam");
+        assert!(settings.history_selections.is_empty());
+    }
+
+    #[test]
+    fn settings_without_history_selections_still_load() {
+        let legacy: Settings = serde_json::from_str(r#"{"query_history":["steam"]}"#).unwrap();
+        assert_eq!(legacy.query_history, ["steam"]);
+        assert!(legacy.history_selections.is_empty());
+        assert_eq!(legacy.history_selection_for("steam"), None);
     }
 
     #[test]
