@@ -79,7 +79,7 @@ pub(crate) fn launcher_width_reset_button(
             eprintln!("Visual width reset clicked: {}x{}", width, height);
             launcher_width.set(width);
             launcher_width_input.set(width.to_string());
-            launcher_width_slider.set(crate::dimension_slider_fraction(
+            launcher_width_slider.set(dimension_slider_fraction(
                 width,
                 flux_core::MIN_LAUNCHER_WIDTH,
                 flux_core::MAX_LAUNCHER_WIDTH,
@@ -113,7 +113,7 @@ pub(crate) fn launcher_height_reset_button(
             eprintln!("Visual height reset clicked: {}x{}", width, height);
             launcher_height.set(height);
             launcher_height_input.set(height.to_string());
-            launcher_height_slider.set(crate::dimension_slider_fraction(
+            launcher_height_slider.set(dimension_slider_fraction(
                 height,
                 flux_core::MIN_LAUNCHER_HEIGHT,
                 flux_core::MAX_LAUNCHER_HEIGHT,
@@ -168,13 +168,13 @@ pub(crate) fn visual_apply_button(context: VisualApplyContext) -> Element {
     } = context;
 
     Element::button(i18n_hub.tr(|| t!("settings.visual.apply").into_owned())).on_click(move |ctx| {
-        let mut width = crate::parse_dimension_input(
+        let mut width = parse_dimension_input(
             &launcher_width_input.get(),
             flux_core::MIN_LAUNCHER_WIDTH,
             flux_core::MAX_LAUNCHER_WIDTH,
         )
         .unwrap_or(flux_core::DEFAULT_LAUNCHER_WIDTH);
-        let mut height = crate::parse_dimension_input(
+        let mut height = parse_dimension_input(
             &launcher_height_input.get(),
             flux_core::MIN_LAUNCHER_HEIGHT,
             flux_core::MAX_LAUNCHER_HEIGHT,
@@ -206,12 +206,12 @@ pub(crate) fn visual_apply_button(context: VisualApplyContext) -> Element {
         launcher_height.set(height);
         launcher_width_input.set(width.to_string());
         launcher_height_input.set(height.to_string());
-        launcher_width_slider.set(crate::dimension_slider_fraction(
+        launcher_width_slider.set(dimension_slider_fraction(
             width,
             flux_core::MIN_LAUNCHER_WIDTH,
             flux_core::MAX_LAUNCHER_WIDTH,
         ));
-        launcher_height_slider.set(crate::dimension_slider_fraction(
+        launcher_height_slider.set(dimension_slider_fraction(
             height,
             flux_core::MIN_LAUNCHER_HEIGHT,
             flux_core::MAX_LAUNCHER_HEIGHT,

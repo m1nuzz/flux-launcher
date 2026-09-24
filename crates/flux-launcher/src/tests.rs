@@ -1,10 +1,8 @@
 use super::{
-    dimension_slider_fraction, history_cursor_step, launcher_window_geometry_with_sizes,
-    parse_dimension_input, should_publish_initial_query_results, should_show_launcher,
     COMPACT_WINDOW_HEIGHT, LAUNCHER_FONT_FAMILY, MAX_LAUNCHER_HEIGHT, MAX_LAUNCHER_WIDTH,
     MIN_LAUNCHER_HEIGHT, MIN_LAUNCHER_WIDTH,
 };
-use crate::actions::{actions_for_result, quoted_result_path};
+use crate::actions::{actions_for_result, quoted_result_path, ActionKind};
 use crate::applications::{canonical_application_id, resolve_bare_executable_path};
 use crate::entry::{is_shutdown_mode, should_claim_single_instance};
 use crate::everything::normalize_everything_query;
@@ -14,17 +12,22 @@ use crate::icons::{
     obsidian_icon_rgba, parse_internet_shortcut_icon_location, resolve_shortcut_icon_path,
     ResultIconView, ShellIconCache, MAX_SHELL_ICON_CACHE_ENTRIES,
 };
-use crate::keyboard::is_run_as_admin_key;
+use crate::keyboard::{history_cursor_step, is_run_as_admin_key};
 use crate::query::{
     merge_application_duplicates, normalize_built_in_executable_targets,
-    preserve_everything_file_order, synthesize_path_result, ProviderResults,
+    preserve_everything_file_order, should_publish_initial_query_results, synthesize_path_result,
+    ProviderResults,
 };
 use crate::result_row::hover_position_changed;
 use crate::ui_helpers::display_title;
 use crate::update_state::{format_bytes, format_update_progress};
 use crate::updater::relaunch_mode_for_auto_install;
-use crate::window_state::{dimension_from_slider, launcher_window_geometry_with_prompt};
+use crate::window_state::{
+    dimension_from_slider, dimension_slider_fraction, launcher_window_geometry_with_prompt,
+    parse_dimension_input,
+};
 use crate::window_state::{launcher_window_geometry, should_show_everything_install_prompt};
+use crate::window_state::{launcher_window_geometry_with_sizes, should_show_launcher};
 use flux_core::{rank_results_with_priorities, ResultKind, ResultSource, SearchResult};
 use flux_core::{DEFAULT_LAUNCHER_HEIGHT, DEFAULT_LAUNCHER_WIDTH};
 use windui::event::{Key, KeyEvent};
@@ -446,12 +449,12 @@ fn application_results_offer_priority_and_launch_actions_in_order() {
             "Copy folder path",
         ]
     );
-    assert!(matches!(actions[0].kind, super::ActionKind::SetPriority));
-    assert!(matches!(actions[1].kind, super::ActionKind::Open));
-    assert!(matches!(actions[2].kind, super::ActionKind::RunAsAdmin));
-    assert!(matches!(actions[3].kind, super::ActionKind::OpenLocation));
-    assert!(matches!(actions[4].kind, super::ActionKind::CopyFile));
-    assert!(matches!(actions[5].kind, super::ActionKind::CopyFolderPath));
+    assert!(matches!(actions[0].kind, ActionKind::SetPriority));
+    assert!(matches!(actions[1].kind, ActionKind::Open));
+    assert!(matches!(actions[2].kind, ActionKind::RunAsAdmin));
+    assert!(matches!(actions[3].kind, ActionKind::OpenLocation));
+    assert!(matches!(actions[4].kind, ActionKind::CopyFile));
+    assert!(matches!(actions[5].kind, ActionKind::CopyFolderPath));
 }
 
 #[test]
@@ -466,8 +469,8 @@ fn system_results_only_offer_open_and_copy_name_actions() {
     };
     let actions = actions_for_result(&result, &std::collections::HashMap::new());
     assert_eq!(actions.len(), 2);
-    assert!(matches!(actions[0].kind, super::ActionKind::Open));
-    assert!(matches!(actions[1].kind, super::ActionKind::CopyName));
+    assert!(matches!(actions[0].kind, ActionKind::Open));
+    assert!(matches!(actions[1].kind, ActionKind::CopyName));
 }
 
 #[test]

@@ -101,3 +101,54 @@ pub(crate) fn run_special_mode(
 
     false
 }
+
+pub(crate) fn init_platform() {
+    #[cfg(windows)]
+    {
+        // Monitor coordinates are queried before windui creates the HWND. Set
+        // per-monitor awareness first so Windows does not virtualize the
+        // 4K/mixed-DPI work area used for the initial center position.
+        use windows::Win32::UI::HiDpi::{
+            SetProcessDpiAwarenessContext, DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2,
+        };
+        unsafe {
+            let _ = SetProcessDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2);
+        }
+    }
+    crate::i18n::apply_system_locale();
+}
+
+pub(crate) fn split_args() -> (Option<OsString>, std::env::ArgsOs) {
+    let mut args = std::env::args_os();
+    let _executable = args.next();
+    (args.next(), args)
+}
+
+pub(crate) fn should_exit_early(
+    mode: Option<&std::ffi::OsStr>,
+    args: &mut std::env::ArgsOs,
+    single_instance_disabled: bool,
+) -> bool {
+    if run_special_mode(mode, &mut *args) {
+        return true;
+    }
+
+    if !single_instance_disabled
+        && should_claim_single_instance(mode)
+        && matches!(
+            windui::claim_instance(crate::SINGLE_INSTANCE_ID),
+            windui::InstanceRole::Handoff
+        )
+    {
+        return true;
+    }
+
+    // The uninstaller uses this one-shot mode only to reach the already-running
+    // instance through the single-instance listener. Never create a new UI if
+    // there is no instance left to shut down.
+    if is_shutdown_mode(mode) {
+        return true;
+    }
+
+    false
+}
