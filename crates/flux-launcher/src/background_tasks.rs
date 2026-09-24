@@ -9,7 +9,7 @@ use windui::prelude::Sender;
 use windui::signal::Signal;
 
 use super::applications::{ApplicationResponse, ApplicationWorker};
-use super::everything::{self, EverythingResponse, EverythingWorker, InstallationState};
+use super::everything::{self, EverythingResponse, EverythingWorker};
 use super::plugins::{
     FlowPluginWorker, NativePluginQueryResponse, NativePluginWorker, PluginAction,
     PluginQueryResponse,
@@ -280,22 +280,20 @@ pub(crate) fn spawn_everything_pipeline(
     });
     let worker = EverythingWorker::spawn(everything_sender);
     if settings_auto_enable {
-        match everything::start_background_if_installed() {
-            Ok(InstallationState::Installed(_)) => {
-                everything_installed.set(true);
-                everything_status.set(String::from(
-                    "Everything is already installed; Flux is enabling local IPC automatically",
-                ));
-            }
-            Ok(InstallationState::Missing) => {
-                everything_installed.set(false);
-                everything_status.set(String::from(
-                    "Everything is not installed. Install it with winget to enable file search.",
-                ));
-            }
-            Err(error) => {
-                everything_status.set(error);
-            }
+        // Starting the service asks tasklist whether Everything is running and
+        // tries the IPC pipe: measured 170-210 ms of blocking, which used to
+        // stall the first paint and the hotkey registration at startup. The
+        // install state and status text already come from the cheap directory
+        // scan in main, and a failed start reports itself through the status on
+        // the first query, so this can run on its own thread.
+        if let Err(error) = std::thread::Builder::new()
+            .name(String::from("flux-everything-start"))
+            .spawn(|| match everything::start_background_if_installed() {
+                Ok(_) => {}
+                Err(error) => eprintln!("Could not start Everything in the background: {error}"),
+            })
+        {
+            eprintln!("Could not start Everything in the background: {error}");
         }
     } else {
         everything_status.set(String::from(
