@@ -10,6 +10,18 @@ pub(crate) fn is_run_as_admin_key(event: &KeyEvent) -> bool {
         )
 }
 
+/// Ctrl+H opens the selectable query history. `Key::Other(0x48)` is the only
+/// form Win32 sends for a letter held with Ctrl (WM_KEYDOWN carries a virtual
+/// key, and the WM_CHAR path reports ctrl=false), so matching the `Char` arms
+/// alone made this shortcut unreachable. VK codes are layout-independent.
+pub(crate) fn is_history_key(event: &KeyEvent) -> bool {
+    event.ctrl
+        && matches!(
+            event.key,
+            Key::Other(0x48) | Key::Char('h') | Key::Char('H')
+        )
+}
+
 #[cfg(windows)]
 pub(crate) fn shift_key_is_down() -> bool {
     unsafe { (GetAsyncKeyState(VK_SHIFT.0 as i32) as u16 & 0x8000) != 0 }
@@ -73,6 +85,28 @@ mod tests {
             pressed: true,
             shift: false,
             ctrl: false,
+        }));
+    }
+
+    #[test]
+    fn ctrl_h_matches_win32_other_key_event() {
+        assert!(is_history_key(&KeyEvent {
+            key: Key::Other(0x48),
+            pressed: true,
+            shift: false,
+            ctrl: true,
+        }));
+        assert!(!is_history_key(&KeyEvent {
+            key: Key::Other(0x48),
+            pressed: true,
+            shift: false,
+            ctrl: false,
+        }));
+        assert!(is_history_key(&KeyEvent {
+            key: Key::Char('h'),
+            pressed: true,
+            shift: false,
+            ctrl: true,
         }));
     }
 

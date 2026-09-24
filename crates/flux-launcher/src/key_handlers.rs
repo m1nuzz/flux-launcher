@@ -10,7 +10,7 @@ use windui::signal::Signal;
 
 use super::history_priorities::{record_launch, record_query_history, set_result_priority};
 use super::hotkeys;
-use super::input_keys::{alt_key_is_down, is_run_as_admin_key, shift_key_is_down};
+use super::input_keys::{alt_key_is_down, is_history_key, is_run_as_admin_key, shift_key_is_down};
 use super::launch;
 use super::plugins::PluginAction;
 use super::provider_snapshot::{refresh_merged_results, ProviderResults};
@@ -188,7 +188,7 @@ pub(crate) fn register_key_handlers(
             }
             return false;
         }
-        if event.ctrl && matches!(event.key, Key::Char('h') | Key::Char('H')) {
+        if is_history_key(&event) {
             let history = query_history_for_keys.borrow();
             if history.is_empty() {
                 return false;
