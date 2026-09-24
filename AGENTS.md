@@ -180,6 +180,21 @@ crates/flux-launcher/locales/zh-CN.yml
 * 除非人工处理不可行，否则禁止使用脚本批量重写行尾。
 * 仅执行 `git add` 不视为完成修复。
 
+### 导入与调用风格
+
+* crate 内部条目（类型、trait、常量、函数）优先 `use` 引入后以裸名调用，例如 `use crate::settings_state::{record_query_history, LauncherSettingsState};`。
+* 允许 `use crate::module;` 后写 `module::item(...)`，也允许在调用处直接写内部路径（如 `crate::settings_state::save_settings`）；两者均为合法形式，存量不强制迁移。
+* 禁止重复限定：已 `use` 的条目不得再写完整路径，例如已导入 `Duration` 仍写 `std::time::Duration`。
+* 外部 crate 与 `std` 保持整模块导入 + 限定调用（`use std::env;` 后 `env::var_os(...)`）；`use windui::prelude::*;` 等 prelude glob 保持现状。
+* 规则说明、门槛覆盖范围与收紧路线见本地记录 `doc/guide/Rust-导入与调用规范.md`（第 13 节）。
+* 发现方式：`unused_qualifications` 在 5 个成员 crate 上设为 `deny`（根 `Cargo.toml` 的 `[workspace.lints.rust]` 加各成员 `[lints] workspace = true`），由第 14 节的 clippy 检查在本地与 CI 强制；「未 `use` 同一项即写内部路径」由第 24 节审查发现，如需机械强制可后续启用 `clippy::absolute_paths`（现存写法需先迁移）。
+
+### 函数规模
+
+* 单函数行数不得超过根 `clippy.toml` 的 `too-many-lines-threshold`；该阈值**只降不升**，收紧必须与对应的函数拆分同批提交。
+* 函数参数不得超过 `clippy::too_many_arguments` 阈值（默认 7）；超出时引入上下文结构（沿用现有 `*Context` / `*Bundle` 模式）。
+* 发现方式：同源的按包 `[lints.clippy]` 门槛（`too_many_lines = "deny"`），由第 14 节 clippy 检查强制。
+
 ---
 
 ## 13. 文档规则
