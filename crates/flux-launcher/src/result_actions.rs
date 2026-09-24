@@ -3,7 +3,7 @@ use std::collections::HashMap;
 #[cfg(windows)]
 use windows::core::BOOL;
 #[cfg(windows)]
-use windows::Win32::Foundation::HANDLE;
+use windows::Win32::Foundation::{GlobalFree, HANDLE};
 #[cfg(windows)]
 use windows::Win32::System::DataExchange::{
     CloseClipboard, EmptyClipboard, OpenClipboard, SetClipboardData,
@@ -158,6 +158,7 @@ pub(crate) fn copy_result_file(result: &SearchResult) -> bool {
         };
         let ptr = GlobalLock(hmem) as *mut u8;
         if ptr.is_null() {
+            let _ = GlobalFree(Some(hmem));
             return false;
         }
         std::ptr::write_bytes(ptr, 0, bytes);
@@ -167,10 +168,16 @@ pub(crate) fn copy_result_file(result: &SearchResult) -> bool {
         std::ptr::copy_nonoverlapping(path.as_ptr() as *const u8, ptr.add(header), path.len() * 2);
         let _ = GlobalUnlock(hmem);
         if OpenClipboard(None).is_err() {
+            let _ = GlobalFree(Some(hmem));
             return false;
         }
         let ok = EmptyClipboard().is_ok() && SetClipboardData(15, Some(HANDLE(hmem.0))).is_ok();
         let _ = CloseClipboard();
+        // A successful SetClipboardData hands the block to the clipboard; every
+        // other outcome leaves this process as its owner.
+        if !ok {
+            let _ = GlobalFree(Some(hmem));
+        }
         ok
     }
 }

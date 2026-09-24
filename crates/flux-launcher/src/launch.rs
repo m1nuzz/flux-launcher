@@ -107,8 +107,24 @@ pub fn run_as_admin(path: &str) -> bool {
 
 #[cfg(windows)]
 pub fn open_file_location(path: &str) -> bool {
-    let argument = format!("/select,\"{path}\"");
+    let Some(argument) = explorer_select_argument(path) else {
+        return false;
+    };
     shell_execute("open", "explorer.exe", Some(&argument))
+}
+
+/// Build the explorer `/select` argument for a result target.
+///
+/// Targets reach this point with their shell quotes still on sometimes, and
+/// explorer opens nothing useful for a doubly quoted path, so the path is
+/// normalized first and quoted exactly once here.
+#[cfg(windows)]
+fn explorer_select_argument(path: &str) -> Option<String> {
+    let target = clean_shell_target(path);
+    if target.as_os_str().is_empty() {
+        return None;
+    }
+    Some(format!("/select,\"{}\"", target.display()))
 }
 
 #[cfg(windows)]
@@ -234,6 +250,22 @@ mod tests {
             clean_shell_target(r#"  "C:\Users\m1nus\Music Pack"  "#),
             std::path::PathBuf::from(r"C:\Users\m1nus\Music Pack")
         );
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn explorer_select_argument_quotes_the_path_exactly_once() {
+        // A target that already carries its shell quotes must not end up doubly
+        // quoted, or explorer opens a location that matches nothing.
+        assert_eq!(
+            super::explorer_select_argument(r#""C:\Music Pack\song.mp3""#).as_deref(),
+            Some(r#"/select,"C:\Music Pack\song.mp3""#)
+        );
+        assert_eq!(
+            super::explorer_select_argument(r" C:\Music Pack\song.mp3 ").as_deref(),
+            Some(r#"/select,"C:\Music Pack\song.mp3""#)
+        );
+        assert_eq!(super::explorer_select_argument("   "), None);
     }
 
     #[test]

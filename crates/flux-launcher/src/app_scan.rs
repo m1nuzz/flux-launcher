@@ -60,13 +60,13 @@ unsafe fn property_store_arguments(
 ) -> Option<String> {
     use windows::core::Interface;
     use windows::Win32::Storage::EnhancedStorage::PKEY_Link_Arguments;
-    use windows::Win32::System::Com::StructuredStorage::PROPVARIANT;
+    use windows::Win32::System::Com::StructuredStorage::{PropVariantClear, PROPVARIANT};
     use windows::Win32::System::Variant::VT_LPWSTR;
     use windows::Win32::UI::Shell::PropertiesSystem::IPropertyStore;
 
     let store: IPropertyStore = link.cast().ok()?;
-    let value: PROPVARIANT = store.GetValue(&PKEY_Link_Arguments).ok()?;
-    (|| {
+    let mut value: PROPVARIANT = store.GetValue(&PKEY_Link_Arguments).ok()?;
+    let arguments = (|| {
         let header = unsafe { &value.Anonymous.Anonymous };
         if header.vt != VT_LPWSTR {
             return None;
@@ -76,7 +76,11 @@ unsafe fn property_store_arguments(
             return None;
         }
         unsafe { pointer.to_string().ok() }
-    })()
+    })();
+    // GetValue hands back an owned variant, so the string it points at leaks
+    // unless the variant is cleared here.
+    let _ = unsafe { PropVariantClear(&mut value) };
+    arguments
 }
 
 #[cfg(not(windows))]
