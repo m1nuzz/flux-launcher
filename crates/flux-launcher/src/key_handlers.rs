@@ -178,17 +178,11 @@ pub(crate) fn register_key_handlers(
                 Key::Other(0x43) | Key::Char('c') | Key::Char('C')
             )
         {
-            eprintln!(
-                "Ctrl+Shift+C dispatch: event_shift={} physical_shift={}",
-                event.shift,
-                shift_key_is_down()
-            );
             if let Some(result) = selected_result(
                 &results_for_keys.get(),
                 &selected_id_for_keys.get(),
                 selected_index_for_keys.get(),
             ) {
-                eprintln!("Ctrl+Shift+C target={:?}", result.target);
                 if copy_result_file(&result) {
                     // Copying a hit is as much a committed search as running
                     // it, so the typed query has to come back on Alt+Up.

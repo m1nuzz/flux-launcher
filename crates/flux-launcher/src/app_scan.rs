@@ -1,4 +1,3 @@
-use std::ffi::OsString;
 use std::path::{Path, PathBuf};
 
 use flux_core::{ResultKind, ResultSource, SearchResult};
@@ -347,9 +346,6 @@ pub(crate) fn collect_files(_root: &Path, _depth: usize, _candidates: &mut Vec<S
 
 #[cfg(not(windows))]
 pub(crate) fn collect_app_paths(_candidates: &mut Vec<SearchResult>) {}
-
-#[allow(dead_code)]
-fn _keep_os_string_type_available(_: OsString) {}
 
 #[cfg(test)]
 mod tests {
