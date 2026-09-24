@@ -378,6 +378,7 @@ fn main() {
         current_sequence,
         Rc::clone(&provider_results),
         priorities,
+        history_mode,
     );
 
     let everything_worker = background_tasks::spawn_everything_pipeline(
@@ -392,6 +393,7 @@ fn main() {
         current_sequence,
         Rc::clone(&provider_results),
         priorities,
+        history_mode,
         auto_enable_everything,
         everything_installed,
         everything_status,
@@ -410,6 +412,7 @@ fn main() {
         current_sequence,
         Rc::clone(&provider_results),
         priorities,
+        history_mode,
         Rc::clone(&plugin_actions),
     );
 
@@ -425,6 +428,7 @@ fn main() {
         current_sequence,
         Rc::clone(&provider_results),
         priorities,
+        history_mode,
         Rc::clone(&plugin_actions),
     );
 

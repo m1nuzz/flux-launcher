@@ -30,7 +30,8 @@ pub(crate) struct ProviderResults {
     pub(crate) sequence: u64,
     /// The query the visible list was last published for. The list is held back
     /// while a new generation is in flight, so this is what lets a key handler
-    /// notice that the rows on screen belong to an earlier keystroke.
+    /// notice that the rows on screen belong to an earlier keystroke. The Ctrl+H
+    /// list clears it: those rows belong to no search generation.
     pub(crate) published_query: String,
     pub(crate) built_in: Vec<SearchResult>,
     pub(crate) applications: Vec<SearchResult>,
@@ -105,7 +106,17 @@ pub(crate) fn commit_provider_results(
     selected_index: Signal<usize>,
     selection_touched: Signal<bool>,
     results: Signal<Vec<SearchResult>>,
+    history_mode: Signal<bool>,
 ) {
+    if history_mode.get() {
+        // The Ctrl+H list owns the visible rows. Publishing here would swap the
+        // history rows out from under the arrow keys while the user is still
+        // navigating them, so only record that the screen no longer matches this
+        // query: the providers keep their data and the next key handler
+        // republishes it once history mode ends.
+        providers.published_query.clear();
+        return;
+    }
     let merged = providers.merged(query, priorities);
     providers.published_query = query.to_owned();
     // distinctUntilChanged: an identical snapshot must not rebuild the row
@@ -175,6 +186,9 @@ pub(crate) fn refresh_merged_results(
         })
         .collect::<Vec<_>>();
     let merged = providers.borrow().merged(&query.get(), &priority_ids);
+    // This is a publish too: recording it keeps a later keystroke from treating
+    // the freshly written list as stale.
+    providers.borrow_mut().published_query = query.get();
     results.set(merged);
 }
 
@@ -271,8 +285,52 @@ mod tests {
             signal(0_usize),
             signal(false),
             signal(Vec::new()),
+            signal(false),
         );
         assert_eq!(providers.published_query, "perp");
+    }
+
+    #[test]
+    fn history_list_survives_a_provider_commit() {
+        use windui::signal::signal;
+        let app = SearchResult {
+            id: String::from("app:perplexity"),
+            title: String::from("Perplexity"),
+            subtitle: String::new(),
+            kind: ResultKind::Application,
+            source: ResultSource::ApplicationCatalog,
+            target: None,
+        };
+        let history_row = SearchResult {
+            id: String::from("history:perp"),
+            title: String::from("perp"),
+            subtitle: String::new(),
+            kind: ResultKind::Command,
+            source: ResultSource::BuiltIn,
+            target: None,
+        };
+        let mut providers = ProviderResults::default();
+        providers.reset(1, Vec::new(), false);
+        providers.applications = vec![app];
+        providers.applications_ready = true;
+        providers.published_query = String::from("perp");
+        let results = signal(vec![history_row]);
+        let version = results.version();
+        commit_provider_results(
+            &mut providers,
+            "perp",
+            &[],
+            signal(String::from("history:perp")),
+            signal(0_usize),
+            signal(false),
+            results,
+            signal(true),
+        );
+        // The rows the arrow keys are walking must not be swapped out mid-list,
+        // and the screen must be marked as belonging to no search generation so
+        // the real list returns as soon as history mode closes.
+        assert_eq!(results.version(), version, "history rows must stay");
+        assert!(providers.published_query.is_empty());
     }
 
     #[test]
@@ -307,6 +365,7 @@ mod tests {
             selected_index,
             selection_touched,
             results,
+            signal(false),
         );
         // Same elements, same order, same selection: no signal may be
         // re-set, otherwise the row tree rebuilds and the frame shimmers.
@@ -342,6 +401,7 @@ mod tests {
             selected_index,
             selection_touched,
             results,
+            signal(false),
         );
         assert_eq!(selected_id.get(), "app:perplexity");
         assert_eq!(selected_index.get(), 0);

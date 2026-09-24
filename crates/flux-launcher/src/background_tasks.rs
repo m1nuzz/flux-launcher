@@ -139,6 +139,7 @@ pub(crate) fn spawn_application_pipeline(
     current_sequence: Signal<u64>,
     providers: Rc<RefCell<ProviderResults>>,
     priorities: Signal<Vec<PriorityEntry>>,
+    history_mode: Signal<bool>,
 ) -> ApplicationWorker {
     let query_for_applications = query;
     let results_for_applications = results;
@@ -150,6 +151,7 @@ pub(crate) fn spawn_application_pipeline(
     let sequence_for_applications = current_sequence;
     let providers_for_applications = Rc::clone(&providers);
     let priorities_for_applications = priorities;
+    let history_mode_for_applications = history_mode;
     let application_sender = app.channel::<ApplicationResponse>(move |_, response| {
         if response.sequence != sequence_for_applications.get()
             || response.query != query_for_applications.get()
@@ -176,6 +178,7 @@ pub(crate) fn spawn_application_pipeline(
                 selected_index_for_applications,
                 selection_touched_for_applications,
                 results_for_applications,
+                history_mode_for_applications,
             );
             // Ghost completion has a single writer per query generation (this
             // pipeline). Refreshing it in every pipeline would flip the hint
@@ -206,6 +209,7 @@ pub(crate) fn spawn_everything_pipeline(
     current_sequence: Signal<u64>,
     providers: Rc<RefCell<ProviderResults>>,
     priorities: Signal<Vec<PriorityEntry>>,
+    history_mode: Signal<bool>,
     auto_enable_everything: Signal<bool>,
     everything_installed: Signal<bool>,
     everything_status: Signal<String>,
@@ -221,6 +225,7 @@ pub(crate) fn spawn_everything_pipeline(
     let sequence_for_everything = current_sequence;
     let providers_for_everything = Rc::clone(&providers);
     let priorities_for_everything = priorities;
+    let history_mode_for_everything = history_mode;
     let auto_enable_everything_for_response = auto_enable_everything;
     let everything_installed_for_response = everything_installed;
     let everything_status_for_response = everything_status;
@@ -268,6 +273,7 @@ pub(crate) fn spawn_everything_pipeline(
                 selected_index_for_everything,
                 selection_touched_for_everything,
                 results_for_everything,
+                history_mode_for_everything,
             );
         }
         status_for_everything.set(response.status);
@@ -312,6 +318,7 @@ pub(crate) fn spawn_plugin_pipeline(
     current_sequence: Signal<u64>,
     providers: Rc<RefCell<ProviderResults>>,
     priorities: Signal<Vec<PriorityEntry>>,
+    history_mode: Signal<bool>,
     plugin_actions: Rc<RefCell<HashMap<String, PluginAction>>>,
 ) -> FlowPluginWorker {
     let query_for_plugins = query;
@@ -324,6 +331,7 @@ pub(crate) fn spawn_plugin_pipeline(
     let sequence_for_plugins = current_sequence;
     let providers_for_plugins = Rc::clone(&providers);
     let priorities_for_plugins = priorities;
+    let history_mode_for_plugins = history_mode;
     let actions_for_plugins = Rc::clone(&plugin_actions);
     let plugin_sender = app.channel::<PluginQueryResponse>(move |_, response| {
         if response.sequence != sequence_for_plugins.get()
@@ -352,6 +360,7 @@ pub(crate) fn spawn_plugin_pipeline(
                     selected_index_for_plugins,
                     selection_touched_for_plugins,
                     results_for_plugins,
+                    history_mode_for_plugins,
                 );
             }
         }
@@ -373,6 +382,7 @@ pub(crate) fn spawn_native_pipeline(
     current_sequence: Signal<u64>,
     providers: Rc<RefCell<ProviderResults>>,
     priorities: Signal<Vec<PriorityEntry>>,
+    history_mode: Signal<bool>,
     plugin_actions: Rc<RefCell<HashMap<String, PluginAction>>>,
 ) -> NativePluginWorker {
     let query_for_native_plugins = query;
@@ -385,6 +395,7 @@ pub(crate) fn spawn_native_pipeline(
     let sequence_for_native_plugins = current_sequence;
     let providers_for_native_plugins = Rc::clone(&providers);
     let priorities_for_native_plugins = priorities;
+    let history_mode_for_native_plugins = history_mode;
     let actions_for_native_plugins = Rc::clone(&plugin_actions);
     let native_sender = app.channel::<NativePluginQueryResponse>(move |_, response| {
         if response.sequence != sequence_for_native_plugins.get()
@@ -420,6 +431,7 @@ pub(crate) fn spawn_native_pipeline(
                 selected_index_for_native_plugins,
                 selection_touched_for_native_plugins,
                 results_for_native_plugins,
+                history_mode_for_native_plugins,
             );
         }
     });

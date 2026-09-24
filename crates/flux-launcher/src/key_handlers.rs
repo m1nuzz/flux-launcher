@@ -251,6 +251,10 @@ pub(crate) fn register_key_handlers(
                     .unwrap_or_default(),
             );
             results_for_keys.set(filtered);
+            // These rows belong to no search generation, so the published list
+            // is no longer what is on screen. Providers keep filling in for the
+            // typed query and republish it as soon as history mode ends.
+            providers_for_keys.borrow_mut().published_query.clear();
             show_results_for_keys.set(true);
             size_for_keys.set(
                 i32::from(launcher_width.get()),
@@ -319,8 +323,9 @@ pub(crate) fn register_key_handlers(
         // earlier keystroke. When the published list is not the one for the
         // typed text, rebuild it from whatever the providers already returned
         // for this generation, so Enter, Alt+Enter and Run as admin resolve
-        // against what the user actually typed.
-        if providers_for_keys.borrow().published_query != query {
+        // against what the user actually typed. History rows are excluded: that
+        // list is the point of the keystroke, not a stale generation.
+        if !history_mode_for_keys.get() && providers_for_keys.borrow().published_query != query {
             refresh_merged_results(
                 &providers_for_keys,
                 query_for_keys,
