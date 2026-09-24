@@ -90,6 +90,11 @@ pub(crate) fn result_row(
     let (glyph, glyph_font) = match id.as_str() {
         "empty-recycle-bin" => (String::from("\u{ea99}"), "Segoe Fluent Icons"),
         "open-recycle-bin" => (String::from("\u{e74d}"), "Segoe Fluent Icons"),
+        // Recalling a previous search is what these rows do, so mark them with an
+        // hourglass instead of the generic placeholder square. The family is named
+        // explicitly: U+231B has an emoji presentation by default, and the rows are
+        // painted monochrome.
+        _ if id.starts_with("history:") => (String::from("⏳"), "Segoe UI Symbol"),
         _ if subtitle.contains("Application") => (String::from("◉"), LAUNCHER_FONT_FAMILY),
         _ => (String::from("▣"), LAUNCHER_FONT_FAMILY),
     };
