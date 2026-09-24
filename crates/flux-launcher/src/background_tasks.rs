@@ -169,7 +169,7 @@ pub(crate) fn spawn_application_pipeline(
                 .map(|entry| entry.id.clone())
                 .collect::<Vec<_>>();
             commit_provider_results(
-                &providers,
+                &mut providers,
                 &query_for_applications.get(),
                 &priorities,
                 selected_id_for_applications,
@@ -261,7 +261,7 @@ pub(crate) fn spawn_everything_pipeline(
                 .map(|entry| entry.id.clone())
                 .collect::<Vec<_>>();
             commit_provider_results(
-                &providers,
+                &mut providers,
                 &query_for_everything.get(),
                 &priorities,
                 selected_id_for_everything,
@@ -345,7 +345,7 @@ pub(crate) fn spawn_plugin_pipeline(
                     .map(|entry| entry.id.clone())
                     .collect::<Vec<_>>();
                 commit_provider_results(
-                    &providers,
+                    &mut providers,
                     &query_for_plugins.get(),
                     &priorities,
                     selected_id_for_plugins,
@@ -413,7 +413,7 @@ pub(crate) fn spawn_native_pipeline(
                 .map(|entry| entry.id.clone())
                 .collect::<Vec<_>>();
             commit_provider_results(
-                &providers,
+                &mut providers,
                 &query_for_native_plugins.get(),
                 &priorities,
                 selected_id_for_native_plugins,

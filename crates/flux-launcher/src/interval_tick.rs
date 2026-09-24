@@ -572,6 +572,7 @@ pub(crate) fn register_interval(
                 // Built-in/system commands are synchronous and must be actionable
                 // immediately. External providers still replace this snapshot once
                 // their responses arrive for the same query sequence.
+                providers.published_query = next_query.clone();
                 results_for_interval.set(built_in_results);
             }
         }

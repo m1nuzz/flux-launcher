@@ -28,6 +28,10 @@ pub(crate) fn should_publish_initial_query_results(
 #[derive(Default)]
 pub(crate) struct ProviderResults {
     pub(crate) sequence: u64,
+    /// The query the visible list was last published for. The list is held back
+    /// while a new generation is in flight, so this is what lets a key handler
+    /// notice that the rows on screen belong to an earlier keystroke.
+    pub(crate) published_query: String,
     pub(crate) built_in: Vec<SearchResult>,
     pub(crate) applications: Vec<SearchResult>,
     pub(crate) everything: Vec<SearchResult>,
@@ -84,7 +88,7 @@ impl ProviderResults {
 
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn commit_provider_results(
-    providers: &ProviderResults,
+    providers: &mut ProviderResults,
     query: &str,
     priorities: &[String],
     selected_id: Signal<String>,
@@ -93,6 +97,7 @@ pub(crate) fn commit_provider_results(
     results: Signal<Vec<SearchResult>>,
 ) {
     let merged = providers.merged(query, priorities);
+    providers.published_query = query.to_owned();
     // distinctUntilChanged: an identical snapshot must not rebuild the row
     // tree or jump the highlight, so write each signal only when its value
     // would actually change. Element and order both matter: a reorder alone
@@ -206,6 +211,36 @@ mod tests {
     }
 
     #[test]
+    fn commit_records_the_query_the_published_list_belongs_to() {
+        use windui::signal::signal;
+        let app = SearchResult {
+            id: String::from("app:perplexity"),
+            title: String::from("Perplexity"),
+            subtitle: String::new(),
+            kind: ResultKind::Application,
+            source: ResultSource::ApplicationCatalog,
+            target: None,
+        };
+        let mut providers = ProviderResults::default();
+        providers.reset(1, Vec::new(), false);
+        providers.applications = vec![app];
+        providers.applications_ready = true;
+        // Nothing published yet: a key handler must treat any shown list as
+        // belonging to a different query.
+        assert!(providers.published_query.is_empty());
+        commit_provider_results(
+            &mut providers,
+            "perp",
+            &[],
+            signal(String::new()),
+            signal(0_usize),
+            signal(false),
+            signal(Vec::new()),
+        );
+        assert_eq!(providers.published_query, "perp");
+    }
+
+    #[test]
     fn identical_commit_writes_no_signals() {
         use windui::signal::signal;
         let app = SearchResult {
@@ -230,7 +265,7 @@ mod tests {
             selected_index.version(),
         );
         commit_provider_results(
-            &providers,
+            &mut providers,
             "perp",
             &[],
             selected_id,
@@ -265,7 +300,7 @@ mod tests {
         let selection_touched = signal(false);
         let results = signal(Vec::new());
         commit_provider_results(
-            &providers,
+            &mut providers,
             "perp",
             &[],
             selected_id,

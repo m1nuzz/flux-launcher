@@ -273,7 +273,22 @@ pub(crate) fn register_key_handlers(
         if query.trim().is_empty() && !history_mode_for_keys.get() {
             return false;
         }
-        let current_results = results_for_keys.get();
+        let mut current_results = results_for_keys.get();
+        // The visible list is held back on purpose while a new query generation
+        // is in flight, so a fast typist can act on rows that belong to an
+        // earlier keystroke. When the published list is not the one for the
+        // typed text, rebuild it from whatever the providers already returned
+        // for this generation, so Enter, Alt+Enter and Run as admin resolve
+        // against what the user actually typed.
+        if providers_for_keys.borrow().published_query != query {
+            refresh_merged_results(
+                &providers_for_keys,
+                query_for_keys,
+                priorities_for_keys,
+                results_for_keys,
+            );
+            current_results = results_for_keys.get();
+        }
         if current_results.is_empty() {
             return false;
         }
