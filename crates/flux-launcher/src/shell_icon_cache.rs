@@ -206,9 +206,12 @@ pub(crate) fn trace_shell_icon_probe(target: &str, loaded: bool) {
 
 #[cfg(windows)]
 pub(crate) fn shortcut_icon_smoke(target: &str) -> bool {
-    shortcut_icon_location(target)
-        .and_then(|(path, index)| extract_icon_rgba_from_source(&path, Some(index)))
-        .is_some_and(|rgba| rgba.len() == 32 * 32 * 4)
+    // Exercise the same resolution chain the rows use, and require visible
+    // pixels: a correctly sized but fully transparent buffer once passed this
+    // smoke while the icon was invisible on screen.
+    shell_icon_rgba(target).is_some_and(|rgba| {
+        rgba.len() == 32 * 32 * 4 && rgba.chunks_exact(4).any(|pixel| pixel[3] != 0)
+    })
 }
 
 #[cfg(windows)]

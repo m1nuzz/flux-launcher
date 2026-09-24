@@ -202,6 +202,64 @@ pub(crate) fn is_executable_icon_target(target: &str) -> bool {
 }
 
 #[cfg(windows)]
+fn icon_and_mask(
+    hdc: windows::Win32::Graphics::Gdi::HDC,
+    icon: windows::Win32::UI::WindowsAndMessaging::HICON,
+    size: i32,
+) -> Option<Vec<u8>> {
+    use std::ffi::c_void;
+    use std::mem::size_of;
+    use windows::Win32::Graphics::Gdi::{
+        DeleteObject, GetDIBits, BITMAPINFO, BITMAPINFOHEADER, BI_RGB, DIB_RGB_COLORS, HGDIOBJ,
+    };
+    use windows::Win32::UI::WindowsAndMessaging::{GetIconInfo, ICONINFO};
+
+    let stride = ((size + 31) / 32) * 4;
+    let mut mask = vec![0_u8; (stride * size) as usize];
+    let mut info = ICONINFO::default();
+    if unsafe { GetIconInfo(icon, &mut info) }.is_err() {
+        return None;
+    }
+    let header = BITMAPINFOHEADER {
+        biSize: size_of::<BITMAPINFOHEADER>() as u32,
+        biWidth: size,
+        // Negative height asks for top-down rows, matching the DIB the icon was
+        // drawn into.
+        biHeight: -size,
+        biPlanes: 1,
+        biBitCount: 1,
+        biCompression: BI_RGB.0,
+        ..Default::default()
+    };
+    let mut bitmap_info = BITMAPINFO {
+        bmiHeader: header,
+        ..Default::default()
+    };
+    let scanned = unsafe {
+        GetDIBits(
+            hdc,
+            info.hbmMask,
+            0,
+            size as u32,
+            Some(mask.as_mut_ptr().cast::<c_void>()),
+            &mut bitmap_info,
+            DIB_RGB_COLORS,
+        )
+    };
+    // A monochrome icon reports the same bitmap as color and mask, so only
+    // release one of them.
+    if !info.hbmColor.is_invalid() && info.hbmColor.0 != info.hbmMask.0 {
+        unsafe {
+            let _ = DeleteObject(HGDIOBJ(info.hbmColor.0));
+        }
+    }
+    unsafe {
+        let _ = DeleteObject(HGDIOBJ(info.hbmMask.0));
+    }
+    (scanned > 0).then_some(mask)
+}
+
+#[cfg(windows)]
 pub(crate) fn extract_icon_rgba_from_source(
     source: &str,
     icon_index: Option<i32>,
@@ -283,9 +341,34 @@ pub(crate) fn extract_icon_rgba_from_source(
         let bgra = unsafe {
             std::slice::from_raw_parts(bits.cast::<u8>(), (ICON_SIZE * ICON_SIZE * 4) as usize)
         };
+        // A 32bpp icon entry carries its own alpha. An 8bpp or 24bpp entry - the
+        // Steam game ICO files - is drawn with the alpha channel left at zero, and
+        // its transparency exists only in the icon's AND mask, so without the mask
+        // every pixel is either invisible or an opaque black box.
+        let has_alpha = bgra.chunks_exact(4).any(|pixel| pixel[3] != 0);
+        let mask_stride = ((ICON_SIZE + 31) / 32) as usize * 4;
+        let mask = if has_alpha {
+            None
+        } else {
+            icon_and_mask(hdc, icon, ICON_SIZE)
+        };
         let mut rgba = Vec::with_capacity(bgra.len());
-        for pixel in bgra.chunks_exact(4) {
-            rgba.extend([pixel[2], pixel[1], pixel[0], pixel[3]]);
+        for (index, pixel) in bgra.chunks_exact(4).enumerate() {
+            let alpha = if has_alpha {
+                pixel[3]
+            } else if let Some(mask) = &mask {
+                let row = index / ICON_SIZE as usize;
+                let column = index % ICON_SIZE as usize;
+                let bit = (mask[row * mask_stride + column / 8] >> (7 - (column % 8))) & 1;
+                if bit == 1 {
+                    0
+                } else {
+                    255
+                }
+            } else {
+                255
+            };
+            rgba.extend([pixel[2], pixel[1], pixel[0], alpha]);
         }
         Some(rgba)
     } else {
