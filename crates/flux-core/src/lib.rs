@@ -25,3 +25,4 @@ pub use settings::{
     DEFAULT_LAUNCHER_WIDTH, MAX_LAUNCHER_HEIGHT, MAX_LAUNCHER_WIDTH, MAX_QUERY_HISTORY,
     MIN_LAUNCHER_HEIGHT, MIN_LAUNCHER_WIDTH,
 };
+pub use settings_store::SettingsLoadOutcome;

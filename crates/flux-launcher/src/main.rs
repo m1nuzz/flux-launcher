@@ -58,8 +58,8 @@ mod visual_preview;
 mod window_geometry;
 
 use flux_core::{
-    MonitorPreference, SearchModel, Settings, MAX_LAUNCHER_HEIGHT, MAX_LAUNCHER_WIDTH,
-    MIN_LAUNCHER_HEIGHT, MIN_LAUNCHER_WIDTH,
+    MonitorPreference, SearchModel, Settings, SettingsLoadOutcome, MAX_LAUNCHER_HEIGHT,
+    MAX_LAUNCHER_WIDTH, MIN_LAUNCHER_HEIGHT, MIN_LAUNCHER_WIDTH,
 };
 use plugins::PluginAction;
 use std::cell::RefCell;
@@ -94,7 +94,18 @@ fn main() {
         } => (startup, single_instance_disabled),
     };
 
-    let settings = Settings::load_or_default();
+    let (settings, settings_load) = Settings::load_or_default_from(&Settings::config_path());
+    match settings_load {
+        SettingsLoadOutcome::Loaded => {}
+        SettingsLoadOutcome::MovedAside(backup) => eprintln!(
+            "Settings could not be read, so they were moved to {} and this run starts from defaults",
+            backup.display()
+        ),
+        SettingsLoadOutcome::Unreadable => eprintln!(
+            "Settings at {} could not be read and could not be moved aside; this run starts from defaults",
+            Settings::config_path().display()
+        ),
+    }
     if let Err(error) = startup::set_enabled(settings.start_with_windows) {
         eprintln!("Could not synchronize Windows startup setting: {error}");
     }
