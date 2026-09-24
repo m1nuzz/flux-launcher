@@ -125,7 +125,7 @@ pub(crate) fn split_args() -> (Option<OsString>, std::env::ArgsOs) {
 }
 
 pub(crate) fn should_exit_early(
-    mode: Option<&std::ffi::OsStr>,
+    mode: Option<&OsStr>,
     args: &mut std::env::ArgsOs,
     single_instance_disabled: bool,
 ) -> bool {

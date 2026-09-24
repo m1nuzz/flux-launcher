@@ -56,15 +56,13 @@ pub fn foreground_is_fullscreen() -> bool {
         return matches_display_bounds(visible_bounds, bounds_from_rect(monitor_info.rcMonitor));
     }
 
-    unsafe fn dwm_extended_frame_bounds(
-        hwnd: windows::Win32::Foundation::HWND,
-    ) -> Option<WindowBounds> {
-        let mut rect = windows::Win32::Foundation::RECT::default();
+    unsafe fn dwm_extended_frame_bounds(hwnd: HWND) -> Option<WindowBounds> {
+        let mut rect = RECT::default();
         DwmGetWindowAttribute(
             hwnd,
             DWMWA_EXTENDED_FRAME_BOUNDS,
             &mut rect as *mut _ as *mut c_void,
-            size_of::<windows::Win32::Foundation::RECT>() as u32,
+            size_of::<RECT>() as u32,
         )
         .ok()?;
         Some(bounds_from_rect(rect))

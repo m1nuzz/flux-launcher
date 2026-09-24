@@ -74,15 +74,15 @@ pub(crate) fn launcher_width_reset_button(
     Element::button(i18n_hub.tr(|| t!("settings.visual.reset").into_owned()))
         .neutral()
         .on_click(move |_| {
-            let width = flux_core::DEFAULT_LAUNCHER_WIDTH;
+            let width = DEFAULT_LAUNCHER_WIDTH;
             let height = launcher_height.get();
             eprintln!("Visual width reset clicked: {}x{}", width, height);
             launcher_width.set(width);
             launcher_width_input.set(width.to_string());
             launcher_width_slider.set(dimension_slider_fraction(
                 width,
-                flux_core::MIN_LAUNCHER_WIDTH,
-                flux_core::MAX_LAUNCHER_WIDTH,
+                MIN_LAUNCHER_WIDTH,
+                MAX_LAUNCHER_WIDTH,
             ));
             launcher_preview_text.set(
                 t!(
@@ -109,14 +109,14 @@ pub(crate) fn launcher_height_reset_button(
         .neutral()
         .on_click(move |_| {
             let width = launcher_width.get();
-            let height = flux_core::DEFAULT_LAUNCHER_HEIGHT;
+            let height = DEFAULT_LAUNCHER_HEIGHT;
             eprintln!("Visual height reset clicked: {}x{}", width, height);
             launcher_height.set(height);
             launcher_height_input.set(height.to_string());
             launcher_height_slider.set(dimension_slider_fraction(
                 height,
-                flux_core::MIN_LAUNCHER_HEIGHT,
-                flux_core::MAX_LAUNCHER_HEIGHT,
+                MIN_LAUNCHER_HEIGHT,
+                MAX_LAUNCHER_HEIGHT,
             ));
             launcher_preview_text.set(
                 t!(
@@ -144,8 +144,8 @@ pub(crate) struct VisualApplyContext {
     pub(crate) caret_duration: Signal<String>,
     pub(crate) settings_visible: Signal<bool>,
     pub(crate) show_results: Signal<bool>,
-    pub(crate) window_size: windui::app::WindowSizeHandle,
-    pub(crate) window_position: windui::app::WindowPositionHandle,
+    pub(crate) window_size: WindowSizeHandle,
+    pub(crate) window_position: WindowPositionHandle,
 }
 
 pub(crate) fn visual_apply_button(context: VisualApplyContext) -> Element {
@@ -170,16 +170,16 @@ pub(crate) fn visual_apply_button(context: VisualApplyContext) -> Element {
     Element::button(i18n_hub.tr(|| t!("settings.visual.apply").into_owned())).on_click(move |ctx| {
         let mut width = parse_dimension_input(
             &launcher_width_input.get(),
-            flux_core::MIN_LAUNCHER_WIDTH,
-            flux_core::MAX_LAUNCHER_WIDTH,
+            MIN_LAUNCHER_WIDTH,
+            MAX_LAUNCHER_WIDTH,
         )
-        .unwrap_or(flux_core::DEFAULT_LAUNCHER_WIDTH);
+        .unwrap_or(DEFAULT_LAUNCHER_WIDTH);
         let mut height = parse_dimension_input(
             &launcher_height_input.get(),
-            flux_core::MIN_LAUNCHER_HEIGHT,
-            flux_core::MAX_LAUNCHER_HEIGHT,
+            MIN_LAUNCHER_HEIGHT,
+            MAX_LAUNCHER_HEIGHT,
         )
-        .unwrap_or(flux_core::DEFAULT_LAUNCHER_HEIGHT);
+        .unwrap_or(DEFAULT_LAUNCHER_HEIGHT);
         let duration = caret_duration
             .get()
             .trim()
@@ -198,7 +198,7 @@ pub(crate) fn visual_apply_button(context: VisualApplyContext) -> Element {
         width = settings.launcher_width;
         height = settings.launcher_height;
         let preference = settings.monitor_preference;
-        if !crate::settings_state::save_settings(&settings) {
+        if !save_settings(&settings) {
             ctx.toast_ok(t!("settings.visual.save_failed"));
             return;
         }
@@ -208,13 +208,13 @@ pub(crate) fn visual_apply_button(context: VisualApplyContext) -> Element {
         launcher_height_input.set(height.to_string());
         launcher_width_slider.set(dimension_slider_fraction(
             width,
-            flux_core::MIN_LAUNCHER_WIDTH,
-            flux_core::MAX_LAUNCHER_WIDTH,
+            MIN_LAUNCHER_WIDTH,
+            MAX_LAUNCHER_WIDTH,
         ));
         launcher_height_slider.set(dimension_slider_fraction(
             height,
-            flux_core::MIN_LAUNCHER_HEIGHT,
-            flux_core::MAX_LAUNCHER_HEIGHT,
+            MIN_LAUNCHER_HEIGHT,
+            MAX_LAUNCHER_HEIGHT,
         ));
         launcher_preview_text.set(
             t!(
@@ -231,7 +231,7 @@ pub(crate) fn visual_apply_button(context: VisualApplyContext) -> Element {
         } else {
             crate::COMPACT_WINDOW_HEIGHT
         };
-        crate::window_state::request_monitor_position(
+        request_monitor_position(
             &window_position,
             preference,
             i32::from(width),
@@ -346,19 +346,17 @@ pub(crate) fn everything_settings(context: EverythingSettingsContext) -> Element
         .child(
             Element::button(i18n_hub.tr(|| t!("everything.install").into_owned()))
                 .visible_when(move || !installed_for_ui.get())
-                .on_click(
-                    move |ctx| match crate::everything::launch_winget_install() {
-                        Ok(()) => {
-                            status_for_install
-                                .set(t!("everything.winget_started_restart").into_owned());
-                            ctx.toast_ok(t!("everything.winget_started_toast"));
-                        }
-                        Err(error) => {
-                            status_for_install.set(error.clone());
-                            ctx.toast_ok(error);
-                        }
-                    },
-                ),
+                .on_click(move |ctx| match everything::launch_winget_install() {
+                    Ok(()) => {
+                        status_for_install
+                            .set(t!("everything.winget_started_restart").into_owned());
+                        ctx.toast_ok(t!("everything.winget_started_toast"));
+                    }
+                    Err(error) => {
+                        status_for_install.set(error.clone());
+                        ctx.toast_ok(error);
+                    }
+                }),
         )
         .child(plugin_settings(
             i18n_hub,
@@ -592,20 +590,19 @@ pub(crate) struct SettingsPanelContext {
     pub(crate) switch_to_english_layout: Signal<bool>,
     pub(crate) system_commands_enabled: Signal<bool>,
     pub(crate) system_commands_enabled_for_apply: Signal<bool>,
-    pub(crate) update_available_for_install: Signal<Option<crate::updater::StableUpdate>>,
+    pub(crate) update_available_for_install: Signal<Option<updater::StableUpdate>>,
     pub(crate) update_check_in_flight_for_apply: Rc<Cell<bool>>,
     pub(crate) update_check_in_flight_for_check_now: Rc<Cell<bool>>,
     pub(crate) update_checks_enabled: Signal<bool>,
     pub(crate) update_checks_enabled_for_apply: Signal<bool>,
     pub(crate) update_install_in_flight_for_ui: Rc<Cell<bool>>,
-    pub(crate) update_install_progress_for_ui:
-        Signal<Option<(String, crate::updater::DownloadProgress)>>,
+    pub(crate) update_install_progress_for_ui: Signal<Option<(String, updater::DownloadProgress)>>,
     pub(crate) update_install_sender_for_ui: Sender<crate::update_state::UpdateInstallResponse>,
     pub(crate) update_installing_for_ui: Signal<bool>,
     pub(crate) update_interval_hours: Signal<String>,
     pub(crate) update_interval_hours_for_apply: Signal<String>,
-    pub(crate) update_sender_for_apply: Sender<crate::updater::UpdateCheckResponse>,
-    pub(crate) update_sender_for_check_now: Sender<crate::updater::UpdateCheckResponse>,
+    pub(crate) update_sender_for_apply: Sender<updater::UpdateCheckResponse>,
+    pub(crate) update_sender_for_check_now: Sender<updater::UpdateCheckResponse>,
     pub(crate) update_status: Signal<String>,
     pub(crate) update_status_for_apply: Signal<String>,
     pub(crate) update_status_for_install: Signal<String>,

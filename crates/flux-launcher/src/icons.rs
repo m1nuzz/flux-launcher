@@ -268,7 +268,7 @@ pub(crate) fn prewarm_icon_targets(
     results: &[flux_core::SearchResult],
     limit: usize,
 ) -> Vec<String> {
-    let mut seen = std::collections::HashSet::new();
+    let mut seen = HashSet::new();
     let mut targets = Vec::new();
     for result in results {
         if targets.len() >= limit {

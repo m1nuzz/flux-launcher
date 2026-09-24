@@ -180,8 +180,8 @@ impl Widget for ResultRowAnchor {
         self.last_pointer = None;
     }
 
-    fn cursor(&self) -> windui::event::CursorShape {
-        windui::event::CursorShape::Hand
+    fn cursor(&self) -> CursorShape {
+        CursorShape::Hand
     }
 
     fn wants_right_click(&self) -> bool {
@@ -190,12 +190,12 @@ impl Widget for ResultRowAnchor {
 
     fn paint(
         &self,
-        bounds: windui::geometry::Rect,
-        _content: windui::geometry::Rect,
+        bounds: Rect,
+        _content: Rect,
         _focused: bool,
         _enabled: bool,
         canvas: &mut dyn Canvas,
-        _style: &windui::style::Style,
+        _style: &Style,
     ) {
         let selected = self.selected_id.get() == self.result_id;
         let color = if selected {
@@ -289,17 +289,17 @@ impl Widget for ActionRowAnchor {
         self.pressed = false;
         self.last_pointer = None;
     }
-    fn cursor(&self) -> windui::event::CursorShape {
-        windui::event::CursorShape::Hand
+    fn cursor(&self) -> CursorShape {
+        CursorShape::Hand
     }
     fn paint(
         &self,
-        bounds: windui::geometry::Rect,
-        _content: windui::geometry::Rect,
+        bounds: Rect,
+        _content: Rect,
         _focused: bool,
         _enabled: bool,
         canvas: &mut dyn Canvas,
-        _style: &windui::style::Style,
+        _style: &Style,
     ) {
         let selected = self.action_index.get() == self.item_index;
         let color = if selected {

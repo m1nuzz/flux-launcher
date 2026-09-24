@@ -66,7 +66,7 @@ pub fn set_enabled(enabled: bool) -> Result<(), String> {
                 REG_SZ,
                 Some(std::slice::from_raw_parts(
                     value.as_ptr().cast::<u8>(),
-                    value.len() * std::mem::size_of::<u16>(),
+                    value.len() * size_of::<u16>(),
                 )),
             )
         } else {

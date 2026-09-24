@@ -56,7 +56,7 @@ impl HostResourceGuard {
                     job,
                     JobObjectExtendedLimitInformation,
                     &mut limits as *mut _ as *const _,
-                    std::mem::size_of::<JOBOBJECT_EXTENDED_LIMIT_INFORMATION>() as u32,
+                    size_of::<JOBOBJECT_EXTENDED_LIMIT_INFORMATION>() as u32,
                 )
             };
             if let Err(error) = result {
@@ -79,7 +79,7 @@ impl HostResourceGuard {
                     job,
                     JobObjectCpuRateControlInformation,
                     &mut cpu as *mut _ as *const _,
-                    std::mem::size_of::<JOBOBJECT_CPU_RATE_CONTROL_INFORMATION>() as u32,
+                    size_of::<JOBOBJECT_CPU_RATE_CONTROL_INFORMATION>() as u32,
                 )
             } {
                 unsafe {

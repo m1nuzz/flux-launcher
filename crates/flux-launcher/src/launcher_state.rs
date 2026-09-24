@@ -252,11 +252,11 @@ pub(crate) fn init_launcher_state(
 }
 
 pub(crate) struct LauncherSetup {
-    pub(crate) settings: flux_core::Settings,
+    pub(crate) settings: Settings,
     pub(crate) startup_launch: bool,
     pub(crate) activation_hotkey: windui::event::Hotkey,
-    pub(crate) shared_settings: Arc<std::sync::RwLock<flux_core::Settings>>,
-    pub(crate) query_history: Rc<std::cell::RefCell<Vec<String>>>,
+    pub(crate) shared_settings: Arc<std::sync::RwLock<Settings>>,
+    pub(crate) query_history: Rc<RefCell<Vec<String>>>,
     pub(crate) priorities: Signal<Vec<flux_core::PriorityEntry>>,
     pub(crate) history_cursor: Signal<Option<usize>>,
     pub(crate) history_mode: Signal<bool>,

@@ -774,7 +774,7 @@ mod tests {
         let powershell_path = super::resolve_bare_executable_path("powershell.exe")
             .expect("Windows PowerShell should resolve through SearchPathW");
         let start_menu = SearchResult {
-            id: super::canonical_application_id(&powershell_path).unwrap(),
+            id: canonical_application_id(&powershell_path).unwrap(),
             title: String::from("PowerShell"),
             subtitle: String::from("Application • Start Menu"),
             kind: ResultKind::Application,
@@ -782,7 +782,7 @@ mod tests {
             target: Some(powershell_path.clone()),
         };
         let app_path = SearchResult {
-            id: super::canonical_application_id(&powershell_path).unwrap(),
+            id: canonical_application_id(&powershell_path).unwrap(),
             title: String::from("PowerShell"),
             subtitle: String::from("Application • App Paths"),
             kind: ResultKind::Application,

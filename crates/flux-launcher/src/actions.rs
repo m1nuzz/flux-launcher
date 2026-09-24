@@ -149,7 +149,7 @@ pub(crate) fn copy_result_file(result: &SearchResult) -> bool {
         return false;
     };
     let path: Vec<u16> = path.encode_utf16().chain([0]).collect();
-    let header = std::mem::size_of::<DROPFILES>();
+    let header = size_of::<DROPFILES>();
     let bytes = header + path.len() * 2 + 2;
     unsafe {
         let Ok(hmem) = GlobalAlloc(GMEM_MOVEABLE, bytes) else {

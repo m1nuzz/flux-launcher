@@ -164,7 +164,7 @@ fn shell_execute(verb: &str, target: &str, arguments: Option<&str>) -> bool {
 
     trace_launch_event("shell-execute-start");
     let mut execute_info = SHELLEXECUTEINFOW {
-        cbSize: std::mem::size_of::<SHELLEXECUTEINFOW>() as u32,
+        cbSize: size_of::<SHELLEXECUTEINFOW>() as u32,
         fMask: SEE_MASK_NOCLOSEPROCESS,
         hwnd: HWND::default(),
         lpVerb: PCWSTR(verb.as_ptr()),
@@ -247,23 +247,19 @@ pub fn trace_query_profile(event: &str, detail: &str) {
     if path.is_empty() {
         return;
     }
-    let _ = write_query_profile_line(std::path::Path::new(&path), event, detail);
+    let _ = write_query_profile_line(Path::new(&path), event, detail);
 }
 
 /// 诊断日志由 UI 线程与 shell 图标 worker 线程并发追加。行必须一次性写入，
 /// 否则格式化的多段 write 会互相交错，产生无法解析的坏行（见
 /// `doc/archive/plan/u-key-lag-remediation-2026-09-18.md` 步骤 1）。
-static QUERY_PROFILE_WRITE_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+static QUERY_PROFILE_WRITE_LOCK: Mutex<()> = Mutex::new(());
 
-fn write_query_profile_line(
-    path: &std::path::Path,
-    event: &str,
-    detail: &str,
-) -> std::io::Result<()> {
+fn write_query_profile_line(path: &Path, event: &str, detail: &str) -> std::io::Result<()> {
     use std::io::Write;
 
-    let timestamp_ms = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
+    let timestamp_ms = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
         .map(|duration| duration.as_secs_f64() * 1000.0)
         .unwrap_or_default();
     let line = format!(
@@ -272,10 +268,7 @@ fn write_query_profile_line(
     );
     // 先整体成行再单次 write_all；锁用于跨线程串行化，避免不同线程的写入互相穿插。
     let _guard = QUERY_PROFILE_WRITE_LOCK.lock();
-    let mut file = std::fs::OpenOptions::new()
-        .create(true)
-        .append(true)
-        .open(path)?;
+    let mut file = OpenOptions::new().create(true).append(true).open(path)?;
     file.write_all(line.as_bytes())?;
     file.flush()
 }

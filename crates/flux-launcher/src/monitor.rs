@@ -75,7 +75,7 @@ fn work_area_with_dpi(preference: MonitorPreference) -> Option<(MonitorBounds, u
 
     fn bounds_and_dpi_for_monitor(monitor: HMONITOR) -> Option<(MonitorBounds, u32)> {
         let mut info = MONITORINFO {
-            cbSize: std::mem::size_of::<MONITORINFO>() as u32,
+            cbSize: size_of::<MONITORINFO>() as u32,
             ..Default::default()
         };
         if !unsafe { GetMonitorInfoW(monitor, &mut info).as_bool() } {
@@ -132,7 +132,7 @@ fn work_area_with_dpi(preference: MonitorPreference) -> Option<(MonitorBounds, u
                 if let Some(entry) = bounds_and_dpi_for_monitor(monitor) {
                     state.first.get_or_insert(entry);
                     let mut info = MONITORINFO {
-                        cbSize: std::mem::size_of::<MONITORINFO>() as u32,
+                        cbSize: size_of::<MONITORINFO>() as u32,
                         ..Default::default()
                     };
                     if unsafe { GetMonitorInfoW(monitor, &mut info).as_bool() }
@@ -174,7 +174,7 @@ pub(crate) fn work_area(preference: MonitorPreference) -> Option<MonitorBounds> 
 
     fn bounds_for_monitor(monitor: HMONITOR) -> Option<(MonitorBounds, u32)> {
         let mut info = MONITORINFO {
-            cbSize: std::mem::size_of::<MONITORINFO>() as u32,
+            cbSize: size_of::<MONITORINFO>() as u32,
             ..Default::default()
         };
         if !unsafe { GetMonitorInfoW(monitor, &mut info).as_bool() } {
