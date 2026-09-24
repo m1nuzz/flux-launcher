@@ -104,9 +104,49 @@ pub(crate) fn register_key_handlers(
     let show_results_for_keys = show_results;
     app.on_key(move |event: KeyEvent| {
         if activation_recording_for_keys.get() {
+            // Recording is only meaningful while the dialog that started it is on
+            // screen. Exiting Settings any other way (tray toggle, the Visual
+            // tab's Apply) leaves the flag armed, and then the launcher swallows
+            // every keystroke with the global hotkey still disabled. Repair that
+            // orphaned state on the first key that arrives without the dialog.
+            if !settings_visible_for_keys.get() {
+                hotkeys::end_recording(
+                    activation_recording_for_keys,
+                    activation_display_for_keys,
+                    activation_key_for_keys,
+                    activation_ctrl_for_keys,
+                    activation_alt_for_keys,
+                    activation_shift_for_keys,
+                    activation_meta_for_keys,
+                    &activation_handle_for_recorder,
+                );
+                return false;
+            }
             if event.pressed {
+                let recorder_alt = alt_key_is_down();
+                let recorder_meta = hotkeys::meta_key_is_down();
+                // Escape is Flux's dismiss key everywhere else, so it cancels
+                // recording rather than becoming the global activation hotkey.
+                if event.key == Key::Escape
+                    && !event.ctrl
+                    && !event.shift
+                    && !recorder_alt
+                    && !recorder_meta
+                {
+                    hotkeys::end_recording(
+                        activation_recording_for_keys,
+                        activation_display_for_keys,
+                        activation_key_for_keys,
+                        activation_ctrl_for_keys,
+                        activation_alt_for_keys,
+                        activation_shift_for_keys,
+                        activation_meta_for_keys,
+                        &activation_handle_for_recorder,
+                    );
+                    return true;
+                }
                 if let Some(configuration) =
-                    hotkeys::capture_config(&event, alt_key_is_down(), hotkeys::meta_key_is_down())
+                    hotkeys::capture_config(&event, recorder_alt, recorder_meta)
                 {
                     activation_key_for_keys.set(configuration.key.clone());
                     activation_ctrl_for_keys.set(configuration.ctrl);

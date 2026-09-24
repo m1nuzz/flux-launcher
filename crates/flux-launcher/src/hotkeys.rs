@@ -1,6 +1,8 @@
 use flux_core::HotkeyConfig;
+use windui::app::HotkeyHandle;
 use windui::event::{Key as EventKey, KeyEvent};
 use windui::prelude::{Hotkey, Key};
+use windui::signal::Signal;
 
 pub fn activation_hotkey(config: &HotkeyConfig) -> Hotkey {
     let mut hotkey = Hotkey::new(parse_key(&config.key));
@@ -57,6 +59,36 @@ pub fn display_config(config: &HotkeyConfig) -> String {
     }
     parts.push(config.key.clone());
     parts.join(" + ")
+}
+
+/// End an interrupted key recording: re-arm the activation hotkey and show the
+/// combination that Apply would persist. Recording is the only path that
+/// disables the global hotkey, so a recording flag left set by a cancelled or
+/// abandoned dialog would keep swallowing every keystroke in the launcher.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn end_recording(
+    recording: Signal<bool>,
+    display: Signal<String>,
+    key: Signal<String>,
+    ctrl: Signal<bool>,
+    alt: Signal<bool>,
+    shift: Signal<bool>,
+    meta: Signal<bool>,
+    handle: &HotkeyHandle,
+) {
+    if !recording.get() {
+        return;
+    }
+    let config = HotkeyConfig {
+        ctrl: ctrl.get(),
+        alt: alt.get(),
+        shift: shift.get(),
+        meta: meta.get(),
+        key: key.get(),
+    };
+    display.set(display_config(&config));
+    recording.set(false);
+    handle.set_enabled(true);
 }
 
 pub fn meta_key_is_down() -> bool {
