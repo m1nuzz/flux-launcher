@@ -244,7 +244,7 @@ public static class Worker {
         }
     }
 
-    public static string Run(IntPtr hWnd, int durationMs, int intervalMs, int header, int rowHeight) {
+    public static string Run(IntPtr hWnd, int durationMs, int intervalMs, int header, int rowHeight, string frameDir) {
         StringBuilder report = new StringBuilder();
         byte[] previous = null;
         int previousHeight = 0, previousStride = 0;
@@ -286,6 +286,9 @@ public static class Worker {
                     }
                 }
                 if (changed.Length > 0) {
+                    if (frameDir != null && frameDir.Length > 0) {
+                        Save(hWnd, System.IO.Path.Combine(frameDir, "s-" + unix + ".png"));
+                    }
                     report.AppendLine("sample unix=" + unix + " after=" + (unix - previousUnix)
                         + "ms changed=" + (100.0 * moved / Math.Max(1, samples)).ToString("0.0")
                         + " bands=[" + changed + "]");
@@ -389,7 +392,7 @@ try {
         }
         $unix = [DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds()
         [Flicker.Input]::TypeChar($handle, $char)
-        $samples = [Flicker.Sampler+Worker]::Run($handle, $InterKeyMs, $SampleEveryMs, $HeaderHeight, $RowHeight)
+        $samples = [Flicker.Sampler+Worker]::Run($handle, $InterKeyMs, $SampleEveryMs, $HeaderHeight, $RowHeight, $(if ($SaveFrames) { $frameDir } else { '' }))
         if ($SaveFrames) {
             $safe = ($label -replace '[^A-Za-z0-9_.-]', '_')
             [Flicker.Sampler+Worker]::Save($handle, (Join-Path $frameDir ($phase + '-' + $safe + '-' + $unix + '.png')))
@@ -406,7 +409,7 @@ try {
         $held = $held.Substring(0, $held.Length - 1)
         $unix = [DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds()
         [Flicker.Input]::Backspace($handle)
-        $samples = [Flicker.Sampler+Worker]::Run($handle, $InterKeyMs, $SampleEveryMs, $HeaderHeight, $RowHeight)
+        $samples = [Flicker.Sampler+Worker]::Run($handle, $InterKeyMs, $SampleEveryMs, $HeaderHeight, $RowHeight, $(if ($SaveFrames) { $frameDir } else { '' }))
         if ($SaveFrames) {
             $safe = ($label -replace '[^A-Za-z0-9_.-]', '_')
             [Flicker.Sampler+Worker]::Save($handle, (Join-Path $frameDir ($phase + '-' + $safe + '-' + $unix + '.png')))
@@ -420,14 +423,14 @@ try {
             $current += [string]$char
             $unix = [DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds()
             [Flicker.Input]::TypeChar($handle, $char)
-            $samples = [Flicker.Sampler+Worker]::Run($handle, $InterKeyMs, $SampleEveryMs, $HeaderHeight, $RowHeight)
+            $samples = [Flicker.Sampler+Worker]::Run($handle, $InterKeyMs, $SampleEveryMs, $HeaderHeight, $RowHeight, $(if ($SaveFrames) { $frameDir } else { '' }))
             Add-Observation 'toggle' "r$round add $char" $current $unix $samples
         }
         for ($k = 0; $k -lt $Toggle.Length; $k++) {
             $current = $current.Substring(0, $current.Length - 1)
             $unix = [DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds()
             [Flicker.Input]::Backspace($handle)
-            $samples = [Flicker.Sampler+Worker]::Run($handle, $InterKeyMs, $SampleEveryMs, $HeaderHeight, $RowHeight)
+            $samples = [Flicker.Sampler+Worker]::Run($handle, $InterKeyMs, $SampleEveryMs, $HeaderHeight, $RowHeight, $(if ($SaveFrames) { $frameDir } else { '' }))
             Add-Observation 'toggle' "r$round delete" $current $unix $samples
         }
     }
