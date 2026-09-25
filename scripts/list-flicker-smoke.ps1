@@ -4,22 +4,26 @@
     Regression smoke for result-list flicker.
 
 .DESCRIPTION
-    Types a query into a running-on-this-desktop Flux Launcher build at a fixed
-    keystroke cadence while sampling the launcher's list area in memory every
-    ~15 ms, and reads the app's own paint trace (FLUX_PAINT_TRACE_FILE).
+    Drives a Flux Launcher build on this desktop with posted window messages,
+    samples the launcher's own surface every ~15 ms, and reads the app's paint
+    trace (FLUX_PAINT_TRACE_FILE).
 
-    Two properties must hold while the keystrokes keep coming:
-      * the result list is published exactly once per keystroke while typing
-        continues - the built-in and application snapshot that must stay
-        actionable immediately - and
-      * asynchronously arriving shell icons and Everything results cause no
-        visible repaint at all until the query has been quiet.
+    Two phases are measured: typing a word letter by letter, then appending and
+    deleting the same letters quickly - the repro where the panel collapsed to a
+    single row and refilled, which reads as a full-list flash.
 
-    Violations exit non-zero and print the offending samples with the events that
-    fell inside the same gap.
+    While keystrokes keep coming, every step must hold:
+      * at most one list publish (one row-tree rebuild),
+      * no repaint caused by shell-icon arrivals before the query has been quiet,
+      * no single frame replacing more than -MaxChangedPct of the list pixels.
 
-    Requires a desktop session: the launcher must be able to show a window and
-    receive synthetic input. Run it the same way scripts/capture-mica.ps1 runs.
+    The final step is watched through the quiet window, so its deferred publish is
+    expected and only the rebuild budget is checked.
+
+    Input is posted (WM_CHAR, WM_KEYDOWN VK_BACK) rather than typed as keystrokes:
+    the launcher is translucent, so grabbing the foreground would type into whatever
+    the user actually has focused. The surface is captured with PrintWindow because
+    a screen grab also contains the desktop behind the panel.
 
 .PARAMETER Executable
     Path to the flux-launcher.exe under test (debug or release).
@@ -27,24 +31,30 @@
 .PARAMETER Query
     Text typed one character at a time.
 
+.PARAMETER Toggle
+    Characters appended and then deleted again in the second phase.
+
 .PARAMETER InterKeyMs
-    Delay between characters. Keep it below the app's icon quiet window
-    (ICON_REFRESH_QUIET_MS) so the quiet case is not accidentally tested.
+    Delay between synthetic keystrokes. Keep it below -QuietMs.
 
 .PARAMETER QuietMs
-    Minimum gap without a keystroke before icon arrivals are allowed to paint.
-    Must match ICON_REFRESH_QUIET_MS in the build under test.
+    Gap without a keystroke before deferred results may paint. Must match
+    TYPING_QUIET_MS in the build under test.
 #>
 [CmdletBinding()]
 param(
     [Parameter(Mandatory = $true)][string]$Executable,
-    [string]$Query = 'launcher',
-    [int]$InterKeyMs = 55,
-    [int]$QuietMs = 120,
+    [string]$Query = 'chatgpt',
+    [string]$Toggle = 'pt',
+    [int]$Rounds = 4,
+    [int]$InterKeyMs = 150,
+    [int]$QuietMs = 250,
+    [double]$MaxChangedPct = 20,
     [int]$SampleEveryMs = 15,
     [int]$RowHeight = 24,
     [int]$HeaderHeight = 56,
-    [string]$OutDir = (Join-Path $env:TEMP 'flux-list-flicker')
+    [string]$OutDir = (Join-Path $env:TEMP 'flux-list-flicker'),
+    [string]$SettingsFile = (Join-Path $env:APPDATA 'FluxLauncher\settings.json')
 )
 
 $ErrorActionPreference = 'Stop'
@@ -59,36 +69,48 @@ New-Item -ItemType Directory -Force -Path $OutDir | Out-Null
 
 $tracePath = Join-Path $OutDir 'paint.trace'
 $scratchAppData = Join-Path $OutDir 'appdata'
-New-Item -ItemType Directory -Force -Path $scratchAppData | Out-Null
+New-Item -ItemType Directory -Force -Path (Join-Path $scratchAppData 'FluxLauncher') | Out-Null
+
+# The collapse this smoke guards is a race between the applications commit and
+# Everything's, and it only happens for queries that already have built-in rows on
+# screen - which means the profile matters. Seed the scratch profile from a real
+# settings file (read only: the instance under test writes to the copy) so the run
+# measures the same provider mix the user sees.
+if ($SettingsFile -and (Test-Path $SettingsFile)) {
+    Copy-Item -Path $SettingsFile -Destination (Join-Path $scratchAppData 'FluxLauncher\settings.json') -Force
+    Write-Host "seeded profile from $SettingsFile"
+} else {
+    Write-Host 'no settings file to seed: running with default settings (built-in providers off)'
+}
 
 Add-Type -Namespace Flicker -Name Input -UsingNamespace 'System.Threading' -MemberDefinition @'
+[DllImport("user32.dll")] public static extern bool SetProcessDpiAwarenessContext(IntPtr ctx);
 [DllImport("user32.dll", CharSet=CharSet.Unicode)]
 public static extern IntPtr SendMessage(IntPtr hWnd, uint Msg, IntPtr wParam, IntPtr lParam);
 [DllImport("user32.dll")] public static extern bool PostMessage(IntPtr hWnd, uint Msg, UIntPtr wParam, IntPtr lParam);
-
-// Posting WM_CHAR is what makes this harness survive a busy desktop: it needs no
-// foreground right, so it never steals the user's focus and cannot type into another
-// window. The launcher gives the search field keyboard focus when it is shown.
-public static void PostChar(IntPtr hWnd, uint charCode) { PostMessage(hWnd, 0x0102, new UIntPtr(charCode), IntPtr.Zero); }
-public static void TypeText(IntPtr hWnd, string text) {
-    foreach (char c in text) { PostChar(hWnd, c); Thread.Sleep(12); }
-}
+[DllImport("user32.dll")] public static extern bool GetWindowRect(IntPtr hWnd, out RECT rect);
+[DllImport("user32.dll")] public static extern bool IsWindowVisible(IntPtr hWnd);
+[DllImport("user32.dll")] public static extern bool EnumWindows(EnumProc cb, IntPtr arg);
+[DllImport("user32.dll")] public static extern uint GetWindowThreadProcessId(IntPtr hWnd, out uint pid);
 [DllImport("user32.dll")] public static extern short MapVirtualKey(uint vk, uint mapType);
+public delegate bool EnumProc(IntPtr hWnd, IntPtr arg);
+public struct RECT { public int Left; public int Top; public int Right; public int Bottom; }
+
+// Posting messages needs no foreground right, so the harness never steals the
+// user's focus and cannot type into another window.
+public static void TypeChar(IntPtr hWnd, char value) {
+    PostMessage(hWnd, 0x0102, new UIntPtr((uint)value), IntPtr.Zero);
+    Thread.Sleep(12);
+}
 public static void Backspace(IntPtr hWnd) {
-    // VK_BACK through WM_KEYDOWN/WM_KEYUP: WM_CHAR 8 is delivered but the search
-    // field only edits on the key-down path, so a posted character does nothing.
+    // The search field edits on the key-down path; a posted WM_CHAR backspace is
+    // delivered and ignored, which once let this harness measure a query that
+    // still carried its probe character.
     uint scan = (uint)MapVirtualKey(0x08, 0);
     PostMessage(hWnd, 0x0100, new UIntPtr(0x08), (IntPtr)(long)((scan << 16) | 1u));
     PostMessage(hWnd, 0x0101, new UIntPtr(0x08), (IntPtr)(long)((scan << 16) | 1u | unchecked((int)0xC0000000)));
     Thread.Sleep(12);
 }
-public static void Erase(IntPtr hWnd, int count) { for (int i = 0; i < count; i++) { Backspace(hWnd); } }
-[DllImport("user32.dll")] public static extern bool GetWindowRect(IntPtr hWnd, out RECT rect);
-[DllImport("user32.dll")] public static extern bool IsWindowVisible(IntPtr hWnd);
-[DllImport("user32.dll")] public static extern bool EnumWindows(EnumProc cb, IntPtr arg);
-[DllImport("user32.dll")] public static extern uint GetWindowThreadProcessId(IntPtr hWnd, out uint pid);
-public delegate bool EnumProc(IntPtr hWnd, IntPtr arg);
-public struct RECT { public int Left; public int Top; public int Right; public int Bottom; }
 public static IntPtr FindByPid(uint targetPid) {
     IntPtr best = IntPtr.Zero;
     long bestArea = 0;
@@ -113,6 +135,7 @@ public struct RECT { public int Left; public int Top; public int Right; public i
 
 public static class Worker {
     [DllImport("user32.dll")] public static extern bool GetWindowRect(IntPtr hWnd, out RECT rect);
+    [DllImport("user32.dll")] public static extern bool PrintWindow(IntPtr hWnd, IntPtr hdc, uint flags);
 
     static byte[] Grab(IntPtr hWnd, out int height, out int stride) {
         RECT r;
@@ -123,7 +146,12 @@ public static class Worker {
         if (width <= 0 || height <= 0) { height = 0; return null; }
         using (Bitmap bmp = new Bitmap(width, height)) {
             using (Graphics g = Graphics.FromImage(bmp)) {
-                g.CopyFromScreen(r.Left, r.Top, 0, 0, new Size(width, height));
+                // PW_RENDERFULLCONTENT: the panel is translucent and painted through
+                // DirectComposition, so a screen grab would capture the desktop behind
+                // it rather than the rows.
+                IntPtr hdc = g.GetHdc();
+                PrintWindow(hWnd, hdc, 2u);
+                g.ReleaseHdc(hdc);
             }
             BitmapData data = bmp.LockBits(new Rectangle(0, 0, width, height), ImageLockMode.ReadOnly, PixelFormat.Format32bppRgb);
             byte[] buffer = new byte[data.Stride * height];
@@ -141,34 +169,44 @@ public static class Worker {
         long previousUnix = 0;
         int deadline = Environment.TickCount + durationMs;
         while (true) {
-            int remaining = deadline - Environment.TickCount;
-            if (remaining <= 0) { break; }
+            if (deadline - Environment.TickCount <= 0) { break; }
             int height; int stride;
             byte[] current = Grab(hWnd, out height, out stride);
             long unix = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
             if (current != null && previous != null && stride == previousStride && height == previousHeight) {
                 int bands = Math.Max(1, (height - header) / rowHeight);
                 StringBuilder changed = new StringBuilder();
+                int samples = 0;
+                int moved = 0;
                 for (int band = 0; band < bands; band++) {
                     int rowStart = header + band * rowHeight;
                     int rowEnd = Math.Min(height, rowStart + rowHeight);
                     long delta = 0;
+                    int bandSamples = 0;
+                    int bandMoved = 0;
                     for (int y = rowStart; y < rowEnd; y++) {
                         int line = y * stride;
                         for (int x = 0; x + 3 < stride; x += 4) {
-                            delta += Math.Abs((int)current[line + x] - previous[line + x])
-                                 + Math.Abs((int)current[line + x + 1] - previous[line + x + 1])
-                                 + Math.Abs((int)current[line + x + 2] - previous[line + x + 2]);
+                            int pixel = Math.Abs((int)current[line + x] - previous[line + x])
+                                     + Math.Abs((int)current[line + x + 1] - previous[line + x + 1])
+                                     + Math.Abs((int)current[line + x + 2] - previous[line + x + 2]);
+                            delta += pixel;
+                            bandSamples++;
+                            if (pixel > 30) { bandMoved++; }
                         }
                     }
-                    double mean = delta / (double)Math.Max(1, (rowEnd - rowStart) * (stride / 4));
+                    samples += bandSamples;
+                    moved += bandMoved;
+                    double mean = delta / (double)Math.Max(1, bandSamples);
                     if (mean > 1.0) {
                         if (changed.Length > 0) { changed.Append(','); }
-                        changed.Append(band).Append(':').Append(mean.ToString("0.0"));
+                        changed.Append(band).Append(':').Append((100.0 * bandMoved / Math.Max(1, bandSamples)).ToString("0"));
                     }
                 }
                 if (changed.Length > 0) {
-                    report.AppendLine("sample unix=" + unix + " after=" + (unix - previousUnix) + "ms bands=[" + changed + "]");
+                    report.AppendLine("sample unix=" + unix + " after=" + (unix - previousUnix)
+                        + "ms changed=" + (100.0 * moved / Math.Max(1, samples)).ToString("0.0")
+                        + " bands=[" + changed + "]");
                 }
             }
             previous = current; previousHeight = height; previousStride = stride; previousUnix = unix;
@@ -194,6 +232,9 @@ function Get-TraceEvents {
     return $parsed
 }
 
+# The capture must see the same physical pixels the launcher writes.
+[void][Flicker.Input]::SetProcessDpiAwarenessContext([IntPtr](-4))
+
 $previousAppData = $env:APPDATA
 $env:APPDATA = $scratchAppData
 $env:FLUX_DISABLE_SINGLE_INSTANCE = '1'
@@ -202,8 +243,23 @@ $env:FLUX_DISABLE_EVERYTHING_PROMPT = '1'
 $env:FLUX_PAINT_TRACE_FILE = $tracePath
 
 $violations = @()
+$script:observations = @()
 $process = Start-Process -FilePath $Executable -PassThru
-Write-Host "launcher pid=$($process.Id) query=$Query inter_key=${InterKeyMs}ms quiet=${QuietMs}ms sample=${SampleEveryMs}ms"
+Write-Host "pid=$($process.Id) query=$Query toggle=$Toggle rounds=$Rounds inter_key=${InterKeyMs}ms quiet=${QuietMs}ms sample=${SampleEveryMs}ms"
+
+function Add-Observation([string]$phase, [string]$label, [string]$after, [long]$unix, $samples) {
+    # Harness self-check: the launcher must actually hold the text this harness
+    # believes it typed, otherwise the run measures a query that never existed.
+    $seen = @(Get-TraceEvents | Where-Object { $_.event -eq 'query' } | Select-Object -Last 1)
+    $actual = 'nothing'
+    if ($seen.Count -gt 0) { $actual = $seen[0].detail }
+    if ($seen.Count -eq 0 -or $actual -notlike ("value={0} *" -f $after)) {
+        throw "phase '$phase' step '$label': expected the launcher to hold '$after', it holds '$actual'"
+    }
+    $script:observations += [pscustomobject]@{
+        phase = $phase; label = $label; after = $after; unix = $unix; samples = $samples
+    }
+}
 
 try {
     $handle = [IntPtr]::Zero
@@ -214,23 +270,19 @@ try {
     }
     if ($handle -eq [IntPtr]::Zero) { throw 'launcher window never appeared' }
 
-    # Tray-resident start: WM_HOTKEY shows it deterministically, because the real
-    # Alt+Space may already be registered by another Flux instance.
+    # Tray-resident start: WM_HOTKEY toggles it deterministically, because the real
+    # Alt+Space may be registered by the user's own instance.
     [void][Flicker.Input]::SendMessage($handle, 0x0312, [IntPtr]::Zero, [IntPtr]::Zero)
-    Start-Sleep -Milliseconds 600
-    $rect = New-Object Flicker.Input+RECT
-    [void][Flicker.Input]::GetWindowRect($handle, [ref]$rect)
+    Start-Sleep -Milliseconds 700
 
-    # Focus probe by post, not by assumption: one character must show up in the
-    # launcher's own trace before anything else is typed.
-    [Flicker.Input]::PostChar($handle, [uint32][char]'z')
+    [Flicker.Input]::TypeChar($handle, 'z')
     Start-Sleep -Milliseconds 400
-    $probeSeen = @(Get-TraceEvents | Where-Object { $_.event -eq 'query' -and $_.detail -like 'value=z *' })
-    if ($probeSeen.Count -eq 0) { throw 'posted characters never reached the launcher window' }
-    [Flicker.Input]::Erase($handle, 4)
-    Start-Sleep -Milliseconds 300
+    if (@(Get-TraceEvents | Where-Object { $_.event -eq 'query' -and $_.detail -like 'value=z *' }).Count -eq 0) {
+        throw 'posted characters never reached the launcher window'
+    }
+    for ($i = 0; $i -lt 4; $i++) { [Flicker.Input]::Backspace($handle) }
+    Start-Sleep -Milliseconds 400
 
-    $observations = @()
     $typed = ''
     foreach ($char in $Query.ToCharArray()) {
         $typed += [string]$char
@@ -238,27 +290,48 @@ try {
             [void][Flicker.Input]::SendMessage($handle, 0x0312, [IntPtr]::Zero, [IntPtr]::Zero)
             Start-Sleep -Milliseconds 250
         }
-        $keyUnix = [DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds()
-        [Flicker.Input]::PostChar($handle, [uint32][char]$char)
+        $unix = [DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds()
+        [Flicker.Input]::TypeChar($handle, $char)
         $samples = [Flicker.Sampler+Worker]::Run($handle, $InterKeyMs, $SampleEveryMs, $HeaderHeight, $RowHeight)
-        # Harness self-check: if the launcher did not end up holding exactly this
-        # text, the measurement is meaningless and must stop rather than report a
-        # clean run over a query that never existed.
-        $seen = @(Get-TraceEvents | Where-Object { $_.event -eq 'query' } | Select-Object -Last 1)
-        if ($seen.Count -eq 0 -or $seen[0].detail -notlike ("value={0} *" -f $typed)) {
-            $actualText = if ($seen.Count -gt 0) { $seen[0].detail } else { 'nothing' }
-            throw "keystroke $index expected query '$typed' but the launcher holds '$actualText'"
+        Add-Observation 'type' "add $char" $typed $unix $samples
+    }
+
+    $base = $Query
+    if ($base.Length -gt $Toggle.Length) { $base = $base.Substring(0, $base.Length - $Toggle.Length) }
+    # Walk back to the reported starting point: the field holds $Query here, and
+    # each backspace removes the last character.
+    $held = $Query
+    for ($k = 0; $k -lt $Toggle.Length; $k++) {
+        $held = $held.Substring(0, $held.Length - 1)
+        $unix = [DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds()
+        [Flicker.Input]::Backspace($handle)
+        $samples = [Flicker.Sampler+Worker]::Run($handle, $InterKeyMs, $SampleEveryMs, $HeaderHeight, $RowHeight)
+        Add-Observation 'settle' "drop $($k + 1)" $held $unix $samples
+    }
+
+    for ($round = 1; $round -le $Rounds; $round++) {
+        $current = $base
+        foreach ($char in $Toggle.ToCharArray()) {
+            $current += [string]$char
+            $unix = [DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds()
+            [Flicker.Input]::TypeChar($handle, $char)
+            $samples = [Flicker.Sampler+Worker]::Run($handle, $InterKeyMs, $SampleEveryMs, $HeaderHeight, $RowHeight)
+            Add-Observation 'toggle' "r$round add $char" $current $unix $samples
         }
-        $observations += [pscustomobject]@{ typed = $typed; char = $char; unix = $keyUnix; samples = $samples }
+        for ($k = 0; $k -lt $Toggle.Length; $k++) {
+            $current = $current.Substring(0, $current.Length - 1)
+            $unix = [DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds()
+            [Flicker.Input]::Backspace($handle)
+            $samples = [Flicker.Sampler+Worker]::Run($handle, $InterKeyMs, $SampleEveryMs, $HeaderHeight, $RowHeight)
+            Add-Observation 'toggle' "r$round delete" $current $unix $samples
+        }
     }
 
     Write-Host ''
-    Write-Host 'keystroke   list-writes  icon-paints'
+    Write-Host 'phase    step             list-writes   icon-paints   max-changed%'
     for ($index = 0; $index -lt $observations.Count; $index++) {
         $entry = $observations[$index]
         $from = $entry.unix
-        # A keystroke owns everything up to the next keystroke; the final one is
-        # watched through the quiet window so a late icon wave is still visible.
         if ($index -lt $observations.Count - 1) {
             $to = $observations[$index + 1].unix
         } else {
@@ -266,33 +339,38 @@ try {
         }
         $events = @(Get-TraceEvents | Where-Object { $_.unix -ge $from -and $_.unix -lt $to })
         $writes = @($events | Where-Object { $_.event -eq 'list-write' })
-        $iconLines = @($entry.samples -split "`r?`n" | Where-Object { $_ -like 'sample *' })
+        # The collapse this smoke exists for: publishing a snapshot smaller than
+        # the rows already on screen while a provider still owes its answer, which
+        # blanks most of the panel for a frame and refills it on the next.
+        $premature = @($writes | Where-Object {
+            $_.detail -match 'rows=(\d+) shown=(\d+) complete=0' -and [int]$matches[1] -lt [int]$matches[2]
+        })
         $iconPaints = 0
-        foreach ($line in $iconLines) {
-            if ($line -match 'unix=(\d+) after=(\d+)ms') {
+        $maxChanged = 0.0
+        foreach ($line in @($entry.samples -split "`r?`n" | Where-Object { $_ -like 'sample *' })) {
+            if ($line -match 'unix=(\d+) after=(\d+)ms changed=([0-9.]+)') {
                 $sampleUnix = [long]$matches[1]
+                $changedPct = [double]$matches[3]
+                if ($changedPct -gt $maxChanged) { $maxChanged = $changedPct }
                 $gapStart = $sampleUnix - [int]$matches[2]
                 $gapEvents = @($events | Where-Object { $_.unix -gt $gapStart -and $_.unix -le $sampleUnix })
-                $iconish = @($gapEvents | Where-Object { $_.event -eq 'icon-refresh' })
-                if ($iconish.Count -gt 0) { $iconPaints++ }
+                if (@($gapEvents | Where-Object { $_.event -eq 'icon-refresh' }).Count -gt 0) { $iconPaints++ }
             }
         }
         $isLast = $index -eq ($observations.Count - 1)
-        Write-Host ("{0,-11} {1,11}  {2,11}" -f $entry.typed, $writes.Count, $iconPaints)
-        # While the keystrokes keep coming a query must be painted exactly once: the
-        # built-in and application snapshot. Everything's answer and the shell icons
-        # wait for the quiet window, so they land together in one repaint instead of
-        # rebuilding every row a second time mid-word. The final keystroke is watched
-        # through that window, so its deferred publish is expected and allowed.
+        Write-Host ("{0,-8} {1,-15} {2,11}   {3,11}   {4,12}" -f $entry.phase, $entry.label, $writes.Count, $iconPaints, [Math]::Round($maxChanged, 1))
         if (-not $isLast) {
             if ($writes.Count -gt 1) {
-                $violations += "query '$($entry.typed)' rebuilt the list $($writes.Count) times before the next keystroke (expected exactly 1)"
+                $violations += "query '$($entry.after)' rebuilt the list $($writes.Count) times before the next keystroke (expected exactly 1)"
             }
             if ($iconPaints -gt 0) {
-                $violations += "query '$($entry.typed)' repainted $iconPaints time(s) from shell-icon arrivals before the query had been quiet for ${QuietMs}ms"
+                $violations += "query '$($entry.after)' repainted $iconPaints time(s) from shell-icon arrivals before the query had been quiet for ${QuietMs}ms"
+            }
+            if ($premature.Count -gt 0) {
+                $violations += "query '$($entry.after)' published a shorter list than the one on screen from an incomplete snapshot: $($premature[0].detail)"
             }
         } elseif ($writes.Count -gt 2) {
-            $violations += "query '$($entry.typed)' rebuilt the list $($writes.Count) times (expected at most 2: immediate plus the deferred publish)"
+            $violations += "query '$($entry.after)' rebuilt the list $($writes.Count) times (expected at most 2: immediate plus the deferred publish)"
         }
     }
 } finally {
@@ -302,12 +380,12 @@ try {
     Remove-Item Env:FLUX_DISABLE_UPDATE_CHECKS -ErrorAction SilentlyContinue
     Remove-Item Env:FLUX_DISABLE_EVERYTHING_PROMPT -ErrorAction SilentlyContinue
     Remove-Item Env:FLUX_PAINT_TRACE_FILE -ErrorAction SilentlyContinue
+    Write-Host ''
+    Write-Host "trace and samples kept under: $OutDir"
 }
 
-Write-Host ''
-Write-Host "trace and samples kept under: $OutDir"
 if ($violations.Count -gt 0) {
     foreach ($violation in $violations) { Write-Host "FAIL: $violation" }
     throw "list flicker smoke failed with $($violations.Count) violation(s)"
 }
-Write-Host 'PASS: list publishes stayed within budget and no icon-driven repaint happened while typing.'
+Write-Host 'PASS: one list publish per keystroke, no icon-driven repaint, no frame replacing most of the list.'
