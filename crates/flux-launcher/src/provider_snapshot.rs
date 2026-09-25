@@ -89,6 +89,12 @@ impl ProviderResults {
         self.everything_ready || !self.built_in.is_empty()
     }
 
+    /// True when every provider that was asked has answered, so a snapshot can be
+    /// smaller than the screen on purpose rather than by accident.
+    pub(crate) fn snapshot_is_complete(&self) -> bool {
+        self.applications_ready && self.everything_ready
+    }
+
     pub(crate) fn merged(&self, query: &str, priorities: &[String]) -> Vec<SearchResult> {
         let mut seen = HashSet::new();
         let collected = self
@@ -146,6 +152,21 @@ pub(crate) fn commit_provider_results(
         );
         return;
     }
+    let shown = results.get();
+    if providers.typing_active && merged.len() < shown.len() && !providers.snapshot_is_complete() {
+        // A snapshot smaller than the list already on screen would collapse the
+        // panel to one or two rows for a frame and refill it later - the flash
+        // reproduced by typing a letter and deleting it again. Keep the fuller
+        // list until the query goes quiet, and do not credit this query as
+        // published: the key handler must still be able to resolve Enter against
+        // the text the user actually typed.
+        providers.pending_publish = true;
+        super::paint_trace::note(
+            "list-shrunk",
+            &format!("query={query} rows={} shown={}", merged.len(), shown.len()),
+        );
+        return;
+    }
     providers.pending_publish = false;
     providers.published_query = query.to_owned();
     providers.published_providers = true;
@@ -197,9 +218,10 @@ pub(crate) fn commit_provider_results(
         super::paint_trace::note(
             "list-write",
             &format!(
-                "query={query} rows={} shown={}",
+                "query={query} rows={} shown={} complete={}",
                 merged.len(),
-                results.get().len()
+                results.get().len(),
+                providers.snapshot_is_complete() as u8
             ),
         );
         results.set(merged);
@@ -224,8 +246,32 @@ pub(crate) fn refresh_merged_results(
         })
         .collect::<Vec<_>>();
     let merged = providers.borrow().merged(&query.get(), &priority_ids);
+    if merged.len() < results.get().len() && !providers.borrow().snapshot_is_complete() {
+        // The providers were just reset for a new keystroke and answer one by one.
+        // Rebuilding from a half-filled snapshot is what collapsed the panel to a
+        // single row between two keystrokes, so leave the fuller list on screen.
+        super::paint_trace::note(
+            "list-kept",
+            &format!(
+                "query={} rows={} shown={}",
+                query.get(),
+                merged.len(),
+                results.get().len()
+            ),
+        );
+        return;
+    }
     // This is a publish too: recording it keeps a later keystroke from treating
     // the freshly written list as stale, and it consumes any deferred snapshot.
+    super::paint_trace::note(
+        "list-write",
+        &format!(
+            "query={} rows={} shown={} complete=1 via=refresh",
+            query.get(),
+            merged.len(),
+            results.get().len()
+        ),
+    );
     let mut providers = providers.borrow_mut();
     providers.published_query = query.get();
     providers.pending_publish = false;
@@ -504,6 +550,73 @@ mod tests {
             "the new keystroke must show at once"
         );
         assert_eq!(providers.published_query, "chatgpt");
+    }
+
+    #[test]
+    fn a_stale_list_repair_never_collapses_the_panel() {
+        use std::cell::RefCell;
+        use std::rc::Rc;
+        use windui::signal::signal;
+        let shown: Vec<SearchResult> = (0..12)
+            .map(|index| SearchResult {
+                id: format!("everything:row-{index}"),
+                title: format!("row-{index}"),
+                subtitle: String::from("Documents"),
+                kind: ResultKind::File,
+                source: ResultSource::Everything,
+                target: None,
+            })
+            .collect();
+        let app = SearchResult {
+            id: String::from("app:chatgpt"),
+            title: String::from("ChatGPT"),
+            subtitle: String::from("Application"),
+            kind: ResultKind::Application,
+            source: ResultSource::ApplicationCatalog,
+            target: None,
+        };
+        let mut providers = ProviderResults::default();
+        providers.reset(1, Vec::new(), true);
+        // A keystroke just reset the providers and only applications has answered:
+        // rebuilding from this snapshot is what blanked the panel for a frame.
+        providers.applications = vec![app.clone()];
+        providers.applications_ready = true;
+        let providers = Rc::new(RefCell::new(providers));
+        let results = signal(shown.clone());
+        let version = results.version();
+        refresh_merged_results(
+            &providers,
+            signal(String::from("chatgpt")),
+            signal(Vec::new()),
+            results,
+        );
+        assert_eq!(
+            results.version(),
+            version,
+            "an incomplete snapshot must not replace the fuller list on screen"
+        );
+
+        // Once Everything answers too, the same rebuild is allowed to land.
+        {
+            let mut borrowed = providers.borrow_mut();
+            borrowed.everything = shown.clone();
+            borrowed.everything_ready = true;
+        }
+        refresh_merged_results(
+            &providers,
+            signal(String::from("chatgpt")),
+            signal(Vec::new()),
+            results,
+        );
+        assert_ne!(
+            results.version(),
+            version,
+            "the complete snapshot is published"
+        );
+        assert_eq!(
+            results.get().first().map(|row| row.id.as_str()),
+            Some("app:chatgpt")
+        );
     }
 
     #[test]
