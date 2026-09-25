@@ -415,11 +415,22 @@ try {
         $events = @(Get-TraceEvents | Where-Object { $_.unix -ge $from -and $_.unix -lt $to })
         $writes = @($events | Where-Object { $_.event -eq 'list-write' })
         # The collapse this smoke exists for: publishing a snapshot smaller than
-        # the rows already on screen while a provider still owes its answer, which
-        # blanks most of the panel for a frame and refills it on the next.
-        $premature = @($writes | Where-Object {
-            $_.detail -match 'rows=(\d+) shown=(\d+) complete=0' -and [int]$matches[1] -lt [int]$matches[2]
+        # the rows already on screen while a provider still owes an answer, which
+        # blanks most of the panel for a frame and refills it on the next. One case
+        # is allowed and only reported: the shorter list puts an application the
+        # screen has never shown at the top, which is the result the user typed for.
+        $newHeads = @($events | Where-Object { $_.event -eq 'list-new-head' } | ForEach-Object {
+            if ($_.detail -match 'query=(\S+)') { $matches[1] }
         })
+        $premature = @($writes | Where-Object {
+            $_.detail -match 'query=(\S+) rows=(\d+) shown=(\d+) complete=0' -and [int]$matches[2] -lt [int]$matches[3] -and $newHeads -notcontains $matches[1]
+        })
+        $acceptedShort = @($writes | Where-Object {
+            $_.detail -match 'query=(\S+) rows=(\d+) shown=(\d+) complete=0' -and [int]$matches[2] -lt [int]$matches[3] -and $newHeads -contains $matches[1]
+        })
+        if ($acceptedShort.Count -gt 0) {
+            Write-Host ("           accepted {0} short publish(es) that surfaced a new application" -f $acceptedShort.Count)
+        }
         $iconPaints = 0
         $maxChanged = 0.0
         foreach ($line in @($entry.samples -split "`r?`n" | Where-Object { $_ -like 'sample *' })) {

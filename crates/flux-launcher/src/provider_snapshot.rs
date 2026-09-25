@@ -2,7 +2,7 @@ use std::cell::RefCell;
 use std::collections::HashSet;
 use std::rc::Rc;
 
-use flux_core::{rank_results_with_priorities, PriorityEntry, SearchResult};
+use flux_core::{rank_results_with_priorities, PriorityEntry, ResultSource, SearchResult};
 use windui::signal::Signal;
 
 use super::applications::canonical_application_id;
@@ -129,6 +129,20 @@ pub(crate) enum Publish {
     Now,
 }
 
+/// The head of a snapshot when it is an installed application the screen does not
+/// show yet. Anything else - a reshuffle, or file results arriving later - is not
+/// new information to the user and stays under the typing holds.
+fn unseen_application_head<'a>(
+    merged: &'a [SearchResult],
+    shown: &[SearchResult],
+) -> Option<&'a str> {
+    let head = merged.first()?;
+    if !matches!(head.source, ResultSource::ApplicationCatalog) {
+        return None;
+    }
+    (!shown.iter().any(|row| row.id == head.id)).then_some(head.id.as_str())
+}
+
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn commit_provider_results(
     providers: &mut ProviderResults,
@@ -151,8 +165,27 @@ pub(crate) fn commit_provider_results(
         return;
     }
     let merged = providers.merged(query, priorities);
+    let shown = results.get();
     let hold = publish == Publish::DeferWhileTyping && providers.typing_active;
-    if hold && providers.published_query == query && providers.published_providers {
+    // Both holds below exist to stop the panel rebuilding the same rows twice for
+    // one keystroke, or collapsing to a shorter list for a frame. Neither is a
+    // reason to hide a result the user has not seen yet: the applications provider
+    // knows an installed game about ten milliseconds after the letter that names it,
+    // and waiting for the file provider to answer as well is what made a fast typist
+    // think the search had not caught up.
+    let new_head = unseen_application_head(&merged, &shown);
+    if hold && new_head.is_some() {
+        if let Some(head) = new_head {
+            super::paint_trace::note(
+                "list-new-head",
+                &format!(
+                    "query={query} head={head} rows={} shown={}",
+                    merged.len(),
+                    shown.len()
+                ),
+            );
+        }
+    } else if hold && providers.published_query == query && providers.published_providers {
         // This keystroke is already on screen and the user is still typing. A
         // second publish for the same query would rebuild every row again - the
         // visible full-list flash - so the snapshot waits in the provider vectors
@@ -163,9 +196,7 @@ pub(crate) fn commit_provider_results(
             &format!("query={query} rows={}", merged.len()),
         );
         return;
-    }
-    let shown = results.get();
-    if hold && merged.len() < shown.len() && !providers.snapshot_is_complete() {
+    } else if hold && merged.len() < shown.len() && !providers.snapshot_is_complete() {
         // A snapshot smaller than the list already on screen would collapse the
         // panel to one or two rows for a frame and refill it later - the flash
         // reproduced by typing a letter and deleting it again. Keep the fuller
@@ -662,6 +693,89 @@ mod tests {
             "the new keystroke must show at once"
         );
         assert_eq!(providers.published_query, "chatgpt");
+    }
+
+    fn file_row(id: &str) -> SearchResult {
+        SearchResult {
+            id: String::from(id),
+            title: String::from(id),
+            subtitle: String::from("Documents"),
+            kind: ResultKind::File,
+            source: ResultSource::Everything,
+            target: None,
+        }
+    }
+
+    #[test]
+    fn an_unseen_application_head_reaches_the_screen_without_the_file_provider() {
+        use windui::signal::signal;
+        let mut providers = ProviderResults::default();
+        providers.reset(2, Vec::new(), true);
+        providers.applications = vec![row("application:counter-strike")];
+        providers.applications_ready = true;
+        // Still typing, and the screen holds the previous, longer snapshot.
+        providers.published_query = String::from("cou");
+        providers.typing_active = true;
+        let results = signal(
+            (0..12)
+                .map(|i| file_row(&format!("everything:old-{i}")))
+                .collect(),
+        );
+        let version = results.version();
+        commit_provider_results(
+            &mut providers,
+            "counter",
+            &[],
+            signal(String::new()),
+            signal(0_usize),
+            signal(false),
+            results,
+            signal(false),
+            Publish::DeferWhileTyping,
+        );
+        assert_ne!(
+            results.version(),
+            version,
+            "the game must not wait for files"
+        );
+        assert_eq!(results.get().len(), 1);
+        assert_eq!(results.get()[0].id, "application:counter-strike");
+    }
+
+    #[test]
+    fn a_tail_that_only_grows_stays_held_while_the_user_types() {
+        use windui::signal::signal;
+        let mut providers = ProviderResults::default();
+        providers.reset(2, Vec::new(), true);
+        providers.applications = vec![row("application:counter-strike")];
+        providers.applications_ready = true;
+        providers.everything = (0..3)
+            .map(|i| file_row(&format!("everything:new-{i}")))
+            .collect();
+        providers.published_query = String::from("counter");
+        providers.published_providers = true;
+        providers.typing_active = true;
+        let mut shown = vec![row("application:counter-strike")];
+        shown.extend((0..11).map(|i| file_row(&format!("everything:old-{i}"))));
+        let results = signal(shown);
+        let version = results.version();
+        commit_provider_results(
+            &mut providers,
+            "counter",
+            &[],
+            signal(String::new()),
+            signal(0_usize),
+            signal(false),
+            results,
+            signal(false),
+            Publish::DeferWhileTyping,
+        );
+        assert_eq!(
+            results.version(),
+            version,
+            "the same head must not rebuild the list"
+        );
+        assert!(providers.pending_publish);
     }
 
     #[test]
