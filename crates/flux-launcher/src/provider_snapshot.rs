@@ -196,22 +196,13 @@ pub(crate) fn commit_provider_results(
             &format!("query={query} rows={}", merged.len()),
         );
         return;
-    } else if hold
-        && merged.len() < shown.len()
-        && (!providers.snapshot_is_complete() || merged.is_empty())
-    {
+    } else if hold && merged.len() < shown.len() && !providers.snapshot_is_complete() {
         // A snapshot smaller than the list already on screen would collapse the
         // panel to one or two rows for a frame and refill it later - the flash
         // reproduced by typing a letter and deleting it again. Keep the fuller
         // list until the query goes quiet, and do not credit this query as
         // published: the key handler must still be able to resolve Enter against
         // the text the user actually typed.
-        //
-        // An empty snapshot is held for the same reason even once every provider
-        // has answered: a query typed one character at a time passes through text
-        // that matches nothing (`LiSA/` in a folder named with the fullwidth
-        // `／`), and blanking the whole list for one keystroke is the worst frame
-        // of the lot. Once the typing pauses, the honest empty page shows.
         providers.pending_publish = true;
         super::paint_trace::note(
             "list-shrunk",
@@ -786,57 +777,6 @@ mod tests {
             "the same head must not rebuild the list"
         );
         assert!(providers.pending_publish);
-    }
-
-    #[test]
-    fn a_query_that_matches_nothing_keeps_the_list_until_typing_paused() {
-        use windui::signal::signal;
-        // "LiSA/" in a folder titled with the fullwidth slash: every provider has
-        // answered and the honest answer is empty. Blank the panel mid-word and the
-        // user sees the list disappear for a frame.
-        let mut providers = ProviderResults::default();
-        providers.reset(3, Vec::new(), true);
-        providers.applications_ready = true;
-        providers.everything_ready = true;
-        providers.published_query = String::from("lisa");
-        providers.typing_active = true;
-        let shown = (0..12)
-            .map(|i| file_row(&format!("everything:lisa-{i}")))
-            .collect();
-        let results = signal(shown);
-        let version = results.version();
-        commit_provider_results(
-            &mut providers,
-            "lisa/",
-            &[],
-            signal(String::new()),
-            signal(0_usize),
-            signal(false),
-            results,
-            signal(false),
-            Publish::DeferWhileTyping,
-        );
-        assert_eq!(results.version(), version, "the panel keeps its rows");
-        assert!(providers.pending_publish);
-
-        // The quiet tick publishes the truth.
-        providers.typing_active = false;
-        commit_provider_results(
-            &mut providers,
-            "lisa/",
-            &[],
-            signal(String::new()),
-            signal(0_usize),
-            signal(false),
-            results,
-            signal(false),
-            Publish::DeferWhileTyping,
-        );
-        assert!(
-            results.get().is_empty(),
-            "an empty page is honest once idle"
-        );
-        assert!(!providers.pending_publish);
     }
 
     #[test]
