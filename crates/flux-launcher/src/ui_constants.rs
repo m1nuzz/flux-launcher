@@ -17,6 +17,13 @@ pub(crate) const ACTION_BAR_HEIGHT: i32 = 22;
 pub(crate) const ACTION_WINDOW_HEIGHT: i32 = 250;
 // Six 46-DIP result rows plus local scroll padding keep the footer close to the results.
 pub(crate) const RESULT_VIEWPORT_HEIGHT: i32 = 288;
+/// How many result rows fit before the list scrolls locally, and the pitch each
+/// one occupies inside the fixed viewport.
+pub(crate) const RESULT_ROWS_VISIBLE: i32 = 6;
+pub(crate) const RESULT_ROW_PITCH: i32 = RESULT_VIEWPORT_HEIGHT / RESULT_ROWS_VISIBLE;
+/// The search strip plus the footer and their padding: everything the window shows
+/// apart from the result rows themselves.
+pub(crate) const LAUNCHER_CHROME_HEIGHT: i32 = COMPACT_WINDOW_HEIGHT + 38;
 /// How long the query must go untouched before late-arriving results and shell
 /// icons are allowed to touch the element tree. While the user types, the list is
 /// painted once per keystroke: a second publish for the same query rebuilds every

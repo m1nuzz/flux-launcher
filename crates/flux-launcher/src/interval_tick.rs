@@ -30,7 +30,7 @@ use super::ui_constants::{
 use super::update_tasks::{request_update_check, update_check_due};
 use super::visual_preview;
 use super::window_geometry::{
-    apply_launcher_size, dimension_from_slider, dimension_slider_fraction,
+    apply_launcher_size, dimension_from_slider, dimension_slider_fraction, launcher_content_height,
     launcher_window_geometry_with_prompt, parse_dimension_input, request_monitor_position,
 };
 
@@ -133,6 +133,7 @@ pub(crate) fn register_interval(
     let mut last_query = String::new();
     let mut last_query_change_ms: u64 = 0;
     let mut slow_sent_sequence: u64 = 0;
+    let mut last_fitted_height: i32 = 0;
     let mut visual_preview_process: Option<visual_preview::PreviewProcess> = None;
     let mut last_visual_preview_request: Option<(u16, u16)> = None;
     let mut last_visual_preview_generation = visual_preview_generation.get();
@@ -568,6 +569,26 @@ pub(crate) fn register_interval(
                 );
                 icon_refresh_generation_for_interval.set(completed_icon_generation);
             }
+            // A provider can also answer after the keystroke that opened the
+            // generation, and the window has to follow the row count then too.
+            if has_query
+                && !settings_visible_for_interval.get()
+                && !everything_prompt_visible_for_interval.get()
+            {
+                let fitted = launcher_content_height(
+                    results_for_interval.get().len(),
+                    launcher_height.get() as i32,
+                );
+                if fitted != last_fitted_height {
+                    last_fitted_height = fitted;
+                    let width = launcher_width.get() as i32;
+                    size_for_interval.set(width, fitted);
+                    super::paint_trace::note(
+                        "resize",
+                        &format!("size={width}x{fitted} has_query=true fitted=true"),
+                    );
+                }
+            }
             return;
         }
         history_mode_for_interval.set(false);
@@ -582,6 +603,17 @@ pub(crate) fn register_interval(
             launcher_width.get() as i32,
             launcher_height.get() as i32,
         );
+        // The configured height is a maximum: one result must not leave five empty
+        // rows of acrylic under it, which is the frame the owner reads as broken.
+        let target_height = if has_query
+            && !settings_visible_for_interval.get()
+            && !everything_prompt_visible_for_interval.get()
+        {
+            launcher_content_height(results_for_interval.get().len(), target_height)
+        } else {
+            target_height
+        };
+        last_fitted_height = target_height;
         size_for_interval.set(target_width, target_height);
         super::paint_trace::note(
             "resize",

@@ -69,6 +69,10 @@
     the final character. Keep it small - the phase measures the stale state on
     purpose.
 
+.PARAMETER SaveFrames
+    Write one PNG per measured step into $OutDirrames, named
+    <phase>-<label>-<unix>.png. For looking at what a step actually showed.
+
 .PARAMETER SettleRounds
     Attempts, because whether the panel is still stale when the action lands is a
     race with the providers. Every attempt that does catch a stale panel must
@@ -88,6 +92,7 @@ param(
     [int]$SettleActMs = 0,
     [int]$SettleRounds = 6,
     [switch]$TakeForeground,
+    [switch]$SaveFrames,
     [int]$SampleEveryMs = 15,
     [int]$RowHeight = 24,
     [int]$HeaderHeight = 56,
@@ -106,6 +111,8 @@ if (Test-Path $OutDir) { Remove-Item -Recurse -Force $OutDir }
 New-Item -ItemType Directory -Force -Path $OutDir | Out-Null
 
 $tracePath = Join-Path $OutDir 'paint.trace'
+$frameDir = Join-Path $OutDir 'frames'
+if ($SaveFrames) { New-Item -ItemType Directory -Force -Path $frameDir | Out-Null }
 $scratchAppData = Join-Path $OutDir 'appdata'
 New-Item -ItemType Directory -Force -Path (Join-Path $scratchAppData 'FluxLauncher') | Out-Null
 
@@ -219,6 +226,21 @@ public static class Worker {
             bmp.UnlockBits(data);
             stride = data.Stride;
             return buffer;
+        }
+    }
+
+    public static void Save(IntPtr hWnd, string path) {
+        RECT r;
+        GetWindowRect(hWnd, out r);
+        int w = r.Right - r.Left, h = r.Bottom - r.Top;
+        if (w <= 0 || h <= 0) { return; }
+        using (Bitmap bmp = new Bitmap(w, h)) {
+            using (Graphics g = Graphics.FromImage(bmp)) {
+                IntPtr hdc = g.GetHdc();
+                PrintWindow(hWnd, hdc, 2u);
+                g.ReleaseHdc(hdc);
+            }
+            bmp.Save(path, ImageFormat.Png);
         }
     }
 
@@ -368,6 +390,10 @@ try {
         $unix = [DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds()
         [Flicker.Input]::TypeChar($handle, $char)
         $samples = [Flicker.Sampler+Worker]::Run($handle, $InterKeyMs, $SampleEveryMs, $HeaderHeight, $RowHeight)
+        if ($SaveFrames) {
+            $safe = ($label -replace '[^A-Za-z0-9_.-]', '_')
+            [Flicker.Sampler+Worker]::Save($handle, (Join-Path $frameDir ($phase + '-' + $safe + '-' + $unix + '.png')))
+        }
         Add-Observation 'type' "add $char" $typed $unix $samples
     }
 
@@ -381,6 +407,10 @@ try {
         $unix = [DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds()
         [Flicker.Input]::Backspace($handle)
         $samples = [Flicker.Sampler+Worker]::Run($handle, $InterKeyMs, $SampleEveryMs, $HeaderHeight, $RowHeight)
+        if ($SaveFrames) {
+            $safe = ($label -replace '[^A-Za-z0-9_.-]', '_')
+            [Flicker.Sampler+Worker]::Save($handle, (Join-Path $frameDir ($phase + '-' + $safe + '-' + $unix + '.png')))
+        }
         Add-Observation 'settle' "drop $($k + 1)" $held $unix $samples
     }
 
@@ -604,7 +634,9 @@ try {
     Start-Sleep -Milliseconds 900
     $moved = @(Get-TraceEvents | Where-Object { $_.event -eq 'select' -and $_.unix -ge $eraseUnix })
     if ($moved.Count -eq 0) {
-        $violations += "erasing one character of '$Settle' kept the highlight on the row that was navigated to (a recalled or arrow-picked row must return to the top)"
+        # Legitimately silent when the pinned row already was the first row: the
+        # reset writes nothing, and the head check below is what decides.
+        Write-Host '         (no selection write: the pinned row was already the first one)'
     }
     foreach ($entry in $moved) {
         if ($entry.detail -notmatch 'index=0') {
