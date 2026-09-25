@@ -48,6 +48,11 @@ pub(crate) struct ProviderResults {
     /// A complete snapshot is waiting in the provider vectors for the next quiet
     /// tick, which publishes it.
     pub(crate) pending_publish: bool,
+    /// The list on screen for `published_query` already contains provider rows.
+    /// A built-in-only publish does not count: holding back the first real results
+    /// for a keystroke would make a dead-end prefix show system commands until the
+    /// next pause, which is a delay, not a saved repaint.
+    pub(crate) published_providers: bool,
 }
 
 impl ProviderResults {
@@ -69,6 +74,7 @@ impl ProviderResults {
         // to the query that was just replaced.
         self.typing_active = true;
         self.pending_publish = false;
+        self.published_providers = false;
     }
 
     pub(crate) fn core_ready(&self) -> bool {
@@ -125,7 +131,10 @@ pub(crate) fn commit_provider_results(
         return;
     }
     let merged = providers.merged(query, priorities);
-    if providers.typing_active && providers.published_query == query {
+    if providers.typing_active
+        && providers.published_query == query
+        && providers.published_providers
+    {
         // This keystroke is already on screen and the user is still typing. A
         // second publish for the same query would rebuild every row again - the
         // visible full-list flash - so the snapshot waits in the provider vectors
@@ -139,6 +148,7 @@ pub(crate) fn commit_provider_results(
     }
     providers.pending_publish = false;
     providers.published_query = query.to_owned();
+    providers.published_providers = true;
     // distinctUntilChanged: an identical snapshot must not rebuild the row
     // tree or jump the highlight, so write each signal only when its value
     // would actually change. Element and order both matter: a reorder alone
@@ -368,6 +378,7 @@ mod tests {
         providers.applications_ready = true;
         // The keystroke is already on screen with the application snapshot.
         providers.published_query = String::from("chatgpt");
+        providers.published_providers = true;
         let results = signal(vec![app]);
         let version = results.version();
         commit_provider_results(
@@ -406,6 +417,55 @@ mod tests {
             version,
             "the queued snapshot is published"
         );
+        assert!(!providers.pending_publish);
+    }
+
+    #[test]
+    fn a_builtin_only_publish_does_not_hold_back_the_first_provider_results() {
+        use windui::signal::signal;
+        let command = SearchResult {
+            id: String::from("system:clear"),
+            title: String::from("Clear"),
+            subtitle: String::new(),
+            kind: ResultKind::Command,
+            source: ResultSource::BuiltIn,
+            target: None,
+        };
+        let app = SearchResult {
+            id: String::from("app:chatgpt"),
+            title: String::from("ChatGPT"),
+            subtitle: String::from("Application"),
+            kind: ResultKind::Application,
+            source: ResultSource::ApplicationCatalog,
+            target: None,
+        };
+        let mut providers = ProviderResults::default();
+        providers.reset(5, vec![command.clone()], true);
+        providers.applications = vec![app];
+        providers.applications_ready = true;
+        // The tick published the built-in list for this very keystroke, which is
+        // what the list looked like after a prefix that returned nothing.
+        providers.published_query = String::from("chatgpt");
+        providers.published_providers = false;
+        providers.typing_active = true;
+        let results = signal(vec![command]);
+        let version = results.version();
+        commit_provider_results(
+            &mut providers,
+            "chatgpt",
+            &[],
+            signal(String::new()),
+            signal(0_usize),
+            signal(false),
+            results,
+            signal(false),
+        );
+        assert_ne!(
+            results.version(),
+            version,
+            "real results must appear on this keystroke, not after a pause"
+        );
+        assert!(providers.published_providers);
         assert!(!providers.pending_publish);
     }
 

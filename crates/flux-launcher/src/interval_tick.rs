@@ -617,9 +617,12 @@ pub(crate) fn register_interval(
                         .unwrap_or_default(),
                 );
                 // Built-in/system commands are synchronous and must be actionable
-                // immediately. External providers still replace this snapshot once
-                // their responses arrive for the same query sequence.
+                // immediately. This list holds no provider rows, so it must not
+                // count as this query being published: otherwise the applications
+                // and Everything commits for the same keystroke would defer
+                // themselves behind the quiet window.
                 providers.published_query = next_query.clone();
+                providers.published_providers = false;
                 results_for_interval.set(built_in_results);
             }
         }
