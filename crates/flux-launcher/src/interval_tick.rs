@@ -133,6 +133,7 @@ pub(crate) fn register_interval(
     let mut last_query = String::new();
     let mut last_query_change_ms: u64 = 0;
     let mut slow_sent_sequence: u64 = 0;
+    let mut everything_sent_sequence: u64 = 0;
     let mut last_fitted_height: i32 = 0;
     let mut visual_preview_process: Option<visual_preview::PreviewProcess> = None;
     let mut last_visual_preview_request: Option<(u16, u16)> = None;
@@ -499,16 +500,17 @@ pub(crate) fn register_interval(
                 )
             {
                 slow_sent_sequence = sequence;
-                // Everything is the always-on file provider for every non-empty
-                // query. Native Everything syntax such as `ext:zip`, `parent:`,
-                // `file:`, and `dm:today` stays unchanged; a leading `.ext`
-                // shorthand is normalized only for this provider.
-                if auto_enable_everything_for_interval.get()
+                // Normally the change tick already asked; this covers a query that
+                // became eligible without changing (Everything auto-enabled while
+                // the text stood still).
+                if everything_sent_sequence != sequence
+                    && auto_enable_everything_for_interval.get()
                     && next_query.trim().len() >= EVERYTHING_MIN_QUERY_LEN
                 {
+                    everything_sent_sequence = sequence;
                     super::paint_trace::note(
                         "request-everything",
-                        &format!("query={next_query}"),
+                        &format!("query={next_query} late=true"),
                     );
                     everything_worker.request(sequence, normalize_everything_query(&next_query));
                 }
@@ -621,6 +623,17 @@ pub(crate) fn register_interval(
         );
         sequence = sequence.wrapping_add(1);
         sequence_for_interval.set(sequence);
+        // Ask the file provider about the text the user just typed, in this same
+        // tick. Waiting for a settled tick first put 16-30 ms in front of
+        // Everything's own round trip, which is the whole of the window during
+        // which the panel can only show the previous prefix's rows.
+        if auto_enable_everything_for_interval.get()
+            && next_query.trim().len() >= EVERYTHING_MIN_QUERY_LEN
+        {
+            everything_sent_sequence = sequence;
+            super::paint_trace::note("request-everything", &format!("query={next_query}"));
+            everything_worker.request(sequence, normalize_everything_query(&next_query));
+        }
         model.set_query(&next_query);
         // Ghost completion is a pure function of (query, applications,
         // selection): derive it synchronously from the previous generation
