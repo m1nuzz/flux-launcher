@@ -318,46 +318,23 @@ pub(crate) fn title_match_doc(title: &str, query: &str) -> RichDoc {
 
 pub(crate) fn normalize_everything_query(query: &str) -> String {
     let trimmed = query.trim();
-    let shorthand = match trimmed.strip_prefix('.') {
-        Some(rest)
-            if !rest.is_empty()
-                && rest
-                    .split_once(char::is_whitespace)
-                    .unwrap_or((rest, ""))
-                    .0
-                    .chars()
-                    .all(|character| character.is_ascii_alphanumeric()) =>
-        {
-            let (extension, remainder) = rest.split_once(char::is_whitespace).unwrap_or((rest, ""));
-            let remainder = remainder.trim();
-            if remainder.is_empty() {
-                format!("ext:{extension}")
-            } else {
-                format!("ext:{extension} {remainder}")
-            }
-        }
-        _ => trimmed.to_owned(),
+    let Some(rest) = trimmed.strip_prefix('.') else {
+        return trimmed.to_owned();
     };
-    path_separators(&shorthand)
-}
-
-/// Everything indexes Windows paths with backslashes, so a query typed with the
-/// forward slash people learn from Explorer, the Run dialog and every URL bar
-/// matches nothing: `hi res/` returns zero rows while `hi res\` returns the
-/// folders. Rewrite the separators, collapsing runs of them into one so `C://x`
-/// does not become an escaped backslash.
-fn path_separators(term: &str) -> String {
-    let mut out = String::with_capacity(term.len());
-    for ch in term.chars() {
-        if ch != '/' {
-            out.push(ch);
-            continue;
-        }
-        if !out.ends_with('\\') {
-            out.push('\\');
-        }
+    let (extension, remainder) = rest.split_once(char::is_whitespace).unwrap_or((rest, ""));
+    if extension.is_empty()
+        || !extension
+            .chars()
+            .all(|character| character.is_ascii_alphanumeric())
+    {
+        return trimmed.to_owned();
     }
-    out
+    let remainder = remainder.trim();
+    if remainder.is_empty() {
+        format!("ext:{extension}")
+    } else {
+        format!("ext:{extension} {remainder}")
+    }
 }
 
 /// Ghost completion suffix, Flow-style: a pure function of the query, the
@@ -653,21 +630,6 @@ mod tests {
         assert_eq!(completion.get(), "exity");
         refresh_inline_completion(completion, "xyz", &apps, "app:perplexity");
         assert_eq!(completion.get(), "");
-    }
-
-    #[test]
-    fn forward_slashes_become_the_separator_everything_indexes() {
-        // The index stores Windows paths, so a query left with `/` matches nothing
-        // and the panel goes blank exactly when the user types a path separator.
-        assert_eq!(normalize_everything_query("hi res/"), "hi res\\");
-        assert_eq!(normalize_everything_query("c:/users/me"), "c:\\users\\me");
-        assert_eq!(normalize_everything_query("d://games"), "d:\\games");
-        assert_eq!(
-            normalize_everything_query("parent:c:/games"),
-            "parent:c:\\games"
-        );
-        assert_eq!(normalize_everything_query("ext:zip"), "ext:zip");
-        assert_eq!(normalize_everything_query(".zip c:/tmp"), "ext:zip c:\\tmp");
     }
 
     #[test]
