@@ -9,11 +9,11 @@
     ~15 ms, and reads the app's own paint trace (FLUX_PAINT_TRACE_FILE).
 
     Two properties must hold while the keystrokes keep coming:
-      * the result list is published at most twice per keystroke - once with the
-        built-in and application results that must stay actionable immediately,
-        and once when Everything answers - and
-      * asynchronously arriving shell icons cause no visible repaint at all:
-        they may only fill in after the query has been quiet.
+      * the result list is published exactly once per keystroke while typing
+        continues - the built-in and application snapshot that must stay
+        actionable immediately - and
+      * asynchronously arriving shell icons and Everything results cause no
+        visible repaint at all until the query has been quiet.
 
     Violations exit non-zero and print the offending samples with the events that
     fell inside the same gap.
@@ -61,16 +61,32 @@ $tracePath = Join-Path $OutDir 'paint.trace'
 $scratchAppData = Join-Path $OutDir 'appdata'
 New-Item -ItemType Directory -Force -Path $scratchAppData | Out-Null
 
-Add-Type -Namespace Flicker -Name Input -MemberDefinition @'
+Add-Type -Namespace Flicker -Name Input -UsingNamespace 'System.Threading' -MemberDefinition @'
 [DllImport("user32.dll", CharSet=CharSet.Unicode)]
 public static extern IntPtr SendMessage(IntPtr hWnd, uint Msg, IntPtr wParam, IntPtr lParam);
-[DllImport("user32.dll")] public static extern bool SetForegroundWindow(IntPtr hWnd);
+[DllImport("user32.dll")] public static extern bool PostMessage(IntPtr hWnd, uint Msg, UIntPtr wParam, IntPtr lParam);
+
+// Posting WM_CHAR is what makes this harness survive a busy desktop: it needs no
+// foreground right, so it never steals the user's focus and cannot type into another
+// window. The launcher gives the search field keyboard focus when it is shown.
+public static void PostChar(IntPtr hWnd, uint charCode) { PostMessage(hWnd, 0x0102, new UIntPtr(charCode), IntPtr.Zero); }
+public static void TypeText(IntPtr hWnd, string text) {
+    foreach (char c in text) { PostChar(hWnd, c); Thread.Sleep(12); }
+}
+[DllImport("user32.dll")] public static extern short MapVirtualKey(uint vk, uint mapType);
+public static void Backspace(IntPtr hWnd) {
+    // VK_BACK through WM_KEYDOWN/WM_KEYUP: WM_CHAR 8 is delivered but the search
+    // field only edits on the key-down path, so a posted character does nothing.
+    uint scan = (uint)MapVirtualKey(0x08, 0);
+    PostMessage(hWnd, 0x0100, new UIntPtr(0x08), (IntPtr)(long)((scan << 16) | 1u));
+    PostMessage(hWnd, 0x0101, new UIntPtr(0x08), (IntPtr)(long)((scan << 16) | 1u | unchecked((int)0xC0000000)));
+    Thread.Sleep(12);
+}
+public static void Erase(IntPtr hWnd, int count) { for (int i = 0; i < count; i++) { Backspace(hWnd); } }
 [DllImport("user32.dll")] public static extern bool GetWindowRect(IntPtr hWnd, out RECT rect);
 [DllImport("user32.dll")] public static extern bool IsWindowVisible(IntPtr hWnd);
 [DllImport("user32.dll")] public static extern bool EnumWindows(EnumProc cb, IntPtr arg);
 [DllImport("user32.dll")] public static extern uint GetWindowThreadProcessId(IntPtr hWnd, out uint pid);
-[DllImport("user32.dll")] public static extern bool SetCursorPos(int x, int y);
-[DllImport("user32.dll")] public static extern void mouse_event(uint flags, uint dx, uint dy, uint data, UIntPtr extraInfo);
 public delegate bool EnumProc(IntPtr hWnd, IntPtr arg);
 public struct RECT { public int Left; public int Top; public int Right; public int Bottom; }
 public static IntPtr FindByPid(uint targetPid) {
@@ -205,29 +221,14 @@ try {
     $rect = New-Object Flicker.Input+RECT
     [void][Flicker.Input]::GetWindowRect($handle, [ref]$rect)
 
-    $shell = New-Object -ComObject WScript.Shell
-    for ($attempt = 0; $attempt -lt 3; $attempt++) {
-        # Focus probe: one character, and refuse to continue if the app did not see
-        # it, so a focus loss cannot type the query into another window. Foreground
-        # hand-off is racy on a busy desktop, hence the retry with a real click.
-        [void][Flicker.Input]::SetForegroundWindow($handle)
-        [void]$shell.AppActivate($process.Id)
-        Start-Sleep -Milliseconds 300
-        [void][Flicker.Input]::SetCursorPos($rect.Left + [int](($rect.Right - $rect.Left) / 2), $rect.Top + [int](($rect.Bottom - $rect.Top) / 2))
-        [Flicker.Input]::mouse_event(0x0002, 0, 0, 0, [UIntPtr]::Zero)
-        [Flicker.Input]::mouse_event(0x0004, 0, 0, 0, [UIntPtr]::Zero)
-        Start-Sleep -Milliseconds 200
-        [void][Flicker.Input]::SetForegroundWindow($handle)
-        Start-Sleep -Milliseconds 150
-        $shell.SendKeys('z')
-        Start-Sleep -Milliseconds 400
-        $probeSeen = @(Get-TraceEvents | Where-Object { $_.event -eq 'query' -and $_.detail -like 'value=z *' })
-        $shell.SendKeys('{BACKSPACE}')
-        Start-Sleep -Milliseconds 250
-        if ($probeSeen.Count -gt 0) { break }
-        Write-Host "focus attempt $($attempt + 1) did not reach the launcher, retrying"
-    }
-    if ($probeSeen.Count -eq 0) { throw 'typed characters never reached the launcher window' }
+    # Focus probe by post, not by assumption: one character must show up in the
+    # launcher's own trace before anything else is typed.
+    [Flicker.Input]::PostChar($handle, [uint32][char]'z')
+    Start-Sleep -Milliseconds 400
+    $probeSeen = @(Get-TraceEvents | Where-Object { $_.event -eq 'query' -and $_.detail -like 'value=z *' })
+    if ($probeSeen.Count -eq 0) { throw 'posted characters never reached the launcher window' }
+    [Flicker.Input]::Erase($handle, 4)
+    Start-Sleep -Milliseconds 300
 
     $observations = @()
     $typed = ''
@@ -237,12 +238,17 @@ try {
             [void][Flicker.Input]::SendMessage($handle, 0x0312, [IntPtr]::Zero, [IntPtr]::Zero)
             Start-Sleep -Milliseconds 250
         }
-        [void][Flicker.Input]::SetForegroundWindow($handle)
-        [void]$shell.AppActivate($process.Id)
-        Start-Sleep -Milliseconds 120
         $keyUnix = [DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds()
-        $shell.SendKeys([string]$char)
+        [Flicker.Input]::PostChar($handle, [uint32][char]$char)
         $samples = [Flicker.Sampler+Worker]::Run($handle, $InterKeyMs, $SampleEveryMs, $HeaderHeight, $RowHeight)
+        # Harness self-check: if the launcher did not end up holding exactly this
+        # text, the measurement is meaningless and must stop rather than report a
+        # clean run over a query that never existed.
+        $seen = @(Get-TraceEvents | Where-Object { $_.event -eq 'query' } | Select-Object -Last 1)
+        if ($seen.Count -eq 0 -or $seen[0].detail -notlike ("value={0} *" -f $typed)) {
+            $actualText = if ($seen.Count -gt 0) { $seen[0].detail } else { 'nothing' }
+            throw "keystroke $index expected query '$typed' but the launcher holds '$actualText'"
+        }
         $observations += [pscustomobject]@{ typed = $typed; char = $char; unix = $keyUnix; samples = $samples }
     }
 
@@ -271,16 +277,22 @@ try {
                 if ($iconish.Count -gt 0) { $iconPaints++ }
             }
         }
+        $isLast = $index -eq ($observations.Count - 1)
         Write-Host ("{0,-11} {1,11}  {2,11}" -f $entry.typed, $writes.Count, $iconPaints)
-        # Two publishes per keystroke is the intended shape: built-in and application
-        # results publish at once so a system command is actionable immediately, and
-        # the complete snapshot replaces it when Everything answers. A third swap
-        # means another provider is republishing the same generation.
-        if ($writes.Count -gt 2) {
-            $violations += "query '$($entry.typed)' published the list $($writes.Count) times while typing (expected at most 2)"
-        }
-        if ($iconPaints -gt 0 -and $entry.typed -ne $Query) {
-            $violations += "query '$($entry.typed)' repainted $iconPaints time(s) from shell-icon arrivals before the query had been quiet for ${QuietMs}ms"
+        # While the keystrokes keep coming a query must be painted exactly once: the
+        # built-in and application snapshot. Everything's answer and the shell icons
+        # wait for the quiet window, so they land together in one repaint instead of
+        # rebuilding every row a second time mid-word. The final keystroke is watched
+        # through that window, so its deferred publish is expected and allowed.
+        if (-not $isLast) {
+            if ($writes.Count -gt 1) {
+                $violations += "query '$($entry.typed)' rebuilt the list $($writes.Count) times before the next keystroke (expected exactly 1)"
+            }
+            if ($iconPaints -gt 0) {
+                $violations += "query '$($entry.typed)' repainted $iconPaints time(s) from shell-icon arrivals before the query had been quiet for ${QuietMs}ms"
+            }
+        } elseif ($writes.Count -gt 2) {
+            $violations += "query '$($entry.typed)' rebuilt the list $($writes.Count) times (expected at most 2: immediate plus the deferred publish)"
         }
     }
 } finally {
