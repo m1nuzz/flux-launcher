@@ -18,11 +18,17 @@ use super::ui_constants::MAX_VISIBLE_RESULTS;
 /// applications commit flashes the whole list twice per keystroke. The
 /// applications scan is local and lands milliseconds later, so holding the
 /// previous list is strictly calmer.
+///
+/// The calm does not extend to the home page. Its rows are a menu shown while
+/// the field is empty and the list is hidden, so they answer no text at all:
+/// holding them means the first keystroke *reveals* "About Flux Launcher" and
+/// friends for the length of the file provider's round trip.
 pub(crate) fn should_publish_initial_query_results(
     has_query: bool,
     displayed_results_are_empty: bool,
+    screen_holds_home_page: bool,
 ) -> bool {
-    !has_query || displayed_results_are_empty
+    !has_query || displayed_results_are_empty || (has_query && screen_holds_home_page)
 }
 
 #[derive(Default)]
@@ -424,9 +430,22 @@ mod tests {
 
     #[test]
     fn pending_non_empty_query_keeps_previous_result_list_visible() {
-        assert!(!should_publish_initial_query_results(true, false));
-        assert!(should_publish_initial_query_results(true, true));
-        assert!(should_publish_initial_query_results(false, false));
+        assert!(!should_publish_initial_query_results(true, false, false));
+        assert!(should_publish_initial_query_results(true, true, false));
+        assert!(should_publish_initial_query_results(false, false, false));
+    }
+
+    #[test]
+    fn the_first_keystroke_replaces_the_home_page_instead_of_revealing_it() {
+        // The list is hidden while the field is empty, so its rows are the
+        // suggestion menu: "About Flux Launcher" and the other commands. Typing
+        // shows the list again, and holding those rows means the first character
+        // reveals a menu that answers nothing until the file provider replies.
+        assert!(should_publish_initial_query_results(true, false, true));
+        // Erasing back to the home page still publishes it.
+        assert!(should_publish_initial_query_results(false, false, true));
+        // Rows the user typed for are still held, which is the calm half of the rule.
+        assert!(!should_publish_initial_query_results(true, false, false));
     }
 
     #[test]
@@ -434,8 +453,8 @@ mod tests {
         // Even with synchronous built-in results ready, a shown list is left
         // alone: the applications commit lands milliseconds later and swaps
         // once instead of flashing builtins-then-full.
-        assert!(!should_publish_initial_query_results(true, false));
-        assert!(should_publish_initial_query_results(false, true));
+        assert!(!should_publish_initial_query_results(true, false, false));
+        assert!(should_publish_initial_query_results(false, true, false));
     }
 
     #[test]

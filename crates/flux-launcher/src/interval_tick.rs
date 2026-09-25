@@ -595,32 +595,6 @@ pub(crate) fn register_interval(
         }
         history_mode_for_interval.set(false);
         show_results_for_interval.set(has_query);
-        // Query cleanup also happens when hide-on-deactivate hides the
-        // launcher. Do not let that asynchronous query transition resize
-        // an already-open Settings panel back to the compact search strip.
-        let (target_width, target_height) = launcher_window_geometry_with_prompt(
-            settings_visible_for_interval.get(),
-            everything_prompt_visible_for_interval.get(),
-            has_query,
-            launcher_width.get() as i32,
-            launcher_height.get() as i32,
-        );
-        // The configured height is a maximum: one result must not leave five empty
-        // rows of acrylic under it, which is the frame the owner reads as broken.
-        let target_height = if has_query
-            && !settings_visible_for_interval.get()
-            && !everything_prompt_visible_for_interval.get()
-        {
-            launcher_content_height(results_for_interval.get().len(), target_height)
-        } else {
-            target_height
-        };
-        last_fitted_height = target_height;
-        size_for_interval.set(target_width, target_height);
-        super::paint_trace::note(
-            "resize",
-            &format!("size={target_width}x{target_height} has_query={has_query}"),
-        );
         sequence = sequence.wrapping_add(1);
         sequence_for_interval.set(sequence);
         // Ask the file provider about the text the user just typed, in this same
@@ -660,6 +634,7 @@ pub(crate) fn register_interval(
             let publish_initial_results = should_publish_initial_query_results(
                 has_query,
                 results_for_interval.get().is_empty(),
+                providers.published_query.is_empty(),
             );
             if publish_initial_results {
                 super::paint_trace::note(
@@ -684,6 +659,36 @@ pub(crate) fn register_interval(
                 results_for_interval.set(built_in_results);
             }
         }
+        // Size the panel from the rows this keystroke actually published, which is
+        // why this runs after them: fitting first would leave the previous
+        // generation's height for a frame on every keystroke that shortens the list.
+        //
+        // Query cleanup also happens when hide-on-deactivate hides the
+        // launcher. Do not let that asynchronous query transition resize
+        // an already-open Settings panel back to the compact search strip.
+        let (target_width, target_height) = launcher_window_geometry_with_prompt(
+            settings_visible_for_interval.get(),
+            everything_prompt_visible_for_interval.get(),
+            has_query,
+            launcher_width.get() as i32,
+            launcher_height.get() as i32,
+        );
+        // The configured height is a maximum: one result must not leave five empty
+        // rows of acrylic under it, which is the frame the owner reads as broken.
+        let target_height = if has_query
+            && !settings_visible_for_interval.get()
+            && !everything_prompt_visible_for_interval.get()
+        {
+            launcher_content_height(results_for_interval.get().len(), target_height)
+        } else {
+            target_height
+        };
+        last_fitted_height = target_height;
+        size_for_interval.set(target_width, target_height);
+        super::paint_trace::note(
+            "resize",
+            &format!("size={target_width}x{target_height} has_query={has_query}"),
+        );
         request_scroll(scroll_request_for_interval);
         action_mode.set(false);
         action_index.set(0);

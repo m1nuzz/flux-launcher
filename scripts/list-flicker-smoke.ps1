@@ -20,6 +20,9 @@
     highlight must return to the first row of the shorter query instead of staying
     pinned to the row the arrows (or a recalled history entry) picked.
 
+    A first phase types one character into an empty field, which is where the
+    hidden suggestion menu can be revealed instead of an answer.
+
     While keystrokes keep coming, every step must hold:
       * at most one list publish (one row-tree rebuild),
       * no repaint caused by shell-icon arrivals before the query has been quiet,
@@ -383,6 +386,41 @@ try {
     for ($i = 0; $i -lt 4; $i++) { [Flicker.Input]::Backspace($handle) }
     Start-Sleep -Milliseconds 400
 
+    Write-Host ''
+    Write-Host 'home: the first character typed into an empty field'
+    # While the field is empty the result list is hidden and its rows are the
+    # suggestion menu - "About Flux Launcher" and the other commands. A keystroke
+    # shows the list again, so if the new query publishes nothing the reveal is
+    # that menu, and it stays for the whole file provider round trip. One character
+    # is enough to ask Everything, so the window is open on purpose; '/' is the
+    # owner's repro and matches no local row, 'c' is the common case that does.
+    foreach ($probe in @('/', 'c')) {
+        $unix = [DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds()
+        [Flicker.Input]::TypeChar($handle, $probe)
+        $samples = [Flicker.Sampler+Worker]::Run($handle, $InterKeyMs, $SampleEveryMs, $HeaderHeight, $RowHeight, '')
+        Add-Observation 'home' "first $probe" $probe $unix $samples
+        $events = @(Get-TraceEvents)
+        # What the panel shows is whatever the last write put there, so a write for
+        # this query strictly before the provider answered is the whole requirement.
+        $answer = @($events | Where-Object {
+            $_.event -eq 'response-everything' -and $_.detail -like "query=$probe *"
+        } | Select-Object -Last 1)
+        if ($answer.Count -eq 0) {
+            throw "home probe '$probe': the file provider never answered, so the reveal window was never measured"
+        }
+        $answered = $answer[0].unix
+        $forProbe = @($events | Where-Object {
+            $_.unix -ge $unix -and $_.unix -lt $answered -and $_.detail -like "query=$probe *" -and
+            ($_.event -eq 'publish-initial' -or $_.event -eq 'list-write')
+        })
+        Write-Host ("           '{0}' republished {1} time(s) in the {2}ms before the answer" -f $probe, $forProbe.Count, ($answered - $unix))
+        if ($forProbe.Count -eq 0) {
+            $violations += "typing the first '$probe' into an empty field left the suggestion menu on screen for $($answered - $unix)ms: nothing was published for '$probe' before the file provider answered"
+        }
+        [Flicker.Input]::Backspace($handle)
+        Start-Sleep -Milliseconds ($QuietMs + 150)
+    }
+
     $typed = ''
     foreach ($char in $Query.ToCharArray()) {
         $typed += [string]$char
@@ -492,7 +530,10 @@ try {
         if ($premature.Count -gt 0) {
             $violations += "query '$($entry.after)' painted $($premature.Count) snapshot(s) smaller than the rows on screen while a provider still owed its answer (the panel collapses and refills)"
         }
-        if (-not $isLast) {
+        # The home probes watch a whole provider round trip plus the erase that
+        # follows it, so counting repaints there measures nothing; the invariants
+        # above still apply.
+        if (-not $isLast -and $entry.phase -ne 'home') {
             if ($writes.Count -gt 1) {
                 $violations += "query '$($entry.after)' rebuilt the list $($writes.Count) times before the next keystroke (expected exactly 1)"
             }
