@@ -59,21 +59,16 @@ impl ProviderResults {
         self.everything_ready = !everything_expected;
     }
 
-    pub(crate) fn core_ready(&self, query: &str) -> bool {
+    pub(crate) fn core_ready(&self) -> bool {
         if !self.applications_ready {
             return false;
         }
         // Built-in/system results must be actionable without waiting for the
         // asynchronous Everything response. When a query has no built-in result,
-        // retain the atomic application+Everything snapshot behavior.
-        if self.everything_ready || !self.built_in.is_empty() {
-            return true;
-        }
-        // The atomic snapshot is still incomplete. Holding it back only buys one
-        // fewer swap, and that is worth it solely while the displayed list already
-        // belongs to this query: showing rows from an earlier keystroke to avoid a
-        // second swap is the worse trade.
-        self.published_query != query
+        // retain the atomic application+Everything snapshot behavior: publishing
+        // the applications half first means two row-tree rebuilds per keystroke,
+        // and the second one repaints every row under the stable top hit.
+        self.everything_ready || !self.built_in.is_empty()
     }
 
     pub(crate) fn merged(&self, query: &str, priorities: &[String]) -> Vec<SearchResult> {
@@ -217,38 +212,17 @@ mod tests {
     fn core_provider_snapshot_waits_for_both_search_providers() {
         let mut providers = ProviderResults::default();
         providers.reset(7, Vec::new(), true);
-        providers.published_query = String::from("chat");
-        assert!(!providers.core_ready("chat"));
+        assert!(!providers.core_ready());
 
         providers.applications_ready = true;
-        assert!(!providers.core_ready("chat"));
+        // Held even while the shown list belongs to an earlier keystroke:
+        // publishing the applications half means two row-tree rebuilds for this
+        // query, one when applications land and one when Everything does.
+        providers.published_query = String::from("older-keystroke");
+        assert!(!providers.core_ready());
 
         providers.everything_ready = true;
-        assert!(providers.core_ready("chat"));
-    }
-
-    #[test]
-    fn incomplete_snapshot_publishes_when_shown_list_is_stale() {
-        // Everything has not answered yet. Holding the snapshot only avoids a
-        // second swap while the screen already shows this query; showing the
-        // previous keystroke is the defect the user reports.
-        let mut providers = ProviderResults::default();
-        providers.reset(11, Vec::new(), true);
-        providers.applications_ready = true;
-        providers.published_query = String::from("cha");
-        assert!(providers.core_ready("chat"));
-
-        providers.published_query = String::from("chat");
-        assert!(!providers.core_ready("chat"));
-    }
-
-    #[test]
-    fn nothing_published_yet_publishes_without_everything() {
-        let providers = ProviderResults {
-            applications_ready: true,
-            ..Default::default()
-        };
-        assert!(providers.core_ready("chat"));
+        assert!(providers.core_ready());
     }
 
     #[test]
@@ -256,7 +230,7 @@ mod tests {
         let mut providers = ProviderResults::default();
         providers.reset(8, Vec::new(), false);
         providers.applications_ready = true;
-        assert!(providers.core_ready("chat"));
+        assert!(providers.core_ready());
     }
 
     #[test]
@@ -424,7 +398,7 @@ mod tests {
             true,
         );
         providers.applications_ready = true;
-        assert!(providers.core_ready("wifi"));
+        assert!(providers.core_ready());
         assert!(!providers.everything_ready);
     }
 }
