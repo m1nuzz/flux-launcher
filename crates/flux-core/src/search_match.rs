@@ -6,41 +6,78 @@ pub fn matches_search_text(candidate: &str, query: &str) -> bool {
     if normalized_query.is_empty() || compact_search_key(&normalized_query).is_empty() {
         return false;
     }
+    if is_path_query(&normalized_query) {
+        // A separator is a step in a path, not punctuation to forgive: with the
+        // compact comparison a query of `d:/` matches every name holding a "d", so
+        // the results of the previous keystroke keep answering the new query and
+        // stay on screen until the file provider replies.
+        return normalized_candidate
+            .replace('/', "\\")
+            .contains(&normalized_query.replace('/', "\\"));
+    }
     normalized_candidate.contains(&normalized_query)
         || compact_contains(&normalized_candidate, &normalized_query)
 }
 
-pub(crate) fn match_app_title(title: &str, query: &str) -> u8 {
-    if query.is_empty() || title == query {
+fn is_path_query(normalized_query: &str) -> bool {
+    normalized_query.contains('/') || normalized_query.contains('\\')
+}
+
+/// How well a title matches, best first: the whole title, its first characters,
+/// the start of any word inside it, and only then a substring anywhere. Release
+/// folders are titled like `[Hi-Res] LiSA／紅蓮華 [FLAC]`, so the word rule is what
+/// puts the album the user typed above files that merely happen to contain it.
+fn title_tier(title: &str, query: &str) -> u8 {
+    if title == query {
         0
     } else if title.starts_with(query) {
         1
-    } else if matches_search_text(title, query) {
+    } else if starts_a_word(title, query) {
         2
-    } else {
+    } else if matches_search_text(title, query) {
         3
+    } else {
+        4
+    }
+}
+
+fn starts_a_word(title: &str, query: &str) -> bool {
+    !query.is_empty()
+        && title
+            .split(|character: char| !character.is_alphanumeric())
+            .any(|word| word.starts_with(query))
+}
+
+pub(crate) fn match_app_title(title: &str, query: &str) -> u8 {
+    if query.is_empty() {
+        0
+    } else {
+        title_tier(title, query)
     }
 }
 
 pub(crate) fn match_file_title(title: &str, query: &str) -> u8 {
     if query.is_empty() {
-        3
-    } else if title == query {
-        0
-    } else if title.starts_with(query) {
-        1
-    } else if matches_search_text(title, query) {
-        2
+        4
     } else {
-        3
+        title_tier(title, query)
     }
 }
 
-pub(crate) fn is_application_path(path: &str) -> bool {
+pub fn is_application_path(path: &str) -> bool {
     let lower = normalize(path);
-    [".exe", ".lnk", ".com", ".bat", ".cmd", ".url"]
-        .iter()
-        .any(|extension| lower.ends_with(extension))
+    if lower.ends_with(".exe")
+        || lower.ends_with(".lnk")
+        || lower.ends_with(".bat")
+        || lower.ends_with(".cmd")
+        || lower.ends_with(".url")
+    {
+        return true;
+    }
+    // `.com` is an executable extension and also the tail of every email address,
+    // and mailto files sit in ordinary folders: `elisam@nvidia.com` is an address,
+    // not a program, and treating it as one puts junk above what the user typed.
+    lower.ends_with(".com") && !lower.contains('@')
 }
 
 pub(crate) fn normalize(value: &str) -> String {
@@ -152,13 +189,47 @@ mod tests {
         assert_eq!(results[0].title, "LM Studio");
         assert_eq!(results[1].title, "lmstudio.json");
 
-        assert_eq!(match_app_title("LM Studio", "lmstudio"), 2);
+        assert_eq!(match_app_title("LM Studio", "lmstudio"), 3);
         assert!(matches_search_text("LM Studio", "lmstudio"));
         assert!(matches_search_text("lmstudio.json", "lmstudio"));
         assert!(matches_search_text("LM-Studio", "lmstudio"));
         assert!(!matches_search_text("LM Studio", "!!!"));
         assert_eq!(match_file_title("lmstudio.json", "lmstudio"), 1);
-        assert_eq!(match_app_title("Chrome", "..."), 3);
+        assert_eq!(match_app_title("Chrome", "..."), 4);
+    }
+
+    #[test]
+    fn a_path_separator_is_not_forgiven_as_punctuation() {
+        assert!(matches_search_text(r"D:\Music\song", "d:/"));
+        assert!(matches_search_text("D:/Music/song", "d:/"));
+        assert!(!matches_search_text("drama.json", "d:/"));
+        assert!(!matches_search_text("LM Studio", "studio/"));
+        // Without a separator the loose match stays: `lmstudio` still finds
+        // "LM Studio", which is what makes a launcher usable.
+        assert!(matches_search_text("LM Studio", "lmstudio"));
+    }
+
+    #[test]
+    fn a_match_at_the_start_of_a_word_beats_one_buried_inside_it() {
+        let folder = "[hi-res] lisa／紅蓮華 [flac] [24 bit／48khz]";
+        assert_eq!(match_file_title(folder, "lisa"), 2);
+        assert_eq!(match_file_title("elisa.json", "lisa"), 3);
+        assert_eq!(match_file_title("serialisable.pyi", "lisa"), 3);
+
+        let mut results = vec![
+            SearchResult::file(
+                String::from("D:/x/elisa.json"),
+                String::from("elisa.json"),
+                String::from("D:/x"),
+            ),
+            SearchResult::file(
+                String::from("D:/y/folder"),
+                folder.to_owned(),
+                String::from("D:/y"),
+            ),
+        ];
+        rank_results("lisa", &mut results);
+        assert_eq!(results[0].title, folder, "the album the user typed wins");
     }
 
     #[test]

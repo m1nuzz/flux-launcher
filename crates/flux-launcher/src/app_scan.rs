@@ -189,13 +189,9 @@ pub(crate) fn collect_files(root: &Path, depth: usize, candidates: &mut Vec<Sear
 
 #[cfg(windows)]
 fn is_application_file(path: &Path) -> bool {
-    matches!(
-        path.extension()
-            .and_then(|extension| extension.to_str())
-            .map(|extension| extension.to_ascii_lowercase())
-            .as_deref(),
-        Some("lnk") | Some("url") | Some("exe") | Some("com") | Some("bat") | Some("cmd")
-    )
+    // One rule for the whole app: flux-core also classifies executables by path
+    // when it turns a file hit into a result, and the two must not disagree.
+    flux_core::is_application_path(&path.to_string_lossy())
 }
 
 #[cfg(windows)]

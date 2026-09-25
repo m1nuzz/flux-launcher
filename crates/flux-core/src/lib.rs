@@ -18,7 +18,9 @@ pub use game_mode::{
     WindowClass,
 };
 pub use search::{ResultKind, ResultSource, SearchResult};
-pub use search_match::{matches_search_text, rank_results, rank_results_with_priorities};
+pub use search_match::{
+    is_application_path, matches_search_text, rank_results, rank_results_with_priorities,
+};
 pub use search_model::{history_results, SearchModel};
 pub use settings::{
     HotkeyConfig, LaunchCount, MonitorPreference, PriorityEntry, Settings, DEFAULT_LAUNCHER_HEIGHT,
