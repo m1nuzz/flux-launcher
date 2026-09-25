@@ -1,7 +1,7 @@
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::io::Write;
 use std::sync::{
-    atomic::{AtomicU64, Ordering},
+    atomic::{AtomicU64, AtomicUsize, Ordering},
     mpsc::{self, SyncSender},
     Arc, Mutex, OnceLock,
 };
@@ -71,6 +71,10 @@ pub(crate) static SHELL_ICON_COMPLETION_GENERATION: AtomicU64 = AtomicU64::new(0
 
 pub(crate) struct ShellIconWorker {
     pending: Arc<Mutex<HashSet<String>>>,
+    /// Requests handed to the thread but not finished yet. The result list waits
+    /// for this to reach zero so a page of icons arrives in one repaint instead of
+    /// one full-window repaint per completed icon.
+    in_flight: Arc<AtomicUsize>,
     wake: SyncSender<String>,
 }
 
@@ -95,6 +99,8 @@ impl ShellIconWorker {
     fn spawn() -> Self {
         let pending = Arc::new(Mutex::new(HashSet::<String>::new()));
         let pending_for_worker = Arc::clone(&pending);
+        let in_flight = Arc::new(AtomicUsize::new(0));
+        let in_flight_for_worker = Arc::clone(&in_flight);
         let (wake, receiver) = mpsc::sync_channel::<String>(64);
         thread::Builder::new()
             .name(String::from("flux-shell-icons"))
@@ -108,6 +114,7 @@ impl ShellIconWorker {
                     }
                     #[cfg(windows)]
                     let _ = shell_icon_rgba(&target);
+                    in_flight_for_worker.fetch_sub(1, Ordering::AcqRel);
                     let generation =
                         SHELL_ICON_COMPLETION_GENERATION.fetch_add(1, Ordering::Release) + 1;
                     crate::paint_trace::note(
@@ -122,7 +129,11 @@ impl ShellIconWorker {
                 }
             })
             .expect("failed to create shell icon worker thread");
-        Self { pending, wake }
+        Self {
+            pending,
+            in_flight,
+            wake,
+        }
     }
 
     fn request(&self, target: String) {
@@ -134,7 +145,9 @@ impl ShellIconWorker {
         if !should_send {
             return;
         }
+        self.in_flight.fetch_add(1, Ordering::AcqRel);
         if self.wake.try_send(target.clone()).is_err() {
+            self.in_flight.fetch_sub(1, Ordering::AcqRel);
             if let Ok(mut pending) = self.pending.lock() {
                 pending.remove(&target);
             }
@@ -146,6 +159,11 @@ static SHELL_ICON_WORKER: OnceLock<ShellIconWorker> = OnceLock::new();
 
 pub(crate) fn shell_icon_worker() -> &'static ShellIconWorker {
     SHELL_ICON_WORKER.get_or_init(ShellIconWorker::spawn)
+}
+
+/// True while the icon thread still owes results for the rows on screen.
+pub(crate) fn shell_icons_in_flight() -> bool {
+    shell_icon_worker().in_flight.load(Ordering::Acquire) > 0
 }
 
 #[cfg(windows)]

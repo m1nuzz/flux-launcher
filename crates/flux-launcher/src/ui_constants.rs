@@ -23,6 +23,11 @@ pub(crate) const RESULT_VIEWPORT_HEIGHT: i32 = 288;
 /// row and reads as a full-list flash. The window has to exceed a normal inter-key
 /// interval, otherwise the deferred snapshot still lands between two keystrokes.
 pub(crate) const TYPING_QUIET_MS: u64 = 250;
+/// How many search ticks a page of shell icons may be held back waiting for the
+/// icon thread to drain before the partial set is propagated anyway. At
+/// `SEARCH_INTERVAL` this caps the wait at roughly half a second, so a shell item
+/// that never answers cannot hide the icons.
+pub(crate) const ICON_SETTLE_TICKS: u32 = 30;
 pub(crate) const SETTINGS_WINDOW_HEIGHT: i32 = 520;
 pub(crate) const LAUNCHER_FONT_FAMILY: &str = "Segoe UI Variable";
 pub(crate) const SEARCH_INTERVAL: Duration = Duration::from_millis(16);

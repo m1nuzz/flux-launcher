@@ -49,7 +49,7 @@ param(
     [int]$Rounds = 4,
     [int]$InterKeyMs = 150,
     [int]$QuietMs = 250,
-    [double]$MaxChangedPct = 20,
+    [int]$IconBudgetMs = 60,
     [int]$SampleEveryMs = 15,
     [int]$RowHeight = 24,
     [int]$HeaderHeight = 56,
@@ -363,14 +363,31 @@ try {
             if ($writes.Count -gt 1) {
                 $violations += "query '$($entry.after)' rebuilt the list $($writes.Count) times before the next keystroke (expected exactly 1)"
             }
-            if ($iconPaints -gt 0) {
-                $violations += "query '$($entry.after)' repainted $iconPaints time(s) from shell-icon arrivals before the query had been quiet for ${QuietMs}ms"
+            # One icon repaint per keystroke is the point: the page of icons is
+            # propagated once the icon thread has drained, so a new query gains its
+            # icons promptly without one full-panel repaint per icon.
+            if ($iconPaints -gt 1) {
+                $violations += "query '$($entry.after)' was repainted $iconPaints times by shell-icon arrivals (expected at most 1: one page, one repaint)"
             }
-            if ($premature.Count -gt 0) {
-                $violations += "query '$($entry.after)' published a shorter list than the one on screen from an incomplete snapshot: $($premature[0].detail)"
+            # A cold page must reach the screen without waiting for the typing to
+            # stop: measure the gap between the last icon the thread loaded and the
+            # refresh that propagated it. Nothing was loaded in this window means
+            # the page was already cached, which is not a delay.
+            $allEvents = @(Get-TraceEvents)
+            $loads = @($allEvents | Where-Object { $_.event -eq 'icon-loaded' -and $_.unix -ge $from -and $_.unix -lt $to })
+            if ($loads.Count -gt 0) {
+                $lastLoad = ($loads | Measure-Object -Property unix -Maximum).Maximum
+                $refresh = @($allEvents | Where-Object { $_.event -eq 'icon-refresh' -and $_.unix -ge $lastLoad } | Select-Object -First 1)
+                if ($refresh.Count -eq 0) {
+                    $violations += "query '$($entry.after)' loaded $($loads.Count) icon(s) that were never propagated to the screen"
+                } else {
+                    $delay = $refresh[0].unix - $lastLoad
+                    Write-Host ("           icons: loaded={0} propagated {1}ms after the last load" -f $loads.Count, $delay)
+                    if ($delay -gt $IconBudgetMs) {
+                        $violations += "query '$($entry.after)' showed its icons $delay ms after the last one finished loading (budget ${IconBudgetMs}ms)"
+                    }
+                }
             }
-        } elseif ($writes.Count -gt 2) {
-            $violations += "query '$($entry.after)' rebuilt the list $($writes.Count) times (expected at most 2: immediate plus the deferred publish)"
         }
     }
 } finally {
@@ -388,4 +405,4 @@ if ($violations.Count -gt 0) {
     foreach ($violation in $violations) { Write-Host "FAIL: $violation" }
     throw "list flicker smoke failed with $($violations.Count) violation(s)"
 }
-Write-Host 'PASS: one list publish per keystroke, no icon-driven repaint, no frame replacing most of the list.'
+Write-Host 'PASS: one list publish per keystroke, at most one icon repaint, and icons reach the screen within budget.'

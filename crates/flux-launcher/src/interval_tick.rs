@@ -20,12 +20,12 @@ use super::provider_snapshot::{
 };
 use super::request_scroll;
 use super::shell_icon_cache::{
-    icon_completion_generation_changed, SHELL_ICON_COMPLETION_GENERATION,
+    icon_completion_generation_changed, shell_icons_in_flight, SHELL_ICON_COMPLETION_GENERATION,
 };
 use super::theme_text::normalize_everything_query;
 use super::ui_constants::{
-    EVERYTHING_MIN_QUERY_LEN, PLUGIN_MIN_QUERY_LEN, SEARCH_INTERVAL, SETTINGS_WINDOW_HEIGHT,
-    SETTINGS_WINDOW_WIDTH, SLOW_PROVIDER_DEBOUNCE_MS, TYPING_QUIET_MS,
+    EVERYTHING_MIN_QUERY_LEN, ICON_SETTLE_TICKS, PLUGIN_MIN_QUERY_LEN, SEARCH_INTERVAL,
+    SETTINGS_WINDOW_HEIGHT, SETTINGS_WINDOW_WIDTH, SLOW_PROVIDER_DEBOUNCE_MS, TYPING_QUIET_MS,
 };
 use super::update_tasks::{request_update_check, update_check_due};
 use super::visual_preview;
@@ -125,6 +125,7 @@ pub(crate) fn register_interval(
     ));
     let tray_settings_smoke_pending_for_interval = Rc::clone(&tray_settings_smoke_pending);
     let mut last_icon_generation = icon_refresh_generation.get();
+    let mut icon_wait_ticks: u32 = 0;
     let mut last_launcher_width = launcher_width.get();
     let mut last_launcher_height = launcher_height.get();
     let mut last_settings_visible = settings_visible.get();
@@ -519,41 +520,50 @@ pub(crate) fn register_interval(
                 }
             }
             // Late answers were kept back while the user typed: a second publish
-            // for the same query, or an icon arrival, would rebuild every row again
-            // and read as a full-list flash. Once the query has been quiet, both
-            // land together in this single repaint.
+            // for the same query would rebuild every row again and read as a
+            // full-list flash. Once the query has been quiet, it lands.
             let query_is_quiet = now_ms.saturating_sub(last_query_change_ms) >= TYPING_QUIET_MS;
             let mut providers = providers_for_interval.borrow_mut();
             providers.typing_active = !query_is_quiet;
-            if query_is_quiet {
-                if providers.pending_publish {
-                    let priority_ids = priorities_for_interval
-                        .get()
-                        .into_iter()
-                        .map(|entry| entry.id)
-                        .collect::<Vec<_>>();
-                    commit_provider_results(
-                        &mut providers,
-                        &next_query,
-                        &priority_ids,
-                        selected_id,
-                        selected_index,
-                        selection_touched_for_interval,
-                        results_for_interval,
-                        history_mode_for_interval,
-                    );
-                }
-                let completed_icon_generation =
-                    SHELL_ICON_COMPLETION_GENERATION.load(Ordering::Acquire);
-                if icon_completion_generation_changed(last_icon_generation, completed_icon_generation)
-                {
-                    last_icon_generation = completed_icon_generation;
-                    super::paint_trace::note(
-                        "icon-refresh",
-                        &format!("generation={completed_icon_generation}"),
-                    );
-                    icon_refresh_generation_for_interval.set(completed_icon_generation);
-                }
+            if query_is_quiet && providers.pending_publish {
+                let priority_ids = priorities_for_interval
+                    .get()
+                    .into_iter()
+                    .map(|entry| entry.id)
+                    .collect::<Vec<_>>();
+                commit_provider_results(
+                    &mut providers,
+                    &next_query,
+                    &priority_ids,
+                    selected_id,
+                    selected_index,
+                    selection_touched_for_interval,
+                    results_for_interval,
+                    history_mode_for_interval,
+                );
+            }
+            drop(providers);
+            // Shell icons are not held back that way - a new query would show
+            // placeholder squares until the typing paused. They are held back
+            // *per page*: the generation only reaches the tree once the icon
+            // thread has nothing left to load, so a page of rows gains its icons
+            // in one repaint instead of one repaint per icon. A queue that never
+            // drains (a shell item that hangs) is cut off after the tick budget.
+            let completed_icon_generation =
+                SHELL_ICON_COMPLETION_GENERATION.load(Ordering::Acquire);
+            if !icon_completion_generation_changed(last_icon_generation, completed_icon_generation) {
+                icon_wait_ticks = 0;
+            } else if !shell_icons_in_flight() || {
+                icon_wait_ticks = icon_wait_ticks.saturating_add(1);
+                icon_wait_ticks >= ICON_SETTLE_TICKS
+            } {
+                icon_wait_ticks = 0;
+                last_icon_generation = completed_icon_generation;
+                super::paint_trace::note(
+                    "icon-refresh",
+                    &format!("generation={completed_icon_generation}"),
+                );
+                icon_refresh_generation_for_interval.set(completed_icon_generation);
             }
             return;
         }
