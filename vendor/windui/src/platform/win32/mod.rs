@@ -133,6 +133,16 @@ pub(super) fn active_hwnd() -> isize {
 }
 
 /// 查询系统"显示动画"设置（无障碍/省电）。查询失败默认开。
+/// Test hook: `WINDUI_SMOKE_NO_FOREGROUND=1` shows windows without taking the
+/// foreground, so an automated smoke can measure a window while the user's own
+/// focused app - a game that minimizes on activation loss - is left alone.
+fn show_takes_foreground() -> bool {
+    static DECISION: OnceLock<bool> = OnceLock::new();
+    !*DECISION.get_or_init(|| {
+        std::env::var_os("WINDUI_SMOKE_NO_FOREGROUND").is_some_and(|value| value == "1")
+    })
+}
+
 unsafe fn os_animations_enabled() -> bool {
     let mut on = windows::core::BOOL(1);
     let ok = SystemParametersInfoW(
@@ -2334,7 +2344,13 @@ pub(crate) fn show_and_activate(hwnd: HWND) {
                 );
             }
         }
-        let _ = SetForegroundWindow(hwnd);
+        // A driver script that measures the window while the user works elsewhere
+        // must not move the foreground here: activating the window is what closes a
+        // fullscreen game. Everything after this point still runs, so the window
+        // lays out, paints and receives posted messages exactly as when focused.
+        if show_takes_foreground() {
+            let _ = SetForegroundWindow(hwnd);
+        }
         if let Some(state) = state_from(hwnd) {
             state.handler.on_window_activated();
         }

@@ -359,15 +359,17 @@ pub(crate) fn register_key_handlers(
                 history_mode_for_keys,
             );
             current_results = results_for_keys.get();
+            let complete = providers_for_keys.borrow().snapshot_is_complete();
             super::paint_trace::note(
                 "resolve",
                 &format!(
-                    "query={query} resolved={} shown={shown_head} rows={}",
+                    "query={query} resolved={} shown={shown_head} rows={} complete={}",
                     current_results
                         .first()
                         .map(|result| result.id.clone())
                         .unwrap_or_default(),
-                    current_results.len()
+                    current_results.len(),
+                    complete as u8
                 ),
             );
         }

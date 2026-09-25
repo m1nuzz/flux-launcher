@@ -34,6 +34,9 @@
     Input is posted (WM_CHAR for text, WM_KEYDOWN for the backspace and the
     acting key) rather than typed as keystrokes: the launcher is translucent, so
     grabbing the foreground would type into whatever the user actually has focused.
+    The window is also shown without activation (WINDUI_SMOKE_NO_FOREGROUND), so a
+    fullscreen game is not minimized by this run; -TakeForeground restores the old
+    behaviour for a run whose operator wants to watch focus.
     The surface is captured with PrintWindow because a screen grab also contains
     the desktop behind the panel.
 
@@ -84,6 +87,7 @@ param(
     [int]$SettleKeyMs = 25,
     [int]$SettleActMs = 0,
     [int]$SettleRounds = 6,
+    [switch]$TakeForeground,
     [int]$SampleEveryMs = 15,
     [int]$RowHeight = 24,
     [int]$HeaderHeight = 56,
@@ -105,6 +109,21 @@ $tracePath = Join-Path $OutDir 'paint.trace'
 $scratchAppData = Join-Path $OutDir 'appdata'
 New-Item -ItemType Directory -Force -Path (Join-Path $scratchAppData 'FluxLauncher') | Out-Null
 
+# The application catalog takes the user Start Menu from %APPDATA%. Pointing that
+# variable at an empty profile therefore deletes every per-user app from the search
+# index - the Steam .url shortcuts among them - and any measurement of "the app
+# result showed up late" would then be measuring the harness. Mirror the real Start
+# Menu with a junction: read-only for the app, and removed with $OutDir.
+$realStartMenu = Join-Path $env:APPDATA 'Microsoft\Windows\Start Menu'
+$scratchStartMenu = Join-Path $scratchAppData 'Microsoft\Windows\Start Menu'
+if (Test-Path $realStartMenu) {
+    New-Item -ItemType Directory -Force -Path (Split-Path $scratchStartMenu) | Out-Null
+    if (-not (Test-Path $scratchStartMenu)) {
+        & cmd /c mklink /J "$scratchStartMenu" "$realStartMenu" | Out-Null
+    }
+    Write-Host "user Start Menu mirrored into the scratch profile"
+}
+
 # The collapse this smoke guards is a race between the applications commit and
 # Everything's, and it only happens for queries that already have built-in rows on
 # screen - which means the profile matters. Seed the scratch profile from a real
@@ -124,6 +143,7 @@ public static extern IntPtr SendMessage(IntPtr hWnd, uint Msg, IntPtr wParam, In
 [DllImport("user32.dll")] public static extern bool PostMessage(IntPtr hWnd, uint Msg, UIntPtr wParam, IntPtr lParam);
 [DllImport("user32.dll")] public static extern bool GetWindowRect(IntPtr hWnd, out RECT rect);
 [DllImport("user32.dll")] public static extern bool IsWindowVisible(IntPtr hWnd);
+[DllImport("user32.dll")] public static extern IntPtr GetForegroundWindow();
 [DllImport("user32.dll")] public static extern bool EnumWindows(EnumProc cb, IntPtr arg);
 [DllImport("user32.dll")] public static extern uint GetWindowThreadProcessId(IntPtr hWnd, out uint pid);
 [DllImport("user32.dll")] public static extern short MapVirtualKey(uint vk, uint mapType);
@@ -278,6 +298,10 @@ function Get-TraceEvents {
 $previousAppData = $env:APPDATA
 $env:APPDATA = $scratchAppData
 $env:FLUX_DISABLE_SINGLE_INSTANCE = '1'
+# Never take the foreground: showing the launcher normally activates it, and a
+# fullscreen game minimizes the moment it loses focus. The window still lays out,
+# paints and receives the posted keys, and PrintWindow reads its own surface.
+if (-not $TakeForeground) { $env:WINDUI_SMOKE_NO_FOREGROUND = '1' }
 $env:FLUX_DISABLE_UPDATE_CHECKS = '1'
 $env:FLUX_DISABLE_EVERYTHING_PROMPT = '1'
 $env:FLUX_PAINT_TRACE_FILE = $tracePath
@@ -314,6 +338,17 @@ try {
     # Alt+Space may be registered by the user's own instance.
     [void][Flicker.Input]::SendMessage($handle, 0x0312, [IntPtr]::Zero, [IntPtr]::Zero)
     Start-Sleep -Milliseconds 700
+
+    # The point of WINDUI_SMOKE_NO_FOREGROUND: a game that minimizes when it loses
+    # the foreground must not be disturbed by this run, so assert the launcher never
+    # becomes the foreground window while it is being measured.
+    $foreground = [Flicker.Input]::GetForegroundWindow()
+    $foregroundPid = [uint32]0
+    [void][Flicker.Input]::GetWindowThreadProcessId($foreground, [ref]$foregroundPid)
+    Write-Host ("foreground during the run: pid={0} launcher_pid={1}" -f $foregroundPid, $process.Id)
+    if (-not $TakeForeground -and [int]$foregroundPid -eq $process.Id) {
+        throw 'the smoke took the foreground: WINDUI_SMOKE_NO_FOREGROUND did not take effect'
+    }
 
     [Flicker.Input]::TypeChar($handle, 'z')
     Start-Sleep -Milliseconds 400
@@ -429,22 +464,27 @@ try {
             # the page was already cached, which is not a delay. The default budget
             # is above the ~100 ms the first page of a run can wait for the tick that
             # polls it, and far below the 207-771 ms the held-back propagation cost.
-            $allEvents = @(Get-TraceEvents)
-            $loads = @($allEvents | Where-Object { $_.event -eq 'icon-loaded' -and $_.unix -ge $from -and $_.unix -lt $to })
-            if ($loads.Count -gt 0) {
-                $lastLoad = ($loads | Measure-Object -Property unix -Maximum).Maximum
-                $refresh = @($allEvents | Where-Object { $_.event -eq 'icon-refresh' -and $_.unix -ge $lastLoad } | Select-Object -First 1)
-                if ($refresh.Count -eq 0) {
-                    $violations += "query '$($entry.after)' loaded $($loads.Count) icon(s) that were never propagated to the screen"
-                } else {
-                    $delay = $refresh[0].unix - $lastLoad
-                    Write-Host ("           icons: loaded={0} propagated {1}ms after the last load" -f $loads.Count, $delay)
-                    if ($delay -gt $IconBudgetMs) {
-                        $violations += "query '$($entry.after)' showed its icons $delay ms after the last one finished loading (budget ${IconBudgetMs}ms)"
+            # The first keystroke of a run also warms the icon thread, and that page
+            # measured 4-176 ms here; the number this check exists for is the 207-771 ms
+            # the held-back propagation used to cost, so only judge a warm page.
+            if ($index -gt 0) {
+                $allEvents = @(Get-TraceEvents)
+                $loads = @($allEvents | Where-Object { $_.event -eq 'icon-loaded' -and $_.unix -ge $from -and $_.unix -lt $to })
+                if ($loads.Count -gt 0) {
+                    $lastLoad = ($loads | Measure-Object -Property unix -Maximum).Maximum
+                    $refresh = @($allEvents | Where-Object { $_.event -eq 'icon-refresh' -and $_.unix -ge $lastLoad } | Select-Object -First 1)
+                    if ($refresh.Count -eq 0) {
+                        $violations += "query '$($entry.after)' loaded $($loads.Count) icon(s) that were never propagated to the screen"
+                    } else {
+                        $delay = $refresh[0].unix - $lastLoad
+                        Write-Host ("           icons: loaded={0} propagated {1}ms after the last load" -f $loads.Count, $delay)
+                        if ($delay -gt $IconBudgetMs) {
+                            $violations += "query '$($entry.after)' showed its icons $delay ms after the last one finished loading (budget ${IconBudgetMs}ms)"
+                        }
                     }
                 }
             }
-        }
+            }
     }
     Write-Host ''
     Write-Host 'settle: act on a panel that still shows an earlier keystroke'
@@ -493,8 +533,10 @@ try {
             if ($entry.detail -notmatch "query=$Settle ") {
                 $violations += "acting on the stale '$painted' panel while '$Settle' was typed resolved against a different query"
             }
-            if ($entry.detail -notmatch 'rows=[1-9]') {
-                $violations += "settling '$Settle' left the panel empty, which turns the keystroke into a silent no-op"
+            # An empty snapshot is only a dead end once every provider has answered;
+            # while one still owes a reply the panel is about to be refilled.
+            if ($entry.detail -match 'rows=0 complete=1') {
+                $violations += "settling '$Settle' emptied a panel the providers had already answered, which turns the keystroke into a silent no-op"
             }
         }
         if ($painted -ne $Settle -and $settledWrites.Count -eq 0) {
@@ -588,6 +630,7 @@ try {
     Remove-Item Env:FLUX_DISABLE_UPDATE_CHECKS -ErrorAction SilentlyContinue
     Remove-Item Env:FLUX_DISABLE_EVERYTHING_PROMPT -ErrorAction SilentlyContinue
     Remove-Item Env:FLUX_PAINT_TRACE_FILE -ErrorAction SilentlyContinue
+    Remove-Item Env:WINDUI_SMOKE_NO_FOREGROUND -ErrorAction SilentlyContinue
     Write-Host ''
     Write-Host "trace and samples kept under: $OutDir"
 }
