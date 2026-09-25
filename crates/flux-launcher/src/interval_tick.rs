@@ -4,7 +4,7 @@ use std::rc::Rc;
 use std::sync::{atomic::Ordering, Arc, RwLock};
 
 use flux_core::{
-    MonitorPreference, SearchModel, SearchResult, Settings, MAX_LAUNCHER_HEIGHT,
+    MonitorPreference, PriorityEntry, SearchModel, SearchResult, Settings, MAX_LAUNCHER_HEIGHT,
     MAX_LAUNCHER_WIDTH, MIN_LAUNCHER_HEIGHT, MIN_LAUNCHER_WIDTH,
 };
 use windui::app::{App, WindowOpHandle, WindowPositionHandle, WindowSizeHandle};
@@ -15,15 +15,17 @@ use super::everything::EverythingWorker;
 use super::launch;
 use super::plugins::{FlowPluginWorker, NativePluginWorker, PluginAction};
 use super::provider_merge::normalize_built_in_executable_targets;
-use super::provider_snapshot::{should_publish_initial_query_results, ProviderResults};
+use super::provider_snapshot::{
+    commit_provider_results, should_publish_initial_query_results, ProviderResults,
+};
 use super::request_scroll;
 use super::shell_icon_cache::{
     icon_completion_generation_changed, SHELL_ICON_COMPLETION_GENERATION,
 };
 use super::theme_text::normalize_everything_query;
 use super::ui_constants::{
-    EVERYTHING_MIN_QUERY_LEN, ICON_REFRESH_QUIET_MS, PLUGIN_MIN_QUERY_LEN, SEARCH_INTERVAL,
-    SETTINGS_WINDOW_HEIGHT, SETTINGS_WINDOW_WIDTH, SLOW_PROVIDER_DEBOUNCE_MS,
+    EVERYTHING_MIN_QUERY_LEN, PLUGIN_MIN_QUERY_LEN, SEARCH_INTERVAL, SETTINGS_WINDOW_HEIGHT,
+    SETTINGS_WINDOW_WIDTH, SLOW_PROVIDER_DEBOUNCE_MS, TYPING_QUIET_MS,
 };
 use super::update_tasks::{request_update_check, update_check_due};
 use super::visual_preview;
@@ -51,6 +53,7 @@ pub(crate) fn register_interval(
     selection_touched: Signal<bool>,
     current_sequence: Signal<u64>,
     providers: Rc<RefCell<ProviderResults>>,
+    priorities: Signal<Vec<PriorityEntry>>,
     scroll_request: Signal<bool>,
     plugin_actions: Rc<RefCell<HashMap<String, PluginAction>>>,
     auto_enable_everything: Signal<bool>,
@@ -98,6 +101,7 @@ pub(crate) fn register_interval(
     let selection_touched_for_interval = selection_touched;
     let sequence_for_interval = current_sequence;
     let providers_for_interval = Rc::clone(&providers);
+    let priorities_for_interval = priorities;
     let scroll_request_for_interval = scroll_request;
     let actions_for_interval = Rc::clone(&plugin_actions);
     let auto_enable_everything_for_interval = auto_enable_everything;
@@ -514,13 +518,31 @@ pub(crate) fn register_interval(
                     native_plugin_worker.request(sequence, next_query.clone());
                 }
             }
-            // Shell icons land asynchronously. Propagating every completion as
-            // soon as it arrives repaints the rows 2-4 times per keystroke - the
-            // measured band deltas are 17-82 for rows under the stable top hit,
-            // which reads as a flash while typing - so a new generation only
-            // reaches the element tree once the query has been quiet. The rows
-            // are already on screen; the icons fill in when typing pauses.
-            if now_ms.saturating_sub(last_query_change_ms) >= ICON_REFRESH_QUIET_MS {
+            // Late answers were kept back while the user typed: a second publish
+            // for the same query, or an icon arrival, would rebuild every row again
+            // and read as a full-list flash. Once the query has been quiet, both
+            // land together in this single repaint.
+            let query_is_quiet = now_ms.saturating_sub(last_query_change_ms) >= TYPING_QUIET_MS;
+            let mut providers = providers_for_interval.borrow_mut();
+            providers.typing_active = !query_is_quiet;
+            if query_is_quiet {
+                if providers.pending_publish {
+                    let priority_ids = priorities_for_interval
+                        .get()
+                        .into_iter()
+                        .map(|entry| entry.id)
+                        .collect::<Vec<_>>();
+                    commit_provider_results(
+                        &mut providers,
+                        &next_query,
+                        &priority_ids,
+                        selected_id,
+                        selected_index,
+                        selection_touched_for_interval,
+                        results_for_interval,
+                        history_mode_for_interval,
+                    );
+                }
                 let completed_icon_generation =
                     SHELL_ICON_COMPLETION_GENERATION.load(Ordering::Acquire);
                 if icon_completion_generation_changed(last_icon_generation, completed_icon_generation)

@@ -652,6 +652,7 @@ fn main() {
         selection_touched,
         current_sequence,
         Rc::clone(&provider_results),
+        priorities,
         scroll_request_for_rows,
         Rc::clone(&plugin_actions),
         auto_enable_everything,

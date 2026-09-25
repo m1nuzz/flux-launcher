@@ -40,6 +40,14 @@ pub(crate) struct ProviderResults {
     pub(crate) native_plugins: Vec<SearchResult>,
     pub(crate) applications_ready: bool,
     pub(crate) everything_ready: bool,
+    /// Set while the user is actively typing (the tick clears it once the query has
+    /// been quiet). A commit that arrives during typing for the query already on
+    /// screen is deferred instead of published, so one keystroke never rebuilds the
+    /// whole row tree twice.
+    pub(crate) typing_active: bool,
+    /// A complete snapshot is waiting in the provider vectors for the next quiet
+    /// tick, which publishes it.
+    pub(crate) pending_publish: bool,
 }
 
 impl ProviderResults {
@@ -57,6 +65,10 @@ impl ProviderResults {
         self.native_plugins.clear();
         self.applications_ready = false;
         self.everything_ready = !everything_expected;
+        // A reset only happens on a keystroke, and any deferred snapshot belongs
+        // to the query that was just replaced.
+        self.typing_active = true;
+        self.pending_publish = false;
     }
 
     pub(crate) fn core_ready(&self) -> bool {
@@ -113,6 +125,19 @@ pub(crate) fn commit_provider_results(
         return;
     }
     let merged = providers.merged(query, priorities);
+    if providers.typing_active && providers.published_query == query {
+        // This keystroke is already on screen and the user is still typing. A
+        // second publish for the same query would rebuild every row again - the
+        // visible full-list flash - so the snapshot waits in the provider vectors
+        // and the next quiet tick publishes it once.
+        providers.pending_publish = true;
+        super::paint_trace::note(
+            "list-deferred",
+            &format!("query={query} rows={}", merged.len()),
+        );
+        return;
+    }
+    providers.pending_publish = false;
     providers.published_query = query.to_owned();
     // distinctUntilChanged: an identical snapshot must not rebuild the row
     // tree or jump the highlight, so write each signal only when its value
@@ -190,8 +215,11 @@ pub(crate) fn refresh_merged_results(
         .collect::<Vec<_>>();
     let merged = providers.borrow().merged(&query.get(), &priority_ids);
     // This is a publish too: recording it keeps a later keystroke from treating
-    // the freshly written list as stale.
-    providers.borrow_mut().published_query = query.get();
+    // the freshly written list as stale, and it consumes any deferred snapshot.
+    let mut providers = providers.borrow_mut();
+    providers.published_query = query.get();
+    providers.pending_publish = false;
+    drop(providers);
     results.set(merged);
 }
 
@@ -313,6 +341,119 @@ mod tests {
         // the real list returns as soon as history mode closes.
         assert_eq!(results.version(), version, "history rows must stay");
         assert!(providers.published_query.is_empty());
+    }
+
+    #[test]
+    fn a_second_publish_for_the_same_query_waits_while_the_user_types() {
+        use windui::signal::signal;
+        let app = SearchResult {
+            id: String::from("app:chatgpt"),
+            title: String::from("ChatGPT"),
+            subtitle: String::from("Application"),
+            kind: ResultKind::Application,
+            source: ResultSource::ApplicationCatalog,
+            target: None,
+        };
+        let file = SearchResult {
+            id: String::from("everything:chatgpt.md"),
+            title: String::from("chatgpt.md"),
+            subtitle: String::from("Documents"),
+            kind: ResultKind::File,
+            source: ResultSource::Everything,
+            target: Some(String::from("C:\\Docs\\chatgpt.md")),
+        };
+        let mut providers = ProviderResults::default();
+        providers.reset(1, Vec::new(), true);
+        providers.applications = vec![app.clone()];
+        providers.applications_ready = true;
+        // The keystroke is already on screen with the application snapshot.
+        providers.published_query = String::from("chatgpt");
+        let results = signal(vec![app]);
+        let version = results.version();
+        commit_provider_results(
+            &mut providers,
+            "chatgpt",
+            &[],
+            signal(String::new()),
+            signal(0_usize),
+            signal(false),
+            results,
+            signal(false),
+        );
+        assert_eq!(
+            results.version(),
+            version,
+            "the row tree must not be rebuilt a second time for one keystroke"
+        );
+        assert!(providers.pending_publish, "the file rows stay queued");
+
+        // The quiet tick clears the typing flag, and the same commit now lands.
+        providers.typing_active = false;
+        providers.everything = vec![file];
+        providers.everything_ready = true;
+        commit_provider_results(
+            &mut providers,
+            "chatgpt",
+            &[],
+            signal(String::new()),
+            signal(0_usize),
+            signal(false),
+            results,
+            signal(false),
+        );
+        assert_ne!(
+            results.version(),
+            version,
+            "the queued snapshot is published"
+        );
+        assert!(!providers.pending_publish);
+    }
+
+    #[test]
+    fn the_first_snapshot_of_a_generation_publishes_even_mid_typing() {
+        use windui::signal::signal;
+        let app = SearchResult {
+            id: String::from("app:chatgpt"),
+            title: String::from("ChatGPT"),
+            subtitle: String::from("Application"),
+            kind: ResultKind::Application,
+            source: ResultSource::ApplicationCatalog,
+            target: None,
+        };
+        let mut providers = ProviderResults::default();
+        providers.reset(2, Vec::new(), true);
+        providers.applications = vec![app.clone()];
+        providers.applications_ready = true;
+        providers.published_query = String::from("chatgp");
+        providers.typing_active = true;
+        let results = signal(Vec::new());
+        let version = results.version();
+        commit_provider_results(
+            &mut providers,
+            "chatgpt",
+            &[],
+            signal(String::new()),
+            signal(0_usize),
+            signal(false),
+            results,
+            signal(false),
+        );
+        assert_ne!(
+            results.version(),
+            version,
+            "the new keystroke must show at once"
+        );
+        assert_eq!(providers.published_query, "chatgpt");
+    }
+
+    #[test]
+    fn a_new_keystroke_drops_a_snapshot_deferred_by_the_previous_one() {
+        let mut providers = ProviderResults::default();
+        providers.reset(3, Vec::new(), true);
+        providers.pending_publish = true;
+        providers.reset(4, Vec::new(), true);
+        assert!(!providers.pending_publish);
+        assert!(providers.typing_active);
     }
 
     #[test]

@@ -17,11 +17,12 @@ pub(crate) const ACTION_BAR_HEIGHT: i32 = 22;
 pub(crate) const ACTION_WINDOW_HEIGHT: i32 = 250;
 // Six 46-DIP result rows plus local scroll padding keep the footer close to the results.
 pub(crate) const RESULT_VIEWPORT_HEIGHT: i32 = 288;
-/// How long the query must be untouched before asynchronously loaded shell
-/// icons are allowed to repaint the result rows. While typing, the rows are
-/// already correct without them; propagating every arrival flashed the list 2-4
-/// times per keystroke.
-pub(crate) const ICON_REFRESH_QUIET_MS: u64 = 120;
+/// How long the query must go untouched before late-arriving results and shell
+/// icons are allowed to touch the element tree. While the user types, the list is
+/// painted once per keystroke: a second publish for the same query rebuilds every
+/// row and reads as a full-list flash. The window has to exceed a normal inter-key
+/// interval, otherwise the deferred snapshot still lands between two keystrokes.
+pub(crate) const TYPING_QUIET_MS: u64 = 250;
 pub(crate) const SETTINGS_WINDOW_HEIGHT: i32 = 520;
 pub(crate) const LAUNCHER_FONT_FAMILY: &str = "Segoe UI Variable";
 pub(crate) const SEARCH_INTERVAL: Duration = Duration::from_millis(16);
