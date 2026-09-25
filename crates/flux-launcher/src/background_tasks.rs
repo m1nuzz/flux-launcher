@@ -165,6 +165,14 @@ pub(crate) fn spawn_application_pipeline(
         providers.applications = response.results;
         providers.applications_ready = true;
         if providers.core_ready() {
+            super::paint_trace::note(
+                "commit-applications",
+                &format!(
+                    "query={} rows={}",
+                    query_for_applications.get(),
+                    providers.built_in.len() + providers.applications.len()
+                ),
+            );
             let priorities = priorities_for_applications
                 .get()
                 .iter()
@@ -260,6 +268,14 @@ pub(crate) fn spawn_everything_pipeline(
             ));
         }
         if providers.core_ready() {
+            super::paint_trace::note(
+                "commit-everything",
+                &format!(
+                    "query={} rows={}",
+                    query_for_everything.get(),
+                    providers.built_in.len() + providers.applications.len()
+                ),
+            );
             let priorities = priorities_for_everything
                 .get()
                 .iter()
@@ -345,6 +361,14 @@ pub(crate) fn spawn_plugin_pipeline(
             providers.plugins = response.results;
             *actions_for_plugins.borrow_mut() = response.actions;
             if providers.core_ready() {
+                super::paint_trace::note(
+                    "commit-plugins",
+                    &format!(
+                        "query={} rows={}",
+                        query_for_plugins.get(),
+                        providers.built_in.len() + providers.applications.len()
+                    ),
+                );
                 let priorities = priorities_for_plugins
                     .get()
                     .iter()
@@ -416,6 +440,14 @@ pub(crate) fn spawn_native_pipeline(
             }
         }
         if providers.core_ready() {
+            super::paint_trace::note(
+                "commit-native_plugins",
+                &format!(
+                    "query={} rows={}",
+                    query_for_native_plugins.get(),
+                    providers.built_in.len() + providers.applications.len()
+                ),
+            );
             let priorities = priorities_for_native_plugins
                 .get()
                 .iter()

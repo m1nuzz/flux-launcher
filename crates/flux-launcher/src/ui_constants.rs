@@ -17,6 +17,11 @@ pub(crate) const ACTION_BAR_HEIGHT: i32 = 22;
 pub(crate) const ACTION_WINDOW_HEIGHT: i32 = 250;
 // Six 46-DIP result rows plus local scroll padding keep the footer close to the results.
 pub(crate) const RESULT_VIEWPORT_HEIGHT: i32 = 288;
+/// How long the query must be untouched before asynchronously loaded shell
+/// icons are allowed to repaint the result rows. While typing, the rows are
+/// already correct without them; propagating every arrival flashed the list 2-4
+/// times per keystroke.
+pub(crate) const ICON_REFRESH_QUIET_MS: u64 = 120;
 pub(crate) const SETTINGS_WINDOW_HEIGHT: i32 = 520;
 pub(crate) const LAUNCHER_FONT_FAMILY: &str = "Segoe UI Variable";
 pub(crate) const SEARCH_INTERVAL: Duration = Duration::from_millis(16);

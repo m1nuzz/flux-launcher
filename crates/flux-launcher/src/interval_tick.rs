@@ -22,8 +22,8 @@ use super::shell_icon_cache::{
 };
 use super::theme_text::normalize_everything_query;
 use super::ui_constants::{
-    EVERYTHING_MIN_QUERY_LEN, PLUGIN_MIN_QUERY_LEN, SEARCH_INTERVAL, SETTINGS_WINDOW_HEIGHT,
-    SETTINGS_WINDOW_WIDTH, SLOW_PROVIDER_DEBOUNCE_MS,
+    EVERYTHING_MIN_QUERY_LEN, ICON_REFRESH_QUIET_MS, PLUGIN_MIN_QUERY_LEN, SEARCH_INTERVAL,
+    SETTINGS_WINDOW_HEIGHT, SETTINGS_WINDOW_WIDTH, SLOW_PROVIDER_DEBOUNCE_MS,
 };
 use super::update_tasks::{request_update_check, update_check_due};
 use super::visual_preview;
@@ -461,12 +461,6 @@ pub(crate) fn register_interval(
                 );
             }
         }
-        let completed_icon_generation =
-            SHELL_ICON_COMPLETION_GENERATION.load(Ordering::Acquire);
-        if icon_completion_generation_changed(last_icon_generation, completed_icon_generation) {
-            last_icon_generation = completed_icon_generation;
-            icon_refresh_generation_for_interval.set(completed_icon_generation);
-        }
         if tray_settings_smoke_pending_for_interval.replace(false) {
             // Exercise the same lifecycle order as the tray Settings item,
             // without relying on brittle screen-coordinate tray automation.
@@ -482,6 +476,10 @@ pub(crate) fn register_interval(
         if query_changed {
             last_query = next_query.clone();
             last_query_change_ms = now_ms;
+            super::paint_trace::note(
+                "query",
+                &format!("value={next_query} len={}", next_query.chars().count()),
+            );
         } else {
             // Settled tick: fire debounced slow providers at most once per
             // query generation; everything else already ran on change.
@@ -516,6 +514,25 @@ pub(crate) fn register_interval(
                     native_plugin_worker.request(sequence, next_query.clone());
                 }
             }
+            // Shell icons land asynchronously. Propagating every completion as
+            // soon as it arrives repaints the rows 2-4 times per keystroke - the
+            // measured band deltas are 17-82 for rows under the stable top hit,
+            // which reads as a flash while typing - so a new generation only
+            // reaches the element tree once the query has been quiet. The rows
+            // are already on screen; the icons fill in when typing pauses.
+            if now_ms.saturating_sub(last_query_change_ms) >= ICON_REFRESH_QUIET_MS {
+                let completed_icon_generation =
+                    SHELL_ICON_COMPLETION_GENERATION.load(Ordering::Acquire);
+                if icon_completion_generation_changed(last_icon_generation, completed_icon_generation)
+                {
+                    last_icon_generation = completed_icon_generation;
+                    super::paint_trace::note(
+                        "icon-refresh",
+                        &format!("generation={completed_icon_generation}"),
+                    );
+                    icon_refresh_generation_for_interval.set(completed_icon_generation);
+                }
+            }
             return;
         }
         history_mode_for_interval.set(false);
@@ -531,6 +548,10 @@ pub(crate) fn register_interval(
             launcher_height.get() as i32,
         );
         size_for_interval.set(target_width, target_height);
+        super::paint_trace::note(
+            "resize",
+            &format!("size={target_width}x{target_height} has_query={has_query}"),
+        );
         sequence = sequence.wrapping_add(1);
         sequence_for_interval.set(sequence);
         model.set_query(&next_query);
@@ -561,6 +582,10 @@ pub(crate) fn register_interval(
                 results_for_interval.get().is_empty(),
             );
             if publish_initial_results {
+                super::paint_trace::note(
+                    "publish-initial",
+                    &format!("query={next_query} rows={}", built_in_results.len()),
+                );
                 selection_touched_for_interval.set(false);
                 selected_index.set(0);
                 selected_id.set(

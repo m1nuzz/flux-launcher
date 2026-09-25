@@ -27,6 +27,7 @@ mod launcher_icons;
 mod monitor;
 mod native_host;
 mod native_plugins;
+mod paint_trace;
 mod plugin_limits;
 mod plugin_transport;
 mod plugins;

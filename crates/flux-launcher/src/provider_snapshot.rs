@@ -159,6 +159,14 @@ pub(crate) fn commit_provider_results(
         }
     }
     if merged != results.get() {
+        super::paint_trace::note(
+            "list-write",
+            &format!(
+                "query={query} rows={} shown={}",
+                merged.len(),
+                results.get().len()
+            ),
+        );
         results.set(merged);
     }
 }

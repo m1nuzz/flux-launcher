@@ -108,7 +108,12 @@ impl ShellIconWorker {
                     }
                     #[cfg(windows)]
                     let _ = shell_icon_rgba(&target);
-                    SHELL_ICON_COMPLETION_GENERATION.fetch_add(1, Ordering::Release);
+                    let generation =
+                        SHELL_ICON_COMPLETION_GENERATION.fetch_add(1, Ordering::Release) + 1;
+                    crate::paint_trace::note(
+                        "icon-loaded",
+                        &format!("generation={generation} target={target}"),
+                    );
                 }
 
                 #[cfg(windows)]
