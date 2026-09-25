@@ -16,7 +16,7 @@ use super::launch;
 use super::plugins::{FlowPluginWorker, NativePluginWorker, PluginAction};
 use super::provider_merge::normalize_built_in_executable_targets;
 use super::provider_snapshot::{
-    commit_provider_results, should_publish_initial_query_results, ProviderResults,
+    commit_provider_results, should_publish_initial_query_results, ProviderResults, Publish,
 };
 use super::request_scroll;
 use super::shell_icon_cache::{
@@ -505,6 +505,10 @@ pub(crate) fn register_interval(
                 if auto_enable_everything_for_interval.get()
                     && next_query.trim().len() >= EVERYTHING_MIN_QUERY_LEN
                 {
+                    super::paint_trace::note(
+                        "request-everything",
+                        &format!("query={next_query}"),
+                    );
                     everything_worker.request(sequence, normalize_everything_query(&next_query));
                 }
                 if next_query.trim().len() >= PLUGIN_MIN_QUERY_LEN {
@@ -539,8 +543,7 @@ pub(crate) fn register_interval(
                     selected_index,
                     selection_touched_for_interval,
                     results_for_interval,
-                    history_mode_for_interval,
-                );
+                    history_mode_for_interval, Publish::DeferWhileTyping);
             }
             drop(providers);
             // Shell icons are not held back that way - a new query would show

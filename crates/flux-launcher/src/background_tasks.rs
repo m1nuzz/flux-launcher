@@ -14,7 +14,7 @@ use super::plugins::{
     FlowPluginWorker, NativePluginQueryResponse, NativePluginWorker, PluginAction,
     PluginQueryResponse,
 };
-use super::provider_snapshot::{commit_provider_results, ProviderResults};
+use super::provider_snapshot::{commit_provider_results, ProviderResults, Publish};
 use super::theme_text::normalize_everything_query;
 use super::ui_constants::CURRENT_VERSION;
 use super::update_tasks::format_update_progress;
@@ -187,6 +187,7 @@ pub(crate) fn spawn_application_pipeline(
                 selection_touched_for_applications,
                 results_for_applications,
                 history_mode_for_applications,
+                Publish::DeferWhileTyping,
             );
             // Ghost completion has a single writer per query generation (this
             // pipeline). Refreshing it in every pipeline would flip the hint
@@ -238,6 +239,10 @@ pub(crate) fn spawn_everything_pipeline(
     let everything_installed_for_response = everything_installed;
     let everything_status_for_response = everything_status;
     let everything_sender = app.channel::<EverythingResponse>(move |_, response| {
+        super::paint_trace::note(
+            "response-everything",
+            &format!("query={} seq={}", response.query, response.sequence),
+        );
         if !auto_enable_everything_for_response.get() {
             everything_status_for_response.set(String::from(
                 "Everything auto-enable is disabled in Flux settings",
@@ -290,6 +295,7 @@ pub(crate) fn spawn_everything_pipeline(
                 selection_touched_for_everything,
                 results_for_everything,
                 history_mode_for_everything,
+                Publish::DeferWhileTyping,
             );
         }
         status_for_everything.set(response.status);
@@ -383,6 +389,7 @@ pub(crate) fn spawn_plugin_pipeline(
                     selection_touched_for_plugins,
                     results_for_plugins,
                     history_mode_for_plugins,
+                    Publish::DeferWhileTyping,
                 );
             }
         }
@@ -462,6 +469,7 @@ pub(crate) fn spawn_native_pipeline(
                 selection_touched_for_native_plugins,
                 results_for_native_plugins,
                 history_mode_for_native_plugins,
+                Publish::DeferWhileTyping,
             );
         }
     });

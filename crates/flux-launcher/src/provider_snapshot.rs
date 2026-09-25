@@ -116,6 +116,19 @@ impl ProviderResults {
     }
 }
 
+/// Whether a commit may hold its snapshot back to spare a typing user a second
+/// full-list rebuild.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Publish {
+    /// The user is mid-word: a second publish for the query already on screen, or
+    /// a snapshot that would collapse the panel, waits for the next quiet tick.
+    DeferWhileTyping,
+    /// The user acted on the panel, so the visible rows must become the rows for
+    /// the text they typed whatever it costs: one repaint before the window hides
+    /// is cheaper than launching the previous keystroke's top hit.
+    Now,
+}
+
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn commit_provider_results(
     providers: &mut ProviderResults,
@@ -126,6 +139,7 @@ pub(crate) fn commit_provider_results(
     selection_touched: Signal<bool>,
     results: Signal<Vec<SearchResult>>,
     history_mode: Signal<bool>,
+    publish: Publish,
 ) {
     if history_mode.get() {
         // The Ctrl+H list owns the visible rows. Publishing here would swap the
@@ -137,10 +151,8 @@ pub(crate) fn commit_provider_results(
         return;
     }
     let merged = providers.merged(query, priorities);
-    if providers.typing_active
-        && providers.published_query == query
-        && providers.published_providers
-    {
+    let hold = publish == Publish::DeferWhileTyping && providers.typing_active;
+    if hold && providers.published_query == query && providers.published_providers {
         // This keystroke is already on screen and the user is still typing. A
         // second publish for the same query would rebuild every row again - the
         // visible full-list flash - so the snapshot waits in the provider vectors
@@ -153,7 +165,7 @@ pub(crate) fn commit_provider_results(
         return;
     }
     let shown = results.get();
-    if providers.typing_active && merged.len() < shown.len() && !providers.snapshot_is_complete() {
+    if hold && merged.len() < shown.len() && !providers.snapshot_is_complete() {
         // A snapshot smaller than the list already on screen would collapse the
         // panel to one or two rows for a frame and refill it later - the flash
         // reproduced by typing a letter and deleting it again. Keep the fuller
@@ -228,13 +240,11 @@ pub(crate) fn commit_provider_results(
     }
 }
 
-pub(crate) fn refresh_merged_results(
-    providers: &Rc<RefCell<ProviderResults>>,
-    query: Signal<String>,
-    priorities: Signal<Vec<PriorityEntry>>,
-    results: Signal<Vec<SearchResult>>,
-) {
-    let priority_ids = priorities
+/// The saved-priority ids a query's rows can be boosted by, including the
+/// canonical application key for a priority recorded against a different shell
+/// view of the same app.
+fn priority_ids(priorities: Signal<Vec<PriorityEntry>>) -> Vec<String> {
+    priorities
         .get()
         .into_iter()
         .flat_map(|entry| {
@@ -244,8 +254,57 @@ pub(crate) fn refresh_merged_results(
             }
             ids
         })
-        .collect::<Vec<_>>();
-    let merged = providers.borrow().merged(&query.get(), &priority_ids);
+        .collect::<Vec<_>>()
+}
+
+/// The rows that belong to `query` from whatever the providers have returned so far.
+fn merged_for(
+    providers: &Rc<RefCell<ProviderResults>>,
+    query: Signal<String>,
+    priorities: Signal<Vec<PriorityEntry>>,
+) -> Vec<SearchResult> {
+    providers
+        .borrow()
+        .merged(&query.get(), &priority_ids(priorities))
+}
+
+/// Publish the snapshot for `query` because the user acted on the panel: the rows
+/// on screen still belong to an earlier keystroke, and Enter must not launch that
+/// keystroke's top hit.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn settle_results_for_query(
+    providers: &Rc<RefCell<ProviderResults>>,
+    query: Signal<String>,
+    priorities: Signal<Vec<PriorityEntry>>,
+    selected_id: Signal<String>,
+    selected_index: Signal<usize>,
+    selection_touched: Signal<bool>,
+    results: Signal<Vec<SearchResult>>,
+    history_mode: Signal<bool>,
+) {
+    let value = query.get();
+    let priority_ids = priority_ids(priorities);
+    let mut providers = providers.borrow_mut();
+    commit_provider_results(
+        &mut providers,
+        &value,
+        &priority_ids,
+        selected_id,
+        selected_index,
+        selection_touched,
+        results,
+        history_mode,
+        Publish::Now,
+    );
+}
+
+pub(crate) fn refresh_merged_results(
+    providers: &Rc<RefCell<ProviderResults>>,
+    query: Signal<String>,
+    priorities: Signal<Vec<PriorityEntry>>,
+    results: Signal<Vec<SearchResult>>,
+) {
+    let merged = merged_for(providers, query, priorities);
     if merged.len() < results.get().len() && !providers.borrow().snapshot_is_complete() {
         // The providers were just reset for a new keystroke and answer one by one.
         // Rebuilding from a half-filled snapshot is what collapsed the panel to a
@@ -352,6 +411,7 @@ mod tests {
             signal(false),
             signal(Vec::new()),
             signal(false),
+            Publish::DeferWhileTyping,
         );
         assert_eq!(providers.published_query, "perp");
     }
@@ -391,6 +451,7 @@ mod tests {
             signal(false),
             results,
             signal(true),
+            Publish::DeferWhileTyping,
         );
         // The rows the arrow keys are walking must not be swapped out mid-list,
         // and the screen must be marked as belonging to no search generation so
@@ -436,6 +497,7 @@ mod tests {
             signal(false),
             results,
             signal(false),
+            Publish::DeferWhileTyping,
         );
         assert_eq!(
             results.version(),
@@ -457,6 +519,7 @@ mod tests {
             signal(false),
             results,
             signal(false),
+            Publish::DeferWhileTyping,
         );
         assert_ne!(
             results.version(),
@@ -505,6 +568,7 @@ mod tests {
             signal(false),
             results,
             signal(false),
+            Publish::DeferWhileTyping,
         );
         assert_ne!(
             results.version(),
@@ -543,6 +607,7 @@ mod tests {
             signal(false),
             results,
             signal(false),
+            Publish::DeferWhileTyping,
         );
         assert_ne!(
             results.version(),
@@ -550,6 +615,82 @@ mod tests {
             "the new keystroke must show at once"
         );
         assert_eq!(providers.published_query, "chatgpt");
+    }
+
+    #[test]
+    fn acting_on_a_held_panel_settles_it_on_the_typed_query() {
+        use std::cell::RefCell;
+        use std::rc::Rc;
+        use windui::signal::signal;
+        let charmap = SearchResult {
+            id: String::from("system:charmap"),
+            title: String::from("Character Map"),
+            subtitle: String::from("Windows System"),
+            kind: ResultKind::Command,
+            source: ResultSource::BuiltIn,
+            target: Some(String::from("charmap.exe")),
+        };
+        // The screen still holds the previous keystroke: "cha" answered with the
+        // system commands on top and a page of Everything files.
+        let mut shown = vec![charmap.clone()];
+        shown.extend((0..5).map(|index| SearchResult {
+            id: format!("everything:cha-{index}"),
+            title: format!("cha-{index}"),
+            subtitle: String::from("Documents"),
+            kind: ResultKind::File,
+            source: ResultSource::Everything,
+            target: None,
+        }));
+        // "chat" has been typed. The applications provider answered with ChatGPT and
+        // Everything has not, so this snapshot is smaller than the panel.
+        let mut providers = ProviderResults::default();
+        providers.reset(2, vec![charmap.clone()], true);
+        providers.applications = vec![SearchResult {
+            id: String::from("application:chatgpt"),
+            title: String::from("ChatGPT"),
+            subtitle: String::from("Application"),
+            kind: ResultKind::Application,
+            source: ResultSource::ApplicationCatalog,
+            target: Some(String::from(r"C:\Apps\ChatGPT.exe")),
+        }];
+        providers.applications_ready = true;
+        providers.published_query = String::from("cha");
+        let providers = Rc::new(RefCell::new(providers));
+        let query = signal(String::from("chat"));
+        let priorities = signal(Vec::new());
+        let results = signal(shown);
+        let selected_id = signal(String::from("system:charmap"));
+        let selected_index = signal(0_usize);
+        let selection_touched = signal(false);
+
+        // Painting the half-filled generation stays held: it would collapse six rows
+        // to two and flash the panel under a user who is still typing.
+        refresh_merged_results(&providers, query, priorities, results);
+        assert_eq!(results.get().len(), 6, "a held generation keeps its rows");
+
+        // Acting on the panel settles it. Enter must launch what the typed text
+        // resolves to, not the top hit of "cha" that is still on screen.
+        settle_results_for_query(
+            &providers,
+            query,
+            priorities,
+            selected_id,
+            selected_index,
+            selection_touched,
+            results,
+            signal(false),
+        );
+        assert_eq!(
+            results.get().first().map(|row| row.id.as_str()),
+            Some("application:chatgpt"),
+            "the settled list puts the typed query's top hit first"
+        );
+        assert_eq!(
+            selected_id.get(),
+            "application:chatgpt",
+            "the highlight follows the settled list, so Enter resolves by id to ChatGPT"
+        );
+        assert_eq!(providers.borrow().published_query, "chat");
     }
 
     #[test]
@@ -662,6 +803,7 @@ mod tests {
             selection_touched,
             results,
             signal(false),
+            Publish::DeferWhileTyping,
         );
         // Same elements, same order, same selection: no signal may be
         // re-set, otherwise the row tree rebuilds and the frame shimmers.
@@ -698,6 +840,7 @@ mod tests {
             selection_touched,
             results,
             signal(false),
+            Publish::DeferWhileTyping,
         );
         assert_eq!(selected_id.get(), "app:perplexity");
         assert_eq!(selected_index.get(), 0);

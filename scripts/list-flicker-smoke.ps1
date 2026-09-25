@@ -12,6 +12,10 @@
     deleting the same letters quickly - the repro where the panel collapsed to a
     single row and refilled, which reads as a full-list flash.
 
+    A third phase acts on the list while it still shows an earlier keystroke's
+    rows, which is the fast-typing case where Enter opened the previous prefix's
+    top hit instead of what was typed.
+
     While keystrokes keep coming, every step must hold:
       * at most one list publish (one row-tree rebuild),
       * no repaint caused by shell-icon arrivals before the query has been quiet,
@@ -40,6 +44,24 @@
 .PARAMETER QuietMs
     Gap without a keystroke before deferred results may paint. Must match
     TYPING_QUIET_MS in the build under test.
+
+.PARAMETER Settle
+    Query used by the last phase, which acts on the list while an earlier
+    keystroke is still on screen.
+
+.PARAMETER SettleKeyMs
+    Delay between characters of -Settle. Shorter than -InterKeyMs on purpose: the
+    panel must still belong to an earlier keystroke when the action arrives.
+
+.PARAMETER SettleActMs
+    Base delay added to the sweep in -SettleRounds: attempt N acts N*10 ms after
+    the final character. Keep it small - the phase measures the stale state on
+    purpose.
+
+.PARAMETER SettleRounds
+    Attempts, because whether the panel is still stale when the action lands is a
+    race with the providers. Every attempt that does catch a stale panel must
+    settle it; an attempt that finds the panel fresh is reported and skipped.
 #>
 [CmdletBinding()]
 param(
@@ -50,6 +72,10 @@ param(
     [int]$InterKeyMs = 150,
     [int]$QuietMs = 250,
     [int]$IconBudgetMs = 60,
+    [string]$Settle = 'chat',
+    [int]$SettleKeyMs = 25,
+    [int]$SettleActMs = 0,
+    [int]$SettleRounds = 6,
     [int]$SampleEveryMs = 15,
     [int]$RowHeight = 24,
     [int]$HeaderHeight = 56,
@@ -110,6 +136,11 @@ public static void Backspace(IntPtr hWnd) {
     PostMessage(hWnd, 0x0100, new UIntPtr(0x08), (IntPtr)(long)((scan << 16) | 1u));
     PostMessage(hWnd, 0x0101, new UIntPtr(0x08), (IntPtr)(long)((scan << 16) | 1u | unchecked((int)0xC0000000)));
     Thread.Sleep(12);
+}
+public static void KeyDown(IntPtr hWnd, uint vk) {
+    uint scan = (uint)MapVirtualKey(vk, 0);
+    PostMessage(hWnd, 0x0100, new UIntPtr(vk), (IntPtr)(long)(scan << 16 | 1u));
+    PostMessage(hWnd, 0x0101, new UIntPtr(vk), (IntPtr)(long)((scan << 16) | 1u | 0x40000000u | unchecked((int)0xC0000000)));
 }
 public static IntPtr FindByPid(uint targetPid) {
     IntPtr best = IntPtr.Zero;
@@ -389,6 +420,69 @@ try {
                 }
             }
         }
+    }
+    Write-Host ''
+    Write-Host 'settle: act on a panel that still shows an earlier keystroke'
+    # Deliberately faster than the typing phases and repeated: whether the panel is
+    # still stale when the action lands is a race with Everything, so several attempts
+    # measure the case the user actually hits - typing a word and acting on it in the
+    # same breath.
+    $stale = 0
+    for ($attempt = 1; $attempt -le $SettleRounds; $attempt++) {
+        # Sweep the delay instead of pinning it: the state this phase needs - the
+        # applications provider has answered the new character, Everything has not -
+        # lasts tens of milliseconds, and which attempt lands inside it depends on
+        # how warm the Everything index is right now.
+        $actDelayMs = $SettleActMs + $attempt * 10
+        for ($k = 0; $k -lt ($Settle.Length + 4); $k++) { [Flicker.Input]::Backspace($handle) }
+        Start-Sleep -Milliseconds 300
+        foreach ($char in $Settle.ToCharArray()) {
+            [Flicker.Input]::TypeChar($handle, $char)
+            Start-Sleep -Milliseconds $SettleKeyMs
+        }
+        Start-Sleep -Milliseconds $actDelayMs
+        # VK_DOWN moves the highlight without opening anything: the keystroke still
+        # runs the whole action path, which is the path that must not act on a row
+        # the user never asked for. The stamp is taken around the post, so what counts
+        # as "on screen when the user acted" is the state the handler itself sees.
+        $keyUnix = [DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds()
+        [Flicker.Input]::KeyDown($handle, 0x28)
+        $keyUnix = [DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds()
+        Start-Sleep -Milliseconds 700
+        $allEvents = @(Get-TraceEvents)
+        if (@($allEvents | Where-Object { $_.event -eq 'query' -and $_.detail -like "value=$Settle *" }).Count -eq 0) {
+            throw "phase 'settle' attempt $attempt : the launcher never held '$Settle', the posted characters were lost"
+        }
+        $before = @($allEvents | Where-Object { $_.event -eq 'list-write' -and $_.unix -le $keyUnix } | Select-Object -Last 1)
+        $painted = 'nothing'
+        if ($before.Count -gt 0 -and $before[0].detail -match 'query=(\S+)') { $painted = $matches[1] }
+        $resolves = @($allEvents | Where-Object { $_.event -eq 'resolve' -and $_.unix -ge $keyUnix })
+        $settledWrites = @($allEvents | Where-Object {
+            $_.event -eq 'list-write' -and $_.unix -ge $keyUnix -and $_.unix -le ($keyUnix + 80) -and $_.detail -like "query=$Settle *"
+        })
+        $seen = 'fresh'
+        if ($painted -ne $Settle) { $stale++; $seen = "stale('$painted')" }
+        Write-Host ("         attempt {0}: panel {1} for '{2}'; keystroke +{3}ms -> {4} resolve, {5} repaint of '{2}'" -f $attempt, $seen, $Settle, $actDelayMs, $resolves.Count, $settledWrites.Count)
+        foreach ($entry in $resolves) {
+            Write-Host "           $($entry.detail)"
+            if ($entry.detail -notmatch "query=$Settle ") {
+                $violations += "acting on the stale '$painted' panel while '$Settle' was typed resolved against a different query"
+            }
+            if ($entry.detail -notmatch 'rows=[1-9]') {
+                $violations += "settling '$Settle' left the panel empty, which turns the keystroke into a silent no-op"
+            }
+        }
+        if ($painted -ne $Settle -and $settledWrites.Count -eq 0) {
+            # The rows on screen belong to an earlier keystroke and nothing painted
+            # the typed text around the action, so Enter would have opened the
+            # previous keystroke's top hit - the reported bug.
+            $violations += "acting on the stale '$painted' panel while '$Settle' was typed left '$painted' rows on screen (Enter would have launched one of them)"
+        }
+    }
+    if ($stale -eq 0) {
+        Write-Host '         note: every provider answered before each keystroke, so no attempt caught a stale panel'
+    } else {
+        Write-Host "         $stale of $SettleRounds attempts caught the panel showing an earlier keystroke"
     }
 } finally {
     Stop-Process -Id $process.Id -Force -ErrorAction SilentlyContinue

@@ -13,7 +13,7 @@ use super::hotkeys;
 use super::input_keys::{alt_key_is_down, is_history_key, is_run_as_admin_key, shift_key_is_down};
 use super::launch;
 use super::plugins::PluginAction;
-use super::provider_snapshot::{refresh_merged_results, ProviderResults};
+use super::provider_snapshot::{refresh_merged_results, settle_results_for_query, ProviderResults};
 use super::result_actions::{
     actions_for_result, copy_result_file, copy_result_path, execute_result_action, selected_result,
     ActionItem, ActionKind,
@@ -312,21 +312,40 @@ pub(crate) fn register_key_handlers(
             return false;
         }
         let mut current_results = results_for_keys.get();
-        // The visible list is held back on purpose while a new query generation
-        // is in flight, so a fast typist can act on rows that belong to an
-        // earlier keystroke. When the published list is not the one for the
-        // typed text, rebuild it from whatever the providers already returned
-        // for this generation, so Enter, Alt+Enter and Run as admin resolve
-        // against what the user actually typed. History rows are excluded: that
-        // list is the point of the keystroke, not a stale generation.
+        // The panel is held back on purpose while a new query generation is still
+        // answering, so a fast typist can be looking at rows from an earlier
+        // keystroke: typing "chat" and pressing Enter within Everything's round
+        // trip would otherwise launch the top hit of "cha". Acting on the panel
+        // settles the generation - the rows, the highlight and this keystroke all
+        // move to the text the user typed. History rows are excluded: there the
+        // list on screen is the point of the keystroke.
         if !history_mode_for_keys.get() && providers_for_keys.borrow().published_query != query {
-            refresh_merged_results(
+            let shown_head = current_results
+                .first()
+                .map(|result| result.id.clone())
+                .unwrap_or_default();
+            settle_results_for_query(
                 &providers_for_keys,
                 query_for_keys,
                 priorities_for_keys,
+                selected_id_for_keys,
+                selected_index_for_keys,
+                selection_touched_for_keys,
                 results_for_keys,
+                history_mode_for_keys,
             );
             current_results = results_for_keys.get();
+            super::paint_trace::note(
+                "resolve",
+                &format!(
+                    "query={query} resolved={} shown={shown_head} rows={}",
+                    current_results
+                        .first()
+                        .map(|result| result.id.clone())
+                        .unwrap_or_default(),
+                    current_results.len()
+                ),
+            );
         }
         if current_results.is_empty() {
             return false;
