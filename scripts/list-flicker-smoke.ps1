@@ -518,28 +518,68 @@ try {
         Start-Sleep -Milliseconds $InterKeyMs
     }
     Start-Sleep -Milliseconds $QuietMs
-    # Move the highlight down, exactly as an arrow key or a recalled history entry
-    # does, then erase one character: the visible list belongs to the shorter query
-    # now, so the highlight has to return to its first row.
+    function Get-HeadAfterEdit([string]$label, [string]$expect, [long]$since) {
+        # The end-to-end form of his report: after the query got shorter, the row the
+        # app calls selected must be the row the new list actually starts with. The
+        # violation is returned rather than appended, because a function cannot write
+        # to the caller's $violations and a silently dropped one would always pass.
+        $writes = @(Get-TraceEvents | Where-Object {
+            $_.event -eq 'list-write' -and $_.unix -ge $since -and $_.detail -like "query=$expect *"
+        })
+        if ($writes.Count -eq 0) {
+            Write-Host "         ${label}: no publish of '$expect' yet, nothing to compare"
+            return $null
+        }
+        $match = [regex]::Match($writes[-1].detail, 'head=(?<head>.*?) selected=(?<sel>.*)@(?<idx>\d+)$')
+        if (-not $match.Success) {
+            Write-Host "         ${label}: could not read head/selected out of '$($writes[-1].detail)'"
+            return $null
+        }
+        $onHead = $match.Groups['sel'].Value -eq $match.Groups['head'].Value
+        Write-Host ("         {0}: query='{1}' selected_index={2} on_head={3}" -f $label, $expect, $match.Groups['idx'].Value, $onHead)
+        if ($onHead) { return $null }
+        return "${label}: after erasing a character the highlight stayed on '$($match.Groups['sel'].Value)' instead of the top hit of '$expect'"
+    }
+    # Step A - move the highlight with the arrow keys, then erase one character: the
+    # list belongs to the shorter query now, so the highlight has to return to row 0.
     [Flicker.Input]::PostVk($handle, 0x28)
     Start-Sleep -Milliseconds 80
     [Flicker.Input]::PostVk($handle, 0x28)
     Start-Sleep -Milliseconds 80
     $eraseUnix = [DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds()
     [Flicker.Input]::Backspace($handle)
-    Start-Sleep -Milliseconds 800
+    Start-Sleep -Milliseconds 900
     $moved = @(Get-TraceEvents | Where-Object { $_.event -eq 'select' -and $_.unix -ge $eraseUnix })
-    foreach ($entry in $moved) { Write-Host "         $($entry.detail)" }
     if ($moved.Count -eq 0) {
         $violations += "erasing one character of '$Settle' kept the highlight on the row that was navigated to (a recalled or arrow-picked row must return to the top)"
     }
     foreach ($entry in $moved) {
         if ($entry.detail -notmatch 'index=0') {
-            $violations += "erasing one character moved the highlight to index $($matches[1]) instead of the first row"
+            $violations += "erasing one character moved the highlight to an index other than 0: $($entry.detail)"
         }
-        if ($entry.detail -notmatch 'id=\S') {
-            $violations += "erasing one character left the highlight with no row id"
-        }
+    }
+    $problem = Get-HeadAfterEdit 'arrows+erase' ($Settle.Substring(0, $Settle.Length - 1)) $eraseUnix
+    if ($problem) { $violations += $problem }
+    # Step B - his actual flow: recall a query from the history (plain Up on an empty
+    # field takes the newest one, which is the same code path Alt+Up uses) and erase a
+    # character of the recalled text.
+    for ($k = 0; $k -lt ($Settle.Length + 6); $k++) { [Flicker.Input]::Backspace($handle) }
+    Start-Sleep -Milliseconds 500
+    [Flicker.Input]::PostVk($handle, 0x26)
+    Start-Sleep -Milliseconds 900
+    $recalled = @((Get-TraceEvents | Where-Object { $_.event -eq 'query' } | Select-Object -Last 1))
+    if ($recalled.Count -eq 0 -or $recalled[0].detail -notmatch '^value=(\S+) ') {
+        throw "phase 'recall': the field text after Up could not be read"
+    }
+    $recalledQuery = $recalled[0].detail -replace '^value=(\S+) .*', '$1'
+    if ($recalledQuery.Length -lt 2) {
+        Write-Host "         recall+erase: skipped, the profile recalled '$recalledQuery' (needs a query of two or more characters)"
+    } else {
+        $recallEraseUnix = [DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds()
+        [Flicker.Input]::Backspace($handle)
+        Start-Sleep -Milliseconds 900
+        $problem = Get-HeadAfterEdit 'recall+erase' ($recalledQuery.Substring(0, $recalledQuery.Length - 1)) $recallEraseUnix
+        if ($problem) { $violations += $problem }
     }
 } finally {
     Stop-Process -Id $process.Id -Force -ErrorAction SilentlyContinue

@@ -169,10 +169,13 @@ pub(crate) fn register_key_handlers(
             return false;
         }
         let alt_down = alt_key_is_down();
-        if !alt_down && matches!(event.key, Key::Char(_) | Key::Backspace | Key::Delete) {
-            // Ctrl+Backspace erases a word, so editing is not limited to the
-            // unmodified keys the two resets below used to require.
-            if !event.ctrl {
+        // Erasing is an edit whatever modifier is held - Alt+Up to recall a query
+        // and then hitting Backspace with Alt still down is the ordinary flow - while
+        // Alt+letter is a shortcut, not text.
+        let edits_the_field = matches!(event.key, Key::Backspace | Key::Delete)
+            || (!alt_down && matches!(event.key, Key::Char(_)));
+        if edits_the_field {
+            if !event.ctrl && !alt_down {
                 history_cursor_for_keys.set(None);
             }
             cursor_visibility_for_keys.hide();

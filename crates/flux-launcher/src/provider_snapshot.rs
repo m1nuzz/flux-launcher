@@ -195,7 +195,7 @@ pub(crate) fn commit_provider_results(
             selected_index.set(0);
         }
         if selected_id.get() != first_id {
-            selected_id.set(first_id);
+            selected_id.set(first_id.clone());
         }
     } else if let Some(position) = merged
         .iter()
@@ -230,10 +230,13 @@ pub(crate) fn commit_provider_results(
         super::paint_trace::note(
             "list-write",
             &format!(
-                "query={query} rows={} shown={} complete={}",
+                "query={query} rows={} shown={} complete={} head={} selected={}@{}",
                 merged.len(),
                 results.get().len(),
-                providers.snapshot_is_complete() as u8
+                providers.snapshot_is_complete() as u8,
+                first_id,
+                selected_id.get(),
+                selected_index.get()
             ),
         );
         results.set(merged);
