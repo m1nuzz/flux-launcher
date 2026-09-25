@@ -19,15 +19,19 @@
     While keystrokes keep coming, every step must hold:
       * at most one list publish (one row-tree rebuild),
       * no repaint caused by shell-icon arrivals before the query has been quiet,
-      * no single frame replacing more than -MaxChangedPct of the list pixels.
+      * no publish of a snapshot smaller than the rows on screen while a provider
+        still owes its answer (that collapse-and-refill is the flash),
+      * no force-publish from a keystroke that only edits the field: settling the
+        panel is what Enter and the navigation keys do, never typing.
 
     The final step is watched through the quiet window, so its deferred publish is
     expected and only the rebuild budget is checked.
 
-    Input is posted (WM_CHAR, WM_KEYDOWN VK_BACK) rather than typed as keystrokes:
-    the launcher is translucent, so grabbing the foreground would type into whatever
-    the user actually has focused. The surface is captured with PrintWindow because
-    a screen grab also contains the desktop behind the panel.
+    Input is posted (WM_CHAR for text, WM_KEYDOWN for the backspace and the
+    acting key) rather than typed as keystrokes: the launcher is translucent, so
+    grabbing the foreground would type into whatever the user actually has focused.
+    The surface is captured with PrintWindow because a screen grab also contains
+    the desktop behind the panel.
 
 .PARAMETER Executable
     Path to the flux-launcher.exe under test (debug or release).
@@ -124,7 +128,15 @@ public struct RECT { public int Left; public int Top; public int Right; public i
 
 // Posting messages needs no foreground right, so the harness never steals the
 // user's focus and cannot type into another window.
+public static void PostVk(IntPtr hWnd, uint vk) {
+    uint scan = (uint)MapVirtualKey(vk, 0);
+    PostMessage(hWnd, 0x0100, new UIntPtr(vk), (IntPtr)(long)(scan << 16 | 1u));
+    PostMessage(hWnd, 0x0101, new UIntPtr(vk), (IntPtr)(long)((scan << 16) | 1u | 0x40000000u | unchecked((int)0xC0000000)));
+}
 public static void TypeChar(IntPtr hWnd, char value) {
+    // windui turns WM_CHAR into a `Key::Char` key event, so this reaches the same
+    // handlers a physical keystroke does, including the one that settles a held
+    // panel - which is how a keystroke that only edits the field can flash the list.
     PostMessage(hWnd, 0x0102, new UIntPtr((uint)value), IntPtr.Zero);
     Thread.Sleep(12);
 }
@@ -132,15 +144,8 @@ public static void Backspace(IntPtr hWnd) {
     // The search field edits on the key-down path; a posted WM_CHAR backspace is
     // delivered and ignored, which once let this harness measure a query that
     // still carried its probe character.
-    uint scan = (uint)MapVirtualKey(0x08, 0);
-    PostMessage(hWnd, 0x0100, new UIntPtr(0x08), (IntPtr)(long)((scan << 16) | 1u));
-    PostMessage(hWnd, 0x0101, new UIntPtr(0x08), (IntPtr)(long)((scan << 16) | 1u | unchecked((int)0xC0000000)));
+    PostVk(hWnd, 0x08);
     Thread.Sleep(12);
-}
-public static void KeyDown(IntPtr hWnd, uint vk) {
-    uint scan = (uint)MapVirtualKey(vk, 0);
-    PostMessage(hWnd, 0x0100, new UIntPtr(vk), (IntPtr)(long)(scan << 16 | 1u));
-    PostMessage(hWnd, 0x0101, new UIntPtr(vk), (IntPtr)(long)((scan << 16) | 1u | 0x40000000u | unchecked((int)0xC0000000)));
 }
 public static IntPtr FindByPid(uint targetPid) {
     IntPtr best = IntPtr.Zero;
@@ -390,6 +395,16 @@ try {
         }
         $isLast = $index -eq ($observations.Count - 1)
         Write-Host ("{0,-8} {1,-15} {2,11}   {3,11}   {4,12}" -f $entry.phase, $entry.label, $writes.Count, $iconPaints, [Math]::Round($maxChanged, 1))
+        # These two steps type and erase characters, so nothing here is allowed to
+        # publish a snapshot the panel then has to grow back: that collapse-and-refill
+        # is the flash, and a keystroke that only edits the field must never trigger it.
+        $resolves = @($events | Where-Object { $_.event -eq 'resolve' })
+        if ($resolves.Count -gt 0) {
+            $violations += "typing '$($entry.after)' acted on the list like Enter does ( $($resolves.Count) force-publish(es)), which repaints a half-filled snapshot"
+        }
+        if ($premature.Count -gt 0) {
+            $violations += "query '$($entry.after)' painted $($premature.Count) snapshot(s) smaller than the rows on screen while a provider still owed its answer (the panel collapses and refills)"
+        }
         if (-not $isLast) {
             if ($writes.Count -gt 1) {
                 $violations += "query '$($entry.after)' rebuilt the list $($writes.Count) times before the next keystroke (expected exactly 1)"
@@ -446,7 +461,7 @@ try {
         # the user never asked for. The stamp is taken around the post, so what counts
         # as "on screen when the user acted" is the state the handler itself sees.
         $keyUnix = [DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds()
-        [Flicker.Input]::KeyDown($handle, 0x28)
+        [Flicker.Input]::PostVk($handle, 0x28)
         $keyUnix = [DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds()
         Start-Sleep -Milliseconds 700
         $allEvents = @(Get-TraceEvents)

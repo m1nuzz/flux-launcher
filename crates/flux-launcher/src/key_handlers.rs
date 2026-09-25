@@ -10,7 +10,10 @@ use windui::signal::Signal;
 
 use super::history_priorities::{record_launch, record_query_history, set_result_priority};
 use super::hotkeys;
-use super::input_keys::{alt_key_is_down, is_history_key, is_run_as_admin_key, shift_key_is_down};
+use super::input_keys::{
+    acts_on_the_selected_row, alt_key_is_down, is_history_key, is_run_as_admin_key,
+    shift_key_is_down,
+};
 use super::launch;
 use super::plugins::PluginAction;
 use super::provider_snapshot::{refresh_merged_results, settle_results_for_query, ProviderResults};
@@ -317,9 +320,14 @@ pub(crate) fn register_key_handlers(
         // keystroke: typing "chat" and pressing Enter within Everything's round
         // trip would otherwise launch the top hit of "cha". Acting on the panel
         // settles the generation - the rows, the highlight and this keystroke all
-        // move to the text the user typed. History rows are excluded: there the
-        // list on screen is the point of the keystroke.
-        if !history_mode_for_keys.get() && providers_for_keys.borrow().published_query != query {
+        // move to the text the user typed. Typing itself must not: on the key-down
+        // path the field still holds the previous text, and publishing then is the
+        // collapse-and-refill flash. History rows are excluded: there the list on
+        // screen is the point of the keystroke.
+        if !history_mode_for_keys.get()
+            && acts_on_the_selected_row(&event)
+            && providers_for_keys.borrow().published_query != query
+        {
             let shown_head = current_results
                 .first()
                 .map(|result| result.id.clone())
