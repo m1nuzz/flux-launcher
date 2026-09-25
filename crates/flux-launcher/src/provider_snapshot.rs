@@ -298,6 +298,50 @@ pub(crate) fn settle_results_for_query(
     );
 }
 
+/// A keystroke that edits the field ends the navigation the user did on the
+/// previous query's rows.
+///
+/// A recall from the history pins the highlight to the row that query last opened
+/// (`selection_touched` plus its id), and every later commit keeps honouring that
+/// pin - so without this the top hit is never selected again and the highlight sits
+/// on a middle row of unrelated results until the field is emptied. Returns whether
+/// the viewport has to follow the moved highlight.
+pub(crate) fn reset_selection_after_edit(
+    selection_touched: Signal<bool>,
+    selected_index: Signal<usize>,
+    selected_id: Signal<String>,
+    results: Signal<Vec<SearchResult>>,
+) -> bool {
+    if !selection_touched.get() {
+        return false;
+    }
+    selection_touched.set(false);
+    let top_id = results
+        .get()
+        .first()
+        .map(|result| result.id.clone())
+        .unwrap_or_default();
+    let index_moves = selected_index.get() != 0;
+    let id_moves = selected_id.get() != top_id;
+    if index_moves {
+        selected_index.set(0);
+    }
+    if id_moves {
+        selected_id.set(top_id.clone());
+    }
+    if index_moves || id_moves {
+        super::paint_trace::note(
+            "select",
+            &format!(
+                "id={top_id} rows={} index={}",
+                results.get().len(),
+                selected_index.get()
+            ),
+        );
+    }
+    index_moves || id_moves
+}
+
 pub(crate) fn refresh_merged_results(
     providers: &Rc<RefCell<ProviderResults>>,
     query: Signal<String>,
@@ -810,6 +854,58 @@ mod tests {
         assert_eq!(results.version(), v_results, "results must not re-set");
         assert_eq!(selected_id.version(), v_id, "selection must not re-set");
         assert_eq!(selected_index.version(), v_idx, "index must not re-set");
+    }
+
+    fn row(id: &str) -> SearchResult {
+        SearchResult {
+            id: String::from(id),
+            title: String::from(id),
+            subtitle: String::new(),
+            kind: ResultKind::Application,
+            source: ResultSource::ApplicationCatalog,
+            target: None,
+        }
+    }
+
+    #[test]
+    fn editing_the_field_drops_a_recalled_row_choice() {
+        use windui::signal::signal;
+        // Alt+Up recalled a query and pinned the highlight to the row it opened
+        // before; erasing a letter must put the highlight back on the top row.
+        let selected_id = signal(String::from("application:steam"));
+        let selected_index = signal(4_usize);
+        let selection_touched = signal(true);
+        let results = signal(vec![
+            row("application:chatgpt"),
+            row("application:obsidian"),
+        ]);
+        let moved =
+            reset_selection_after_edit(selection_touched, selected_index, selected_id, results);
+        assert!(moved, "the viewport has to follow the moved highlight");
+        assert!(!selection_touched.get(), "later commits pick the top hit");
+        assert_eq!(selected_index.get(), 0);
+        assert_eq!(selected_id.get(), "application:chatgpt");
+    }
+
+    #[test]
+    fn editing_the_field_with_a_fresh_selection_writes_nothing() {
+        use windui::signal::signal;
+        let selected_id = signal(String::new());
+        let selected_index = signal(0_usize);
+        let selection_touched = signal(false);
+        let results = signal(vec![row("application:chatgpt")]);
+        let (v_id, v_index, v_touched) = (
+            selected_id.version(),
+            selected_index.version(),
+            selection_touched.version(),
+        );
+        assert!(
+            !reset_selection_after_edit(selection_touched, selected_index, selected_id, results),
+            "an ordinary keystroke must not move a highlight that is already at the top"
+        );
+        assert_eq!(selected_id.version(), v_id);
+        assert_eq!(selected_index.version(), v_index);
+        assert_eq!(selection_touched.version(), v_touched);
     }
 
     #[test]

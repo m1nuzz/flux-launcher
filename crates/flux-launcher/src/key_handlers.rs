@@ -16,7 +16,9 @@ use super::input_keys::{
 };
 use super::launch;
 use super::plugins::PluginAction;
-use super::provider_snapshot::{refresh_merged_results, settle_results_for_query, ProviderResults};
+use super::provider_snapshot::{
+    refresh_merged_results, reset_selection_after_edit, settle_results_for_query, ProviderResults,
+};
 use super::result_actions::{
     actions_for_result, copy_result_file, copy_result_path, execute_result_action, selected_result,
     ActionItem, ActionKind,
@@ -167,12 +169,23 @@ pub(crate) fn register_key_handlers(
             return false;
         }
         let alt_down = alt_key_is_down();
-        if !event.ctrl
-            && !alt_down
-            && matches!(event.key, Key::Char(_) | Key::Backspace | Key::Delete)
-        {
-            history_cursor_for_keys.set(None);
+        if !alt_down && matches!(event.key, Key::Char(_) | Key::Backspace | Key::Delete) {
+            // Ctrl+Backspace erases a word, so editing is not limited to the
+            // unmodified keys the two resets below used to require.
+            if !event.ctrl {
+                history_cursor_for_keys.set(None);
+            }
             cursor_visibility_for_keys.hide();
+            if !history_mode_for_keys.get()
+                && reset_selection_after_edit(
+                    selection_touched_for_keys,
+                    selected_index_for_keys,
+                    selected_id_for_keys,
+                    results_for_keys,
+                )
+            {
+                request_scroll(scroll_request_for_keys);
+            }
         }
         if event.ctrl
             && (event.shift || shift_key_is_down())

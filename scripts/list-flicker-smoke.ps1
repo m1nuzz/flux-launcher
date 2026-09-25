@@ -16,6 +16,10 @@
     rows, which is the fast-typing case where Enter opened the previous prefix's
     top hit instead of what was typed.
 
+    A fourth phase navigates to another row and then erases a character: the
+    highlight must return to the first row of the shorter query instead of staying
+    pinned to the row the arrows (or a recalled history entry) picked.
+
     While keystrokes keep coming, every step must hold:
       * at most one list publish (one row-tree rebuild),
       * no repaint caused by shell-icon arrivals before the query has been quiet,
@@ -75,7 +79,7 @@ param(
     [int]$Rounds = 4,
     [int]$InterKeyMs = 150,
     [int]$QuietMs = 250,
-    [int]$IconBudgetMs = 60,
+    [int]$IconBudgetMs = 150,
     [string]$Settle = 'chat',
     [int]$SettleKeyMs = 25,
     [int]$SettleActMs = 0,
@@ -402,6 +406,10 @@ try {
         if ($resolves.Count -gt 0) {
             $violations += "typing '$($entry.after)' acted on the list like Enter does ( $($resolves.Count) force-publish(es)), which repaints a half-filled snapshot"
         }
+        $movedSelections = @($events | Where-Object { $_.event -eq 'select' })
+        if ($movedSelections.Count -gt 0) {
+            $violations += "typing '$($entry.after)' rewrote the row highlight every keystroke ( $($movedSelections.Count) write(s) on the selection signals), which repaints rows the user never moved"
+        }
         if ($premature.Count -gt 0) {
             $violations += "query '$($entry.after)' painted $($premature.Count) snapshot(s) smaller than the rows on screen while a provider still owed its answer (the panel collapses and refills)"
         }
@@ -418,7 +426,9 @@ try {
             # A cold page must reach the screen without waiting for the typing to
             # stop: measure the gap between the last icon the thread loaded and the
             # refresh that propagated it. Nothing was loaded in this window means
-            # the page was already cached, which is not a delay.
+            # the page was already cached, which is not a delay. The default budget
+            # is above the ~100 ms the first page of a run can wait for the tick that
+            # polls it, and far below the 207-771 ms the held-back propagation cost.
             $allEvents = @(Get-TraceEvents)
             $loads = @($allEvents | Where-Object { $_.event -eq 'icon-loaded' -and $_.unix -ge $from -and $_.unix -lt $to })
             if ($loads.Count -gt 0) {
@@ -498,6 +508,38 @@ try {
         Write-Host '         note: every provider answered before each keystroke, so no attempt caught a stale panel'
     } else {
         Write-Host "         $stale of $SettleRounds attempts caught the panel showing an earlier keystroke"
+    }
+    Write-Host ''
+    Write-Host 'recall: editing the text must not keep a navigated row highlighted'
+    for ($k = 0; $k -lt ($Settle.Length + 6); $k++) { [Flicker.Input]::Backspace($handle) }
+    Start-Sleep -Milliseconds 400
+    foreach ($char in $Settle.ToCharArray()) {
+        [Flicker.Input]::TypeChar($handle, $char)
+        Start-Sleep -Milliseconds $InterKeyMs
+    }
+    Start-Sleep -Milliseconds $QuietMs
+    # Move the highlight down, exactly as an arrow key or a recalled history entry
+    # does, then erase one character: the visible list belongs to the shorter query
+    # now, so the highlight has to return to its first row.
+    [Flicker.Input]::PostVk($handle, 0x28)
+    Start-Sleep -Milliseconds 80
+    [Flicker.Input]::PostVk($handle, 0x28)
+    Start-Sleep -Milliseconds 80
+    $eraseUnix = [DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds()
+    [Flicker.Input]::Backspace($handle)
+    Start-Sleep -Milliseconds 800
+    $moved = @(Get-TraceEvents | Where-Object { $_.event -eq 'select' -and $_.unix -ge $eraseUnix })
+    foreach ($entry in $moved) { Write-Host "         $($entry.detail)" }
+    if ($moved.Count -eq 0) {
+        $violations += "erasing one character of '$Settle' kept the highlight on the row that was navigated to (a recalled or arrow-picked row must return to the top)"
+    }
+    foreach ($entry in $moved) {
+        if ($entry.detail -notmatch 'index=0') {
+            $violations += "erasing one character moved the highlight to index $($matches[1]) instead of the first row"
+        }
+        if ($entry.detail -notmatch 'id=\S') {
+            $violations += "erasing one character left the highlight with no row id"
+        }
     }
 } finally {
     Stop-Process -Id $process.Id -Force -ErrorAction SilentlyContinue
