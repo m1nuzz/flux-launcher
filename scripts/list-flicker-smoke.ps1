@@ -546,6 +546,30 @@ try {
         if ($premature.Count -gt 0) {
             $violations += "query '$($entry.after)' painted $($premature.Count) snapshot(s) smaller than the rows on screen while a provider still owed its answer (the panel collapses and refills)"
         }
+        # One shell extraction per icon class on the page: sixteen `.mp4` rows are
+        # sixteen copies of the same picture, so paying the shell sixteen times is
+        # the load-in the owner watches while he types. Groups of four or more rows
+        # of one extension must be served by a single extraction.
+        $iconJobs = @($events | Where-Object { $_.event -eq 'icon-loaded' })
+        # Mirrors PER_FILE_ICON_EXTENSIONS: those targets own their picture, so one
+        # extraction each is correct and must not be judged.
+        $ownIcon = @('exe', 'dll', 'ocx', 'sys', 'drv', 'cpl', 'msc', 'tlb', 'efi', 'lnk', 'url', 'appref-ms')
+        $groups = @{}
+        foreach ($job in $iconJobs) {
+            if ($job.detail -notmatch 'target=(.*)$') { continue }
+            $target = $matches[1]
+            $extension = [System.IO.Path]::GetExtension($target).TrimStart('.').ToLowerInvariant()
+            if (-not $extension -or $ownIcon -contains $extension) { continue }
+            if (-not $groups.ContainsKey($extension)) { $groups[$extension] = @{ rows = 0; extracted = 0 } }
+            $groups[$extension].rows++
+            if ($job.detail -notmatch 'extracted=0') { $groups[$extension].extracted++ }
+        }
+        foreach ($extension in $groups.Keys) {
+            $group = $groups[$extension]
+            if ($group.rows -ge 4 -and $group.extracted -gt 1) {
+                $violations += "query '$($entry.after)' paid the shell $($group.extracted) times for $($group.rows) '.$extension' rows that share one icon"
+            }
+        }
         # The home probes watch a whole provider round trip plus the erase that
         # follows it, so counting repaints there measures nothing; the invariants
         # above still apply.

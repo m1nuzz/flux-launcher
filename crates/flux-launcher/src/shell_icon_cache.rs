@@ -17,6 +17,61 @@ pub(crate) fn icon_completion_generation_changed(previous: u64, current: u64) ->
     previous != current
 }
 
+/// File types whose icon belongs to the file itself rather than to its
+/// extension: PE binaries carry icon resources, and shortcuts name their own
+/// icon location. Everything else - a video, a document, an archive - shows the
+/// icon of whatever Windows opens it with, so all rows of that extension share
+/// one image.
+const PER_FILE_ICON_EXTENSIONS: &[&str] = &[
+    "exe",
+    "dll",
+    "ocx",
+    "sys",
+    "drv",
+    "cpl",
+    "msc",
+    "tlb",
+    "efi",
+    "lnk",
+    "url",
+    "appref-ms",
+];
+
+/// Whether one shell extraction can serve several targets.
+///
+/// A page of sixteen `.mp4` files used to cost sixteen serial round trips into
+/// the shell for the same picture, which is the load-in the owner watches while
+/// he types. The class is decided on the worker thread, where asking the file
+/// system costs nothing: on a row build the same question would run on the UI
+/// thread for every row, and a folder named `v1.0` would otherwise be classed as
+/// a `.0` file and lose its folder icon.
+enum IconClass {
+    /// An icon shared by every file of this extension.
+    Extension(String),
+    /// An icon that belongs to this one target.
+    Single,
+}
+
+fn icon_class(target: &str) -> IconClass {
+    let trimmed = target.trim().trim_matches('"');
+    // Only filesystem paths have an extension association to share. A launcher
+    // URI like `ms-settings:network-status` would otherwise parse as a `.status`
+    // file and every Settings row on the page would be handed one icon.
+    let is_path = trimmed.contains(['\\', '/']) || matches!(trimmed.as_bytes().get(1), Some(b':'));
+    if !is_path {
+        return IconClass::Single;
+    }
+    let path = std::path::Path::new(trimmed);
+    let Some(extension) = path.extension().and_then(|value| value.to_str()) else {
+        return IconClass::Single;
+    };
+    let lowered = extension.to_ascii_lowercase();
+    if PER_FILE_ICON_EXTENSIONS.contains(&lowered.as_str()) || path.is_dir() {
+        return IconClass::Single;
+    }
+    IconClass::Extension(lowered)
+}
+
 #[cfg(windows)]
 pub(crate) const MAX_SHELL_ICON_CACHE_ENTRIES: usize = 128;
 
@@ -109,18 +164,24 @@ impl ShellIconWorker {
                 let owns_com_apartment = initialize_shell_icon_worker_com();
 
                 while let Ok(target) = receiver.recv() {
-                    if let Ok(mut pending) = pending_for_worker.lock() {
-                        pending.remove(&target);
+                    // A queued target can already have been served by a sibling of the
+                    // same extension while it waited, so an item that is no longer
+                    // pending is dropped here instead of paying the shell twice.
+                    if !take_pending(&pending_for_worker, &target) {
+                        continue;
                     }
                     #[cfg(windows)]
-                    let _ = shell_icon_rgba(&target);
-                    in_flight_for_worker.fetch_sub(1, Ordering::AcqRel);
-                    let generation =
-                        SHELL_ICON_COMPLETION_GENERATION.fetch_add(1, Ordering::Release) + 1;
-                    crate::paint_trace::note(
-                        "icon-loaded",
-                        &format!("generation={generation} target={target}"),
-                    );
+                    let image = shell_icon_rgba(&target);
+                    #[cfg(not(windows))]
+                    let image = None;
+                    settle_icon(&in_flight_for_worker, &target, true);
+                    // A failure is never spread: one unreadable file would otherwise
+                    // blank every row of its extension.
+                    let Some(image) = image else { continue };
+                    for sibling in take_pending_siblings(&pending_for_worker, &target) {
+                        cache_icon(&sibling, &image);
+                        settle_icon(&in_flight_for_worker, &sibling, false);
+                    }
                 }
 
                 #[cfg(windows)]
@@ -155,8 +216,58 @@ impl ShellIconWorker {
     }
 }
 
-static SHELL_ICON_WORKER: OnceLock<ShellIconWorker> = OnceLock::new();
+/// Takes the job out of the queue, false when somebody already settled it.
+fn take_pending(pending: &Mutex<HashSet<String>>, target: &str) -> bool {
+    pending
+        .lock()
+        .map(|mut pending| pending.remove(target))
+        .unwrap_or(false)
+}
 
+/// The queued targets whose icon is the one that was just extracted, removed from
+/// the queue in the same pass so no sibling can be claimed twice.
+fn take_pending_siblings(pending: &Mutex<HashSet<String>>, target: &str) -> Vec<String> {
+    let IconClass::Extension(extension) = icon_class(target) else {
+        return Vec::new();
+    };
+    let mut siblings = Vec::new();
+    if let Ok(mut pending) = pending.lock() {
+        pending.retain(|queued| {
+            let shares =
+                matches!(icon_class(queued), IconClass::Extension(other) if other == extension);
+            if shares {
+                siblings.push(queued.clone());
+            }
+            !shares
+        });
+    }
+    siblings
+}
+
+fn settle_icon(in_flight: &AtomicUsize, target: &str, extracted: bool) {
+    in_flight.fetch_sub(1, Ordering::AcqRel);
+    let generation = SHELL_ICON_COMPLETION_GENERATION.fetch_add(1, Ordering::Release) + 1;
+    crate::paint_trace::note(
+        "icon-loaded",
+        &format!(
+            "generation={generation} extracted={} target={target}",
+            extracted as u8
+        ),
+    );
+}
+
+#[cfg(windows)]
+fn cache_icon(target: &str, image: &[u8]) {
+    let cache = SHELL_ICON_CACHE.get_or_init(|| Mutex::new(ShellIconCache::new()));
+    if let Ok(mut cache) = cache.lock() {
+        cache.insert(target.to_owned(), Some(image.to_vec()));
+    }
+}
+
+#[cfg(not(windows))]
+fn cache_icon(_target: &str, _image: &[u8]) {}
+
+static SHELL_ICON_WORKER: OnceLock<ShellIconWorker> = OnceLock::new();
 pub(crate) fn shell_icon_worker() -> &'static ShellIconWorker {
     SHELL_ICON_WORKER.get_or_init(ShellIconWorker::spawn)
 }
@@ -314,5 +425,59 @@ mod tests {
         assert!(!icon_completion_generation_changed(4, 4));
         assert!(icon_completion_generation_changed(4, 5));
         assert!(icon_completion_generation_changed(u64::MAX, 0));
+    }
+
+    #[test]
+    fn files_of_one_extension_share_an_icon_while_apps_and_uris_do_not() {
+        assert!(matches!(
+            icon_class(r"D:\Music\track.mp4"),
+            IconClass::Extension(extension) if extension == "mp4"
+        ));
+        assert!(matches!(
+            icon_class(r"D:\Music\TRACK.MP4"),
+            IconClass::Extension(extension) if extension == "mp4"
+        ));
+        for own_icon in [
+            r"C:\Apps\chrome.exe",
+            r"C:\Start Menu\Counter-Strike 2.url",
+            r"C:\Windows\System32\devmgmt.msc",
+            "ms-settings:network-status",
+            "notepad",
+            r"D:\Music\playlist",
+        ] {
+            assert!(
+                matches!(icon_class(own_icon), IconClass::Single),
+                "{own_icon} must not share an icon with anything else"
+            );
+        }
+    }
+
+    #[test]
+    fn a_directory_keeps_its_own_icon_even_when_its_name_holds_a_dot() {
+        // The class is decided where the file system can be asked, so the case that
+        // matters is a real folder whose last component looks like `.0`.
+        let root = std::env::temp_dir().join(format!("flux-icon-class-{}", std::process::id()));
+        let dotted = root.join("release-v1.0");
+        std::fs::create_dir_all(&dotted).expect("the temporary folder is created");
+        let verdict = icon_class(&dotted.to_string_lossy());
+        let _ = std::fs::remove_dir_all(&root);
+        assert!(
+            matches!(verdict, IconClass::Single),
+            "a folder named `release-v1.0` is not a `.0` file"
+        );
+    }
+
+    #[test]
+    fn one_extraction_settles_every_queued_file_of_the_same_extension() {
+        let pending = Mutex::new(HashSet::from([
+            String::from(r"D:\Music\b.mp4"),
+            String::from(r"D:\Videos\c.mkv"),
+            String::from(r"C:\Apps\chrome.exe"),
+        ]));
+        let siblings = take_pending_siblings(&pending, r"D:\Music\a.MP4");
+        assert_eq!(siblings, vec![String::from(r"D:\Music\b.mp4")]);
+        let left = pending.lock().expect("the queue lock is never poisoned");
+        assert_eq!(left.len(), 2, "the sibling left the queue");
+        assert!(!left.contains(r"D:\Music\b.mp4"));
     }
 }
