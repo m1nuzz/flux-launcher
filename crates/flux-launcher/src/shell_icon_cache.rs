@@ -51,6 +51,7 @@ const PER_FILE_ICON_EXTENSIONS: &[&str] = &[
     "lnk",
     "url",
     "appref-ms",
+    "ico",
 ];
 
 /// Whether one shell extraction can serve several targets.
@@ -82,7 +83,11 @@ fn icon_class(target: &str) -> IconClass {
         return IconClass::Single;
     };
     let lowered = extension.to_ascii_lowercase();
-    if PER_FILE_ICON_EXTENSIONS.contains(&lowered.as_str()) || path.is_dir() {
+    // `is_file`, not `!is_dir`: a stat that fails - a sleeping network share, a path
+    // Everything still indexes after deletion - must fall back to its own icon
+    // rather than to a shared one, or a folder would be bound to a file picture for
+    // the rest of the session.
+    if PER_FILE_ICON_EXTENSIONS.contains(&lowered.as_str()) || !path.is_file() {
         return IconClass::Single;
     }
     IconClass::Extension(lowered)
@@ -91,8 +96,8 @@ fn icon_class(target: &str) -> IconClass {
 #[cfg(windows)]
 /// Four kilobytes per decoded 32x32 icon, so the whole table costs about four
 /// megabytes: enough to hold the application catalog, which is what the idle
-/// warm-up fills.
-const MAX_SHELL_ICON_CACHE_ENTRIES: usize = 1024;
+/// warm-up fills. The warm-up stops here rather than evicting its own best work.
+pub(crate) const MAX_SHELL_ICON_CACHE_ENTRIES: usize = 1024;
 
 #[cfg(windows)]
 struct ShellIconCache {
@@ -276,11 +281,17 @@ impl ShellIconWorker {
         }
         self.in_flight.fetch_add(1, Ordering::AcqRel);
         if self.wake.try_send(IconJob::Row(target.clone())).is_err() {
-            // The row asks again on its next build; nothing may be left holding the
-            // drain gate for a job that never reached the thread.
-            self.in_flight.fetch_sub(1, Ordering::AcqRel);
-            if let Ok(mut pending) = self.pending.lock() {
-                pending.remove(&target);
+            // The row asks again on its next build. Give the slot back only while we
+            // still own it: a sibling of the same icon class can settle this target
+            // between the increment and the failed send, and subtracting twice would
+            // wrap the counter and stall the drain gate for the rest of the session.
+            let owned = self
+                .pending
+                .lock()
+                .map(|mut pending| pending.remove(&target))
+                .unwrap_or(false);
+            if owned {
+                release_icon_slot(&self.in_flight);
             }
         }
     }
@@ -329,6 +340,13 @@ impl ShellIconWorker {
     }
 }
 
+/// Gives back one slot of the drain gate without ever wrapping below zero.
+fn release_icon_slot(in_flight: &AtomicUsize) {
+    let _ = in_flight.fetch_update(Ordering::AcqRel, Ordering::Acquire, |value| {
+        value.checked_sub(1)
+    });
+}
+
 /// Takes a row job out of the queue, false when a sibling already settled it.
 fn take_pending(pending: &Mutex<HashSet<String>>, target: &str) -> bool {
     pending
@@ -364,7 +382,7 @@ fn take_pending_siblings(pending: &Mutex<HashSet<String>>, target: &str) -> Vec<
 /// completion generation: a warm icon is simply there when the next row is built.
 fn settle_icon(in_flight: &AtomicUsize, target: &str, awaited: bool, extracted: bool) {
     let generation = if awaited {
-        in_flight.fetch_sub(1, Ordering::AcqRel);
+        release_icon_slot(in_flight);
         SHELL_ICON_COMPLETION_GENERATION.fetch_add(1, Ordering::Release) + 1
     } else {
         SHELL_ICON_COMPLETION_GENERATION.load(Ordering::Acquire)
@@ -566,16 +584,26 @@ mod tests {
 
     #[test]
     fn files_of_one_extension_share_an_icon_while_apps_and_uris_do_not() {
-        assert!(matches!(
-            icon_class(r"D:\Music\track.mp4"),
-            IconClass::Extension(extension) if extension == "mp4"
-        ));
-        assert!(matches!(
-            icon_class(r"D:\Music\TRACK.MP4"),
-            IconClass::Extension(extension) if extension == "mp4"
-        ));
+        // The class is decided by asking the file system, so the shared case needs
+        // real files: a path that cannot be stated as a file keeps its own icon.
+        let root = std::env::temp_dir().join(format!("flux-icon-class-{}", std::process::id()));
+        std::fs::create_dir_all(&root).expect("the temporary folder is created");
+        for name in ["track.mp4", "TRACK.MP4"] {
+            let path = root.join(name);
+            std::fs::write(&path, b"").expect("the temporary file is created");
+            assert!(
+                matches!(
+                    icon_class(&path.to_string_lossy()),
+                    IconClass::Extension(extension) if extension == "mp4"
+                ),
+                "{} must share the .mp4 picture",
+                path.display()
+            );
+        }
+        let _ = std::fs::remove_dir_all(&root);
         for own_icon in [
             r"C:\Apps\chrome.exe",
+            r"C:\Icons\player.ico",
             r"C:\Start Menu\Counter-Strike 2.url",
             r"C:\Windows\System32\devmgmt.msc",
             "ms-settings:network-status",
@@ -593,7 +621,7 @@ mod tests {
     fn a_directory_keeps_its_own_icon_even_when_its_name_holds_a_dot() {
         // The class is decided where the file system can be asked, so the case that
         // matters is a real folder whose last component looks like `.0`.
-        let root = std::env::temp_dir().join(format!("flux-icon-class-{}", std::process::id()));
+        let root = std::env::temp_dir().join(format!("flux-icon-dir-{}", std::process::id()));
         let dotted = root.join("release-v1.0");
         std::fs::create_dir_all(&dotted).expect("the temporary folder is created");
         let verdict = icon_class(&dotted.to_string_lossy());
@@ -606,15 +634,25 @@ mod tests {
 
     #[test]
     fn one_extraction_settles_every_queued_file_of_the_same_extension() {
-        let pending = Mutex::new(HashSet::from([
-            String::from(r"D:\Music\b.mp4"),
-            String::from(r"D:\Videos\c.mkv"),
-            String::from(r"C:\Apps\chrome.exe"),
-        ]));
-        let siblings = take_pending_siblings(&pending, r"D:\Music\a.MP4");
-        assert_eq!(siblings, vec![String::from(r"D:\Music\b.mp4")]);
+        let root = std::env::temp_dir().join(format!("flux-icon-siblings-{}", std::process::id()));
+        std::fs::create_dir_all(&root).expect("the temporary folder is created");
+        let paths: Vec<String> = ["a.mp4", "b.mp4", "c.mkv", "chrome.exe"]
+            .iter()
+            .map(|name| {
+                let path = root.join(name);
+                std::fs::write(&path, b"").expect("the temporary file is created");
+                path.to_string_lossy().into_owned()
+            })
+            .collect();
+        let pending = Mutex::new(HashSet::from_iter(paths[1..].iter().cloned()));
+
+        let siblings = take_pending_siblings(&pending, &paths[0]);
+
+        assert_eq!(siblings, vec![paths[1].clone()]);
         let left = pending.lock().expect("the queue lock is never poisoned");
-        assert_eq!(left.len(), 2, "the sibling left the queue");
-        assert!(!left.contains(r"D:\Music\b.mp4"));
+        assert_eq!(left.len(), 2, "only the sibling left the queue");
+        assert!(!left.contains(&paths[1]));
+        drop(left);
+        let _ = std::fs::remove_dir_all(&root);
     }
 }

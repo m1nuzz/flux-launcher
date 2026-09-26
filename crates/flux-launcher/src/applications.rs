@@ -125,10 +125,15 @@ impl ApplicationCatalog {
             .collect();
         ordered.sort_by_key(|(rank, _target)| *rank);
         let mut seen = HashSet::new();
-        ordered
+        let warmed = ordered
             .into_iter()
             .filter_map(|(_rank, target)| seen.insert(target.clone()).then_some(target))
-            .collect()
+            .collect::<Vec<_>>();
+        // Warming more icons than the cache holds would evict the ones it just
+        // loaded, so the pass stops at the capacity: the list is ordered by what the
+        // owner launches, so what fits is what matters.
+        let capacity = super::shell_icon_cache::MAX_SHELL_ICON_CACHE_ENTRIES;
+        warmed.into_iter().take(capacity).collect()
     }
 
     fn search(&self, query: &str) -> Vec<SearchResult> {

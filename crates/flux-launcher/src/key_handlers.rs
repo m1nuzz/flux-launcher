@@ -190,6 +190,50 @@ pub(crate) fn register_key_handlers(
                 request_scroll(scroll_request_for_keys);
             }
         }
+        let query = query_for_keys.get();
+        let mut current_results = results_for_keys.get();
+        // The panel is held back on purpose while a new query generation is still
+        // answering, so a fast typist can be looking at rows from an earlier
+        // keystroke: typing "chat" and pressing Enter within Everything's round
+        // trip would otherwise launch the top hit of "cha". Acting on the panel
+        // settles the generation - the rows, the highlight and this keystroke all
+        // move to the text the user typed. Typing itself must not: on the key-down
+        // path the field still holds the previous text, and publishing then is the
+        // collapse-and-refill flash. History rows are excluded: there the list on
+        // screen is the point of the keystroke.
+        if !history_mode_for_keys.get()
+            && acts_on_the_selected_row(&event)
+            && providers_for_keys.borrow().published_query != query
+        {
+            let shown_head = current_results
+                .first()
+                .map(|result| result.id.clone())
+                .unwrap_or_default();
+            settle_results_for_query(
+                &providers_for_keys,
+                query_for_keys,
+                priorities_for_keys,
+                selected_id_for_keys,
+                selected_index_for_keys,
+                selection_touched_for_keys,
+                results_for_keys,
+                history_mode_for_keys,
+            );
+            current_results = results_for_keys.get();
+            let complete = providers_for_keys.borrow().snapshot_is_complete();
+            super::paint_trace::note(
+                "resolve",
+                &format!(
+                    "query={query} resolved={} shown={shown_head} rows={} complete={}",
+                    current_results
+                        .first()
+                        .map(|result| result.id.clone())
+                        .unwrap_or_default(),
+                    current_results.len(),
+                    complete as u8
+                ),
+            );
+        }
         if event.ctrl
             && (event.shift || shift_key_is_down())
             && matches!(
@@ -275,7 +319,6 @@ pub(crate) fn register_key_handlers(
             );
             return true;
         }
-        let query = query_for_keys.get();
         let history = query_history_for_keys.borrow();
         if alt_down && !event.ctrl && !event.shift && matches!(event.key, Key::Up | Key::Down) {
             if history.is_empty() {
@@ -329,49 +372,6 @@ pub(crate) fn register_key_handlers(
         // Enter for the history rows.
         if query.trim().is_empty() && !history_mode_for_keys.get() {
             return false;
-        }
-        let mut current_results = results_for_keys.get();
-        // The panel is held back on purpose while a new query generation is still
-        // answering, so a fast typist can be looking at rows from an earlier
-        // keystroke: typing "chat" and pressing Enter within Everything's round
-        // trip would otherwise launch the top hit of "cha". Acting on the panel
-        // settles the generation - the rows, the highlight and this keystroke all
-        // move to the text the user typed. Typing itself must not: on the key-down
-        // path the field still holds the previous text, and publishing then is the
-        // collapse-and-refill flash. History rows are excluded: there the list on
-        // screen is the point of the keystroke.
-        if !history_mode_for_keys.get()
-            && acts_on_the_selected_row(&event)
-            && providers_for_keys.borrow().published_query != query
-        {
-            let shown_head = current_results
-                .first()
-                .map(|result| result.id.clone())
-                .unwrap_or_default();
-            settle_results_for_query(
-                &providers_for_keys,
-                query_for_keys,
-                priorities_for_keys,
-                selected_id_for_keys,
-                selected_index_for_keys,
-                selection_touched_for_keys,
-                results_for_keys,
-                history_mode_for_keys,
-            );
-            current_results = results_for_keys.get();
-            let complete = providers_for_keys.borrow().snapshot_is_complete();
-            super::paint_trace::note(
-                "resolve",
-                &format!(
-                    "query={query} resolved={} shown={shown_head} rows={} complete={}",
-                    current_results
-                        .first()
-                        .map(|result| result.id.clone())
-                        .unwrap_or_default(),
-                    current_results.len(),
-                    complete as u8
-                ),
-            );
         }
         if current_results.is_empty() {
             return false;
