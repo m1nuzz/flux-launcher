@@ -340,6 +340,9 @@ $env:FLUX_PAINT_TRACE_FILE = $tracePath
 $violations = @()
 $script:observations = @()
 $script:iconPageWarmed = $false
+$script:maxAttempts = 0
+$script:totalAttempts = 0
+$script:totalDefers = 0
 $process = Start-Process -FilePath $Executable -PassThru
 Write-Host "pid=$($process.Id) query=$Query toggle=$Toggle rounds=$Rounds inter_key=${InterKeyMs}ms quiet=${QuietMs}ms sample=${SampleEveryMs}ms"
 
@@ -513,7 +516,7 @@ try {
     }
 
     Write-Host ''
-    Write-Host 'phase    step             list-writes   icon-paints   max-changed%'
+    Write-Host 'phase    step             list-writes   attempts   defers   icon-paints   max-changed%'
     for ($index = 0; $index -lt $observations.Count; $index++) {
         $entry = $observations[$index]
         $from = $entry.unix
@@ -524,6 +527,23 @@ try {
         }
         $events = @(Get-TraceEvents | Where-Object { $_.unix -ge $from -and $_.unix -lt $to })
         $writes = @($events | Where-Object { $_.event -eq 'list-write' })
+        # Commit ATTEMPTS, reported and never judged. `list-writes` above is a content
+        # check: a provider that commits a snapshot identical to the one on screen
+        # writes nothing, because the row tree is only rebuilt when the value changes.
+        # That is the behaviour the owner wants, but it also means a wasted commit pass
+        # is invisible to a publish count - with the typing hold removed, a second
+        # provider commit still showed one write per letter.
+        # Measured on this machine, 4 rounds at 70 ms: the attempt column does NOT
+        # discriminate (38 attempts, busiest window 3, identical with the hold removed -
+        # the hold changes what happens after a commit, not how many arrive). The defer
+        # column does: 1-2 per keystroke with the hold, 0 everywhere without it. Both are
+        # reported rather than judged, because the normal spread has not been fixed by
+        # measurement yet, and `attempts` on its own would be a number without a verdict.
+        $attempts = @($events | Where-Object { $_.event -like 'commit-*' })
+        $deferred = @($events | Where-Object { $_.event -eq 'list-deferred' -or $_.event -eq 'list-shrunk' })
+        $script:maxAttempts = [Math]::Max($script:maxAttempts, $attempts.Count)
+        $script:totalAttempts += $attempts.Count
+        $script:totalDefers += $deferred.Count
         # The collapse this smoke exists for: publishing a snapshot smaller than
         # the rows already on screen while a provider still owes an answer, which
         # blanks most of the panel for a frame and refills it on the next. One case
@@ -554,7 +574,7 @@ try {
             }
         }
         $isLast = $index -eq ($observations.Count - 1)
-        Write-Host ("{0,-8} {1,-15} {2,11}   {3,11}   {4,12}" -f $entry.phase, $entry.label, $writes.Count, $iconPaints, [Math]::Round($maxChanged, 1))
+        Write-Host ("{0,-8} {1,-15} {2,11}   {3,9}   {4,6}   {5,11}   {6,12}" -f $entry.phase, $entry.label, $writes.Count, $attempts.Count, $deferred.Count, $iconPaints, [Math]::Round($maxChanged, 1))
         # These two steps type and erase characters, so nothing here is allowed to
         # publish a snapshot the panel then has to grow back: that collapse-and-refill
         # is the flash, and a keystroke that only edits the field must never trigger it.
@@ -643,6 +663,8 @@ try {
             }
             }
     }
+    Write-Host ''
+    Write-Host ("commit attempts: {0} in total, busiest window {1}; defers: {2} (reported, not judged)" -f $script:totalAttempts, $script:maxAttempts, $script:totalDefers)
     Write-Host ''
     Write-Host 'settle: act on a panel that still shows an earlier keystroke'
     # Deliberately faster than the typing phases and repeated: whether the panel is
