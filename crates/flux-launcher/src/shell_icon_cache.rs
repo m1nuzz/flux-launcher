@@ -73,7 +73,10 @@ fn icon_class(target: &str) -> IconClass {
 }
 
 #[cfg(windows)]
-pub(crate) const MAX_SHELL_ICON_CACHE_ENTRIES: usize = 128;
+/// Four kilobytes per decoded 32x32 icon, so the whole table costs about four
+/// megabytes: enough to hold the application catalog, which is what the idle
+/// warm-up fills.
+const MAX_SHELL_ICON_CACHE_ENTRIES: usize = 1024;
 
 #[cfg(windows)]
 struct ShellIconCache {
@@ -124,13 +127,28 @@ impl ShellIconCache {
 static SHELL_ICON_CACHE: OnceLock<Mutex<ShellIconCache>> = OnceLock::new();
 pub(crate) static SHELL_ICON_COMPLETION_GENERATION: AtomicU64 = AtomicU64::new(0);
 
+/// One unit of icon work.
+///
+/// A row request is what the drain gate waits for. A warm request is best effort
+/// and never joins the queue, so a full channel or a dropped send cannot leave a
+/// visible row waiting for an icon that will never arrive.
+enum IconJob {
+    Row(String),
+    Warm(String),
+}
+
 pub(crate) struct ShellIconWorker {
+    /// Row targets the icon thread still owes.
     pending: Arc<Mutex<HashSet<String>>>,
-    /// Requests handed to the thread but not finished yet. The result list waits
-    /// for this to reach zero so a page of icons arrives in one repaint instead of
-    /// one full-window repaint per completed icon.
+    /// Row requests a visible row is waiting for. The result list waits for this to
+    /// reach zero so a page of icons arrives in one repaint instead of one
+    /// full-window repaint per completed icon.
     in_flight: Arc<AtomicUsize>,
-    wake: SyncSender<String>,
+    /// Warm jobs the thread has not finished. The warm-up keeps this at one so a
+    /// row never waits behind the catalog, and so the bounded channel cannot drop
+    /// the rest of it.
+    warm_outstanding: Arc<AtomicUsize>,
+    wake: SyncSender<IconJob>,
 }
 
 #[cfg(windows)]
@@ -150,37 +168,67 @@ fn initialize_shell_icon_worker_com() -> bool {
     }
 }
 
+/// Asks the shell for one icon, filling the cache on the way.
+#[cfg(windows)]
+fn extract_icon(target: &str) -> Option<Vec<u8>> {
+    shell_icon_rgba(target)
+}
+
+#[cfg(not(windows))]
+fn extract_icon(_target: &str) -> Option<Vec<u8>> {
+    None
+}
+
 impl ShellIconWorker {
     fn spawn() -> Self {
         let pending = Arc::new(Mutex::new(HashSet::<String>::new()));
         let pending_for_worker = Arc::clone(&pending);
         let in_flight = Arc::new(AtomicUsize::new(0));
         let in_flight_for_worker = Arc::clone(&in_flight);
-        let (wake, receiver) = mpsc::sync_channel::<String>(64);
+        let warm_outstanding = Arc::new(AtomicUsize::new(0));
+        let warm_for_worker = Arc::clone(&warm_outstanding);
+        let (wake, receiver) = mpsc::sync_channel::<IconJob>(64);
         thread::Builder::new()
             .name(String::from("flux-shell-icons"))
             .spawn(move || {
                 #[cfg(windows)]
                 let owns_com_apartment = initialize_shell_icon_worker_com();
 
-                while let Ok(target) = receiver.recv() {
-                    // A queued target can already have been served by a sibling of the
-                    // same extension while it waited, so an item that is no longer
-                    // pending is dropped here instead of paying the shell twice.
-                    if !take_pending(&pending_for_worker, &target) {
-                        continue;
-                    }
-                    #[cfg(windows)]
-                    let image = shell_icon_rgba(&target);
-                    #[cfg(not(windows))]
-                    let image = None;
-                    settle_icon(&in_flight_for_worker, &target, true);
-                    // A failure is never spread: one unreadable file would otherwise
-                    // blank every row of its extension.
-                    let Some(image) = image else { continue };
-                    for sibling in take_pending_siblings(&pending_for_worker, &target) {
-                        cache_icon(&sibling, &image);
-                        settle_icon(&in_flight_for_worker, &sibling, false);
+                while let Ok(job) = receiver.recv() {
+                    match job {
+                        IconJob::Row(target) => {
+                            // The target may already have been served by a sibling of the
+                            // same extension while it waited in the queue.
+                            if !take_pending(&pending_for_worker, &target) {
+                                continue;
+                            }
+                            let image = extract_icon(&target);
+                            settle_icon(&in_flight_for_worker, &target, true, true);
+                            // A failure is never spread: one unreadable file would
+                            // otherwise blank every row of its extension.
+                            let Some(image) = image else { continue };
+                            for sibling in take_pending_siblings(&pending_for_worker, &target) {
+                                cache_icon(&sibling, &image);
+                                settle_icon(&in_flight_for_worker, &sibling, true, false);
+                            }
+                        }
+                        // The catalog is loaded one icon per quiet moment and never tells
+                        // the tree: the next row build finds the picture in the cache.
+                        IconJob::Warm(target) => {
+                            if !icon_is_cached(&target) {
+                                let image = extract_icon(&target);
+                                settle_icon(&in_flight_for_worker, &target, false, true);
+                                if let Some(image) = image {
+                                    for sibling in
+                                        take_pending_siblings(&pending_for_worker, &target)
+                                    {
+                                        cache_icon(&sibling, &image);
+                                        settle_icon(&in_flight_for_worker, &sibling, true, false);
+                                    }
+                                }
+                            }
+                            warm_for_worker.fetch_sub(1, Ordering::AcqRel);
+                        }
                     }
                 }
 
@@ -193,30 +241,69 @@ impl ShellIconWorker {
         Self {
             pending,
             in_flight,
+            warm_outstanding,
             wake,
         }
     }
 
+    /// Queues a target a visible row is waiting for.
     fn request(&self, target: String) {
-        let should_send = self
+        let fresh = self
             .pending
             .lock()
             .map(|mut pending| pending.insert(target.clone()))
             .unwrap_or(false);
-        if !should_send {
+        if !fresh {
             return;
         }
         self.in_flight.fetch_add(1, Ordering::AcqRel);
-        if self.wake.try_send(target.clone()).is_err() {
+        if self.wake.try_send(IconJob::Row(target.clone())).is_err() {
+            // The row asks again on its next build; nothing may be left holding the
+            // drain gate for a job that never reached the thread.
             self.in_flight.fetch_sub(1, Ordering::AcqRel);
             if let Ok(mut pending) = self.pending.lock() {
                 pending.remove(&target);
             }
         }
     }
+
+    /// Feeds the catalog into the same thread while the launcher is idle, so the
+    /// first query of a session does not watch a page of icons arrive one row at a
+    /// time. Warm targets never enter `pending`, which is what keeps the drain gate
+    /// from waiting on the catalog: that stall is how held-back icons used to cost
+    /// 207-771 ms.
+    fn warm(&self, targets: Vec<String>) {
+        let pending = Arc::clone(&self.pending);
+        let outstanding = Arc::clone(&self.warm_outstanding);
+        let sender = self.wake.clone();
+        let _ = thread::Builder::new()
+            .name(String::from("flux-icon-warm"))
+            .spawn(move || {
+                for target in targets {
+                    if icon_is_cached(&target) {
+                        continue;
+                    }
+                    // One warm job in front of a row, and never a queue of them:
+                    // the channel is bounded, and a send it cannot hold is dropped.
+                    while outstanding.load(Ordering::Acquire) > 0
+                        || pending
+                            .lock()
+                            .map(|pending| !pending.is_empty())
+                            .unwrap_or(false)
+                    {
+                        thread::sleep(std::time::Duration::from_millis(25));
+                    }
+                    outstanding.fetch_add(1, Ordering::AcqRel);
+                    if sender.try_send(IconJob::Warm(target)).is_err() {
+                        outstanding.fetch_sub(1, Ordering::AcqRel);
+                        thread::sleep(std::time::Duration::from_millis(25));
+                    }
+                }
+            });
+    }
 }
 
-/// Takes the job out of the queue, false when somebody already settled it.
+/// Takes a row job out of the queue, false when a sibling already settled it.
 fn take_pending(pending: &Mutex<HashSet<String>>, target: &str) -> bool {
     pending
         .lock()
@@ -224,36 +311,55 @@ fn take_pending(pending: &Mutex<HashSet<String>>, target: &str) -> bool {
         .unwrap_or(false)
 }
 
-/// The queued targets whose icon is the one that was just extracted, removed from
-/// the queue in the same pass so no sibling can be claimed twice.
+/// The queued row targets whose icon is the one just extracted, removed from the
+/// queue in the same pass so no sibling can be claimed twice.
 fn take_pending_siblings(pending: &Mutex<HashSet<String>>, target: &str) -> Vec<String> {
     let IconClass::Extension(extension) = icon_class(target) else {
         return Vec::new();
     };
     let mut siblings = Vec::new();
     if let Ok(mut pending) = pending.lock() {
-        pending.retain(|queued| {
-            let shares =
-                matches!(icon_class(queued), IconClass::Extension(other) if other == extension);
-            if shares {
-                siblings.push(queued.clone());
-            }
-            !shares
-        });
+        let shared: Vec<String> = pending
+            .iter()
+            .filter(|queued| {
+                matches!(icon_class(queued), IconClass::Extension(other) if other == extension)
+            })
+            .cloned()
+            .collect();
+        for sibling in shared {
+            pending.remove(&sibling);
+            siblings.push(sibling);
+        }
     }
     siblings
 }
 
-fn settle_icon(in_flight: &AtomicUsize, target: &str, extracted: bool) {
-    in_flight.fetch_sub(1, Ordering::AcqRel);
-    let generation = SHELL_ICON_COMPLETION_GENERATION.fetch_add(1, Ordering::Release) + 1;
+/// Reports a ready icon. Only a target a row waits on moves the drain gate or the
+/// completion generation: a warm icon is simply there when the next row is built.
+fn settle_icon(in_flight: &AtomicUsize, target: &str, awaited: bool, extracted: bool) {
+    let generation = if awaited {
+        in_flight.fetch_sub(1, Ordering::AcqRel);
+        SHELL_ICON_COMPLETION_GENERATION.fetch_add(1, Ordering::Release) + 1
+    } else {
+        SHELL_ICON_COMPLETION_GENERATION.load(Ordering::Acquire)
+    };
     crate::paint_trace::note(
         "icon-loaded",
         &format!(
-            "generation={generation} extracted={} target={target}",
-            extracted as u8
+            "generation={generation} extracted={} awaited={} target={target}",
+            extracted as u8, awaited as u8
         ),
     );
+}
+
+#[cfg(windows)]
+fn icon_is_cached(target: &str) -> bool {
+    shell_icon_cache_lookup(target).is_some()
+}
+
+#[cfg(not(windows))]
+fn icon_is_cached(_target: &str) -> bool {
+    true
 }
 
 #[cfg(windows)]
@@ -266,7 +372,6 @@ fn cache_icon(target: &str, image: &[u8]) {
 
 #[cfg(not(windows))]
 fn cache_icon(_target: &str, _image: &[u8]) {}
-
 static SHELL_ICON_WORKER: OnceLock<ShellIconWorker> = OnceLock::new();
 pub(crate) fn shell_icon_worker() -> &'static ShellIconWorker {
     SHELL_ICON_WORKER.get_or_init(ShellIconWorker::spawn)
@@ -275,6 +380,12 @@ pub(crate) fn shell_icon_worker() -> &'static ShellIconWorker {
 /// True while the icon thread still owes results for the rows on screen.
 pub(crate) fn shell_icons_in_flight() -> bool {
     shell_icon_worker().in_flight.load(Ordering::Acquire) > 0
+}
+
+/// Loads the icons of the application catalog while the launcher is idle, so the
+/// first query of a session does not watch them arrive one row at a time.
+pub(crate) fn warm_shell_icons(targets: Vec<String>) {
+    shell_icon_worker().warm(targets);
 }
 
 #[cfg(windows)]

@@ -97,6 +97,9 @@ param(
     [switch]$TakeForeground,
     [switch]$SaveFrames,
     [int]$SampleEveryMs = 15,
+    # Idle time before any measurement: 0 measures a cold process, which is what the
+    # owner sees on the first open; 25000 measures after the idle icon warm-up.
+    [int]$IdleBeforeMs = 0,
     [int]$RowHeight = 24,
     [int]$HeaderHeight = 56,
     [string]$OutDir = (Join-Path $env:TEMP 'flux-list-flicker'),
@@ -350,6 +353,21 @@ function Show-Launcher([IntPtr]$handle) {
     }
 }
 
+function Send-Char([IntPtr]$handle, [string]$char) {
+    Show-Launcher $handle
+    [Flicker.Input]::TypeChar($handle, $char)
+}
+
+function Send-Backspace([IntPtr]$handle) {
+    Show-Launcher $handle
+    [Flicker.Input]::Backspace($handle)
+}
+
+function Send-Vk([IntPtr]$handle, [uint16]$vk) {
+    Show-Launcher $handle
+    [Flicker.Input]::PostVk($handle, $vk)
+}
+
 function Add-Observation([string]$phase, [string]$label, [string]$after, [long]$unix, $samples) {
     # Harness self-check: the launcher must actually hold the text this harness
     # believes it typed, otherwise the run measures a query that never existed.
@@ -389,13 +407,17 @@ try {
         throw 'the smoke took the foreground: WINDUI_SMOKE_NO_FOREGROUND did not take effect'
     }
 
-    [Flicker.Input]::TypeChar($handle, 'z')
+    Send-Char $handle 'z'
     Start-Sleep -Milliseconds 400
     if (@(Get-TraceEvents | Where-Object { $_.event -eq 'query' -and $_.detail -like 'value=z *' }).Count -eq 0) {
         throw 'posted characters never reached the launcher window'
     }
-    for ($i = 0; $i -lt 4; $i++) { [Flicker.Input]::Backspace($handle) }
+    for ($i = 0; $i -lt 4; $i++) { Send-Backspace $handle }
     Start-Sleep -Milliseconds 400
+    if ($IdleBeforeMs -gt 0) {
+        Write-Host "idling ${IdleBeforeMs}ms before measuring (icon warm-up)"
+        Start-Sleep -Milliseconds $IdleBeforeMs
+    }
 
     Write-Host ''
     Write-Host 'home: the first character typed into an empty field'
@@ -406,8 +428,9 @@ try {
     # is enough to ask Everything, so the window is open on purpose; '/' is the
     # owner's repro and matches no local row, 'c' is the common case that does.
     foreach ($probe in @('/', 'c')) {
+        Show-Launcher $handle
         $unix = [DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds()
-        [Flicker.Input]::TypeChar($handle, $probe)
+        Send-Char $handle $probe
         $samples = [Flicker.Sampler+Worker]::Run($handle, $InterKeyMs, $SampleEveryMs, $HeaderHeight, $RowHeight, '')
         Add-Observation 'home' "first $probe" $probe $unix $samples
         $events = @(Get-TraceEvents)
@@ -436,7 +459,7 @@ try {
         if ($forProbe.Count -eq 0) {
             $violations += "typing the first '$probe' into an empty field left the suggestion menu on screen for $($answered - $unix)ms: nothing was published for '$probe' before the file provider answered"
         }
-        [Flicker.Input]::Backspace($handle)
+        Send-Backspace $handle
         Start-Sleep -Milliseconds ($QuietMs + 150)
     }
 
@@ -445,7 +468,7 @@ try {
         $typed += [string]$char
         Show-Launcher $handle
         $unix = [DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds()
-        [Flicker.Input]::TypeChar($handle, $char)
+        Send-Char $handle $char
         $samples = [Flicker.Sampler+Worker]::Run($handle, $InterKeyMs, $SampleEveryMs, $HeaderHeight, $RowHeight, $(if ($SaveFrames) { $frameDir } else { '' }))
         if ($SaveFrames) {
             $safe = ($label -replace '[^A-Za-z0-9_.-]', '_')
@@ -462,7 +485,7 @@ try {
     for ($k = 0; $k -lt $Toggle.Length; $k++) {
         $held = $held.Substring(0, $held.Length - 1)
         $unix = [DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds()
-        [Flicker.Input]::Backspace($handle)
+        Send-Backspace $handle
         $samples = [Flicker.Sampler+Worker]::Run($handle, $InterKeyMs, $SampleEveryMs, $HeaderHeight, $RowHeight, $(if ($SaveFrames) { $frameDir } else { '' }))
         if ($SaveFrames) {
             $safe = ($label -replace '[^A-Za-z0-9_.-]', '_')
@@ -476,14 +499,14 @@ try {
         foreach ($char in $Toggle.ToCharArray()) {
             $current += [string]$char
             $unix = [DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds()
-            [Flicker.Input]::TypeChar($handle, $char)
+            Send-Char $handle $char
             $samples = [Flicker.Sampler+Worker]::Run($handle, $InterKeyMs, $SampleEveryMs, $HeaderHeight, $RowHeight, $(if ($SaveFrames) { $frameDir } else { '' }))
             Add-Observation 'toggle' "r$round add $char" $current $unix $samples
         }
         for ($k = 0; $k -lt $Toggle.Length; $k++) {
             $current = $current.Substring(0, $current.Length - 1)
             $unix = [DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds()
-            [Flicker.Input]::Backspace($handle)
+            Send-Backspace $handle
             $samples = [Flicker.Sampler+Worker]::Run($handle, $InterKeyMs, $SampleEveryMs, $HeaderHeight, $RowHeight, $(if ($SaveFrames) { $frameDir } else { '' }))
             Add-Observation 'toggle' "r$round delete" $current $unix $samples
         }
@@ -593,7 +616,13 @@ try {
             # first step that has to fill the icon cache measures a cold cache, and
             # which step that is depends on how many probes ran before it.
             $allEvents = @(Get-TraceEvents)
-            $loads = @($allEvents | Where-Object { $_.event -eq 'icon-loaded' -and $_.unix -ge $from -and $_.unix -lt $to })
+            # Only the arrivals a row was waiting for: the idle warm-up deliberately
+            # fills the cache without telling the tree, so its arrivals must not be
+            # held to a propagation the page never asked for.
+            $loads = @($allEvents | Where-Object {
+                $_.event -eq 'icon-loaded' -and $_.unix -ge $from -and $_.unix -lt $to -and
+                $_.detail -notmatch 'awaited=0'
+            })
             if ($loads.Count -eq 0) {
                 # Nothing was loaded in this window: the page was already cached.
             } elseif (-not $script:iconPageWarmed) {
@@ -627,10 +656,10 @@ try {
         # lasts tens of milliseconds, and which attempt lands inside it depends on
         # how warm the Everything index is right now.
         $actDelayMs = $SettleActMs + $attempt * 10
-        for ($k = 0; $k -lt ($Settle.Length + 4); $k++) { [Flicker.Input]::Backspace($handle) }
+        for ($k = 0; $k -lt ($Settle.Length + 4); $k++) { Send-Backspace $handle }
         Start-Sleep -Milliseconds 300
         foreach ($char in $Settle.ToCharArray()) {
-            [Flicker.Input]::TypeChar($handle, $char)
+            Send-Char $handle $char
             Start-Sleep -Milliseconds $SettleKeyMs
         }
         Start-Sleep -Milliseconds $actDelayMs
@@ -639,7 +668,7 @@ try {
         # the user never asked for. The stamp is taken around the post, so what counts
         # as "on screen when the user acted" is the state the handler itself sees.
         $keyUnix = [DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds()
-        [Flicker.Input]::PostVk($handle, 0x28)
+        Send-Vk $handle 0x28
         $keyUnix = [DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds()
         Start-Sleep -Milliseconds 700
         $allEvents = @(Get-TraceEvents)
@@ -681,11 +710,10 @@ try {
     }
     Write-Host ''
     Write-Host 'recall: editing the text must not keep a navigated row highlighted'
-    for ($k = 0; $k -lt ($Settle.Length + 6); $k++) { [Flicker.Input]::Backspace($handle) }
+    for ($k = 0; $k -lt ($Settle.Length + 6); $k++) { Send-Backspace $handle }
     Start-Sleep -Milliseconds 400
     foreach ($char in $Settle.ToCharArray()) {
-        Show-Launcher $handle
-        [Flicker.Input]::TypeChar($handle, $char)
+        Send-Char $handle $char
         Start-Sleep -Milliseconds $InterKeyMs
     }
     Start-Sleep -Milliseconds $QuietMs
@@ -713,13 +741,12 @@ try {
     }
     # Step A - move the highlight with the arrow keys, then erase one character: the
     # list belongs to the shorter query now, so the highlight has to return to row 0.
-    Show-Launcher $handle
-    [Flicker.Input]::PostVk($handle, 0x28)
+    Send-Vk $handle 0x28
     Start-Sleep -Milliseconds 80
-    [Flicker.Input]::PostVk($handle, 0x28)
+    Send-Vk $handle 0x28
     Start-Sleep -Milliseconds 80
     $eraseUnix = [DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds()
-    [Flicker.Input]::Backspace($handle)
+    Send-Backspace $handle
     Start-Sleep -Milliseconds 900
     $moved = @(Get-TraceEvents | Where-Object { $_.event -eq 'select' -and $_.unix -ge $eraseUnix })
     if ($moved.Count -eq 0) {
@@ -737,12 +764,17 @@ try {
     # Step B - his actual flow: recall a query from the history (plain Up on an empty
     # field takes the newest one, which is the same code path Alt+Up uses) and erase a
     # character of the recalled text.
-    for ($k = 0; $k -lt ($Settle.Length + 6); $k++) { [Flicker.Input]::Backspace($handle) }
+    for ($k = 0; $k -lt ($Settle.Length + 6); $k++) { Send-Backspace $handle }
     Start-Sleep -Milliseconds 500
-    Show-Launcher $handle
-    [Flicker.Input]::PostVk($handle, 0x26)
-    Start-Sleep -Milliseconds 900
-    $recalled = @((Get-TraceEvents | Where-Object { $_.event -eq 'query' } | Select-Object -Last 1))
+    Send-Vk $handle 0x26
+    # Wait for the recall to reach the field instead of sleeping once: the tick owns
+    # when the note appears, and reading too early looks like a lost keystroke.
+    $recalled = @()
+    for ($wait = 0; $wait -lt 80; $wait++) {
+        $recalled = @(Get-TraceEvents | Where-Object { $_.event -eq 'query' } | Select-Object -Last 1)
+        if ($recalled.Count -gt 0 -and $recalled[0].detail -match '^value=\S+ ') { break }
+        Start-Sleep -Milliseconds 25
+    }
     if ($recalled.Count -eq 0 -or $recalled[0].detail -notmatch '^value=(\S+) ') {
         throw "phase 'recall': the field text after Up could not be read"
     }
@@ -751,7 +783,7 @@ try {
         Write-Host "         recall+erase: skipped, the profile recalled '$recalledQuery' (needs a query of two or more characters)"
     } else {
         $recallEraseUnix = [DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds()
-        [Flicker.Input]::Backspace($handle)
+        Send-Backspace $handle
         Start-Sleep -Milliseconds 900
         $problem = Get-HeadAfterEdit 'recall+erase' ($recalledQuery.Substring(0, $recalledQuery.Length - 1)) $recallEraseUnix
         if ($problem) { $violations += $problem }

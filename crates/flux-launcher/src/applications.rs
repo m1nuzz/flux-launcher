@@ -47,6 +47,10 @@ impl ApplicationWorker {
             .name(String::from("flux-applications"))
             .spawn(move || {
                 let catalog = ApplicationCatalog::load();
+                // The catalog is known before the first keystroke, so its pictures can
+                // be loaded while nothing is on screen. A page of application rows
+                // otherwise costs one shell round trip per row, every session.
+                super::shell_icon_cache::warm_shell_icons(catalog.icon_targets());
                 while receiver.recv().is_ok() {
                     let Some(request) = latest_for_worker
                         .lock()
@@ -93,6 +97,17 @@ impl ApplicationCatalog {
         entries.sort_by_key(|result| result.title.to_ascii_lowercase());
         entries.truncate(MAX_CATALOG_ENTRIES);
         Self { entries }
+    }
+
+    /// Every icon target the catalog holds, without duplicates, for the idle
+    /// warm-up.
+    fn icon_targets(&self) -> Vec<String> {
+        let mut seen = std::collections::HashSet::new();
+        self.entries
+            .iter()
+            .filter_map(|entry| entry.target.clone())
+            .filter(|target| seen.insert(target.clone()))
+            .collect()
     }
 
     fn search(&self, query: &str) -> Vec<SearchResult> {
