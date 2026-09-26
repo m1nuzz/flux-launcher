@@ -378,6 +378,22 @@ fn main() {
     }
     *action_window_slot.borrow_mut() = Some(window_size.clone());
     let size_for_visibility = window_size.clone();
+    // The idle icon warm-up can only cover part of the catalog before he types, so
+    // it starts from what he actually launches.
+    let preferred_result_ids: Vec<String> = {
+        let settings = shared_settings
+            .read()
+            .expect("the settings lock is never poisoned");
+        let mut counted: Vec<(u64, String)> = settings
+            .launch_counts
+            .iter()
+            .map(|(id, entry)| (entry.count, id.clone()))
+            .collect();
+        counted.sort_unstable_by(|left, right| {
+            right.0.cmp(&left.0).then_with(|| left.1.cmp(&right.1))
+        });
+        counted.into_iter().map(|(_count, id)| id).collect()
+    };
     let application_worker = background_tasks::spawn_application_pipeline(
         &mut app,
         query,
@@ -391,6 +407,7 @@ fn main() {
         Rc::clone(&provider_results),
         priorities,
         history_mode,
+        preferred_result_ids,
     );
 
     let everything_worker = background_tasks::spawn_everything_pipeline(

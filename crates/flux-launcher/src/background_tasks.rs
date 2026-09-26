@@ -140,6 +140,7 @@ pub(crate) fn spawn_application_pipeline(
     providers: Rc<RefCell<ProviderResults>>,
     priorities: Signal<Vec<PriorityEntry>>,
     history_mode: Signal<bool>,
+    preferred_ids: Vec<String>,
 ) -> ApplicationWorker {
     let query_for_applications = query;
     let results_for_applications = results;
@@ -202,7 +203,7 @@ pub(crate) fn spawn_application_pipeline(
         }
         status_for_applications.set(response.status);
     });
-    ApplicationWorker::spawn(application_sender)
+    ApplicationWorker::spawn(application_sender, preferred_ids)
 }
 
 #[allow(clippy::too_many_arguments)]

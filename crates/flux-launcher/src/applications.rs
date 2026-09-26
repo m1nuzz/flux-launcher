@@ -1,3 +1,4 @@
+use std::collections::{HashMap, HashSet};
 use std::fs::OpenOptions;
 use std::io::Write;
 use std::sync::{mpsc, Arc, Mutex};
@@ -39,7 +40,7 @@ pub struct ApplicationWorker {
 }
 
 impl ApplicationWorker {
-    pub fn spawn(output: Sender<ApplicationResponse>) -> Self {
+    pub fn spawn(output: Sender<ApplicationResponse>, preferred_ids: Vec<String>) -> Self {
         let latest = Arc::new(Mutex::new(None::<ApplicationRequest>));
         let latest_for_worker = Arc::clone(&latest);
         let (wake, receiver) = mpsc::sync_channel::<()>(1);
@@ -50,7 +51,9 @@ impl ApplicationWorker {
                 // The catalog is known before the first keystroke, so its pictures can
                 // be loaded while nothing is on screen. A page of application rows
                 // otherwise costs one shell round trip per row, every session.
-                super::shell_icon_cache::warm_shell_icons(catalog.icon_targets());
+                super::shell_icon_cache::warm_shell_icons(
+                    catalog.icon_targets_in_order(&preferred_ids),
+                );
                 while receiver.recv().is_ok() {
                     let Some(request) = latest_for_worker
                         .lock()
@@ -100,13 +103,31 @@ impl ApplicationCatalog {
     }
 
     /// Every icon target the catalog holds, without duplicates, for the idle
-    /// warm-up.
-    fn icon_targets(&self) -> Vec<String> {
-        let mut seen = std::collections::HashSet::new();
-        self.entries
+    /// warm-up. The ids the owner launches most go first: the pass is slow enough
+    /// that its order decides which icons are ready when he opens the launcher
+    /// right after start, and everything else keeps the catalog order.
+    fn icon_targets_in_order(&self, preferred_ids: &[String]) -> Vec<String> {
+        let ranks: HashMap<&str, usize> = preferred_ids
             .iter()
-            .filter_map(|entry| entry.target.clone())
-            .filter(|target| seen.insert(target.clone()))
+            .enumerate()
+            .map(|(rank, id)| (id.as_str(), rank))
+            .collect();
+        let mut ordered: Vec<(usize, String)> = self
+            .entries
+            .iter()
+            .filter_map(|entry| {
+                let target = entry.target.clone()?;
+                Some((
+                    ranks.get(entry.id.as_str()).copied().unwrap_or(usize::MAX),
+                    target,
+                ))
+            })
+            .collect();
+        ordered.sort_by_key(|(rank, _target)| *rank);
+        let mut seen = HashSet::new();
+        ordered
+            .into_iter()
+            .filter_map(|(_rank, target)| seen.insert(target.clone()).then_some(target))
             .collect()
     }
 
@@ -191,6 +212,41 @@ mod tests {
         assert_eq!(results.len(), 1);
         assert_eq!(results[0].title, "Steam");
         assert_eq!(results[0].kind, ResultKind::Application);
+    }
+
+    #[test]
+    fn the_warm_up_loads_the_apps_he_launches_before_the_rest_of_the_catalog() {
+        let entry = |id: &str, title: &str, target: &str| SearchResult {
+            id: id.to_owned(),
+            title: title.to_owned(),
+            subtitle: String::from("Application • Start Menu"),
+            kind: ResultKind::Application,
+            source: ResultSource::ApplicationCatalog,
+            target: Some(target.to_owned()),
+        };
+        let catalog = ApplicationCatalog {
+            entries: vec![
+                entry("application:calibre", "calibre", r"C:\calibre\calibre.exe"),
+                entry("application:spotify", "Spotify", r"C:\Spotify\Spotify.exe"),
+                entry("application:steam", "Steam", r"C:\Steam\steam.exe"),
+                entry("application:calibre", "calibre", r"C:\calibre\calibre.exe"),
+            ],
+        };
+
+        let ordered = catalog.icon_targets_in_order(&[
+            String::from("application:steam"),
+            String::from("application:spotify"),
+        ]);
+
+        assert_eq!(
+            ordered,
+            vec![
+                r"C:\Steam\steam.exe",
+                r"C:\Spotify\Spotify.exe",
+                // Not launched: still warmed, in the catalog's own order, once.
+                r"C:\calibre\calibre.exe",
+            ]
+        );
     }
 
     #[test]
