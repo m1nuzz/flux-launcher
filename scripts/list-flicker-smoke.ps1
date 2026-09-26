@@ -336,8 +336,19 @@ $env:FLUX_PAINT_TRACE_FILE = $tracePath
 
 $violations = @()
 $script:observations = @()
+$script:iconPageWarmed = $false
 $process = Start-Process -FilePath $Executable -PassThru
 Write-Host "pid=$($process.Id) query=$Query toggle=$Toggle rounds=$Rounds inter_key=${InterKeyMs}ms quiet=${QuietMs}ms sample=${SampleEveryMs}ms"
+
+function Show-Launcher([IntPtr]$handle) {
+    # The run never takes the foreground, and the launcher hides itself when it
+    # loses activation, so a posted key can land on a window that is gone. Posted
+    # keys do nothing on a hidden window, which reads as a lost character.
+    if (-not [Flicker.Input]::IsWindowVisible($handle)) {
+        [void][Flicker.Input]::SendMessage($handle, 0x0312, [IntPtr]::Zero, [IntPtr]::Zero)
+        Start-Sleep -Milliseconds 250
+    }
+}
 
 function Add-Observation([string]$phase, [string]$label, [string]$after, [long]$unix, $samples) {
     # Harness self-check: the launcher must actually hold the text this harness
@@ -402,13 +413,21 @@ try {
         $events = @(Get-TraceEvents)
         # What the panel shows is whatever the last write put there, so a write for
         # this query strictly before the provider answered is the whole requirement.
-        $answer = @($events | Where-Object {
-            $_.event -eq 'response-everything' -and $_.detail -like "query=$probe *"
-        } | Select-Object -Last 1)
+        # The answer is waited for, not assumed: it lands around the sampling window
+        # itself, and reading the trace too early would throw on a build that is fine.
+        $answer = @()
+        for ($wait = 0; $wait -lt 60; $wait++) {
+            $events = @(Get-TraceEvents)
+            $answer = @($events | Where-Object {
+                $_.event -eq 'response-everything' -and $_.detail -like "query=$probe *"
+            })
+            if ($answer.Count -gt 0) { break }
+            Start-Sleep -Milliseconds 25
+        }
         if ($answer.Count -eq 0) {
             throw "home probe '$probe': the file provider never answered, so the reveal window was never measured"
         }
-        $answered = $answer[0].unix
+        $answered = ($answer | Measure-Object -Property unix -Minimum).Minimum
         $forProbe = @($events | Where-Object {
             $_.unix -ge $unix -and $_.unix -lt $answered -and $_.detail -like "query=$probe *" -and
             ($_.event -eq 'publish-initial' -or $_.event -eq 'list-write')
@@ -424,10 +443,7 @@ try {
     $typed = ''
     foreach ($char in $Query.ToCharArray()) {
         $typed += [string]$char
-        if (-not [Flicker.Input]::IsWindowVisible($handle)) {
-            [void][Flicker.Input]::SendMessage($handle, 0x0312, [IntPtr]::Zero, [IntPtr]::Zero)
-            Start-Sleep -Milliseconds 250
-        }
+        Show-Launcher $handle
         $unix = [DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds()
         [Flicker.Input]::TypeChar($handle, $char)
         $samples = [Flicker.Sampler+Worker]::Run($handle, $InterKeyMs, $SampleEveryMs, $HeaderHeight, $RowHeight, $(if ($SaveFrames) { $frameDir } else { '' }))
@@ -549,23 +565,26 @@ try {
             # the page was already cached, which is not a delay. The default budget
             # is above the ~100 ms the first page of a run can wait for the tick that
             # polls it, and far below the 207-771 ms the held-back propagation cost.
-            # The first keystroke of a run also warms the icon thread, and that page
-            # measured 4-176 ms here; the number this check exists for is the 207-771 ms
-            # the held-back propagation used to cost, so only judge a warm page.
-            if ($index -gt 0) {
-                $allEvents = @(Get-TraceEvents)
-                $loads = @($allEvents | Where-Object { $_.event -eq 'icon-loaded' -and $_.unix -ge $from -and $_.unix -lt $to })
-                if ($loads.Count -gt 0) {
-                    $lastLoad = ($loads | Measure-Object -Property unix -Maximum).Maximum
-                    $refresh = @($allEvents | Where-Object { $_.event -eq 'icon-refresh' -and $_.unix -ge $lastLoad } | Select-Object -First 1)
-                    if ($refresh.Count -eq 0) {
-                        $violations += "query '$($entry.after)' loaded $($loads.Count) icon(s) that were never propagated to the screen"
-                    } else {
-                        $delay = $refresh[0].unix - $lastLoad
-                        Write-Host ("           icons: loaded={0} propagated {1}ms after the last load" -f $loads.Count, $delay)
-                        if ($delay -gt $IconBudgetMs) {
-                            $violations += "query '$($entry.after)' showed its icons $delay ms after the last one finished loading (budget ${IconBudgetMs}ms)"
-                        }
+            # The number this check exists for is that 207-771 ms, so only judge a warm page: the
+            # first step that has to fill the icon cache measures a cold cache, and
+            # which step that is depends on how many probes ran before it.
+            $allEvents = @(Get-TraceEvents)
+            $loads = @($allEvents | Where-Object { $_.event -eq 'icon-loaded' -and $_.unix -ge $from -and $_.unix -lt $to })
+            if ($loads.Count -eq 0) {
+                # Nothing was loaded in this window: the page was already cached.
+            } elseif (-not $script:iconPageWarmed) {
+                $script:iconPageWarmed = $true
+                Write-Host ("           icons: cold page of {0} load(s), not judged" -f $loads.Count)
+            } else {
+                $lastLoad = ($loads | Measure-Object -Property unix -Maximum).Maximum
+                $refresh = @($allEvents | Where-Object { $_.event -eq 'icon-refresh' -and $_.unix -ge $lastLoad } | Select-Object -First 1)
+                if ($refresh.Count -eq 0) {
+                    $violations += "query '$($entry.after)' loaded $($loads.Count) icon(s) that were never propagated to the screen"
+                } else {
+                    $delay = $refresh[0].unix - $lastLoad
+                    Write-Host ("           icons: loaded={0} propagated {1}ms after the last load" -f $loads.Count, $delay)
+                    if ($delay -gt $IconBudgetMs) {
+                        $violations += "query '$($entry.after)' showed its icons $delay ms after the last one finished loading (budget ${IconBudgetMs}ms)"
                     }
                 }
             }
@@ -641,6 +660,7 @@ try {
     for ($k = 0; $k -lt ($Settle.Length + 6); $k++) { [Flicker.Input]::Backspace($handle) }
     Start-Sleep -Milliseconds 400
     foreach ($char in $Settle.ToCharArray()) {
+        Show-Launcher $handle
         [Flicker.Input]::TypeChar($handle, $char)
         Start-Sleep -Milliseconds $InterKeyMs
     }
@@ -669,6 +689,7 @@ try {
     }
     # Step A - move the highlight with the arrow keys, then erase one character: the
     # list belongs to the shorter query now, so the highlight has to return to row 0.
+    Show-Launcher $handle
     [Flicker.Input]::PostVk($handle, 0x28)
     Start-Sleep -Milliseconds 80
     [Flicker.Input]::PostVk($handle, 0x28)
@@ -694,6 +715,7 @@ try {
     # character of the recalled text.
     for ($k = 0; $k -lt ($Settle.Length + 6); $k++) { [Flicker.Input]::Backspace($handle) }
     Start-Sleep -Milliseconds 500
+    Show-Launcher $handle
     [Flicker.Input]::PostVk($handle, 0x26)
     Start-Sleep -Milliseconds 900
     $recalled = @((Get-TraceEvents | Where-Object { $_.event -eq 'query' } | Select-Object -Last 1))
