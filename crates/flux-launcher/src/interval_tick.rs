@@ -572,10 +572,13 @@ pub(crate) fn register_interval(
                 icon_refresh_generation_for_interval.set(completed_icon_generation);
             }
             // A provider can also answer after the keystroke that opened the
-            // generation, and the window has to follow the row count then too.
+            // generation, and the window has to follow the row count then too. The
+            // action bar owns its own height while it is open: refitting the window
+            // to the row count would cut off the actions the user just opened.
             if has_query
                 && !settings_visible_for_interval.get()
                 && !everything_prompt_visible_for_interval.get()
+                && !action_mode.get()
             {
                 let fitted = launcher_content_height(
                     results_for_interval.get().len(),
@@ -659,6 +662,12 @@ pub(crate) fn register_interval(
                 results_for_interval.set(built_in_results);
             }
         }
+        // A keystroke closes the action bar, and the height that bar was given is
+        // not the height of the next page: reset it before the panel is measured.
+        action_mode.set(false);
+        action_index.set(0);
+        action_items.set(Vec::new());
+        actions_for_interval.borrow_mut().clear();
         // Size the panel from the rows this keystroke actually published, which is
         // why this runs after them: fitting first would leave the previous
         // generation's height for a frame on every keystroke that shortens the list.
@@ -690,10 +699,6 @@ pub(crate) fn register_interval(
             &format!("size={target_width}x{target_height} has_query={has_query}"),
         );
         request_scroll(scroll_request_for_interval);
-        action_mode.set(false);
-        action_index.set(0);
-        action_items.set(Vec::new());
-        actions_for_interval.borrow_mut().clear();
         if !has_query {
             inline_completion_for_interval.set(String::new());
             status_for_interval.set(String::from("Ready"));

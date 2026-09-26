@@ -13,6 +13,22 @@ use super::shell_icon_extract::{
     is_executable_icon_target, shortcut_icon_location,
 };
 
+/// Milliseconds since the first icon was ever asked for, so the warm-up can tell a
+/// pause from a keystroke stream without reading the UI thread's state.
+fn icon_clock_ms() -> u64 {
+    static START: OnceLock<std::time::Instant> = OnceLock::new();
+    START
+        .get_or_init(std::time::Instant::now)
+        .elapsed()
+        .as_millis() as u64
+}
+
+/// How long the last row request has to age before the catalog may be warmed. A
+/// warm icon costs the same shell round trip a page of rows is waiting for, and one
+/// thread cannot serve both: warming in a pause is free, while warming between two
+/// keystrokes delayed a page's icons by 189 ms.
+const WARM_QUIET_MS: u64 = 250;
+
 pub(crate) fn icon_completion_generation_changed(previous: u64, current: u64) -> bool {
     previous != current
 }
@@ -148,6 +164,8 @@ pub(crate) struct ShellIconWorker {
     /// row never waits behind the catalog, and so the bounded channel cannot drop
     /// the rest of it.
     warm_outstanding: Arc<AtomicUsize>,
+    /// When a visible row last asked for an icon, on the icon clock.
+    last_row_request: Arc<AtomicU64>,
     wake: SyncSender<IconJob>,
 }
 
@@ -186,6 +204,7 @@ impl ShellIconWorker {
         let in_flight = Arc::new(AtomicUsize::new(0));
         let in_flight_for_worker = Arc::clone(&in_flight);
         let warm_outstanding = Arc::new(AtomicUsize::new(0));
+        let last_row_request = Arc::new(AtomicU64::new(0));
         let warm_for_worker = Arc::clone(&warm_outstanding);
         let (wake, receiver) = mpsc::sync_channel::<IconJob>(64);
         thread::Builder::new()
@@ -215,17 +234,13 @@ impl ShellIconWorker {
                         // The catalog is loaded one icon per quiet moment and never tells
                         // the tree: the next row build finds the picture in the cache.
                         IconJob::Warm(target) => {
+                            // A warm job fills the cache and nothing else. It must not
+                            // close a row's own request: that would move the completion
+                            // generation from inside the warm pass and repaint the page a
+                            // second time under a keystroke that was waiting for one.
                             if !icon_is_cached(&target) {
-                                let image = extract_icon(&target);
+                                extract_icon(&target);
                                 settle_icon(&in_flight_for_worker, &target, false, true);
-                                if let Some(image) = image {
-                                    for sibling in
-                                        take_pending_siblings(&pending_for_worker, &target)
-                                    {
-                                        cache_icon(&sibling, &image);
-                                        settle_icon(&in_flight_for_worker, &sibling, true, false);
-                                    }
-                                }
                             }
                             warm_for_worker.fetch_sub(1, Ordering::AcqRel);
                         }
@@ -242,12 +257,15 @@ impl ShellIconWorker {
             pending,
             in_flight,
             warm_outstanding,
+            last_row_request,
             wake,
         }
     }
 
     /// Queues a target a visible row is waiting for.
     fn request(&self, target: String) {
+        self.last_row_request
+            .store(icon_clock_ms(), Ordering::Release);
         let fresh = self
             .pending
             .lock()
@@ -276,12 +294,20 @@ impl ShellIconWorker {
         let pending = Arc::clone(&self.pending);
         let outstanding = Arc::clone(&self.warm_outstanding);
         let sender = self.wake.clone();
+        let last_row_request = Arc::clone(&self.last_row_request);
         let _ = thread::Builder::new()
             .name(String::from("flux-icon-warm"))
             .spawn(move || {
                 for target in targets {
                     if icon_is_cached(&target) {
                         continue;
+                    }
+                    // Only in a real pause, or the catalog competes with the page the
+                    // user is looking at: see `WARM_QUIET_MS`.
+                    while icon_clock_ms().saturating_sub(last_row_request.load(Ordering::Acquire))
+                        < WARM_QUIET_MS
+                    {
+                        thread::sleep(std::time::Duration::from_millis(25));
                     }
                     // One warm job in front of a row, and never a queue of them:
                     // the channel is bounded, and a send it cannot hold is dropped.

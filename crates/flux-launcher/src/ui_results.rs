@@ -121,7 +121,12 @@ pub(crate) fn build_result_list(
     .padding_edges(6, 6, 18, 6);
     Element::scroll()
         .width_match()
-        .height(RESULT_VIEWPORT_HEIGHT)
+        // The window is fitted to the row count, so the viewport has to take what
+        // is left rather than pin six rows: a fixed 288 made the column taller than
+        // the fitted window and pushed the footer out of the client area for every
+        // short query.
+        .weight(1.0)
+        .max_height(RESULT_VIEWPORT_HEIGHT)
         .child(result_list_body)
         .visible_when(move || show_results.get() && !action_mode.get())
 }

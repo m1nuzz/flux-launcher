@@ -44,9 +44,12 @@ pub(crate) fn acts_on_the_selected_row(event: &KeyEvent) -> bool {
                 | Key::Char('R')
         );
     }
+    // Home and End are deliberately absent: no handler moves a row on them, they
+    // only put the caret at an edge of the text, and settling for them published a
+    // half-filled snapshot the user then watched refill.
     matches!(
         event.key,
-        Key::Enter | Key::Tab | Key::Up | Key::Down | Key::Home | Key::End | Key::Right
+        Key::Enter | Key::Tab | Key::Up | Key::Down | Key::Right
     )
 }
 
@@ -164,16 +167,18 @@ mod tests {
 
     #[test]
     fn row_actions_are_the_keys_that_consume_a_result() {
-        for key in [
-            Key::Enter,
-            Key::Tab,
-            Key::Up,
-            Key::Down,
-            Key::Home,
-            Key::End,
-            Key::Right,
-        ] {
+        for key in [Key::Enter, Key::Tab, Key::Up, Key::Down, Key::Right] {
             assert!(acts_on_the_selected_row(&KeyEvent {
+                key,
+                pressed: true,
+                shift: false,
+                ctrl: false,
+            }));
+        }
+        // Home and End only move the caret: no handler reads a row on them, and
+        // settling for them published a half-filled snapshot that then refilled.
+        for key in [Key::Home, Key::End, Key::Left] {
+            assert!(!acts_on_the_selected_row(&KeyEvent {
                 key,
                 pressed: true,
                 shift: false,
