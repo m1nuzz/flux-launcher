@@ -357,23 +357,37 @@ fn take_pending(pending: &Mutex<HashSet<String>>, target: &str) -> bool {
 
 /// The queued row targets whose icon is the one just extracted, removed from the
 /// queue in the same pass so no sibling can be claimed twice.
+///
+/// The queue is snapshotted and classified BEFORE the lock is taken. `icon_class`
+/// states a path, and a stat on a sleeping or absent volume can take tens of
+/// milliseconds; spending that with the queue locked blocks every other row request,
+/// and it is paid per queued entry, so a page of sixteen rows pays it sixteen times.
+/// The classification is the same either way - only *when* the stat happens moves.
 fn take_pending_siblings(pending: &Mutex<HashSet<String>>, target: &str) -> Vec<String> {
     let IconClass::Extension(extension) = icon_class(target) else {
         return Vec::new();
     };
-    let mut siblings = Vec::new();
-    if let Ok(mut pending) = pending.lock() {
-        let shared: Vec<String> = pending
-            .iter()
-            .filter(|queued| {
-                matches!(icon_class(queued), IconClass::Extension(other) if other == extension)
-            })
-            .cloned()
-            .collect();
-        for sibling in shared {
-            pending.remove(&sibling);
-            siblings.push(sibling);
+    let Ok(queue) = pending.lock() else {
+        return Vec::new();
+    };
+    let queued: Vec<String> = queue.iter().cloned().collect();
+    drop(queue);
+    let mut siblings: Vec<String> = queued
+        .into_iter()
+        .filter(|candidate| {
+            matches!(icon_class(candidate), IconClass::Extension(other) if other == extension)
+        })
+        .collect();
+    if siblings.is_empty() {
+        return siblings;
+    }
+    match pending.lock() {
+        Ok(mut pending) => {
+            // A sibling another thread settled in between is simply not ours to hand
+            // out; it keeps its slot and asks again on its next build.
+            siblings.retain(|sibling| pending.remove(sibling));
         }
+        Err(_) => siblings.clear(),
     }
     siblings
 }
