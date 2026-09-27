@@ -4,7 +4,7 @@ use std::io::Write;
 use std::sync::{mpsc, Arc, Mutex};
 use std::thread;
 
-use flux_core::{matches_search_text, rank_results, SearchResult};
+use flux_core::{rank_results, PreparedQuery, SearchResult};
 use windui::prelude::Sender;
 
 pub(crate) use super::app_identity::{
@@ -137,16 +137,20 @@ impl ApplicationCatalog {
     }
 
     fn search(&self, query: &str) -> Vec<SearchResult> {
-        let normalized = normalize(query);
-        if normalized.is_empty() {
+        // The query is prepared once and the candidate's normalised form is written into
+        // one buffer for the whole catalog: 878 entries used to re-derive the query's
+        // normalised and compact forms on every single one of them.
+        let prepared = PreparedQuery::new(query);
+        if normalize(query).is_empty() {
             return Vec::new();
         }
-        let mut results = self
-            .entries
-            .iter()
-            .filter(|result| application_matches_query(result, &normalized))
-            .cloned()
-            .collect::<Vec<_>>();
+        let mut scratch = String::new();
+        let mut results = Vec::new();
+        for entry in &self.entries {
+            if application_matches_query(entry, &prepared, &mut scratch) {
+                results.push(entry.clone());
+            }
+        }
         rank_results(query, &mut results);
         results.truncate(MAX_APPLICATION_RESULTS);
         trace_application_probe(query, &results);
@@ -180,8 +184,12 @@ fn trace_application_probe(query: &str, results: &[SearchResult]) {
     }
 }
 
-fn application_matches_query(result: &SearchResult, normalized_query: &str) -> bool {
-    if matches_search_text(&result.title, normalized_query) {
+fn application_matches_query(
+    result: &SearchResult,
+    prepared: &PreparedQuery,
+    scratch: &mut String,
+) -> bool {
+    if prepared.matches(&result.title, scratch) {
         return true;
     }
     let Some(identity) = result.id.strip_prefix("application:target:") else {
@@ -193,7 +201,7 @@ fn application_matches_query(result: &SearchResult, normalized_query: &str) -> b
         .rsplit('\\')
         .next()
         .unwrap_or_default();
-    matches_search_text(executable, normalized_query)
+    prepared.matches(executable, scratch)
 }
 
 #[cfg(test)]
@@ -278,8 +286,17 @@ mod tests {
         let results = catalog.search("lmstudio");
         assert_eq!(results.len(), 2);
         assert_eq!(results[0].title, "LM Studio");
-        assert!(application_matches_query(&spaced_title, "lmstudio"));
-        assert!(!application_matches_query(&spaced_title, "!!!"));
+        let mut scratch = String::new();
+        assert!(application_matches_query(
+            &spaced_title,
+            &PreparedQuery::new("lmstudio"),
+            &mut scratch
+        ));
+        assert!(!application_matches_query(
+            &spaced_title,
+            &PreparedQuery::new("!!!"),
+            &mut scratch
+        ));
     }
 
     #[test]
