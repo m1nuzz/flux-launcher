@@ -135,18 +135,43 @@ pub(crate) enum Publish {
     Now,
 }
 
-/// The head of a snapshot when it is an installed application the screen does not
-/// show yet. Anything else - a reshuffle, or file results arriving later - is not
-/// new information to the user and stays under the typing holds.
-fn unseen_application_head<'a>(
+/// The head of a snapshot when it is something the screen does not show yet and the
+/// user asked for by name: an installed application.
+/// Anything else - a reshuffle, or file results arriving later - is not new
+/// information to the user and stays under the typing holds.
+fn unseen_head<'a>(
     merged: &'a [SearchResult],
     shown: &[SearchResult],
+    query: &str,
 ) -> Option<&'a str> {
     let head = merged.first()?;
     if !matches!(head.source, ResultSource::ApplicationCatalog) {
         return None;
     }
+    // An expression the calculator answers has to reach the screen with the
+    // calculator on top, and that row is still owed by a provider this gate does not
+    // wait for. Publishing the application that merely shares its digits would put an
+    // unrelated program - `1+1` matches `…-1.10.15…` - under the highlight for the rest
+    // of the burst, and Enter in that window would launch it.
+    if head.source == ResultSource::ApplicationCatalog && super::builtin_calc::owns_query(query) {
+        return None;
+    }
     (!shown.iter().any(|row| row.id == head.id)).then_some(head.id.as_str())
+}
+
+/// True when the calculator answers this text and its own row has not landed yet.
+///
+/// The calculator is a built-in with no off switch and answers in about a
+/// millisecond, so this is bounded rather than a wait on a provider that might be gone.
+/// It matters because the completeness gate covers the applications and the indexer, and `1+1` also matches an installed `…-1.10.15…` through the compact
+/// matcher: a snapshot published in the gap between those two answers puts an
+/// uninstaller under the highlight, and Enter in that gap launches it.
+fn calculator_owed(providers: &ProviderResults, query: &str) -> bool {
+    super::builtin_calc::owns_query(query)
+        && !providers
+            .plugins
+            .iter()
+            .any(|result| result.id == "builtin:calculator")
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -179,7 +204,7 @@ pub(crate) fn commit_provider_results(
     // knows an installed game about ten milliseconds after the letter that names it,
     // and waiting for the file provider to answer as well is what made a fast typist
     // think the search had not caught up.
-    let new_head = unseen_application_head(&merged, &shown);
+    let new_head = unseen_head(&merged, &shown, query);
     if hold && new_head.is_some() {
         if let Some(head) = new_head {
             super::paint_trace::note(
@@ -191,6 +216,18 @@ pub(crate) fn commit_provider_results(
                 ),
             );
         }
+    } else if calculator_owed(providers, query) {
+        // A query the calculator answers is not answered until the calculator's row is
+        // in it. This hold does not wait for the typing to pause: the answer is a
+        // millisecond away, and waiting for the pause would put a program that merely
+        // shares the query's digits on screen for a quarter of a second. The quiet tick
+        // is still the backstop, so a row that never arrives cannot strand the panel.
+        providers.pending_publish = true;
+        super::paint_trace::note(
+            "list-owed-calculator",
+            &format!("query={query} rows={} shown={}", merged.len(), shown.len()),
+        );
+        return;
     } else if hold && providers.published_query == query && providers.published_providers {
         // This keystroke is already on screen and the user is still typing. A
         // second publish for the same query would rebuild every row again - the
@@ -427,6 +464,169 @@ pub(crate) fn refresh_merged_results(
 mod tests {
     use super::*;
     use flux_core::{ResultKind, ResultSource};
+
+    fn application_row(id: &str, title: &str) -> SearchResult {
+        SearchResult {
+            id: id.to_owned(),
+            title: title.to_owned(),
+            subtitle: String::from("Application • Start Menu"),
+            kind: ResultKind::Application,
+            source: ResultSource::ApplicationCatalog,
+            target: None,
+        }
+    }
+
+    #[test]
+    fn an_expression_the_calculator_owns_never_borrows_the_unseen_head_escape() {
+        // `1+1` matches `…-1.10.15…` through the compact matcher, so the application
+        // half of the answer is ready first. Publishing it now would leave an
+        // uninstaller under the highlight until the calculator's own row arrives.
+        let merged = vec![application_row(
+            "application:uninstall",
+            "Uninstall 3D SDK 1.10.15",
+        )];
+        assert_eq!(
+            unseen_head(&merged, &[], "1+1"),
+            None,
+            "the calculator's row is still owed, so the head waits for it"
+        );
+        assert_eq!(
+            unseen_head(&merged, &[], "2026-08"),
+            None,
+            "a date-like query is an expression too, and the test above covers both"
+        );
+        assert_eq!(
+            unseen_head(&merged, &[], "3d sdk"),
+            Some("application:uninstall"),
+            "an ordinary word still gets the escape, which is what the fast typist needs"
+        );
+        assert_eq!(
+            unseen_head(
+                &merged,
+                &[application_row("application:uninstall", "Uninstall")],
+                "3d sdk"
+            ),
+            None,
+            "a row the screen already shows is not new information"
+        );
+    }
+
+    #[test]
+    fn a_typed_path_keeps_the_unseen_head_escape_the_calculator_guard_takes_away() {
+        // `f:\maxim\cmd` holds no operator, so the calculator never answers it and the
+        // place the user named must still be publishable the moment the probe has it.
+        let mut row = SearchResult::from_existing_path(r"F:\Maxim\cmd");
+        row.id = String::from("file:F:\\Maxim\\cmd");
+        let merged = vec![row];
+        assert_eq!(
+            unseen_head(&merged, &[], r"f:\maxim\cmd"),
+            Some("file:F:\\Maxim\\cmd")
+        );
+        assert_eq!(
+            unseen_head(&merged, &[], "maxim\\cmd"),
+            Some("file:F:\\Maxim\\cmd")
+        );
+    }
+
+    #[test]
+    fn a_query_the_calculator_answers_waits_for_the_calculator_row() {
+        use windui::signal::signal;
+
+        let app = application_row("application:uninstall", "Uninstall P...3D SDK 1.10.15");
+        let calculator = SearchResult {
+            id: String::from("builtin:calculator"),
+            title: String::from("= 2"),
+            subtitle: String::from("Calculator • 1+1"),
+            kind: ResultKind::Placeholder,
+            source: ResultSource::Plugin,
+            target: None,
+        };
+        let mut providers = ProviderResults::default();
+        // Everything has answered, so nothing in the completeness gate is holding this
+        // snapshot: the applications half of `1+1` would be published on its own, and
+        // `1+1` matches `…-1.10.15…` through the compact matcher.
+        providers.reset(1, Vec::new(), true);
+        providers.applications = vec![app.clone()];
+        providers.applications_ready = true;
+        providers.everything_ready = true;
+        providers.typing_active = false;
+        let results = signal(vec![app.clone()]);
+        let version = results.version();
+
+        commit_provider_results(
+            &mut providers,
+            "1+1",
+            &[],
+            signal(String::new()),
+            signal(0_usize),
+            signal(false),
+            results,
+            signal(false),
+            Publish::DeferWhileTyping,
+        );
+        assert_eq!(
+            results.version(),
+            version,
+            "an uninstaller must not reach the screen under the highlight while the answer is owed"
+        );
+        assert!(
+            providers.pending_publish,
+            "the snapshot waits in the vectors"
+        );
+
+        providers.plugins = vec![calculator];
+        commit_provider_results(
+            &mut providers,
+            "1+1",
+            &[],
+            signal(String::new()),
+            signal(0_usize),
+            signal(false),
+            results,
+            signal(false),
+            Publish::DeferWhileTyping,
+        );
+        assert_eq!(
+            results.get().first().map(|row| row.id.as_str()),
+            Some("builtin:calculator"),
+            "one publish, with the calculator on top"
+        );
+        assert!(!providers.pending_publish);
+    }
+
+    #[test]
+    fn an_ordinary_word_keeps_publishing_without_the_calculator() {
+        use windui::signal::signal;
+
+        let app = application_row("application:uninstall", "Uninstall 3D SDK 1.10.15");
+        let mut providers = ProviderResults::default();
+        providers.reset(1, Vec::new(), true);
+        providers.applications = vec![app.clone()];
+        providers.applications_ready = true;
+        providers.everything_ready = true;
+        let results = signal(Vec::new());
+
+        commit_provider_results(
+            &mut providers,
+            "3d sdk",
+            &[],
+            signal(String::new()),
+            signal(0_usize),
+            signal(false),
+            results,
+            signal(false),
+            Publish::DeferWhileTyping,
+        );
+        assert_eq!(
+            results.get().len(),
+            1,
+            "a word with no expression publishes straight away"
+        );
+        assert!(
+            !providers.pending_publish,
+            "no expression, nothing to wait for"
+        );
+    }
 
     #[test]
     fn pending_non_empty_query_keeps_previous_result_list_visible() {

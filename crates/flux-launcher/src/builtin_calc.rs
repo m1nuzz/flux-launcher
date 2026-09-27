@@ -7,9 +7,7 @@ pub(crate) struct CalculatorProvider;
 impl BuiltinProvider for CalculatorProvider {
     fn query(&self, request: &BuiltinQuery) -> Vec<BuiltinResult> {
         let expression = request.query.trim();
-        if expression.len() > CALCULATOR_MAX_QUERY_LENGTH
-            || !expression.chars().any(is_calculator_operator)
-        {
+        if !owns_query(expression) {
             return Vec::new();
         }
         let Ok(value) = evaluate_expression(expression) else {
@@ -28,6 +26,20 @@ impl BuiltinProvider for CalculatorProvider {
             action: Some(BuiltinAction::CopyText(formatted)),
         }]
     }
+}
+
+/// True when this text is an expression the calculator answers.
+///
+/// The single definition of what the calculator owns, so a publisher that has to
+/// decide whether to wait for it asks this and not a second guess. `1+1` also matches
+/// an installed `…-1.10.15…` through the compact matcher, and a list that puts that
+/// application on top leaves the calculator for the next quiet tick: the row the user
+/// sees under the highlight is then an uninstaller.
+pub(crate) fn owns_query(query: &str) -> bool {
+    let expression = query.trim();
+    expression.len() <= CALCULATOR_MAX_QUERY_LENGTH
+        && expression.chars().any(is_calculator_operator)
+        && evaluate_expression(expression).is_ok()
 }
 
 const CALCULATOR_MAX_QUERY_LENGTH: usize = 128;
@@ -267,5 +279,40 @@ mod tests {
                 obsidian_keyword: String::from("ob"),
             })
             .is_empty());
+    }
+
+    #[test]
+    fn owns_query_is_exactly_what_the_provider_answers() {
+        // The publisher that waits for this asks the calculator, not a second guess, so
+        // the two lists have to be the same list: what `query` answers is what
+        // `owns_query` claims, for every input the launcher can be handed.
+        for owned in ["1+1", "12+34", "2*3", "2026-08", "1+", " 1+1 ", "1 / 0"] {
+            let request = BuiltinQuery {
+                query: String::from(owned),
+                google_enabled: false,
+                google_keyword: String::from("g"),
+                obsidian_enabled: false,
+                obsidian_keyword: String::from("ob"),
+            };
+            assert_eq!(
+                owns_query(owned),
+                !CalculatorProvider.query(&request).is_empty(),
+                "{owned:?} is claimed and answered differently"
+            );
+        }
+        for not_owned in [
+            "steam",
+            "cmd",
+            "notepad.exe",
+            "ext:zip",
+            "dm:today",
+            r"f:\maxim\cmd",
+            "maxim\\cmd",
+            "",
+            "1",
+            "-",
+        ] {
+            assert!(!owns_query(not_owned), "{not_owned:?} is not an expression");
+        }
     }
 }
