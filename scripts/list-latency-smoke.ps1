@@ -39,6 +39,7 @@ param(
     [int]$SampleMs = 15,
     [int]$Rounds = 1,
     [int]$LatencyBudgetMs = 150,
+    [int]$IdleBeforeMs = 0,
     [string]$OutDir = (Join-Path $env:TEMP 'flux-list-latency'),
     [string]$SettingsFile = (Join-Path $env:APPDATA 'FluxLauncher\settings.json')
 )
@@ -221,6 +222,13 @@ function Invoke-Build([string]$exe, [string]$label) {
             $handle = [LatencyProbe]::FindByPid([uint32]$process.Id)
         }
         if ($handle -eq [IntPtr]::Zero) { throw "$label : the launcher window never appeared" }
+        # A cold process is what the owner sees on the first open; a warmed one is what he
+        # sees later. The two differ by the idle icon warm-up, which is worth separating
+        # before blaming the search path for either number.
+        if ($IdleBeforeMs -gt 0) {
+            Write-Host "   ($label : idling $IdleBeforeMs ms before measuring)"
+            Start-Sleep -Milliseconds $IdleBeforeMs
+        }
         Start-Sleep -Seconds 3
         $process.Refresh()
         $idle = [pscustomobject]@{
