@@ -586,8 +586,12 @@ pub(crate) fn register_interval(
                 && !everything_prompt_visible_for_interval.get()
                 && !action_mode.get()
             {
+                // `with` reads the length in place. `get` would deep-clone the whole
+                // result vector - every title, subtitle and path of every row - on
+                // every 16 ms tick, only to be dropped after taking a len.
+                let row_count = results_for_interval.with(|rows| rows.len());
                 let fitted = launcher_content_height(
-                    results_for_interval.get().len(),
+                    row_count,
                     launcher_height.get() as i32,
                 );
                 if fitted != last_fitted_height {
@@ -642,7 +646,7 @@ pub(crate) fn register_interval(
             providers.reset(sequence, built_in_results.clone(), everything_expected);
             let publish_initial_results = should_publish_initial_query_results(
                 has_query,
-                results_for_interval.get().is_empty(),
+                results_for_interval.with(|rows| rows.is_empty()),
                 providers.published_query.is_empty(),
             );
             if publish_initial_results {
@@ -694,7 +698,7 @@ pub(crate) fn register_interval(
             && !settings_visible_for_interval.get()
             && !everything_prompt_visible_for_interval.get()
         {
-            launcher_content_height(results_for_interval.get().len(), target_height)
+            launcher_content_height(results_for_interval.with(|rows| rows.len()), target_height)
         } else {
             target_height
         };
