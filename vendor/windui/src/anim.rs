@@ -27,6 +27,10 @@ thread_local! {
     static DAMAGE_FULL: Cell<bool> = const { Cell::new(false) };
     /// 本帧是否有控件请求「下一帧重排」（布局动画：高度补间等每帧改变几何）。
     static RELAYOUT: Cell<bool> = const { Cell::new(false) };
+    /// 控件登记的「再过这么久需要一帧」。用于按时间推进、但并不需要连续动画的
+    /// 视觉状态（典型是闪烁的光标）：登记一次即可，宿主睡到点再画一帧。
+    /// 由控件在 paint 内登记，宿主在每轮循环开头取走。
+    static SCHEDULED: Cell<Option<std::time::Duration>> = const { Cell::new(None) };
 }
 
 /// 本帧动画脏区。`Full`=需整窗重绘；`Rect`=仅该区域；`None`=无动画脏区。
@@ -117,6 +121,27 @@ pub(crate) fn reset_request() {
     DAMAGE_FULL.with(|c| c.set(false));
     PAINT_RECT.with(|c| c.set(None));
     RELAYOUT.with(|c| c.set(false));
+}
+
+/// 登记「`d` 之后需要一帧」，多次登记取最早的一个。
+///
+/// 与 [`request_repaint`] 的区别：那个是「我正在动画，下一帧马上来」，宿主因此连续出帧；
+/// 这个是「到某个时刻才有变化」，宿主可以先睡到那一刻。按时间推进的视觉状态（闪烁的
+/// 光标）必须走这里：若它在每次 paint 里 [`request_repaint`]，宿主就会永远停在动画
+/// 分支上，以显示器刷新率持续出帧——一个聚焦的输入框就足以让整个窗口每帧重绘，
+/// 空闲时不再是零 CPU，每秒白烧掉几十毫秒的 UI 线程。
+pub fn schedule_repaint_after(d: std::time::Duration) {
+    SCHEDULED.with(|c| {
+        let keep = matches!(c.get(), Some(current) if current <= d);
+        if !keep {
+            c.set(Some(d));
+        }
+    });
+}
+
+/// 宿主：取走本轮登记的延迟，`None` 表示没有控件等着要帧。
+pub(crate) fn take_scheduled() -> Option<std::time::Duration> {
+    SCHEDULED.with(|c| c.replace(None))
 }
 
 /// 宿主/平台：本帧是否有控件请求了动画。

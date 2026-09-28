@@ -1256,6 +1256,14 @@ impl EventCtx<'_> {
     pub fn now_ms(&self) -> u64 {
         crate::anim::clock_ms()
     }
+    /// Ask for the app's interval callback to run on the next loop turn.
+    ///
+    /// Use it from an event handler whose work is gated on the interval noticing
+    /// something the user just did: the request takes the wait for that noticing out
+    /// of the keystroke, while the timer keeps its own period for everything else.
+    pub fn request_interval_tick(&self) {
+        crate::platform::request_interval_tick();
+    }
     /// 请求重绘本控件（纯视觉变化，不改布局）。失效区域取本节点视觉矩形（含投影/焦点环）。
     pub fn mark_dirty(&mut self) {
         let r = self.tree.visual_bounds(self.self_id);

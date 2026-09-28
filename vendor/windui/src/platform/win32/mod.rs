@@ -1274,6 +1274,32 @@ unsafe fn set_interval_timers(hwnd: HWND, enabled: bool) {
     }
 }
 
+/// Runs the app's interval callbacks straight away, ahead of any paint.
+///
+/// The obvious way to honour a request for "run my interval work now" is to re-arm the
+/// timer at 1 ms, and that is what this first did - measured, it was the wrong fix. A
+/// 1 ms timer cannot beat the work already in flight: on a keystroke the window is about
+/// to repaint a translucent surface, and the timer message was delivered 44-47 ms after
+/// the key, behind that repaint. The request exists precisely to get ahead of the wait,
+/// so the callback runs here instead, at the top of the loop and therefore before the
+/// repaint the key just asked for.
+unsafe fn run_pending_intervals(hwnd: HWND) {
+    if !crate::platform::take_interval_tick_request() {
+        return;
+    }
+    let count = state_from(hwnd)
+        .map(|state| state.handler.intervals().len())
+        .unwrap_or(0);
+    for index in 0..count {
+        let needs_repaint = state_from(hwnd)
+            .map(|state| state.handler.on_interval_fired(index))
+            .unwrap_or(false);
+        if needs_repaint {
+            let _ = InvalidateRect(Some(hwnd), None, false);
+        }
+    }
+}
+
 unsafe fn run_message_loop(hwnd: HWND) {
     // 动画帧间隔按显示器刷新率取整（默认 60fps 上限，刷新率 <60 时回退到实际值）。
     // 注：仅起始采样一次；跨刷新率不同的显示器移动后不更新（单窗口小工具可接受）。
@@ -1282,21 +1308,56 @@ unsafe fn run_message_loop(hwnd: HWND) {
     let mut last_frame = std::time::Instant::now();
     // 仅动画期间持有（提升定时器分辨率），空闲时 None 由 Drop 归还，省电。
     let mut hires: Option<TimerResolution> = None;
+    // A control whose look advances on a schedule - a blinking caret is the one that
+    // ships - registers *when* its next frame is due instead of asking for one on
+    // every paint. The deadline is waited on like a frame deadline, so the loop still
+    // drops back to a blocking idle between the scheduled frames. A request per paint
+    // instead pins the loop to the display refresh rate for as long as the field is
+    // focused, which is a full core spent repainting a panel that did not change.
+    let mut sched_due: Option<std::time::Instant> = None;
     loop {
-        let animating = IsWindowVisible(hwnd).as_bool()
-            && !IsIconic(hwnd).as_bool()
+        // An app can ask for its interval work now instead of after a period. Run at the
+        // top of the loop so it lands right after the event that asked for it and before
+        // the repaint that event scheduled, in both the animating and the idle branch.
+        run_pending_intervals(hwnd);
+        if sched_due.is_none() {
+            sched_due = crate::anim::take_scheduled().map(|d| std::time::Instant::now() + d);
+        }
+        let animating_window = IsWindowVisible(hwnd).as_bool() && !IsIconic(hwnd).as_bool();
+        let animating = animating_window
             && state_from(hwnd)
                 .map(|s| s.handler.wants_animation())
                 .unwrap_or(false);
-        if animating {
+        let waiting_for_sched = sched_due.is_some();
+        if animating || waiting_for_sched {
             // 提升定时器分辨率到 1ms：否则 MsgWait 超时被默认 ~15.6ms tick 向上取整，
             // 16ms 等待常变成 ~31ms → 实测掉到 ~30fps。
             if hires.is_none() {
                 hires = Some(TimerResolution::raise());
             }
             // 等待输入，至多到下一帧截止；零句柄，仅作可被输入中断的定时等待。
-            let elapsed = last_frame.elapsed().as_millis();
-            let wait = frame_ms.saturating_sub(elapsed) as u32;
+            // An animation frame is due every frame interval; a registered deadline is
+            // due once. Only an animation may advance a frame on its own - waiting for
+            // a deadline must not turn into a frame per interval, which is the loop
+            // this whole path exists to avoid.
+            let now = std::time::Instant::now();
+            let far = std::time::Duration::from_millis(u32::MAX as u64);
+            let until_frame = if animating {
+                last_frame
+                    .checked_add(std::time::Duration::from_millis(frame_ms as u64))
+                    .map(|due| due.saturating_duration_since(now))
+                    .unwrap_or_default()
+            } else {
+                far
+            };
+            let until_sched = match sched_due {
+                Some(due) if due > now => due - now,
+                _ => far,
+            };
+            let wait = until_frame
+                .min(until_sched)
+                .as_millis()
+                .min(u32::MAX as u128) as u32;
             MsgWaitForMultipleObjectsEx(None, wait, QS_ALLINPUT, MWMO_INPUTAVAILABLE);
             // 非阻塞排空所有待处理消息。
             while PeekMessageW(&mut msg, None, 0, 0, PM_REMOVE).as_bool() {
@@ -1306,8 +1367,13 @@ unsafe fn run_message_loop(hwnd: HWND) {
                 let _ = TranslateMessage(&msg);
                 DispatchMessageW(&msg);
             }
-            // 到达帧截止才推进一帧（与唤醒原因解耦，保证 ≤刷新率且不冻结）。
-            if last_frame.elapsed().as_millis() >= frame_ms {
+            let now = std::time::Instant::now();
+            let sched_ready = matches!(sched_due, Some(due) if due <= now);
+            if sched_ready {
+                sched_due = None;
+            }
+            let frame_due = animating && last_frame.elapsed().as_millis() >= frame_ms;
+            if sched_ready || frame_due {
                 let _ = InvalidateRect(Some(hwnd), None, false);
                 let _ = UpdateWindow(hwnd);
                 last_frame = std::time::Instant::now();
@@ -3071,6 +3137,14 @@ unsafe fn dispatch_key_event(hwnd: HWND, ev: KeyEvent) {
     }
     if repaint {
         let _ = InvalidateRect(Some(hwnd), None, false);
+    }
+    // A key is the one input that routinely changes what interval-driven work is about
+    // to do - a search box that asks its providers from a timer, a form that validates
+    // on the next tick. Ask the host to run that work on the next loop turn instead of
+    // after a whole period, so the wait does not land in front of the keystroke. The
+    // timer keeps its own period: the request only shortens this one wait.
+    if is_character || ev.pressed {
+        crate::platform::request_interval_tick();
     }
     apply_window_op(hwnd);
     apply_dialog_request(hwnd);
