@@ -9,7 +9,7 @@ use super::applications::canonical_application_id;
 use super::provider_merge::{
     merge_application_duplicates, preserve_everything_file_order, trace_query_probe,
 };
-use super::ui_constants::MAX_VISIBLE_RESULTS;
+use super::ui_constants::{MAX_VISIBLE_RESULTS, SHRINK_HOLD_GRACE_MS};
 
 /// Keep the previous result list visible while asynchronous providers compute a
 /// new non-empty query. Immediate publication is safe for the home page (empty
@@ -51,6 +51,12 @@ pub(crate) struct ProviderResults {
     /// screen is deferred instead of published, so one keystroke never rebuilds the
     /// whole row tree twice.
     pub(crate) typing_active: bool,
+    /// How long the current query has been standing, on the search clock.
+    ///
+    /// The interval tick owns that clock, so it publishes the age here for the provider
+    /// commits, which arrive on the UI thread's channel with no clock of their own. It
+    /// is what bounds how long a shrinking snapshot may be held back.
+    pub(crate) typing_age_ms: u64,
     /// A complete snapshot is waiting in the provider vectors for the next quiet
     /// tick, which publishes it.
     pub(crate) pending_publish: bool,
@@ -79,6 +85,7 @@ impl ProviderResults {
         // A reset only happens on a keystroke, and any deferred snapshot belongs
         // to the query that was just replaced.
         self.typing_active = true;
+        self.typing_age_ms = 0;
         self.pending_publish = false;
         self.published_providers = false;
     }
@@ -239,7 +246,11 @@ pub(crate) fn commit_provider_results(
             &format!("query={query} rows={}", merged.len()),
         );
         return;
-    } else if hold && merged.len() < shown.len() && !providers.snapshot_is_complete() {
+    } else if hold
+        && merged.len() < shown.len()
+        && !providers.snapshot_is_complete()
+        && providers.typing_age_ms < SHRINK_HOLD_GRACE_MS
+    {
         // A snapshot smaller than the list already on screen would collapse the
         // panel to one or two rows for a frame and refill it later - the flash
         // reproduced by typing a letter and deleting it again. Keep the fuller

@@ -483,6 +483,10 @@ pub(crate) fn register_interval(
         if query_changed {
             last_query = next_query.clone();
             last_query_change_ms = now_ms;
+            // The query is brand new, so the shrink hold starts its grace from here.
+            // The provider commits read this age to decide how long a shorter snapshot
+            // may still be held back.
+            providers_for_interval.borrow_mut().typing_age_ms = 0;
             super::paint_trace::note(
                 "query",
                 &format!("value={next_query} len={}", next_query.chars().count()),
@@ -532,6 +536,8 @@ pub(crate) fn register_interval(
             let query_is_quiet = now_ms.saturating_sub(last_query_change_ms) >= TYPING_QUIET_MS;
             let mut providers = providers_for_interval.borrow_mut();
             providers.typing_active = !query_is_quiet;
+            providers.typing_active = !query_is_quiet;
+            providers.typing_age_ms = now_ms.saturating_sub(last_query_change_ms);
             if query_is_quiet && providers.pending_publish {
                 let priority_ids = priorities_for_interval
                     .get()
