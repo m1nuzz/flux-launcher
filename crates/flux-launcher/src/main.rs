@@ -129,6 +129,9 @@ fn main() {
     let action_items = signal(Vec::<ActionItem>::new());
     let action_window_slot = Rc::new(RefCell::new(None::<WindowSizeHandle>));
     let status = signal(String::from("Ready"));
+    // The action bar shows a short token derived from the same signal; the interval
+    // fills it. See compact_provider_status.
+    let status_compact = signal(String::new());
     let update_status = signal(String::from("Stable updates are checked automatically"));
     let update_available = signal(None::<updater::StableUpdate>);
     let update_install_progress = signal(None::<(String, updater::DownloadProgress)>);
@@ -241,7 +244,7 @@ fn main() {
         settings.smooth_caret_duration_ms,
     );
 
-    let action_bar = ui_results::build_action_bar(show_results, action_mode);
+    let action_bar = ui_results::build_action_bar(show_results, action_mode, status_compact);
     let result_list = ui_results::build_result_list(
         result_source,
         selected_id,
@@ -664,6 +667,7 @@ fn main() {
         launcher_preview_text,
         icon_refresh_generation,
         status,
+        status_compact,
         show_results,
         inline_completion,
         selection_touched,

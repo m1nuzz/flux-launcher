@@ -14,9 +14,87 @@ use super::provider_snapshot::{refresh_merged_results, ProviderResults};
 use super::result_actions::{execute_result_action, selected_result, ActionItem, ActionKind};
 use super::result_row::{result_row, ActionBarGeometryProbe};
 use super::result_widgets::ActionRowAnchor;
-use super::ui_constants::{ACTION_BAR_HEIGHT, ACTION_BAR_WIDTH, RESULT_VIEWPORT_HEIGHT};
+use super::ui_constants::{
+    ACTION_BAR_HEIGHT, ACTION_BAR_STATUS_WIDTH, ACTION_BAR_WIDTH, RESULT_VIEWPORT_HEIGHT,
+};
 
-pub(crate) fn build_action_bar(show_results: Signal<bool>, action_mode: Signal<bool>) -> Element {
+/// Longest token the bar can show. The bound is belt-and-braces: the label is already
+/// capped to one line and to ACTION_BAR_STATUS_WIDTH, so a status nobody anticipated
+/// still cannot wrap or reach the key hints. It keeps the common case free of an
+/// ellipsis.
+const STATUS_TOKEN_MAX: usize = 9;
+
+/// The action bar is a single 22 px line, and AGENTS.md requires the provider status to
+/// be visible there. The providers publish sentences - "16 Everything result(s)" - which
+/// do not fit beside the key hints, so this shortens each status the app actually
+/// publishes into a token that does. Anything unrecognised is truncated rather than
+/// returned whole: a longer string would print over the hints, because a Frame does not
+/// push a sibling aside and will not make room either.
+pub(crate) fn compact_provider_status(status: &str) -> String {
+    let trimmed = status.trim();
+    if trimmed.is_empty() || trimmed == "Ready" {
+        return String::new();
+    }
+    // "N application result(s)", "N Everything result(s)", "N Flow plugin result(s)".
+    for (marker, token) in [
+        ("application result", "apps"),
+        ("Everything result", "files"),
+        ("Flow plugin result", "plug"),
+    ] {
+        if let Some(at) = trimmed.find(marker) {
+            // The marker already carries the "result(s)", so what precedes it is the
+            // count on its own. A result list is capped well below three digits, so a
+            // bare "99+" reads any larger count without widening the token.
+            let count = trimmed[..at].trim();
+            if !count.is_empty() && count.chars().all(|c| c.is_ascii_digit()) {
+                return if count.len() > 2 {
+                    String::from("99+")
+                } else {
+                    format!("{count} {token}")
+                };
+            }
+        }
+    }
+    for (exact, token) in [
+        ("Everything is not available", "no ES"),
+        ("Everything query timed out", "slow"),
+        ("No native Flow plugins installed", "no plug"),
+        ("No native Rust plugin host installed", "no host"),
+        (
+            "Everything auto-enable is disabled in Flux settings",
+            "ES off",
+        ),
+        ("Game Mode: On", "GM on"),
+        ("Game Mode: Off", "GM off"),
+    ] {
+        if trimmed == exact {
+            return String::from(token);
+        }
+    }
+    if trimmed.starts_with("Everything query failed to send") {
+        return String::from("error");
+    }
+    if trimmed.starts_with("Native plugin host restarted") {
+        return String::from("restart");
+    }
+    if let Some(count) = trimmed.strip_suffix("native Flow plugin(s) did not respond") {
+        let count = count.trim();
+        if !count.is_empty() && count.chars().all(|c| c.is_ascii_digit()) {
+            return format!("{count} dead");
+        }
+    }
+    let mut out: String = trimmed.chars().take(STATUS_TOKEN_MAX).collect();
+    if trimmed.chars().count() > STATUS_TOKEN_MAX {
+        out.pop();
+    }
+    out
+}
+
+pub(crate) fn build_action_bar(
+    show_results: Signal<bool>,
+    action_mode: Signal<bool>,
+    status: Signal<String>,
+) -> Element {
     let action_hint = |key: &'static str, label: &'static str| {
         Element::row()
             .height(22)
@@ -43,12 +121,29 @@ pub(crate) fn build_action_bar(show_results: Signal<bool>, action_mode: Signal<b
         .height(22)
         .spacing(8)
         .child(action_hint("↵", "Open"))
-        .child(action_hint("Ctrl + R", "Run as admin"))
-        .child(action_hint("Alt + Enter", "Open file location"));
+        .child(action_hint("Ctrl + R", "Admin"))
+        .child(action_hint("Alt + Enter", "Location"));
     Element::stack()
         .width(ACTION_BAR_WIDTH)
         .height(ACTION_BAR_HEIGHT)
         .child(action_bar_content.align(Align::Center))
+        // The provider status AGENTS.md asks for. A Frame positions every child against
+        // the whole content rect, so this leading-edge child overlays the bar and leaves
+        // the centred hints exactly where they are. The price of that is that a Frame
+        // will not make room either, so the token is bounded to the free space the
+        // shortened hints leave at the leading edge, one line, vertically centred on the
+        // same line as the hints. Only the token hides when there is nothing to say.
+        .child(
+            Element::label_signal(status)
+                .font_size(9.0)
+                .fg(Color::rgba(222, 233, 248, 200))
+                .max_lines(1)
+                .truncate(Truncate::End)
+                .width(ACTION_BAR_STATUS_WIDTH)
+                .height(ACTION_BAR_HEIGHT)
+                .align(Align::Start)
+                .visible_when(move || !status.get().is_empty()),
+        )
         // Keep the probe inside the same real frame so its telemetry describes
         // the exact slot that is centered between the launcher insets.
         .child(
@@ -246,9 +341,9 @@ mod action_bar_fit {
     /// The action bar as main.rs nests it, measured with the real font. The three key
     /// hints fill 317 px of the 340 px bar, so the free space at each edge is about 11 px.
     ///
-    /// That number is the reason the bar has no provider status on it, and it is also a
+    /// That 50 px is what the provider status token is sized against, and it is also a
     /// trap: a fourth child in that space does not get its own room, it takes the hints'
-    /// width instead. AGENTS.md asks for a provider status in this bar, so anyone adding
+    /// width instead. AGENTS.md asks for a provider status in this bar, so anyone changing
     /// one has to make room first - by shortening the hints or by widening the window -
     /// and this test is what shows whether the bar can take it.
     #[test]
@@ -260,6 +355,7 @@ mod action_bar_fit {
             .child(build_action_bar(
                 windui::signal::signal(true),
                 windui::signal::signal(false),
+                windui::signal::signal(String::new()),
             ))
             .build(&mut tree);
         tree.root = Some(root);
@@ -277,15 +373,129 @@ mod action_bar_fit {
             bar.w
         );
         assert_eq!(
-            hints.w, 317,
+            hints.w, 238,
             "the hints' measured width; a different value means a hint changed, and the \
              free space a status could use has to be re-measured"
         );
-        assert_eq!(hints.x - bar.x, 11, "free space at the leading edge");
+        assert_eq!(hints.x - bar.x, 51, "free space at the leading edge");
         assert_eq!(
             (bar.x + bar.w) - (hints.x + hints.w),
-            12,
+            51,
             "free space at the trailing edge"
         );
+    }
+}
+
+#[cfg(test)]
+mod provider_status_in_the_bar {
+    use super::compact_provider_status;
+    use crate::ui_constants::{ACTION_BAR_HEIGHT, ACTION_BAR_STATUS_WIDTH, ACTION_BAR_WIDTH};
+    use windui::core::Tree;
+    use windui::geometry::{Rect, Size};
+    use windui::text::DWriteEngine;
+
+    fn bar_rects(status: &str) -> (Rect, Rect, Rect) {
+        let mut tree = Tree::new();
+        let root = windui::ui::Element::col()
+            .width_match()
+            .padding_edges(10, 13, 10, 7)
+            .child(super::build_action_bar(
+                windui::signal::signal(true),
+                windui::signal::signal(false),
+                windui::signal::signal(String::from(status)),
+            ))
+            .build(&mut tree);
+        tree.root = Some(root);
+        let mut engine = DWriteEngine::new();
+        tree.layout_root(Size::new(420, 382), &mut engine);
+        let bar_id = tree.get(root).unwrap().children[0];
+        let kids = tree.get(bar_id).unwrap().children.clone();
+        (
+            tree.abs_bounds(bar_id),
+            tree.abs_bounds(kids[0]),
+            tree.abs_bounds(kids[1]),
+        )
+    }
+
+    /// The provider status AGENTS.md requires shares one 22 px line with the three key
+    /// hints. A Frame never moves the centred hints, and it never makes room either, so
+    /// the token has to fit the free space the shortened hints leave. This is the test
+    /// that fails the moment a hint grows back or the token is widened.
+    #[test]
+    fn the_token_fits_the_gutter_and_never_reaches_a_key_hint() {
+        for status in [
+            "16 Everything result(s)",
+            "12 application result(s)",
+            "3 Flow plugin result(s)",
+            "2 native Flow plugin(s) did not respond",
+            "Everything is not available",
+            "Everything query timed out",
+            "Everything query failed to send: broken pipe",
+            "No native Flow plugins installed",
+            "Native plugin host restarted (attempt 2): nope",
+            "a status nobody anticipated that runs on and on",
+        ] {
+            let (bar, hints, token) = bar_rects(status);
+            assert_eq!(
+                bar.w, ACTION_BAR_WIDTH,
+                "the bar keeps its width for {status:?}"
+            );
+            assert!(
+                hints.w <= bar.w,
+                "{status:?}: hints {} outgrew the bar {}",
+                hints.w,
+                bar.w
+            );
+            assert!(
+                token.right() <= hints.x,
+                "{status:?}: token {:?} reaches into the hints at x={} (gutter {} px)",
+                token,
+                hints.x,
+                hints.x - bar.x
+            );
+            assert!(
+                token.w <= ACTION_BAR_STATUS_WIDTH,
+                "{status:?}: token {:?} is wider than its {ACTION_BAR_STATUS_WIDTH} px bound",
+                token
+            );
+            assert_eq!(
+                token.h, ACTION_BAR_HEIGHT,
+                "{status:?}: the token must share the bar's line"
+            );
+        }
+    }
+
+    #[test]
+    fn every_status_the_app_publishes_becomes_a_short_token() {
+        for (input, expected) in [
+            ("16 Everything result(s)", "16 files"),
+            ("12 application result(s)", "12 apps"),
+            ("3 Flow plugin result(s)", "3 plug"),
+            ("2 native Flow plugin(s) did not respond", "2 dead"),
+            ("Everything is not available", "no ES"),
+            ("Everything query timed out", "slow"),
+            ("Everything query failed to send: broken pipe", "error"),
+            ("No native Flow plugins installed", "no plug"),
+            ("No native Rust plugin host installed", "no host"),
+            ("Native plugin host restarted (attempt 2): nope", "restart"),
+            (
+                "Everything auto-enable is disabled in Flux settings",
+                "ES off",
+            ),
+            ("Game Mode: On", "GM on"),
+            ("Game Mode: Off", "GM off"),
+            ("999 Everything result(s)", "99+"),
+            ("Ready", ""),
+            ("", ""),
+        ] {
+            assert_eq!(compact_provider_status(input), expected, "status {input:?}");
+        }
+    }
+
+    /// Nothing may wrap the bar: a second line would print over the hints.
+    #[test]
+    fn no_token_can_wrap_the_bar() {
+        let long = "a provider status nobody anticipated, going on and on for ever";
+        assert!(compact_provider_status(long).chars().count() <= 9);
     }
 }

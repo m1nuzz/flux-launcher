@@ -48,6 +48,7 @@ pub(crate) fn register_interval(
     launcher_preview_text: Signal<String>,
     icon_refresh_generation: Signal<u64>,
     status: Signal<String>,
+    status_compact: Signal<String>,
     show_results: Signal<bool>,
     inline_completion: Signal<String>,
     selection_touched: Signal<bool>,
@@ -152,6 +153,13 @@ pub(crate) fn register_interval(
     let window_op_for_interval = window_op;
     let mut recycle_confirm_child: Option<std::process::Child> = None;
     app.on_interval(SEARCH_INTERVAL, move |ctx| {
+        // The action bar shows a short token, not the sentence the Settings page reads.
+        // Derived here so every provider's status reaches the bar from one place, and
+        // only written when it actually changes.
+        let compact = crate::ui_results::compact_provider_status(&status.get());
+        if status_compact.get() != compact {
+            status_compact.set(compact);
+        }
         // Emptying the Recycle Bin uses the native Windows shell confirmation. The
         // launcher hides itself and spawns a short-lived child process that runs the
         // blocking shell prompt off the UI thread, then reshows when the child exits

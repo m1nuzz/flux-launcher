@@ -11,6 +11,13 @@ pub(crate) const VISUAL_SLIDER_WIDTH: i32 = 200;
 // The action group stays narrower than the minimum launcher content width so it
 // can be centered between the same left/right content insets at every size.
 pub(crate) const ACTION_BAR_WIDTH: i32 = 340;
+/// Leading-edge slot for the provider status token. Measured with the real font: the
+/// three key hints occupy 239 px of the 340 px bar, which leaves about 50 px free at
+/// each edge. The token is bounded to 44 px so it cannot reach the first key hint, and
+/// the bar and the window both keep their width, so the Acrylic surface is untouched.
+/// (a_wider_child_overlaps_instead_of_making_room in the vendored windui is the rule
+/// this sizing exists to satisfy: a Frame will not make room for a wider child.)
+pub(crate) const ACTION_BAR_STATUS_WIDTH: i32 = 44;
 pub(crate) const ACTION_BAR_HEIGHT: i32 = 22;
 // Keep the result palette compact like the reference while exposing a six-row
 // viewport; additional results remain available through the native wheel scroll.
