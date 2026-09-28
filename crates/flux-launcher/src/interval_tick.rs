@@ -131,6 +131,19 @@ pub(crate) fn register_interval(
     let mut last_launcher_height = launcher_height.get();
     let mut last_settings_visible = settings_visible.get();
     let mut last_everything_prompt_visible = everything_prompt_visible.get();
+    // The search clock, and the reason it is not `EventCtx::now_ms`: that reads the
+    // shared animation clock, which the host refreshes before a frame, a pointer
+    // event and a key, and which is frozen in between - windui's own doc says so and
+    // warns against reading a frozen period as how long the user has been away.
+    // Inside an interval callback there is no guarantee of a refresh at all, so the
+    // tick stamped a query change with a time that could be hundreds of milliseconds
+    // old, and the next tick read a fresh clock, called a live query quiet, and let
+    // every typing hold stand down. Measured on a failing flicker run: the keystroke
+    // and its tick were 5 ms apart, yet the tick stamped `now_ms=5401` and the tick
+    // after it read 5603 and declared a 202 ms pause. This clock is monotonic and
+    // read live, so `query_is_quiet` and the probe's publish budget both mean what
+    // they say.
+    let search_clock = std::time::Instant::now();
     let mut last_query = String::new();
     let mut last_query_change_ms: u64 = 0;
     let mut slow_sent_sequence: u64 = 0;
@@ -485,16 +498,12 @@ pub(crate) fn register_interval(
             return;
         }
         let next_query = query_for_interval.get();
-        let now_ms = ctx.now_ms();
+        let now_ms = search_clock.elapsed().as_millis() as u64;
         let query_changed = next_query != last_query;
         let has_query = !next_query.trim().is_empty();
         if query_changed {
             last_query = next_query.clone();
             last_query_change_ms = now_ms;
-            // The query is brand new, so the shrink hold starts its grace from here.
-            // The provider commits read this age to decide how long a shorter snapshot
-            // may still be held back.
-            providers_for_interval.borrow_mut().typing_age_ms = 0;
             super::paint_trace::note(
                 "query",
                 &format!("value={next_query} len={}", next_query.chars().count()),
@@ -544,8 +553,6 @@ pub(crate) fn register_interval(
             let query_is_quiet = now_ms.saturating_sub(last_query_change_ms) >= TYPING_QUIET_MS;
             let mut providers = providers_for_interval.borrow_mut();
             providers.typing_active = !query_is_quiet;
-            providers.typing_active = !query_is_quiet;
-            providers.typing_age_ms = now_ms.saturating_sub(last_query_change_ms);
             if query_is_quiet && providers.pending_publish {
                 let priority_ids = priorities_for_interval
                     .get()

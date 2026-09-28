@@ -45,19 +45,6 @@ pub(crate) const LAUNCHER_CHROME_HEIGHT: i32 = COMPACT_WINDOW_HEIGHT + 38;
 /// 120 ms still clears the observed round trips with room to spare while staying well
 /// above a fast typist's inter-key interval.
 pub(crate) const TYPING_QUIET_MS: u64 = 120;
-/// How long a snapshot that is *smaller* than the list on screen may be held back
-/// while the user is still typing.
-///
-/// The hold stops the panel collapsing to one or two rows for a frame and refilling a
-/// moment later. Holding it until the whole snapshot arrives means holding it until the
-/// slowest provider answers, which is the file provider's external round trip: measured
-/// here, the applications provider had an answer ten milliseconds after the letter and
-/// the panel was still showing the previous query seventy milliseconds later. This
-/// grace keeps the anti-flash behaviour for the answers that arrive quickly and bounds
-/// what a slow one can hide, so the panel shows the current list rather than a stale
-/// one. The quiet tick remains the backstop, and the flicker smoke still judges the
-/// flash itself.
-pub(crate) const SHRINK_HOLD_GRACE_MS: u64 = 80;
 /// How many search ticks a page of shell icons may be held back waiting for the
 /// icon thread to drain before the partial set is propagated anyway. At
 /// `SEARCH_INTERVAL` this caps the wait at roughly half a second, so a shell item

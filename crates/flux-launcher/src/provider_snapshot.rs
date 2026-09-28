@@ -9,7 +9,7 @@ use super::applications::canonical_application_id;
 use super::provider_merge::{
     merge_application_duplicates, preserve_everything_file_order, trace_query_probe,
 };
-use super::ui_constants::{MAX_VISIBLE_RESULTS, SHRINK_HOLD_GRACE_MS};
+use super::ui_constants::MAX_VISIBLE_RESULTS;
 
 /// Keep the previous result list visible while asynchronous providers compute a
 /// new non-empty query. Immediate publication is safe for the home page (empty
@@ -51,12 +51,6 @@ pub(crate) struct ProviderResults {
     /// screen is deferred instead of published, so one keystroke never rebuilds the
     /// whole row tree twice.
     pub(crate) typing_active: bool,
-    /// How long the current query has been standing, on the search clock.
-    ///
-    /// The interval tick owns that clock, so it publishes the age here for the provider
-    /// commits, which arrive on the UI thread's channel with no clock of their own. It
-    /// is what bounds how long a shrinking snapshot may be held back.
-    pub(crate) typing_age_ms: u64,
     /// A complete snapshot is waiting in the provider vectors for the next quiet
     /// tick, which publishes it.
     pub(crate) pending_publish: bool,
@@ -85,7 +79,6 @@ impl ProviderResults {
         // A reset only happens on a keystroke, and any deferred snapshot belongs
         // to the query that was just replaced.
         self.typing_active = true;
-        self.typing_age_ms = 0;
         self.pending_publish = false;
         self.published_providers = false;
     }
@@ -204,7 +197,8 @@ pub(crate) fn commit_provider_results(
     }
     let merged = providers.merged(query, priorities);
     let shown = results.get();
-    let hold = publish == Publish::DeferWhileTyping && providers.typing_active;
+    let defer = publish == Publish::DeferWhileTyping;
+    let hold = defer && providers.typing_active;
     // Both holds below exist to stop the panel rebuilding the same rows twice for
     // one keystroke, or collapsing to a shorter list for a frame. Neither is a
     // reason to hide a result the user has not seen yet: the applications provider
@@ -212,17 +206,20 @@ pub(crate) fn commit_provider_results(
     // and waiting for the file provider to answer as well is what made a fast typist
     // think the search had not caught up.
     let new_head = unseen_head(&merged, &shown, query);
-    if hold && new_head.is_some() {
-        if let Some(head) = new_head {
-            super::paint_trace::note(
-                "list-new-head",
-                &format!(
-                    "query={query} head={head} rows={} shown={}",
-                    merged.len(),
-                    shown.len()
-                ),
-            );
-        }
+    if let Some(head) = new_head {
+        // Recorded whether or not the user happens to be typing, because the note is
+        // how the shorter publish this predicate allows is told apart from the
+        // collapse the last hold below exists to prevent. Before a pause the escape
+        // is what lets the write through; after one the write happens either way, and
+        // a reader of the trace still has to be able to see which rule it was.
+        super::paint_trace::note(
+            "list-new-head",
+            &format!(
+                "query={query} head={head} rows={} shown={}",
+                merged.len(),
+                shown.len()
+            ),
+        );
     } else if calculator_owed(providers, query) {
         // A query the calculator answers is not answered until the calculator's row is
         // in it. This hold does not wait for the typing to pause: the answer is a
@@ -246,17 +243,29 @@ pub(crate) fn commit_provider_results(
             &format!("query={query} rows={}", merged.len()),
         );
         return;
-    } else if hold
-        && merged.len() < shown.len()
-        && !providers.snapshot_is_complete()
-        && providers.typing_age_ms < SHRINK_HOLD_GRACE_MS
-    {
-        // A snapshot smaller than the list already on screen would collapse the
-        // panel to one or two rows for a frame and refill it later - the flash
-        // reproduced by typing a letter and deleting it again. Keep the fuller
-        // list until the query goes quiet, and do not credit this query as
-        // published: the key handler must still be able to resolve Enter against
-        // the text the user actually typed.
+    } else if defer && merged.len() < shown.len() && !providers.snapshot_is_complete() {
+        // A snapshot smaller than the list already on screen would collapse the panel
+        // to one or two rows for a frame and refill it later - the flash reproduced
+        // by typing a letter and deleting it again.
+        //
+        // What is owed decides this, and how long the user has been typing does not.
+        // A pause says the word is finished; it says nothing about whether the file
+        // provider has answered, and a path query leaves this hold the only thing
+        // between the panel and the flash for as long as the indexer takes - measured
+        // here at about 250 ms for a typed path, and 533 ms for `f:\maxim` (see
+        // `core_ready`). A typing-window release therefore opened the hold inside
+        // exactly that window, and the smaller snapshot painted. The release belongs
+        // to the provider, and every provider that can be owed here already has its
+        // own bound: the probe gives up after `PATH_PROBE_PUBLISH_GATE_MS`, the file
+        // provider answers within its own query timeout whether or not it found
+        // anything, and the applications scan is local. So the answer arrives, the
+        // snapshot is complete, this hold ends by itself, and nothing is left
+        // showing an older query's rows - which is what the quiet tick used to be
+        // for. It still publishes everything else it holds: a snapshot deferred above
+        // lands on it, and a user who acts on the panel settles it at once.
+        //
+        // Do not credit this query as published: the key handler must still be able
+        // to resolve Enter against the text the user actually typed.
         providers.pending_publish = true;
         super::paint_trace::note(
             "list-shrunk",
@@ -519,23 +528,6 @@ mod tests {
             ),
             None,
             "a row the screen already shows is not new information"
-        );
-    }
-
-    #[test]
-    fn a_typed_path_keeps_the_unseen_head_escape_the_calculator_guard_takes_away() {
-        // `f:\maxim\cmd` holds no operator, so the calculator never answers it and the
-        // place the user named must still be publishable the moment the probe has it.
-        let mut row = SearchResult::from_existing_path(r"F:\Maxim\cmd");
-        row.id = String::from("file:F:\\Maxim\\cmd");
-        let merged = vec![row];
-        assert_eq!(
-            unseen_head(&merged, &[], r"f:\maxim\cmd"),
-            Some("file:F:\\Maxim\\cmd")
-        );
-        assert_eq!(
-            unseen_head(&merged, &[], "maxim\\cmd"),
-            Some("file:F:\\Maxim\\cmd")
         );
     }
 
@@ -1007,6 +999,65 @@ mod tests {
             "the same head must not rebuild the list"
         );
         assert!(providers.pending_publish);
+    }
+
+    #[test]
+    fn a_shorter_snapshot_waits_for_the_provider_that_owes_it_and_not_for_the_pause() {
+        use windui::signal::signal;
+
+        // The screen already shows two rows and this snapshot has only one: the
+        // file provider still owes its answer, so publishing would collapse the
+        // panel for a frame.
+        let results = signal(vec![row("application:steam"), row("application:obsidian")]);
+        let version = results.version();
+        let mut providers = ProviderResults::default();
+        providers.reset(4, Vec::new(), true);
+        providers.applications = vec![row("application:steam")];
+        providers.applications_ready = true;
+        // The rows on screen belong to an earlier keystroke, and the user has
+        // stopped typing - the state the old typing-window release was waiting for.
+        providers.published_query = String::from("steamy");
+        providers.published_providers = true;
+        providers.typing_active = false;
+        let commit = |providers: &mut ProviderResults, results: Signal<Vec<SearchResult>>| {
+            commit_provider_results(
+                providers,
+                "steam",
+                &[],
+                signal(String::new()),
+                signal(0_usize),
+                signal(false),
+                results,
+                signal(false),
+                Publish::DeferWhileTyping,
+            );
+        };
+
+        commit(&mut providers, results);
+
+        assert_eq!(
+            results.version(),
+            version,
+            "the indexer still owes this query, and one row over two is the collapse the smoke forbids"
+        );
+        assert!(
+            providers.pending_publish,
+            "the snapshot waits in the vectors"
+        );
+
+        // The provider answers, and that is what ends the hold. A pause cannot be
+        // the release, or a query whose file provider takes 200 ms to answer spends
+        // most of that time painting the collapse; the answer cannot strand the
+        // panel either, because it is the answer that ends it.
+        providers.everything_ready = true;
+        commit(&mut providers, results);
+
+        assert_ne!(
+            results.version(),
+            version,
+            "the complete snapshot is published"
+        );
+        assert!(!providers.pending_publish);
     }
 
     #[test]
