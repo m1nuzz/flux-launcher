@@ -13,6 +13,90 @@ use super::shell_icon_extract::{
     is_executable_icon_target, shortcut_icon_location,
 };
 
+/// How many icon classes the class table holds at once. A session sees a few dozen
+/// extensions, and every one of them pins the blob it was given, so the table is
+/// bounded rather than grown: a class that falls out of it is paid for again, which
+/// is exactly what every row cost before the table existed.
+const MAX_ICON_CLASS_TABLE_ENTRIES: usize = 64;
+
+/// The picture the shell last gave for each icon class, so a class is paid for once
+/// rather than once per publish that happens to show it.
+///
+/// The sibling sweep in `take_pending_siblings` can only serve the rows that happen
+/// to be queued at the instant an extraction finishes. A page is not published in
+/// one go: the short provider answer lands first, then the complete set does, and
+/// the second publish asks for rows nobody had queued yet. A page of four `.pyi`
+/// rows split that way paid the shell twice for one picture, which is what the
+/// paint trace recorded as `extracted=1` for two different targets of one extension
+/// inside a single keystroke window.
+struct IconClasses {
+    entries: HashMap<String, Arc<Vec<u8>>>,
+    order: VecDeque<String>,
+}
+
+impl IconClasses {
+    fn new() -> Self {
+        Self {
+            entries: HashMap::new(),
+            order: VecDeque::new(),
+        }
+    }
+
+    fn get(&mut self, extension: &str) -> Option<Arc<Vec<u8>>> {
+        let picture = self.entries.get(extension)?.clone();
+        self.touch(extension);
+        Some(picture)
+    }
+
+    fn remember(&mut self, extension: &str, picture: Arc<Vec<u8>>) {
+        self.entries.insert(extension.to_owned(), picture);
+        self.touch(extension);
+        while self.entries.len() > MAX_ICON_CLASS_TABLE_ENTRIES {
+            let Some(oldest) = self.order.pop_front() else {
+                break;
+            };
+            self.entries.remove(&oldest);
+        }
+    }
+
+    fn touch(&mut self, extension: &str) {
+        if let Some(position) = self.order.iter().position(|key| key == extension) {
+            self.order.remove(position);
+        }
+        self.order.push_back(extension.to_owned());
+    }
+}
+
+/// What one row's icon cost the shell.
+enum IconPurchase {
+    /// The shell was asked. The answer may still be nothing: a failure is never
+    /// spread to the other rows of the same class.
+    Paid(Option<Arc<Vec<u8>>>),
+    /// The class table already held this class's picture.
+    Reused(Arc<Vec<u8>>),
+}
+
+/// The picture for one row, from the class table when it is there and from the shell
+/// otherwise. `extract` is the shell round trip, so the number of times it runs is
+/// the number the paint trace reports as an extraction.
+fn purchase_icon(
+    target: &str,
+    class: &IconClass,
+    classes: &mut IconClasses,
+    extract: &mut impl FnMut(&str) -> Option<Arc<Vec<u8>>>,
+) -> IconPurchase {
+    if let IconClass::Extension(extension) = class {
+        if let Some(picture) = classes.get(extension) {
+            return IconPurchase::Reused(picture);
+        }
+    }
+    let picture = extract(target);
+    if let (IconClass::Extension(extension), Some(picture)) = (class, picture.as_ref()) {
+        classes.remember(extension, Arc::clone(picture));
+    }
+    IconPurchase::Paid(picture)
+}
+
 /// Milliseconds since the first icon was ever asked for, so the warm-up can tell a
 /// pause from a keystroke stream without reading the UI thread's state.
 fn icon_clock_ms() -> u64 {
@@ -168,11 +252,29 @@ impl ShellIconCache {
         Some(icon.map(|blob| (*blob).clone()))
     }
 
-    fn insert(&mut self, target: String, icon: Option<Vec<u8>>) {
+    /// The blob held for a target, without copying the pixels out of it.
+    fn get_shared(&mut self, target: &str) -> Option<Option<Arc<Vec<u8>>>> {
+        let icon = self.entries.get(target).cloned()?;
+        self.touch(target);
+        Some(icon)
+    }
+
+    /// Stores the bytes a target resolved to and hands back the blob they were
+    /// interned into, so a caller that needs the shared handle gets the pixels the
+    /// entry holds rather than a second copy of them.
+    fn insert(&mut self, target: String, icon: Option<Vec<u8>>) -> Option<Arc<Vec<u8>>> {
         // Only a found icon is shared. "This target has no icon" is a fact about
         // that one target, so a negative result stays its own entry and keeps
         // reading back as cached.
         let icon = icon.map(|bytes| self.intern(bytes));
+        self.insert_shared(target, icon.as_ref().map(Arc::clone));
+        icon
+    }
+
+    /// The same entry for a picture that is already interned, which is how a class
+    /// the table already paid for reaches a target under its own name: the same
+    /// blob, copied nothing.
+    fn insert_shared(&mut self, target: String, icon: Option<Arc<Vec<u8>>>) {
         if self.entries.contains_key(&target) {
             self.entries.insert(target.clone(), icon);
             self.touch(&target);
@@ -243,14 +345,16 @@ fn initialize_shell_icon_worker_com() -> bool {
     }
 }
 
-/// Asks the shell for one icon, filling the cache on the way.
+/// Asks the shell for one icon, filling the cache on the way. The bytes come back
+/// as the interned blob, so a row served from the class table stores the same
+/// pixels the shell returned rather than a copy of them.
 #[cfg(windows)]
-fn extract_icon(target: &str) -> Option<Vec<u8>> {
-    shell_icon_rgba(target)
+fn extract_icon(target: &str) -> Option<Arc<Vec<u8>>> {
+    shell_icon_shared(target)
 }
 
 #[cfg(not(windows))]
-fn extract_icon(_target: &str) -> Option<Vec<u8>> {
+fn extract_icon(_target: &str) -> Option<Arc<Vec<u8>>> {
     None
 }
 
@@ -269,24 +373,20 @@ impl ShellIconWorker {
             .spawn(move || {
                 #[cfg(windows)]
                 let owns_com_apartment = initialize_shell_icon_worker_com();
+                // Read and written only between two `recv()` calls, so the class
+                // table needs no lock: it is this thread's own memory.
+                let mut classes = IconClasses::new();
 
                 while let Ok(job) = receiver.recv() {
                     match job {
                         IconJob::Row(target) => {
-                            // The target may already have been served by a sibling of the
-                            // same extension while it waited in the queue.
-                            if !take_pending(&pending_for_worker, &target) {
-                                continue;
-                            }
-                            let image = extract_icon(&target);
-                            settle_icon(&in_flight_for_worker, &target, true, true);
-                            // A failure is never spread: one unreadable file would
-                            // otherwise blank every row of its extension.
-                            let Some(image) = image else { continue };
-                            for sibling in take_pending_siblings(&pending_for_worker, &target) {
-                                cache_icon(&sibling, &image);
-                                settle_icon(&in_flight_for_worker, &sibling, true, false);
-                            }
+                            serve_row_job(
+                                &target,
+                                &pending_for_worker,
+                                &in_flight_for_worker,
+                                &mut classes,
+                                &mut |target| extract_icon(target),
+                            );
                         }
                         // The catalog is loaded one icon per quiet moment and never tells
                         // the tree: the next row build finds the picture in the cache.
@@ -407,6 +507,43 @@ fn take_pending(pending: &Mutex<HashSet<String>>, target: &str) -> bool {
         .unwrap_or(false)
 }
 
+/// One queued row: its own icon, the siblings that come free with it, and both
+/// halves of the drain gate. Every row job on the icon thread goes through here, so
+/// the class table, the sibling sweep and the trace stay one code path.
+fn serve_row_job(
+    target: &str,
+    pending: &Mutex<HashSet<String>>,
+    in_flight: &AtomicUsize,
+    classes: &mut IconClasses,
+    extract: &mut impl FnMut(&str) -> Option<Arc<Vec<u8>>>,
+) {
+    // The target may already have been served by a sibling of the same extension
+    // while it waited in the queue.
+    if !take_pending(pending, target) {
+        return;
+    }
+    let class = icon_class(target);
+    let (picture, paid_shell) = match purchase_icon(target, &class, classes, &mut *extract) {
+        IconPurchase::Paid(picture) => (picture, true),
+        IconPurchase::Reused(picture) => {
+            // The class table served this row, so nothing has put the picture
+            // under its own name in the cache. Without that entry every rebuild of
+            // the row would queue another job, move the completion generation
+            // again, and repaint a page of icons it already has.
+            cache_shared(target, &picture);
+            (Some(picture), false)
+        }
+    };
+    settle_icon(in_flight, target, true, paid_shell);
+    // A failure is never spread: one unreadable file would otherwise blank every
+    // row of its extension.
+    let Some(picture) = picture else { return };
+    for sibling in take_pending_siblings(pending, &class) {
+        cache_shared(&sibling, &picture);
+        settle_icon(in_flight, &sibling, true, false);
+    }
+}
+
 /// The queued row targets whose icon is the one just extracted, removed from the
 /// queue in the same pass so no sibling can be claimed twice.
 ///
@@ -415,10 +552,11 @@ fn take_pending(pending: &Mutex<HashSet<String>>, target: &str) -> bool {
 /// milliseconds; spending that with the queue locked blocks every other row request,
 /// and it is paid per queued entry, so a page of sixteen rows pays it sixteen times.
 /// The classification is the same either way - only *when* the stat happens moves.
-fn take_pending_siblings(pending: &Mutex<HashSet<String>>, target: &str) -> Vec<String> {
-    let IconClass::Extension(extension) = icon_class(target) else {
+fn take_pending_siblings(pending: &Mutex<HashSet<String>>, class: &IconClass) -> Vec<String> {
+    let IconClass::Extension(extension) = class else {
         return Vec::new();
     };
+    let extension = extension.as_str();
     let Ok(queue) = pending.lock() else {
         return Vec::new();
     };
@@ -472,16 +610,19 @@ fn icon_is_cached(_target: &str) -> bool {
     true
 }
 
+/// Records a picture for a target under its own name. The bytes are already
+/// interned - the shell returned them, or a sibling's extraction did - so the
+/// entry points at the same blob instead of a copy of it.
 #[cfg(windows)]
-fn cache_icon(target: &str, image: &[u8]) {
+fn cache_shared(target: &str, picture: &Arc<Vec<u8>>) {
     let cache = SHELL_ICON_CACHE.get_or_init(|| Mutex::new(ShellIconCache::new()));
     if let Ok(mut cache) = cache.lock() {
-        cache.insert(target.to_owned(), Some(image.to_vec()));
+        cache.insert_shared(target.to_owned(), Some(Arc::clone(picture)));
     }
 }
 
 #[cfg(not(windows))]
-fn cache_icon(_target: &str, _image: &[u8]) {}
+fn cache_shared(_target: &str, _picture: &Arc<Vec<u8>>) {}
 static SHELL_ICON_WORKER: OnceLock<ShellIconWorker> = OnceLock::new();
 pub(crate) fn shell_icon_worker() -> &'static ShellIconWorker {
     SHELL_ICON_WORKER.get_or_init(ShellIconWorker::spawn)
@@ -571,9 +712,22 @@ pub(crate) fn shortcut_icon_smoke(target: &str) -> bool {
 
 #[cfg(windows)]
 pub(crate) fn shell_icon_rgba(target: &str) -> Option<Vec<u8>> {
+    shell_icon_shared(target).map(|blob| (*blob).clone())
+}
+
+#[cfg(not(windows))]
+pub(crate) fn shell_icon_rgba(_target: &str) -> Option<Vec<u8>> {
+    None
+}
+
+/// The icon of one target, as the interned blob every target resolving to the same
+/// picture shares. The row path takes it as it is, so a row served from the class
+/// table stores the pixels the shell returned rather than a second copy of them.
+#[cfg(windows)]
+pub(crate) fn shell_icon_shared(target: &str) -> Option<Arc<Vec<u8>>> {
     let cache = SHELL_ICON_CACHE.get_or_init(|| Mutex::new(ShellIconCache::new()));
     if let Ok(mut cache) = cache.lock() {
-        if let Some(icon) = cache.get(target) {
+        if let Some(icon) = cache.get_shared(target) {
             return icon;
         }
     }
@@ -591,15 +745,12 @@ pub(crate) fn shell_icon_rgba(target: &str) -> Option<Vec<u8>> {
         .or_else(|| extract_shell_thumbnail_rgba(target))
         .or_else(|| extract_shell_icon_rgba(target));
     trace_shell_icon_probe(target, icon.is_some());
-    if let Ok(mut cache) = cache.lock() {
-        cache.insert(target.to_owned(), icon.clone());
-    }
-    icon
-}
-
-#[cfg(not(windows))]
-pub(crate) fn shell_icon_rgba(_target: &str) -> Option<Vec<u8>> {
-    None
+    // A poisoned lock costs the sharing, not the picture: the row still gets an
+    // icon, and the next extraction interns its own copy of the same bytes.
+    let Ok(mut cache) = cache.lock() else {
+        return icon.map(Arc::new);
+    };
+    cache.insert(target.to_owned(), icon)
 }
 
 #[cfg(test)]
@@ -780,13 +931,148 @@ mod tests {
             .collect();
         let pending = Mutex::new(HashSet::from_iter(paths[1..].iter().cloned()));
 
-        let siblings = take_pending_siblings(&pending, &paths[0]);
+        let siblings = take_pending_siblings(&pending, &icon_class(&paths[0]));
 
         assert_eq!(siblings, vec![paths[1].clone()]);
         let left = pending.lock().expect("the queue lock is never poisoned");
         assert_eq!(left.len(), 2, "only the sibling left the queue");
         assert!(!left.contains(&paths[1]));
         drop(left);
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// The negative control for the flicker gate's `paid the shell N times for M rows
+    /// that share one icon`: a page is not published in one go, so the rows of one
+    /// class reach the icon thread in separate rounds with an empty queue between
+    /// them - which is what the paint trace recorded as two `extracted=1` events for
+    /// four `.pyi` rows inside one keystroke window.
+    #[test]
+    fn one_shell_round_trip_serves_a_class_whose_rows_arrive_in_separate_publishes() {
+        let root = std::env::temp_dir().join(format!("flux-icon-rounds-{}", std::process::id()));
+        std::fs::create_dir_all(&root).expect("the temporary folder is created");
+        let paths: Vec<String> = ["a.pyi", "b.pyi", "c.pyi", "d.pyi"]
+            .iter()
+            .map(|name| {
+                let path = root.join(name);
+                std::fs::write(&path, b"").expect("the temporary file is created");
+                path.to_string_lossy().into_owned()
+            })
+            .collect();
+
+        let in_flight = AtomicUsize::new(0);
+        let mut classes = IconClasses::new();
+        let mut extractions = 0usize;
+        let mut extract = |_target: &str| {
+            extractions += 1;
+            Some(Arc::new(vec![5u8; 32 * 32 * 4]))
+        };
+        for path in &paths {
+            // One publish: the row asks, the icon thread serves it, and the next
+            // keystroke's page replaces the queue before this row's extraction is
+            // even finished, so the sibling sweep has nothing left to serve.
+            let pending = Mutex::new(HashSet::from_iter([path.clone()]));
+            in_flight.store(1, Ordering::Release);
+            serve_row_job(path, &pending, &in_flight, &mut classes, &mut extract);
+            assert_eq!(
+                in_flight.load(Ordering::Acquire),
+                0,
+                "{path}: the drain gate must close"
+            );
+        }
+
+        assert_eq!(
+            extractions, 1,
+            "four .pyi rows in four publishes paid the shell {extractions} time(s) for one picture"
+        );
+        // Every row the class table served has to be cached under its own name, or the
+        // next rebuild of that row queues another job and the page repaints again for
+        // an icon it already has.
+        for path in &paths[1..] {
+            assert!(
+                shell_icon_cache_lookup(path).is_some_and(|icon| icon.is_some()),
+                "{path}: a row served from the class table must be cached by name"
+            );
+        }
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// The same promise when the rows arrive while the extraction is still inside the
+    /// shell, which is the arrival order the row tree actually produces: the queue
+    /// fills from the UI thread while the icon thread is busy.
+    #[test]
+    fn one_shell_round_trip_serves_a_class_that_arrives_during_an_extraction() {
+        let root = std::env::temp_dir().join(format!("flux-icon-race-{}", std::process::id()));
+        std::fs::create_dir_all(&root).expect("the temporary folder is created");
+        let paths: Vec<String> = ["a.pyi", "b.pyi", "c.pyi", "d.pyi"]
+            .iter()
+            .map(|name| {
+                let path = root.join(name);
+                std::fs::write(&path, b"").expect("the temporary file is created");
+                path.to_string_lossy().into_owned()
+            })
+            .collect();
+
+        let in_flight = AtomicUsize::new(0);
+        let pending = Mutex::new(HashSet::from_iter(paths.iter().cloned()));
+        in_flight.store(paths.len(), Ordering::Release);
+        let mut classes = IconClasses::new();
+        let mut extractions = 0usize;
+        let mut extract = |_target: &str| {
+            extractions += 1;
+            Some(Arc::new(vec![6u8; 32 * 32 * 4]))
+        };
+        serve_row_job(&paths[0], &pending, &in_flight, &mut classes, &mut extract);
+        assert_eq!(
+            in_flight.load(Ordering::Acquire),
+            0,
+            "the drain gate must close"
+        );
+        for path in &paths[1..] {
+            assert!(
+                shell_icon_cache_lookup(path).is_some_and(|icon| icon.is_some()),
+                "{path}: every queued row of the class must be served"
+            );
+        }
+        assert_eq!(
+            extractions, 1,
+            "the sibling sweep alone must serve the queue"
+        );
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// The class table must not over-share: a different extension that lands in the
+    /// same queue, and a target that owns its picture, are still paid for one by one.
+    #[test]
+    fn a_class_table_never_serves_one_class_picture_to_another() {
+        let root = std::env::temp_dir().join(format!("flux-icon-classes-{}", std::process::id()));
+        std::fs::create_dir_all(&root).expect("the temporary folder is created");
+        let paths: Vec<String> = ["a.pyi", "b.mkv", "c.exe", "d.pyi"]
+            .iter()
+            .map(|name| {
+                let path = root.join(name);
+                std::fs::write(&path, b"").expect("the temporary file is created");
+                path.to_string_lossy().into_owned()
+            })
+            .collect();
+
+        let in_flight = AtomicUsize::new(0);
+        let mut classes = IconClasses::new();
+        let mut extractions = 0usize;
+        let mut extract = |target: &str| {
+            extractions += 1;
+            Some(Arc::new(vec![target.len() as u8; 32 * 32 * 4]))
+        };
+        for path in &paths {
+            let pending = Mutex::new(HashSet::from_iter([path.clone()]));
+            in_flight.store(1, Ordering::Release);
+            serve_row_job(path, &pending, &in_flight, &mut classes, &mut extract);
+        }
+
+        assert_eq!(
+            extractions, 3,
+            "only the second .pyi row is free: one extraction per distinct class, \
+             and an .exe owns its picture"
+        );
         let _ = std::fs::remove_dir_all(&root);
     }
 }
