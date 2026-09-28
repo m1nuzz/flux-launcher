@@ -2528,6 +2528,53 @@ mod tests {
         (tree, kids)
     }
 
+    /// A Frame child is positioned against the frame's whole content rect, so a Frame
+    /// is an overlay: a narrow child on the leading edge must not move a centred
+    /// sibling. The action bar depends on that - its three key hints are centred while a
+    /// short provider-status token sits at the leading edge - so the rule is pinned here
+    /// rather than rediscovered by rendering the whole launcher.
+    #[test]
+    fn a_narrow_frame_child_does_not_move_a_centred_sibling() {
+        fn bar(with_status: bool) -> (Tree, i32) {
+            // The action bar's hint row carries no explicit width: it is a Linear sized
+            // by its content inside the frame. Reproducing that is the point of the
+            // second case below.
+            let hints = Element::row()
+                .height(22)
+                .child(Element::leaf().width(200).height(22).bg(Color::WHITE))
+                .align(Align::Center);
+            let mut frame = Element::stack().width(396).height(22).child(hints);
+            if with_status {
+                frame = frame.child(
+                    Element::leaf()
+                        .width(38)
+                        .height(22)
+                        .bg(Color::WHITE)
+                        .align(Align::Start),
+                );
+            }
+            let tree = layout(frame, 396, 22);
+            let kids = tree.get(tree.root.unwrap()).unwrap().children.clone();
+            let hints_x = tree.abs_bounds(kids[0]).x;
+            (tree, hints_x)
+        }
+
+        let (alone, without) = bar(false);
+        let (with, present) = bar(true);
+        assert!(
+            without > 0,
+            "the centred hints must be inset by the frame, not flush to it: {without}"
+        );
+        assert_eq!(
+            present,
+            without,
+            "a narrow leading-edge child must not move a content-sized centred sibling: \
+             alone={without} with-status={present} (tree {} vs {})",
+            alone.get(alone.root.unwrap()).unwrap().children.len(),
+            with.get(with.root.unwrap()).unwrap().children.len(),
+        );
+    }
+
     #[test]
     fn node_offset_shifts_both_paint_bounds_and_hit_test() {
         // offset 是绘制/命中偏移：abs_bounds（脏区与拖拽逻辑读它）与 hit_test
