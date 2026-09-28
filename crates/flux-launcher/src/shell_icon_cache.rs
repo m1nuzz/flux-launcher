@@ -3,7 +3,7 @@ use std::io::Write;
 use std::sync::{
     atomic::{AtomicU64, AtomicUsize, Ordering},
     mpsc::{self, SyncSender},
-    Arc, Mutex, OnceLock,
+    Arc, Mutex, OnceLock, Weak,
 };
 use std::thread;
 
@@ -93,16 +93,37 @@ fn icon_class(target: &str) -> IconClass {
     IconClass::Extension(lowered)
 }
 
-#[cfg(windows)]
 /// Four kilobytes per decoded 32x32 icon, so the whole table costs about four
 /// megabytes: enough to hold the application catalog, which is what the idle
 /// warm-up fills. The warm-up stops here rather than evicting its own best work.
+///
+/// Not gated on Windows: the catalog reads it to size its warm list, and the
+/// catalog is built on every target.
 pub(crate) const MAX_SHELL_ICON_CACHE_ENTRIES: usize = 1024;
 
 #[cfg(windows)]
 struct ShellIconCache {
-    entries: HashMap<String, Option<Vec<u8>>>,
+    /// One entry per target, but targets that resolve to the same picture share a
+    /// single blob. The catalog holds hundreds of shortcuts and executables that
+    /// resolve to a few hundred distinct icons, so a copy per target paid for the
+    /// same pixels again and again.
+    entries: HashMap<String, Option<Arc<Vec<u8>>>>,
     lru_order: VecDeque<String>,
+    /// Content hash to the live blobs carrying it, weakly held: `entries` owns the
+    /// blobs, so evicting the last target pointing at one frees it and the weak
+    /// handle here is simply left dead. Several blobs can share a hash, so the
+    /// caller still compares the bytes before reusing one.
+    blobs: HashMap<u64, Vec<Weak<Vec<u8>>>>,
+}
+
+/// FNV-1a, only ever used to pick candidates that are then compared byte for byte.
+fn icon_content_hash(bytes: &[u8]) -> u64 {
+    let mut hash: u64 = 0xcbf2_9ce4_8422_2325;
+    for byte in bytes {
+        hash ^= *byte as u64;
+        hash = hash.wrapping_mul(0x0000_0100_0000_01b3);
+    }
+    hash
 }
 
 #[cfg(windows)]
@@ -111,16 +132,47 @@ impl ShellIconCache {
         Self {
             entries: HashMap::new(),
             lru_order: VecDeque::new(),
+            blobs: HashMap::new(),
         }
+    }
+
+    /// Returns the blob already held for these bytes, or stores them as a new one.
+    fn intern(&mut self, bytes: Vec<u8>) -> Arc<Vec<u8>> {
+        let hash = icon_content_hash(&bytes);
+        let reused = self.blobs.get(&hash).and_then(|candidates| {
+            candidates
+                .iter()
+                .filter_map(Weak::upgrade)
+                .find(|blob| blob.as_slice() == bytes.as_slice())
+        });
+        if let Some(blob) = reused {
+            return blob;
+        }
+        // A miss is rare once the catalog is warm, so dropping the handles whose
+        // blob has already been evicted costs less than the memory they pin.
+        self.blobs.retain(|_, candidates| {
+            candidates.retain(|blob| blob.strong_count() > 0);
+            !candidates.is_empty()
+        });
+        let blob = Arc::new(bytes);
+        self.blobs
+            .entry(hash)
+            .or_default()
+            .push(Arc::downgrade(&blob));
+        blob
     }
 
     fn get(&mut self, target: &str) -> Option<Option<Vec<u8>>> {
         let icon = self.entries.get(target).cloned()?;
         self.touch(target);
-        Some(icon)
+        Some(icon.map(|blob| (*blob).clone()))
     }
 
     fn insert(&mut self, target: String, icon: Option<Vec<u8>>) {
+        // Only a found icon is shared. "This target has no icon" is a fact about
+        // that one target, so a negative result stays its own entry and keeps
+        // reading back as cached.
+        let icon = icon.map(|bytes| self.intern(bytes));
         if self.entries.contains_key(&target) {
             self.entries.insert(target.clone(), icon);
             self.touch(&target);
@@ -587,6 +639,74 @@ mod tests {
         assert!(cache
             .get("missing-target")
             .is_some_and(|icon| icon.is_none()));
+    }
+
+    #[test]
+    fn targets_that_resolve_to_one_picture_share_a_single_blob() {
+        let mut cache = ShellIconCache::new();
+        let picture = vec![7u8; 32 * 32 * 4];
+        cache.insert(String::from("target-a"), Some(picture.clone()));
+        cache.insert(String::from("target-b"), Some(picture.clone()));
+        cache.insert(String::from("target-c"), Some(picture));
+
+        let live: Vec<Arc<Vec<u8>>> = cache
+            .entries
+            .values()
+            .filter_map(|icon| icon.as_ref().map(Arc::clone))
+            .collect();
+        assert_eq!(live.len(), 3, "every target still has its icon");
+        assert!(
+            live.windows(2).all(|pair| Arc::ptr_eq(&pair[0], &pair[1])),
+            "three targets, one picture, must not hold three copies"
+        );
+        assert_eq!(cache.blobs.values().map(Vec::len).sum::<usize>(), 1);
+    }
+
+    #[test]
+    fn different_pictures_are_never_shared() {
+        let mut cache = ShellIconCache::new();
+        cache.insert(String::from("target-a"), Some(vec![1u8; 32 * 32 * 4]));
+        cache.insert(String::from("target-b"), Some(vec![2u8; 32 * 32 * 4]));
+
+        let live: Vec<Arc<Vec<u8>>> = cache
+            .entries
+            .values()
+            .filter_map(|icon| icon.as_ref().map(Arc::clone))
+            .collect();
+        assert_eq!(live.len(), 2);
+        assert!(!Arc::ptr_eq(&live[0], &live[1]));
+        assert_ne!(live[0][0], live[1][0]);
+    }
+
+    #[test]
+    fn a_shared_blob_outlives_the_eviction_of_one_of_its_targets() {
+        let mut cache = ShellIconCache::new();
+        let picture = vec![9u8; 32 * 32 * 4];
+        for index in 0..=MAX_SHELL_ICON_CACHE_ENTRIES {
+            cache.insert(format!("target-{index}"), Some(picture.clone()));
+        }
+        // The first target was pushed out of the table, so its blob may not be the
+        // one a later target still points at.
+        assert_eq!(cache.entries.len(), MAX_SHELL_ICON_CACHE_ENTRIES);
+        assert!(!cache.entries.contains_key("target-0"));
+        assert_eq!(cache.blobs.values().map(Vec::len).sum::<usize>(), 1);
+        assert!(cache
+            .get(&format!("target-{MAX_SHELL_ICON_CACHE_ENTRIES}"))
+            .is_some_and(|icon| icon.is_some()));
+    }
+
+    #[test]
+    fn a_negative_result_stays_its_own_entry() {
+        let mut cache = ShellIconCache::new();
+        cache.insert(String::from("no-icon-a"), None);
+        cache.insert(String::from("no-icon-b"), None);
+
+        assert!(
+            cache.blobs.is_empty(),
+            "nothing to share for a missing icon"
+        );
+        assert!(cache.get("no-icon-a").is_some_and(|icon| icon.is_none()));
+        assert!(cache.get("no-icon-b").is_some_and(|icon| icon.is_none()));
     }
 
     #[test]
