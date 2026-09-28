@@ -63,7 +63,7 @@ use windows_numerics::{Matrix3x2, Vector2};
 
 use super::{AppHandler, WinRenderBackend};
 use crate::geometry::{Color, Size};
-use crate::render::{Canvas, Gradient, Paint, RenderTarget};
+use crate::render::{prof, Canvas, Gradient, Paint, RenderTarget};
 
 /// GPU 呈现后端。持有 D3D11/DXGI/D2D 的 COM 对象与 swapchain。
 pub(super) struct D2DBackend {
@@ -1255,11 +1255,13 @@ impl Canvas for D2DCanvas<'_> {
     }
 
     fn fill_rect(&mut self, x: f32, y: f32, w: f32, h: f32, paint: &Paint) {
+        let _g = prof::scope(prof::FILL);
         let brush = self.fill_brush(paint, x, y, w, h);
         unsafe { self.ctx.FillRectangle(&rect_f(x, y, w, h), &brush) };
     }
 
     fn fill_round_rect(&mut self, x: f32, y: f32, w: f32, h: f32, radius: f32, paint: &Paint) {
+        let _g = prof::scope(prof::FILL);
         let brush = self.fill_brush(paint, x, y, w, h);
         let r = radius.min(w / 2.0).min(h / 2.0).max(0.0);
         let rr = D2D1_ROUNDED_RECT {
@@ -1280,6 +1282,7 @@ impl Canvas for D2DCanvas<'_> {
         width: f32,
         paint: &Paint,
     ) {
+        let _g = prof::scope(prof::STROKE);
         // 对齐物理像素整数坐标：矩形四边乘以 scale 取整后还原，
         // 使描边中心（边 + half_width）在物理坐标上落在半像素（n+0.5），
         // 从而描边两侧各 0.5px 恰好覆盖完整一列物理像素，消除 125%/150% 等
@@ -1306,6 +1309,7 @@ impl Canvas for D2DCanvas<'_> {
     }
 
     fn draw_line(&mut self, x0: f32, y0: f32, x1: f32, y1: f32, width: f32, paint: &Paint) {
+        let _g = prof::scope(prof::STROKE);
         let brush = self.stroke_brush(paint);
         unsafe {
             self.ctx
@@ -1314,6 +1318,7 @@ impl Canvas for D2DCanvas<'_> {
     }
 
     fn fill_circle(&mut self, cx: f32, cy: f32, r: f32, paint: &Paint) {
+        let _g = prof::scope(prof::FILL);
         // 渐变包围盒为圆的外接正方形（与 SkiaCanvas 一致）。
         let brush = self.fill_brush(paint, cx - r, cy - r, 2.0 * r, 2.0 * r);
         let ellipse = D2D1_ELLIPSE {
@@ -1334,6 +1339,7 @@ impl Canvas for D2DCanvas<'_> {
         blur: f32,
         color: Color,
     ) {
+        let _g = prof::scope(prof::SHADOW);
         // 与软路径同源的禁用/退化判定（WINDUI_NOSHADOW、全透明、零尺寸跳过）。
         if color.a == 0 || w <= 0.0 || h <= 0.0 || crate::render::skia::shadows_disabled() {
             return;
@@ -1400,6 +1406,7 @@ impl Canvas for D2DCanvas<'_> {
         radius: f32,
         opacity: f32,
     ) {
+        let _g = prof::scope(prof::IMAGE);
         use crate::render::image::Fit;
         // ★ 全程逻辑坐标：D2D 已 SetTransform(scale)，会把逻辑值放大到物理像素。绝不在此 ×scale
         //   （软路径 SkiaCanvas::draw_image 的 ×scale 是因其直画物理 pixmap、无变换；此处变换统一物理化）。
@@ -1525,6 +1532,7 @@ impl Canvas for D2DCanvas<'_> {
         align: crate::spec::Align,
         ts: &crate::text::TextStyle,
     ) {
+        let _g = prof::scope(prof::TEXT);
         // ★ 全程逻辑坐标：D2D 已 SetTransform(scale)，会把逻辑值放大到物理像素。
         //   绝不在此 ×scale（软渲染 DWriteEngine::draw 的 ×scale 是因其直画物理 pixmap、无变换）。
         if text.is_empty() || rect.is_empty() {
@@ -1685,6 +1693,7 @@ impl Canvas for D2DCanvas<'_> {
     }
 
     fn push_layer(&mut self, opacity: f32) {
+        let _g = prof::scope(prof::CLIP);
         // 离屏合成层：后续绘制重定向到层，PopLayer 时按 opacity 整体合回父层
         // （子树统一不透明度）。无限 contentBounds 不裁剪层内容（裁剪由 clip 栈负责）。
         let params = D2D1_LAYER_PARAMETERS1 {
@@ -1726,6 +1735,7 @@ impl Canvas for D2DCanvas<'_> {
     }
 
     fn clip_rect(&mut self, r: crate::geometry::Rect) {
+        let _g = prof::scope(prof::CLIP);
         // 契约：clip_rect 须在 save() 之后（与 restore() 配对），否则裁剪会泄漏。
         debug_assert!(
             !self.saves.is_empty(),
