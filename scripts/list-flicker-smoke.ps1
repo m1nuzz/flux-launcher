@@ -53,11 +53,16 @@
     Characters appended and then deleted again in the second phase.
 
 .PARAMETER InterKeyMs
-    Delay between synthetic keystrokes. Keep it below -QuietMs.
+    Delay between synthetic keystrokes. Keep it below -QuietMs and below the
+    build's TYPING_QUIET_MS: the one-publish-per-keystroke rule only holds while
+    the launcher still considers the user to be typing, and the run throws if
+    this value would measure the paused-typing case instead.
 
 .PARAMETER QuietMs
-    Gap without a keystroke before deferred results may paint. Must match
-    TYPING_QUIET_MS in the build under test.
+    How long the harness leaves the launcher alone before it reads the list
+    again, so a deferred result has had time to land. This is the harness's
+    own wait, not a launcher constant: the product's typing window is
+    TYPING_QUIET_MS, which -InterKeyMs is checked against above.
 
 .PARAMETER Settle
     Query used by the last phase, which acts on the list while an earlier
@@ -87,7 +92,7 @@ param(
     [string]$Query = 'chatgpt',
     [string]$Toggle = 'pt',
     [int]$Rounds = 4,
-    [int]$InterKeyMs = 150,
+    [int]$InterKeyMs = 90,
     [int]$QuietMs = 250,
     [int]$IconBudgetMs = 150,
     [string]$Settle = 'chat',
@@ -112,6 +117,23 @@ Add-Type -AssemblyName System.Drawing
 if (-not (Test-Path $Executable)) { throw "Executable not found: $Executable" }
 if ($InterKeyMs -ge $QuietMs) {
     throw "InterKeyMs ($InterKeyMs) must stay below QuietMs ($QuietMs) or the test measures the paused-typing case."
+}
+# "One list publish per keystroke" is a promise the launcher makes only while it still
+# considers the user to be typing. TYPING_QUIET_MS is that window: past it the app
+# stops holding a late provider answer back and publishes it, which is what a person
+# who has finished a word expects. So the invariant below is only meaningful at a
+# cadence inside the window. The constant is read from the source rather than copied
+# here, so the two cannot drift apart unnoticed again - a run that measured the
+# paused-typing case reported a violation for behaviour the product intends.
+$typingConstants = Join-Path $PSScriptRoot '..\crates\flux-launcher\src\ui_constants.rs'
+$typingQuietMs = $null
+if (Test-Path $typingConstants) {
+    $match = Select-String -Path $typingConstants -Pattern 'TYPING_QUIET_MS: u64 = (\d+)' |
+        Select-Object -First 1
+    if ($match) { $typingQuietMs = [int]$match.Matches[0].Groups[1].Value }
+}
+if ($null -ne $typingQuietMs -and $InterKeyMs -ge $typingQuietMs) {
+    throw "InterKeyMs ($InterKeyMs) must stay below TYPING_QUIET_MS ($typingQuietMs). At or above it the launcher treats the gap as a pause, publishes the late answer without holding it, and the one-publish-per-keystroke invariant no longer applies - the run would be judging intended behaviour."
 }
 if (Test-Path $OutDir) { Remove-Item -Recurse -Force $OutDir }
 New-Item -ItemType Directory -Force -Path $OutDir | Out-Null
