@@ -312,11 +312,12 @@ function Get-TraceEvents {
     if (-not (Test-Path $tracePath)) { return @() }
     $parsed = @()
     foreach ($line in (Get-Content $tracePath)) {
-        if ($line -match 'unix=(\d+) .*event=([a-z-]+) (.*)') {
+        if ($line -match 'unix=(\d+) seq=(\d+) .*event=([a-z-]+) (.*)') {
             $parsed += [pscustomobject]@{
                 unix   = [long]$matches[1]
-                event  = $matches[2]
-                detail = $matches[3]
+                seq    = [long]$matches[2]
+                event  = $matches[3]
+                detail = $matches[4]
             }
         }
     }
@@ -453,9 +454,18 @@ try {
         if ($answer.Count -eq 0) {
             throw "home probe '$probe': the file provider never answered, so the reveal window was never measured"
         }
-        $answered = ($answer | Measure-Object -Property unix -Minimum).Minimum
+        # The reveal window ends at the EARLIEST answer, and a millisecond stamp cannot
+        # order two events that share one. The trace sequence is the exact write order
+        # under the sink lock, so the tie is resolved by (unix, seq): a publish in the
+        # same millisecond as the answer still counts, and a publish that genuinely
+        # follows the answer inside that millisecond is still a violation.
+        $firstAnswer = $answer | Sort-Object @{ Expression = 'unix' }, @{ Expression = 'seq' } |
+            Select-Object -First 1
+        $answered = $firstAnswer.unix
+        $answeredSeq = $firstAnswer.seq
         $forProbe = @($events | Where-Object {
-            $_.unix -ge $unix -and $_.unix -lt $answered -and $_.detail -like "query=$probe *" -and
+            $beforeAnswer = $_.unix -lt $answered -or ($_.unix -eq $answered -and $_.seq -lt $answeredSeq)
+            $beforeAnswer -and $_.unix -ge $unix -and $_.detail -like "query=$probe *" -and
             ($_.event -eq 'publish-initial' -or $_.event -eq 'list-write')
         })
         Write-Host ("           '{0}' republished {1} time(s) in the {2}ms before the answer" -f $probe, $forProbe.Count, ($answered - $unix))

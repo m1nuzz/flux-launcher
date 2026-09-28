@@ -27,6 +27,10 @@ fn sink() -> Option<&'static Mutex<File>> {
     .as_ref()
 }
 
+use std::sync::atomic::{AtomicU64, Ordering};
+
+static SEQ: AtomicU64 = AtomicU64::new(0);
+
 /// Append `event=<name> <detail>` with both a monotonic and a wall-clock stamp,
 /// so the trace can be aligned against screenshots taken by a driver script.
 pub(crate) fn note(event: &str, detail: &str) {
@@ -41,11 +45,17 @@ pub(crate) fn note(event: &str, detail: &str) {
         .duration_since(UNIX_EPOCH)
         .map(|elapsed| elapsed.as_millis())
         .unwrap_or_default();
+    // Milliseconds cannot order two events that land in the same tick, and the
+    // launcher legitimately paints in the same millisecond Everything answers.
+    // The sequence number, taken under the sink lock, is the exact write order,
+    // so a driver can compare (unix, seq) instead of guessing from the clock.
+    let seq = SEQ.fetch_add(1, Ordering::Relaxed);
     let _ = writeln!(
         file,
-        "t={} unix={} event={} {}",
+        "t={} unix={} seq={} event={} {}",
         started.elapsed().as_millis(),
         unix_ms,
+        seq,
         event,
         detail
     );
