@@ -2575,6 +2575,150 @@ mod tests {
         );
     }
 
+    /// The other half of the rule above, and the half that bites: a Frame child never
+    /// pushes a centred sibling, so a child *wider than the free gutter* does not make
+    /// room for itself - it paints over the sibling. The action bar's provider-status
+    /// token lives in exactly that gutter, so "fits the gutter" is a sizing obligation
+    /// on the child, not something the Frame can enforce. A launcher reading this test
+    /// should size its leading-edge child to the gutter, never to its own text.
+    #[test]
+    fn a_frame_child_wider_than_the_gutter_overlaps_instead_of_making_room() {
+        const FRAME_W: i32 = 396;
+        const HINTS_W: i32 = 200;
+        const GUTTER: i32 = (FRAME_W - HINTS_W) / 2;
+
+        /// Lay the bar out with a leading-edge child of `child_w` and report where the
+        /// centred hint row and that child ended up.
+        fn bar(child_w: i32) -> (Rect, Rect) {
+            let hints = Element::row()
+                .height(22)
+                .child(Element::leaf().width(HINTS_W).height(22).bg(Color::WHITE))
+                .align(Align::Center);
+            let tree = layout(
+                Element::stack()
+                    .width(FRAME_W)
+                    .height(22)
+                    .child(hints)
+                    .child(
+                        Element::leaf()
+                            .width(child_w)
+                            .height(22)
+                            .bg(Color::WHITE)
+                            .align(Align::Start),
+                    ),
+                FRAME_W,
+                22,
+            );
+            let kids = tree.get(tree.root.unwrap()).unwrap().children.clone();
+            (tree.abs_bounds(kids[0]), tree.abs_bounds(kids[1]))
+        }
+
+        // A child that fits the gutter leaves the hints exactly where they were.
+        let (hints, fits) = bar(GUTTER - 3);
+        assert_eq!(hints.x, GUTTER, "the hints must be centred in the frame");
+        assert!(
+            fits.right() <= hints.x,
+            "a {}-wide child fits the {GUTTER} px gutter without touching the hints: {:?} vs {:?}",
+            GUTTER - 3,
+            fits,
+            hints
+        );
+
+        // One pixel wider and it reaches into the centred row instead of pushing it.
+        // The row does not move - that is the overlay rule - so the overlap is the only
+        // signal the caller gets, which is why the gutter has to be a hard bound.
+        let (hints_wide, too_wide) = bar(GUTTER + 1);
+        assert_eq!(
+            hints_wide.x, hints.x,
+            "a Frame child must not move the centred sibling at any width"
+        );
+        assert!(
+            too_wide.right() > hints_wide.x,
+            "a child wider than the {GUTTER} px gutter must be reported as overlapping: \
+             child={:?} hints={:?}",
+            too_wide,
+            hints_wide
+        );
+    }
+
+    /// The arrangement that *does* displace a centred row: putting the status token in
+    /// the same Linear row as the hints. The row is sized by its content, so the token
+    /// plus its spacing widens the row and, being first, pushes the hints right by
+    /// exactly `token + spacing`. This is pinned because it is the only arrangement in
+    /// which "the hints moved when the status token was added" can be true - and it also
+    /// costs the row its centring, so the shift is visible twice. The action bar uses a
+    /// Frame for the token instead, so the shift never happens there.
+    #[test]
+    fn a_token_inside_the_hint_row_pushes_the_hints_right() {
+        const TOKEN_W: i32 = 44;
+        const SPACING: i32 = 8;
+        const HINTS_W: i32 = 316;
+        const FRAME_W: i32 = 396;
+
+        fn hint_leaf() -> Element {
+            Element::leaf()
+                .width(HINTS_W)
+                .height(22)
+                .bg(Color::WHITE)
+                .align(Align::Center)
+        }
+
+        // Alone: a content-sized row centred in the frame, hints at its leading edge.
+        let alone = layout(
+            Element::stack().width(FRAME_W).height(22).child(
+                Element::row()
+                    .height(22)
+                    .child(hint_leaf())
+                    .align(Align::Center),
+            ),
+            FRAME_W,
+            22,
+        );
+        let alone_row = alone.get(alone.root.unwrap()).unwrap().children[0];
+        let alone_box = alone.abs_bounds(alone_row);
+        let alone_hints = alone.abs_bounds(alone.get(alone_row).unwrap().children[0]);
+        assert_eq!(
+            alone_box.x,
+            (FRAME_W - HINTS_W) / 2,
+            "the row starts centred"
+        );
+        assert_eq!(alone_hints.x - alone_box.x, 0, "the hints lead the row");
+
+        // Token first, then the same row: Linear main-axis layout, so the hints move.
+        let shifted = layout(
+            Element::stack().width(FRAME_W).height(22).child(
+                Element::row()
+                    .height(22)
+                    .spacing(SPACING)
+                    .child(Element::leaf().width(TOKEN_W).height(22).bg(Color::WHITE))
+                    .child(hint_leaf()),
+            ),
+            FRAME_W,
+            22,
+        );
+        // The frame holds the row; the row holds the token and the hints.
+        let frame = shifted.root.unwrap();
+        let row = shifted.get(frame).unwrap().children[0];
+        let kids = shifted.get(row).unwrap().children.clone();
+        let (token, hints) = (shifted.abs_bounds(kids[0]), shifted.abs_bounds(kids[1]));
+        assert_eq!(token.x, 0, "the token takes the row's leading slot");
+        assert_eq!(
+            hints.x - shifted.abs_bounds(row).x - (alone_hints.x - alone_box.x),
+            TOKEN_W + SPACING,
+            "a token inside the row displaces the hints by its width plus the spacing"
+        );
+        // The row is also 52 px wider, so the frame can no longer centre it: the group
+        // now starts 52 px in and ends 28 px short, so the same shift is also visible
+        // as a 28 px left/right asymmetry the centred row did not have.
+        assert_eq!(
+            shifted.abs_bounds(row).x,
+            0,
+            "a wider row falls back to leading"
+        );
+        assert_eq!(hints.x, TOKEN_W + SPACING);
+        assert_eq!(FRAME_W - hints.right(), 28);
+    }
+
     #[test]
     fn node_offset_shifts_both_paint_bounds_and_hit_test() {
         // offset 是绘制/命中偏移：abs_bounds（脏区与拖拽逻辑读它）与 hit_test
