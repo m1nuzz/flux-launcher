@@ -235,3 +235,57 @@ pub(crate) fn build_action_list(
     .corner(12.0)
     .visible_signal(action_mode)
 }
+
+#[cfg(test)]
+mod action_bar_fit {
+    use super::build_action_bar;
+    use windui::core::Tree;
+    use windui::geometry::Size;
+    use windui::text::DWriteEngine;
+
+    /// The action bar as main.rs nests it, measured with the real font. The three key
+    /// hints fill 317 px of the 340 px bar, so the free space at each edge is about 11 px.
+    ///
+    /// That number is the reason the bar has no provider status on it, and it is also a
+    /// trap: a fourth child in that space does not get its own room, it takes the hints'
+    /// width instead. AGENTS.md asks for a provider status in this bar, so anyone adding
+    /// one has to make room first - by shortening the hints or by widening the window -
+    /// and this test is what shows whether the bar can take it.
+    #[test]
+    fn the_key_hints_fit_the_action_bar() {
+        let mut tree = Tree::new();
+        let root = windui::ui::Element::col()
+            .width_match()
+            .padding_edges(10, 13, 10, 7)
+            .child(build_action_bar(
+                windui::signal::signal(true),
+                windui::signal::signal(false),
+            ))
+            .build(&mut tree);
+        tree.root = Some(root);
+        let mut engine = DWriteEngine::new();
+        tree.layout_root(Size::new(420, 382), &mut engine);
+        let bar_id = tree.get(root).unwrap().children[0];
+        let bar = tree.abs_bounds(bar_id);
+        let hints = tree.abs_bounds(tree.get(bar_id).unwrap().children[0]);
+
+        assert_eq!(bar.w, super::super::ui_constants::ACTION_BAR_WIDTH);
+        assert!(
+            hints.w <= bar.w,
+            "the key hints must fit the bar: hints {} vs bar {}",
+            hints.w,
+            bar.w
+        );
+        assert_eq!(
+            hints.w, 317,
+            "the hints' measured width; a different value means a hint changed, and the \
+             free space a status could use has to be re-measured"
+        );
+        assert_eq!(hints.x - bar.x, 11, "free space at the leading edge");
+        assert_eq!(
+            (bar.x + bar.w) - (hints.x + hints.w),
+            12,
+            "free space at the trailing edge"
+        );
+    }
+}
