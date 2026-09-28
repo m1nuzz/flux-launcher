@@ -19,8 +19,8 @@ pub use game_mode::{
 };
 pub use search::{ResultKind, ResultSource, SearchResult};
 pub use search_match::{
-    is_application_path, matches_search_text, rank_results, rank_results_with_priorities,
-    PreparedQuery,
+    candidate_keys, is_application_path, matches_search_text, rank_results,
+    rank_results_with_priorities, CandidateKeys, PreparedQuery,
 };
 pub use search_model::{history_results, SearchModel};
 pub use settings::{

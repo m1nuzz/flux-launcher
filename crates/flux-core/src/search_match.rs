@@ -139,6 +139,53 @@ impl PreparedQuery {
         compact_search_key_into(candidate, scratch);
         scratch.contains(&self.compact)
     }
+
+    /// [`PreparedQuery::matches`] for a candidate whose two forms are already known.
+    ///
+    /// The three tests and their order are the ones `matches` runs, so a candidate that
+    /// was prepared once answers exactly as it would have on every call - the pinned
+    /// corpus test is the contract. What it drops is the per-candidate normalisation:
+    /// for a catalog re-tested on every letter that was the whole cost of a keystroke.
+    pub fn matches_keys(&self, keys: &CandidateKeys) -> bool {
+        if self.matches_nothing {
+            return false;
+        }
+        if keys.normalized.contains(&self.normalized) {
+            return true;
+        }
+        if let Some(unified_query) = &self.unified {
+            // A separator is a step in a path, not punctuation to forgive: with the
+            // compact comparison a query of `d:/` matches every name holding a "d", so
+            // the results of the previous keystroke keep answering the new query and
+            // stay on screen until the file provider replies.
+            return unified_separators(&keys.normalized).contains(unified_query.as_str());
+        }
+        keys.compact.contains(&self.compact)
+    }
+}
+
+/// A candidate's two derived forms, computed once instead of per keystroke.
+///
+/// [`PreparedQuery::matches`] derives exactly these two strings from the candidate and
+/// then runs the same three tests on them, so a caller that tests the same candidate on
+/// every keystroke - an application catalog, where one letter re-tests every installed
+/// program - can pay for them once when it loads and keep only the comparisons after
+/// that. The forms are the ones the matcher already builds: the trimmed ASCII-lowercased
+/// text, and its alphanumeric-only compact form.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct CandidateKeys {
+    /// `trim()` + `to_ascii_lowercase()`.
+    pub normalized: String,
+    /// `trim()` + Unicode lowercase, keeping only alphanumerics.
+    pub compact: String,
+}
+
+/// The two forms of `value` that [`PreparedQuery::matches`] would derive for it.
+pub fn candidate_keys(value: &str) -> CandidateKeys {
+    let mut keys = CandidateKeys::default();
+    normalize_into(value, &mut keys.normalized);
+    compact_search_key_into(value, &mut keys.compact);
+    keys
 }
 
 fn normalize_into(value: &str, scratch: &mut String) {
@@ -270,6 +317,20 @@ mod tests {
                 reference("LM Studio", query),
                 "a dirty buffer changed the answer for {query:?}"
             );
+
+            // The catalog prepares a candidate once and re-uses those forms for every
+            // later query, so the prepared forms have to answer exactly as deriving them
+            // per query does. This is the negative control for that change: it is what
+            // fails if `candidate_keys` ever stops being what `matches` would have built.
+            for candidate in candidates {
+                let keys = candidate_keys(candidate);
+                let mut scratch = String::new();
+                assert_eq!(
+                    prepared.matches_keys(&keys),
+                    prepared.matches(candidate, &mut scratch),
+                    "prepared candidate keys disagree with the per-query match on {candidate:?} / {query:?}"
+                );
+            }
         }
     }
 
