@@ -362,6 +362,7 @@ $env:FLUX_PAINT_TRACE_FILE = $tracePath
 
 $violations = @()
 $script:observations = @()
+$script:reshows = 0
 $script:iconPageWarmed = $false
 $script:maxAttempts = 0
 $script:totalAttempts = 0
@@ -374,6 +375,8 @@ function Show-Launcher([IntPtr]$handle) {
     # loses activation, so a posted key can land on a window that is gone. Posted
     # keys do nothing on a hidden window, which reads as a lost character.
     if (-not [Flicker.Input]::IsWindowVisible($handle)) {
+        $script:reshows++
+        Write-Host "           (harness recovery: the launcher window was not visible, re-showing it; a show clears the query by design)"
         [void][Flicker.Input]::SendMessage($handle, 0x0312, [IntPtr]::Zero, [IntPtr]::Zero)
         Start-Sleep -Milliseconds 250
     }
@@ -397,11 +400,38 @@ function Send-Vk([IntPtr]$handle, [uint16]$vk) {
 function Add-Observation([string]$phase, [string]$label, [string]$after, [long]$unix, $samples) {
     # Harness self-check: the launcher must actually hold the text this harness
     # believes it typed, otherwise the run measures a query that never existed.
-    $seen = @(Get-TraceEvents | Where-Object { $_.event -eq 'query' } | Select-Object -Last 1)
+    #
+    # The check asks "did this keystroke land?", so it waits for the expected value
+    # instead of reading the log once. It used to read the *last* query event in the
+    # whole run and demand it match, which is a different question and a wrong one:
+    # the query event is written by the interval tick (interval_tick.rs, on
+    # query_changed), not by the keystroke, so it lags the key by up to a tick; and
+    # the last event in a session-long log is whatever the launcher did most
+    # recently. A show/activation clear - which the launcher performs on purpose, and
+    # which republishes the home menu and resizes the panel to 420x56 - lands after
+    # the key and rewrites that last line, so a keystroke that was delivered
+    # correctly got reported as "the launcher does not hold 'chatg'". It flaked about
+    # one run in five and survived both foreground modes, because it was never the
+    # foreground or the hide-on-deactivate path: it was this read.
+    $expected = "value={0} *" -f $after
     $actual = 'nothing'
-    if ($seen.Count -gt 0) { $actual = $seen[0].detail }
-    if ($seen.Count -eq 0 -or $actual -notlike ("value={0} *" -f $after)) {
-        throw "phase '$phase' step '$label': expected the launcher to hold '$after', it holds '$actual'"
+    $landed = $false
+    for ($wait = 0; $wait -lt 80; $wait++) {
+        $seen = @(Get-TraceEvents | Where-Object {
+            $_.event -eq 'query' -and $_.unix -ge $unix
+        } | Select-Object -Last 1)
+        if ($seen.Count -gt 0) { $actual = $seen[0].detail }
+        if ($seen.Count -gt 0 -and $actual -like $expected) { $landed = $true; break }
+        Start-Sleep -Milliseconds 25
+    }
+    if (-not $landed) {
+        $cause = ''
+        if ($script:reshows -gt 0) {
+            # The harness re-showed a window it had lost, and a show clears the
+            # field by design. Say that instead of blaming the launcher.
+            $cause = " (this harness re-showed the window $($script:reshows) time(s); a show clears the query by design, so the keystroke it measured was destroyed by the harness, not lost by the launcher)"
+        }
+        throw "phase '$phase' step '$label': expected the launcher to hold '$after', it holds '$actual'$cause"
     }
     $script:observations += [pscustomobject]@{
         phase = $phase; label = $label; after = $after; unix = $unix; samples = $samples
@@ -820,12 +850,18 @@ try {
     # character of the recalled text.
     for ($k = 0; $k -lt ($Settle.Length + 6); $k++) { Send-Backspace $handle }
     Start-Sleep -Milliseconds 500
+    $upUnix = [DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds()
     Send-Vk $handle 0x26
     # Wait for the recall to reach the field instead of sleeping once: the tick owns
     # when the note appears, and reading too early looks like a lost keystroke.
+    # Only notes at or after the Up count. The last note in the whole log is not a
+    # verdict on this keystroke - a note written before it, or a clear written after
+    # it, says nothing about whether the recall reached the field.
     $recalled = @()
     for ($wait = 0; $wait -lt 80; $wait++) {
-        $recalled = @(Get-TraceEvents | Where-Object { $_.event -eq 'query' } | Select-Object -Last 1)
+        $recalled = @(Get-TraceEvents | Where-Object {
+            $_.event -eq 'query' -and $_.unix -ge $upUnix
+        } | Select-Object -Last 1)
         if ($recalled.Count -gt 0 -and $recalled[0].detail -match '^value=\S+ ') { break }
         Start-Sleep -Milliseconds 25
     }
