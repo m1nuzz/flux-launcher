@@ -2063,12 +2063,14 @@ try {
             "appSeen=$enterAppSeen pluginSeen=$enterPluginSeen probeLines=$($enterProbeLines.Count). " +
             "Probe tail:`n$enterProbeTail")
     }
+    $enterLaunchVerified = $false
+    for ($enterAttempt = 1; $enterAttempt -le 3 -and !$enterLaunchVerified; $enterAttempt++) {
     [FluxWallpaper]::SendMessage($launcherHandle, $wmKeyDown, [UIntPtr]::new(0x24), [IntPtr]::Zero) | Out-Null
     [FluxWallpaper]::SendMessage($launcherHandle, $wmKeyDown, [UIntPtr]::new(0x28), [IntPtr]::Zero) | Out-Null
     Start-Sleep -Milliseconds 150
     [FluxWallpaper]::SendMessage($launcherHandle, $wmKeyDown, [UIntPtr]::new(0x26), [IntPtr]::Zero) | Out-Null
     Start-Sleep -Milliseconds 350
-    Save-Screenshot "keyboard-selection.png"
+    if ($enterAttempt -eq 1) { Save-Screenshot "keyboard-selection.png" }
     Start-Sleep -Milliseconds 100
     # Clear modifier state left by the preceding Alt+Space cycles before testing
     # plain Enter; otherwise Flux correctly interprets the key as Alt+Enter.
@@ -2109,12 +2111,35 @@ try {
         $enterLaunchHidden -and
         ($enterHideDispatchMilliseconds -lt $EnterHideDispatchBudgetMilliseconds) -and
         $enterLaunchDispatchBeforeHideProbe
-    if (!$enterLaunchHidden) {
+    if ($null -ne $launchDispatchLine) {
+        # A launch happened: strict ordering assertions, no retry (retrying
+        # would launch the fixture a second time).
+        if (!$enterLaunchHidden) {
+            throw "Enter launch did not hide the launcher window."
+        }
+        if (!$enterHideLatencyProbe) {
+            $tracePreview = ($enterTraceLines -join ' | ')
+            throw "Enter launch/hide ordering failed: dispatch_before_hide=$enterLaunchDispatchBeforeHideProbe, hide_dispatch_ms=$enterHideDispatchMilliseconds, budget_ms=$EnterHideDispatchBudgetMilliseconds, trace=$tracePreview."
+        }
+        $enterLaunchVerified = $true
+    } elseif (![FluxWallpaper]::IsWindowVisible($launcherHandle)) {
+        # Hidden with zero trace: Enter executed the silent plugin row, not a
+        # launch. Restore via hotkey and re-select on the next attempt.
+        Write-Host "Enter attempt $enterAttempt hit a non-launch row; restoring and re-selecting."
+        $retryDeadline = (Get-Date).AddSeconds(5)
+        while (![FluxWallpaper]::IsWindowVisible($launcherHandle) -and (Get-Date) -lt $retryDeadline) {
+            [FluxWallpaper]::SendMessage($launcherHandle, $wmHotkey, [UIntPtr]::Zero, [IntPtr]::Zero) | Out-Null
+            Start-Sleep -Milliseconds 650
+        }
+        if (![FluxWallpaper]::IsWindowVisible($launcherHandle)) {
+            throw "Unable to restore launcher after Enter hide probe."
+        }
+    } else {
         throw "Enter launch did not hide the launcher window."
     }
-    if (!$enterHideLatencyProbe) {
-        $tracePreview = ($enterTraceLines -join ' | ')
-        throw "Enter launch/hide ordering failed: dispatch_before_hide=$enterLaunchDispatchBeforeHideProbe, hide_dispatch_ms=$enterHideDispatchMilliseconds, budget_ms=$EnterHideDispatchBudgetMilliseconds, trace=$tracePreview."
+    }
+    if (!$enterLaunchVerified) {
+        throw "Enter launch smoke never dispatched a shell launch in 3 attempts (selection kept landing off the app row)."
     }
     # Restore the launcher for the remaining independent probes. The Enter hide
     # callback and the next hotkey dispatch can cross on a busy CI compositor, so
