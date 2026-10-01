@@ -106,7 +106,6 @@ Installers:
     AppsAndFeaturesEntries:
       - DisplayName: Flux Launcher $Version
         Publisher: m1nuzz
-        DisplayVersion: $Version
         InstallerType: inno
 ManifestType: installer
 ManifestVersion: 1.12.0
