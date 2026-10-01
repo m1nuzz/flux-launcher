@@ -2204,8 +2204,14 @@ try {
         throw "Launch process probe failed: dispatch_before_hide=$launchProbeDispatchBeforeHide, launch_succeeded=$launchProbeLaunchSucceeded, completed_before_hide=$launchProbeLaunchSucceededBeforeHide, process_created=$($launchProbeProcessTimestamp -gt 0.0), shell_return=$($launchProbeShellReturnTimestamp -gt 0.0)."
     }
     [FluxWallpaper]::SendMessage($launcherHandle, $wmHotkey, [UIntPtr]::Zero, [IntPtr]::Zero) | Out-Null
-    Start-Sleep -Milliseconds 650
-    if (![FluxWallpaper]::IsWindowVisible($launcherHandle)) {
+    # A loaded runner can stall the UI thread, so poll for visibility instead
+    # of asserting once after a fixed sleep.
+    $restoreVisible = $false
+    for ($restoreAttempt = 0; $restoreAttempt -lt 20 -and !$restoreVisible; $restoreAttempt++) {
+        Start-Sleep -Milliseconds 250
+        $restoreVisible = [FluxWallpaper]::IsWindowVisible($launcherHandle)
+    }
+    if (!$restoreVisible) {
         throw "Unable to restore launcher after process creation smoke."
     }
 
