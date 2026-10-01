@@ -2888,12 +2888,24 @@ try {
                 throw "Visual Apply smoke persisted unexpected dimensions: $($persistedSettings.launcher_width)x$($persistedSettings.launcher_height)."
             }
             $visualPreviewPersistenceProbe = $true
-            $previewStillAlive = $false
-            try {
-                $previewStillAlive = -not (Get-Process -Id $visualPreviewProcessId -ErrorAction Stop).HasExited
-            } catch { $previewStillAlive = $false }
-            if ($previewStillAlive -or
-                [FluxWallpaper]::FindVisibleWindowByProcessId([uint32]$visualPreviewProcessId) -ne [IntPtr]::Zero) {
+            # The parent closes the preview on its next tick after Settings hides;
+            # a loaded runner can stall the UI thread for seconds, so poll instead
+            # of asserting once. A dead parent is a product crash, not a slow tick:
+            # fail fast with a distinct message instead of waiting out an orphan.
+            $previewGone = $false
+            for ($waitAttempt = 0; $waitAttempt -lt 40 -and !$previewGone; $waitAttempt++) {
+                $settingsProcess.Refresh()
+                if ($settingsProcess.HasExited) {
+                    throw "Visual Apply smoke lost the Settings process (exit $($settingsProcess.ExitCode)) while waiting for preview PID $visualPreviewProcessId to close."
+                }
+                $previewStillAlive = $false
+                try {
+                    $previewStillAlive = -not (Get-Process -Id $visualPreviewProcessId -ErrorAction Stop).HasExited
+                } catch { $previewStillAlive = $false }
+                $previewGone = !$previewStillAlive -and ([FluxWallpaper]::FindVisibleWindowByProcessId([uint32]$visualPreviewProcessId) -eq [IntPtr]::Zero)
+                if (!$previewGone) { Start-Sleep -Milliseconds 250 }
+            }
+            if (!$previewGone) {
                 throw "Visual Apply smoke failed to close preview PID $visualPreviewProcessId."
             }
 
@@ -2968,13 +2980,23 @@ try {
                 throw "Visual Back cleanup smoke could not activate the Back button via header sweep."
             }
             Write-Host "Visual Back activated at x=$backFoundX y=$backFoundY"
-            Start-Sleep -Milliseconds 700
-            $reopenedPreviewAlive = $false
-            try {
-                $reopenedPreviewAlive = -not (Get-Process -Id $reopenedPreviewProcessId -ErrorAction Stop).HasExited
-            } catch { $reopenedPreviewAlive = $false }
-            if ($reopenedPreviewAlive -or
-                [FluxWallpaper]::FindVisibleWindowByProcessId([uint32]$reopenedPreviewProcessId) -ne [IntPtr]::Zero) {
+            # Same polling contract as the Apply close check above: the parent
+            # closes the preview on its next tick, which a loaded runner can
+            # delay; a dead parent is a product crash, not a slow tick.
+            $previewGone = $false
+            for ($waitAttempt = 0; $waitAttempt -lt 40 -and !$previewGone; $waitAttempt++) {
+                $reopenedSettingsProcess.Refresh()
+                if ($reopenedSettingsProcess.HasExited) {
+                    throw "Visual Back cleanup smoke lost the reopened Settings process (exit $($reopenedSettingsProcess.ExitCode)) while waiting for preview PID $reopenedPreviewProcessId to close."
+                }
+                $reopenedPreviewAlive = $false
+                try {
+                    $reopenedPreviewAlive = -not (Get-Process -Id $reopenedPreviewProcessId -ErrorAction Stop).HasExited
+                } catch { $reopenedPreviewAlive = $false }
+                $previewGone = !$reopenedPreviewAlive -and ([FluxWallpaper]::FindVisibleWindowByProcessId([uint32]$reopenedPreviewProcessId) -eq [IntPtr]::Zero)
+                if (!$previewGone) { Start-Sleep -Milliseconds 250 }
+            }
+            if (!$previewGone) {
                 throw "Visual Back cleanup smoke failed after persistence reopen: preview PID $reopenedPreviewProcessId remained."
             }
             $visualPreviewCleanupProbe = $true
