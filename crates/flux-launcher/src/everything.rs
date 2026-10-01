@@ -4,7 +4,6 @@ use std::process::Command;
 #[cfg(windows)]
 use std::sync::OnceLock;
 use std::sync::{
-    atomic::{AtomicBool, Ordering},
     mpsc::{self, SyncSender},
     Arc, Mutex,
 };
@@ -59,37 +58,47 @@ fn everything_start_lock() -> &'static Mutex<()> {
     LOCK.get_or_init(|| Mutex::new(()))
 }
 
-#[cfg(windows)]
-fn everything_start_requested() -> &'static AtomicBool {
-    static REQUESTED: AtomicBool = AtomicBool::new(false);
-    &REQUESTED
-}
-
 fn should_start_everything(ipc_available: bool, process_running: bool) -> bool {
     !ipc_available && !process_running
 }
 
-/// Parse one `tasklist /FO CSV /NH` line: true when it names Everything.exe.
+/// Parse one `tasklist /FO CSV /NH` line: true when it names Everything.exe
+/// running outside session 0. The Everything *service* shares the exe name
+/// but always runs in session 0, while its GUI client (the IPC server Flux
+/// needs) runs in the user session: matching the service would make Flux
+/// believe Everything is already running and skip spawning the client
+/// forever. Columns are Image Name, PID, Session Name, Session#, Mem Usage;
+/// short lines without a session column keep the old name-only match.
 /// Extracted pure for tests; the live check stays in `everything_process_running`.
 #[cfg(windows)]
 fn is_everything_tasklist_line(line: &str) -> bool {
-    let first_cell = line
+    let cells: Vec<&str> = line
         .trim_start()
         .trim_start_matches('"')
         .split([',', '"'])
-        .next()
-        .unwrap_or_default();
-    first_cell.eq_ignore_ascii_case("Everything.exe")
+        .filter(|cell| !cell.is_empty())
+        .collect();
+    let [name, ..] = cells.as_slice() else {
+        return false;
+    };
+    if !name.eq_ignore_ascii_case("Everything.exe") {
+        return false;
+    }
+    match cells.get(3) {
+        Some(session) => *session != "0",
+        None => true,
+    }
 }
 
 /// Cross-process guard around the check+spawn sequence.
 ///
-/// The in-process `everything_start_requested` flag cannot stop TWO Flux
-/// processes (login storm, double launch, flaky single-instance handoff)
-/// from both observing "nobody home" and spawning Everything twice — and two
-/// servers wedge IPC for both. A session-local named mutex serializes the
+/// Two Flux processes (login storm, double launch, flaky single-instance
+/// handoff) can both observe "nobody home" and spawn Everything twice — and
+/// two servers wedge IPC for both. A session-local named mutex serializes the
 /// sequence across processes: whoever loses skips spawning (the winner is
-/// handling it). Abandoned (crashed holder) counts as acquirable.
+/// handling it). Abandoned (crashed holder) counts as acquirable. Together
+/// with the in-process lock in the starter and Everything's own
+/// single-instance exit, this is the duplicate-spawn protection.
 #[cfg(windows)]
 struct EverythingStarterGuard {
     handle: windows::Win32::Foundation::HANDLE,
@@ -170,16 +179,12 @@ pub fn start_background_if_installed() -> Result<InstallationState, String> {
         let ipc_available = EverythingClient::new().is_ok();
         let process_running = everything_process_running();
         if !should_start_everything(ipc_available, process_running) {
-            everything_start_requested().store(false, Ordering::Release);
             return Ok(state);
         }
-        if everything_start_requested().load(Ordering::Acquire) {
-            return Ok(state);
-        }
-
-        everything_start_requested().store(true, Ordering::Release);
+        // Nothing usable alive (no IPC, no client process): spawn. Any
+        // earlier attempt is dead by definition here, so no sticky flag —
+        // a dead child must not block the next retry forever.
         if let Err(error) = Command::new(path).args(startup_args()).spawn() {
-            everything_start_requested().store(false, Ordering::Release);
             return Err(format!(
                 "Unable to start Everything in the background: {error}"
             ));
@@ -441,6 +446,21 @@ mod tests {
         ));
         assert!(!is_everything_tasklist_line(""));
         assert!(!is_everything_tasklist_line("INFO: No tasks are running."));
+    }
+
+    /// The Everything service shares the exe name but always runs in
+    /// session 0, while its GUI client (the IPC server Flux needs) runs in
+    /// the user session. Matching the service would make Flux believe
+    /// Everything is already running and skip spawning the client forever.
+    #[cfg(windows)]
+    #[test]
+    fn tasklist_line_ignores_the_service_in_session_zero() {
+        assert!(!is_everything_tasklist_line(
+            "\"Everything.exe\",\"7824\",\"Services\",\"0\",\"112 K\""
+        ));
+        assert!(is_everything_tasklist_line(
+            "\"Everything.exe\",\"32596\",\"Console\",\"1\",\"541,864 K\""
+        ));
     }
 
     /// Regression test for duplicate Everything instances: the starter mutex
