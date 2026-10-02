@@ -167,11 +167,12 @@ fn icon_class(target: &str) -> IconClass {
         return IconClass::Single;
     };
     let lowered = extension.to_ascii_lowercase();
-    // `is_file`, not `!is_dir`: a stat that fails - a sleeping network share, a path
-    // Everything still indexes after deletion - must fall back to its own icon
-    // rather than to a shared one, or a folder would be bound to a file picture for
-    // the rest of the session.
-    if PER_FILE_ICON_EXTENSIONS.contains(&lowered.as_str()) || !path.is_file() {
+    // `is_dir`, not `!is_file`: a stat that fails - a path Everything still
+    // indexes after deletion - is not a folder, so it shares its extension's
+    // picture instead of paying a shell round trip for a ghost. Only a folder
+    // that really is one keeps its own icon: a folder named `v1.0` would
+    // otherwise be bound to a file picture for the rest of the session.
+    if PER_FILE_ICON_EXTENSIONS.contains(&lowered.as_str()) || path.is_dir() {
         return IconClass::Single;
     }
     IconClass::Extension(lowered)
@@ -914,6 +915,27 @@ mod tests {
         assert!(
             matches!(verdict, IconClass::Single),
             "a folder named `release-v1.0` is not a `.0` file"
+        );
+    }
+
+    #[test]
+    fn a_path_that_is_gone_shares_its_extension_instead_of_paying_for_a_ghost() {
+        // Everything keeps indexing a temp file after its owner deletes it. That
+        // row is not a folder - nothing on disk answers to the name anymore - so
+        // it takes its extension's picture instead of a shell round trip that can
+        // only fail.
+        let missing =
+            std::env::temp_dir().join(format!("flux-icon-ghost-{}.tmp", std::process::id()));
+        assert!(
+            !missing.exists(),
+            "the fixture must be absent for the verdict to mean anything"
+        );
+        assert!(
+            matches!(
+                icon_class(&missing.to_string_lossy()),
+                IconClass::Extension(extension) if extension == "tmp"
+            ),
+            "a deleted file is not a folder and shares the type picture"
         );
     }
 
