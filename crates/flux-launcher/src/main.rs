@@ -28,6 +28,7 @@ mod monitor;
 mod native_host;
 mod native_plugins;
 mod paint_trace;
+mod path_probe;
 mod plugin_limits;
 mod plugin_transport;
 mod plugins;
@@ -429,6 +430,19 @@ fn main() {
         settings.auto_enable_everything,
     );
 
+    let path_probe_worker = background_tasks::spawn_path_probe_pipeline(
+        &mut app,
+        query,
+        results,
+        selected_id,
+        selected_index,
+        selection_touched,
+        current_sequence,
+        Rc::clone(&provider_results),
+        priorities,
+        history_mode,
+    );
+
     let plugin_worker = background_tasks::spawn_plugin_pipeline(
         &mut app,
         query,
@@ -696,6 +710,7 @@ fn main() {
         window_position.clone(),
         application_worker,
         everything_worker,
+        path_probe_worker,
         plugin_worker,
         native_plugin_worker,
         recycle_bin_confirmation,

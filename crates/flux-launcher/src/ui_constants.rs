@@ -38,6 +38,13 @@ pub(crate) const LAUNCHER_CHROME_HEIGHT: i32 = COMPACT_WINDOW_HEIGHT + 38;
 /// 120 ms still clears the observed round trips with room to spare while staying well
 /// above a fast typist's inter-key interval.
 pub(crate) const TYPING_QUIET_MS: u64 = 120;
+/// How long the filesystem probe may hold the list, and how long the tick waits for
+/// it: worker and publish gate share this one number. It answers "how long may a
+/// volume hold the list", not "how long has the user been typing", so it is not an
+/// alias of `TYPING_QUIET_MS`. 60 ms covers an awake volume several times over; on a
+/// sleeping one the stat cannot be cancelled, and this is what the rest of the list
+/// pays instead.
+pub(crate) const PATH_PROBE_PUBLISH_GATE_MS: u64 = 60;
 /// How many search ticks a page of shell icons may be held back waiting for the
 /// icon thread to drain before the partial set is propagated anyway. At
 /// `SEARCH_INTERVAL` this caps the wait at roughly half a second, so a shell item
