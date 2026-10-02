@@ -108,7 +108,11 @@ param(
     [int]$RowHeight = 24,
     [int]$HeaderHeight = 56,
     [string]$OutDir = (Join-Path $env:TEMP 'flux-list-flicker'),
-    [string]$SettingsFile = (Join-Path $env:APPDATA 'FluxLauncher\settings.json')
+    [string]$SettingsFile = (Join-Path $env:APPDATA 'FluxLauncher\settings.json'),
+    # The indexer is off in this run (a settings copy with auto_enable_everything
+    # disabled): the home reveal window has no file-provider answer to measure
+    # against, so that phase is skipped and the path phase carries the proof.
+    [switch]$NoEverything
 )
 
 $ErrorActionPreference = 'Stop'
@@ -477,6 +481,10 @@ try {
 
     Write-Host ''
     Write-Host 'home: the first character typed into an empty field'
+    if ($NoEverything) {
+        Write-Host '           skipped: no file provider in this run, nothing to reveal against'
+    } else
+    {
     # While the field is empty the result list is hidden and its rows are the
     # suggestion menu - "About Flux Launcher" and the other commands. A keystroke
     # shows the list again, so if the new query publishes nothing the reveal is
@@ -527,6 +535,93 @@ try {
         Send-Backspace $handle
         Start-Sleep -Milliseconds ($QuietMs + 150)
     }
+    }
+
+    Write-Host ''
+    Write-Host 'path: the place a typed path names must be the head row'
+    # Universal fixtures: built under %TEMP% for this run, so the phase proves the
+    # feature on any Windows machine instead of asserting one owner's folders.
+    $fixtureRoot = Join-Path $env:TEMP ("flux-path-fixture-{0}" -f $process.Id)
+    Remove-Item -Recurse -Force $fixtureRoot -ErrorAction SilentlyContinue
+    $fixtureFolder = Join-Path $fixtureRoot 'cmd'
+    New-Item -ItemType Directory -Path $fixtureFolder -Force | Out-Null
+    Set-Content -Path (Join-Path $fixtureFolder 'notes.txt') -Value 'fixture' -NoNewline
+    Set-Content -Path (Join-Path $fixtureFolder 'download office.url') -Value '[InternetShortcut]' -NoNewline
+    $fixtureFile = Join-Path $fixtureFolder 'download office.url'
+    $pathProbes = @(
+        @{ label = 'folder'; text = $fixtureFolder; place = $fixtureFolder },
+        @{ label = 'file'; text = $fixtureFile; place = $fixtureFile },
+        @{ label = 'quoted'; text = ('"{0}"' -f $fixtureFolder); place = $fixtureFolder }
+    )
+    foreach ($probe in $pathProbes) {
+        $probeStartUnix = [DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds()
+        $typed = ''
+        foreach ($char in $probe.text.ToCharArray()) {
+            $typed += [string]$char
+            Show-Launcher $handle
+            $unix = [DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds()
+            Send-Char $handle $char
+            $samples = [Flicker.Sampler+Worker]::Run($handle, $InterKeyMs, $SampleEveryMs, $HeaderHeight, $RowHeight, '')
+            Add-Observation 'path' ("{0} + {1}" -f $probe.label, $char) $typed $unix $samples
+        }
+        Start-Sleep -Milliseconds ($QuietMs + 150)
+        # What is on screen after the probe is what the last publish in its window
+        # put there: a keystroke whose rows were already showing publishes nothing,
+        # so demanding a fresh write for the exact text would fail a panel that is
+        # already right. Prefer a publish for the exact text, fall back to the last
+        # publish for a prefix of it - a slow provider's rows for an earlier prefix
+        # are still the rows on screen until the full text publishes.
+        $nowUnix = [DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds()
+        $windowWrites = @(Get-TraceEvents | Where-Object { $_.event -eq 'list-write' } | ForEach-Object {
+            $text = $_.detail -replace '^query=(.*?) rows=.*$', '$1'
+            if ($_.unix -ge $probeStartUnix -and $_.unix -le $nowUnix -and $probe.text.StartsWith($text)) {
+                [pscustomobject]@{ unix = $_.unix; seq = $_.seq; query = $text; detail = $_.detail }
+            }
+        } | Sort-Object @{ Expression = 'unix' }, @{ Expression = 'seq' })
+        if ($windowWrites.Count -eq 0) {
+            $violations += "path probe '$($probe.label)': no publish for '$($probe.text)' at all, the place never reached the screen"
+        } else {
+            $exact = @($windowWrites | Where-Object { $_.query -ceq $probe.text })
+            $final = if ($exact.Count -gt 0) { $exact[-1] } else { $windowWrites[-1] }
+            # The head id itself can hold a space (`download office.url`), so cut
+            # at the next field, not at whitespace.
+            $head = ''
+            if ($final.detail -match 'head=(.*) selected=') { $head = $Matches[1] }
+            # The row may spell the place either way: the probe's own `file:` row,
+            # or an application row for the same target from the catalog.
+            $normHead = $head.ToLowerInvariant().Replace('/', '\').TrimEnd('\')
+            $normPlace = $probe.place.ToLowerInvariant().Replace('/', '\').TrimEnd('\')
+            $namesPlace = $normHead -eq ("file:" + $normPlace) -or $normHead.EndsWith($normPlace)
+            Write-Host ("           path '{0}': last publish head '{1}'" -f $probe.label, $head)
+            if (-not $namesPlace) {
+                $violations += "path probe '$($probe.label)': head is '$head', the place '$($probe.place)' is not row 1"
+            }
+            # One keystroke may publish twice - the exact place immediately, the
+            # complete list when the slower indexer lands - but never more: count
+            # per generation (exact query text), not per time window, because a
+            # slow provider's publish for one keystroke lands in the next
+            # keystroke's window and misattributes there.
+            $byQuery = @{}
+            foreach ($write in $windowWrites) {
+                if (-not $byQuery.ContainsKey($write.query)) { $byQuery[$write.query] = 0 }
+                $byQuery[$write.query]++
+            }
+            foreach ($queryText in $byQuery.Keys) {
+                if ($byQuery[$queryText] -gt 2) {
+                    $violations += "path probe '$($probe.label)': query '$queryText' published $($byQuery[$queryText]) times (expected at most 2: the place, then the complete list)"
+                }
+            }
+        }
+        # Erase by character counter: a probe that gives up halfway must not leave
+        # its text for the next one. The stamp goes before the first backspace,
+        # like every other step: the tick writes the query event after the key.
+        $unix = [DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds()
+        for ($k = 0; $k -lt $probe.text.Length; $k++) { Send-Backspace $handle }
+        $samples = [Flicker.Sampler+Worker]::Run($handle, $InterKeyMs, $SampleEveryMs, $HeaderHeight, $RowHeight, '')
+        Add-Observation 'path' ("erase {0}" -f $probe.label) '' $unix $samples
+        Start-Sleep -Milliseconds ($QuietMs + 150)
+    }
+    Remove-Item -Recurse -Force $fixtureRoot -ErrorAction SilentlyContinue
 
     $typed = ''
     foreach ($char in $Query.ToCharArray()) {
@@ -675,10 +770,19 @@ try {
                 $violations += "query '$($entry.after)' paid the shell $($group.extracted) times for $($group.rows) '.$extension' rows that share one icon"
             }
         }
-        # The home probes watch a whole provider round trip plus the erase that
-        # follows it, so counting repaints there measures nothing; the invariants
-        # above still apply.
-        if (-not $isLast -and $entry.phase -ne 'home') {
+        # A path keystroke may publish twice: the exact place immediately, and the
+        # complete list when the slower indexer lands. The collapse guards above
+        # stay strict; this budget only counts rebuilds, and the second publish
+        # is the completion, not a flash. Generations are counted per exact query
+        # text in the probe step itself (a slow publish lands in the next
+        # keystroke's window), so the per-window rule below skips path steps.
+        # An erase step is a burst of dozens of keystrokes in one window by
+        # construction, so the per-keystroke publish budget does not apply to it
+        # either - the empty-field assertion on the step itself is what judges an
+        # erase.
+        $isErase = $entry.label -like 'erase *'
+        $skipWriteBudget = $isErase -or $entry.phase -eq 'path'
+        if (-not $isLast -and $entry.phase -ne 'home' -and -not $skipWriteBudget) {
             if ($writes.Count -gt 1) {
                 $violations += "query '$($entry.after)' rebuilt the list $($writes.Count) times before the next keystroke (expected exactly 1)"
             }
