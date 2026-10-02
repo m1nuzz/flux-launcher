@@ -2064,6 +2064,10 @@ try {
             "Probe tail:`n$enterProbeTail")
     }
     $enterLaunchVerified = $false
+    # Selection is live: async providers can republish (or one synthesized key
+    # can be lost) between the dance and Enter. The silent plugin row then hides
+    # the window with zero trace; a stale selection may hide nothing at all.
+    # Retry the dance bounded times; only a real dispatch ends the loop.
     for ($enterAttempt = 1; $enterAttempt -le 3 -and !$enterLaunchVerified; $enterAttempt++) {
     [FluxWallpaper]::SendMessage($launcherHandle, $wmKeyDown, [UIntPtr]::new(0x24), [IntPtr]::Zero) | Out-Null
     [FluxWallpaper]::SendMessage($launcherHandle, $wmKeyDown, [UIntPtr]::new(0x28), [IntPtr]::Zero) | Out-Null
@@ -2125,7 +2129,7 @@ try {
     } elseif (![FluxWallpaper]::IsWindowVisible($launcherHandle)) {
         # Hidden with zero trace: Enter executed the silent plugin row, not a
         # launch. Restore via hotkey and re-select on the next attempt.
-        Write-Host "Enter attempt $enterAttempt hit a non-launch row; restoring and re-selecting."
+        Write-Host "Enter attempt $enterAttempt hid without dispatch; restoring and re-selecting."
         $retryDeadline = (Get-Date).AddSeconds(5)
         while (![FluxWallpaper]::IsWindowVisible($launcherHandle) -and (Get-Date) -lt $retryDeadline) {
             [FluxWallpaper]::SendMessage($launcherHandle, $wmHotkey, [UIntPtr]::Zero, [IntPtr]::Zero) | Out-Null
@@ -2135,7 +2139,10 @@ try {
             throw "Unable to restore launcher after Enter hide probe."
         }
     } else {
-        throw "Enter launch did not hide the launcher window."
+        # Visible with zero trace: stale selection launched nothing and hid
+        # nothing. Just re-dance on the next attempt; retrying is safe because
+        # nothing was dispatched.
+        Write-Host "Enter attempt $enterAttempt dispatched nothing and left the window visible; re-selecting."
     }
     }
     if (!$enterLaunchVerified) {
