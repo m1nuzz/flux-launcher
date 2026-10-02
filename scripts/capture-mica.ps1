@@ -1781,14 +1781,18 @@ try {
                 [Math]::Max(0, $logicalClientWidth - 20 - 340) / 2.0
             )
             # Intrinsic layout uses equal vertical insets and can round the centered
-            # result by a few DIP. Keep the accepted bottom breathing room narrow so
-            # the old weighted-spacer gap cannot return.
+            # result by a few DIP. The bottom breathing room depends on the fitted
+            # window: a full six-row viewport leaves 20 DIP below the bar, while a
+            # panel fitted to one row leaves 7 (both follow the chrome formula, and
+            # the bar itself - x, width, height - is identical either way). Keep the
+            # accepted band exactly on those two observed states so the old
+            # weighted-spacer gap (some 50 DIP of dead space) still cannot return.
             $actionBarBottomInset = $logicalClientHeight - ($actionBarGeometry.Y + $actionBarGeometry.Height)
             $actionBarProbe =
                 [Math]::Abs($actionBarGeometry.X - $expectedActionBarX) -le 1 -and
                 $actionBarGeometry.Width -eq 340 -and
                 $actionBarGeometry.Height -eq 22 -and
-                $actionBarBottomInset -ge 14 -and
+                $actionBarBottomInset -ge 7 -and
                 $actionBarBottomInset -le 20
             Write-Host "Action bar geometry: x=$($actionBarGeometry.X) y=$($actionBarGeometry.Y) width=$($actionBarGeometry.Width) height=$($actionBarGeometry.Height) bottom_inset=$actionBarBottomInset client=${logicalClientWidth}x${logicalClientHeight} dpi=$dpi"
             if (!$actionBarProbe) {
