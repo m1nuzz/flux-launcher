@@ -10,6 +10,7 @@ use windui::signal::Signal;
 
 use super::applications::{ApplicationResponse, ApplicationWorker};
 use super::everything::{self, EverythingResponse, EverythingWorker};
+use super::path_probe::{PathProbeResponse, PathProbeWorker};
 use super::plugins::{
     FlowPluginWorker, NativePluginQueryResponse, NativePluginWorker, PluginAction,
     PluginQueryResponse,
@@ -324,6 +325,85 @@ pub(crate) fn spawn_everything_pipeline(
         ));
     }
     worker
+}
+
+/// The filesystem answer for a typed path.
+///
+/// It gates the same publish as the other providers rather than committing on
+/// arrival: the probe answers a few milliseconds after the keystroke, well before
+/// Everything, and publishing on its own would rebuild every row twice for one
+/// letter typed.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn spawn_path_probe_pipeline(
+    app: &mut App,
+    query: Signal<String>,
+    results: Signal<Vec<SearchResult>>,
+    selected_id: Signal<String>,
+    selected_index: Signal<usize>,
+    selection_touched: Signal<bool>,
+    current_sequence: Signal<u64>,
+    providers: Rc<RefCell<ProviderResults>>,
+    priorities: Signal<Vec<PriorityEntry>>,
+    history_mode: Signal<bool>,
+) -> PathProbeWorker {
+    let query_for_probe = query;
+    let results_for_probe = results;
+    let selected_id_for_probe = selected_id;
+    let selected_index_for_probe = selected_index;
+    let selection_touched_for_probe = selection_touched;
+    let sequence_for_probe = current_sequence;
+    let providers_for_probe = Rc::clone(&providers);
+    let priorities_for_probe = priorities;
+    let history_mode_for_probe = history_mode;
+    let probe_sender = app.channel::<PathProbeResponse>(move |_, response| {
+        super::paint_trace::note(
+            "response-path",
+            &format!(
+                "query={} seq={} rows={}",
+                response.query,
+                response.sequence,
+                response.results.len()
+            ),
+        );
+        // A sleeping volume can answer long after the keystroke that asked. By then
+        // the text on screen is another query, and these rows belong to nothing.
+        if response.sequence != sequence_for_probe.get() || response.query != query_for_probe.get()
+        {
+            return;
+        }
+        let mut providers = providers_for_probe.borrow_mut();
+        if providers.sequence != response.sequence {
+            return;
+        }
+        providers.answer_path_probe(response.results);
+        if providers.core_ready() {
+            super::paint_trace::note(
+                "commit-path",
+                &format!(
+                    "query={} rows={}",
+                    query_for_probe.get(),
+                    providers.built_in.len() + providers.applications.len()
+                ),
+            );
+            let priorities = priorities_for_probe
+                .get()
+                .iter()
+                .map(|entry| entry.id.clone())
+                .collect::<Vec<_>>();
+            commit_provider_results(
+                &mut providers,
+                &query_for_probe.get(),
+                &priorities,
+                selected_id_for_probe,
+                selected_index_for_probe,
+                selection_touched_for_probe,
+                results_for_probe,
+                history_mode_for_probe,
+                Publish::DeferWhileTyping,
+            );
+        }
+    });
+    PathProbeWorker::spawn(probe_sender)
 }
 
 #[allow(clippy::too_many_arguments)]

@@ -2,14 +2,16 @@ use std::cell::RefCell;
 use std::collections::HashSet;
 use std::rc::Rc;
 
-use flux_core::{rank_results_with_priorities, PriorityEntry, ResultSource, SearchResult};
+use flux_core::{
+    normalized_path_key, rank_results_with_priorities, PriorityEntry, ResultSource, SearchResult,
+};
 use windui::signal::Signal;
 
 use super::applications::canonical_application_id;
 use super::provider_merge::{
     merge_application_duplicates, preserve_everything_file_order, trace_query_probe,
 };
-use super::ui_constants::MAX_VISIBLE_RESULTS;
+use super::ui_constants::{MAX_VISIBLE_RESULTS, PATH_PROBE_PUBLISH_GATE_MS};
 
 /// Keep the previous result list visible while asynchronous providers compute a
 /// new non-empty query. Immediate publication is safe for the home page (empty
@@ -44,6 +46,16 @@ pub(crate) struct ProviderResults {
     pub(crate) everything: Vec<SearchResult>,
     pub(crate) plugins: Vec<SearchResult>,
     pub(crate) native_plugins: Vec<SearchResult>,
+    /// Places the filesystem probe resolved for this generation. Chained before
+    /// the indexer rows in `merged`, so the probe's spelling of what the user
+    /// typed wins a tie.
+    pub(crate) path_hits: Vec<SearchResult>,
+    /// The filesystem was asked about this generation and has not answered yet.
+    /// While set, neither `core_ready` nor `snapshot_is_complete` may pass: the
+    /// exact place must not lose to a faster provider's partial snapshot.
+    pub(crate) path_probe_pending: bool,
+    /// Search-clock time after which a still-owed probe stops holding the list.
+    pub(crate) path_probe_deadline_ms: u64,
     pub(crate) applications_ready: bool,
     pub(crate) everything_ready: bool,
     /// Set while the user is actively typing (the tick clears it once the query has
@@ -74,6 +86,9 @@ impl ProviderResults {
         self.everything.clear();
         self.plugins.clear();
         self.native_plugins.clear();
+        self.path_hits.clear();
+        self.path_probe_pending = false;
+        self.path_probe_deadline_ms = 0;
         self.applications_ready = false;
         self.everything_ready = !everything_expected;
         // A reset only happens on a keystroke, and any deferred snapshot belongs
@@ -83,8 +98,33 @@ impl ProviderResults {
         self.published_providers = false;
     }
 
+    /// Arm the probe gate for this generation: the snapshot is not complete
+    /// until the filesystem answers, or until the budget below expires.
+    pub(crate) fn expect_path_probe(&mut self, now_ms: u64) {
+        self.path_probe_pending = true;
+        self.path_probe_deadline_ms = now_ms.saturating_add(PATH_PROBE_PUBLISH_GATE_MS);
+    }
+
+    pub(crate) fn answer_path_probe(&mut self, rows: Vec<SearchResult>) {
+        self.path_hits = rows;
+        self.path_probe_pending = false;
+    }
+
+    /// True once, when the budget expires: the probe is no longer owed, and the
+    /// snapshot it would have held back may publish.
+    pub(crate) fn path_probe_budget_spent(&mut self, now_ms: u64) -> bool {
+        if !self.path_probe_pending {
+            return false;
+        }
+        if now_ms < self.path_probe_deadline_ms {
+            return false;
+        }
+        self.path_probe_pending = false;
+        true
+    }
+
     pub(crate) fn core_ready(&self) -> bool {
-        if !self.applications_ready {
+        if !self.applications_ready || self.path_probe_pending {
             return false;
         }
         // Built-in/system results must be actionable without waiting for the
@@ -92,25 +132,47 @@ impl ProviderResults {
         // retain the atomic application+Everything snapshot behavior: publishing
         // the applications half first means two row-tree rebuilds per keystroke,
         // and the second one repaints every row under the stable top hit.
-        self.everything_ready || !self.built_in.is_empty()
+        // A confirmed place is as actionable as a built-in command: without this
+        // clause a path query would wait the indexer's whole round trip, and the
+        // exact place would never reach the screen at all.
+        self.everything_ready || !self.built_in.is_empty() || !self.path_hits.is_empty()
     }
 
     /// True when every provider that was asked has answered, so a snapshot can be
     /// smaller than the screen on purpose rather than by accident.
     pub(crate) fn snapshot_is_complete(&self) -> bool {
-        self.applications_ready && self.everything_ready
+        self.applications_ready && self.everything_ready && !self.path_probe_pending
     }
 
     pub(crate) fn merged(&self, query: &str, priorities: &[String]) -> Vec<SearchResult> {
-        let mut seen = HashSet::new();
+        let mut seen_ids = HashSet::new();
+        let mut seen_places = HashSet::new();
         let collected = self
             .built_in
             .iter()
             .chain(&self.applications)
+            .chain(&self.path_hits)
             .chain(&self.everything)
             .chain(&self.plugins)
             .chain(&self.native_plugins)
-            .filter(|result| seen.insert(result.id.clone()))
+            .filter(|result| {
+                if !seen_ids.insert(result.id.clone()) {
+                    return false;
+                }
+                // One place is one row even when two providers spell it
+                // differently: the probe keeps the typed spelling, the indexer
+                // its own, so ids alone do not catch the double. Rows with no
+                // target never dedupe against each other.
+                if matches!(
+                    result.source,
+                    ResultSource::Everything | ResultSource::FileSystem
+                ) {
+                    if let Some(target) = result.target.as_deref() {
+                        return seen_places.insert(normalized_path_key(target));
+                    }
+                }
+                true
+            })
             .cloned()
             .collect::<Vec<_>>();
         let mut merged = merge_application_duplicates(collected);
@@ -136,7 +198,7 @@ pub(crate) enum Publish {
 }
 
 /// The head of a snapshot when it is something the screen does not show yet and the
-/// user asked for by name: an installed application.
+/// user asked for by name: an installed application, or the place a typed path names.
 /// Anything else - a reshuffle, or file results arriving later - is not new
 /// information to the user and stays under the typing holds.
 fn unseen_head<'a>(
@@ -145,7 +207,10 @@ fn unseen_head<'a>(
     query: &str,
 ) -> Option<&'a str> {
     let head = merged.first()?;
-    if !matches!(head.source, ResultSource::ApplicationCatalog) {
+    if !matches!(
+        head.source,
+        ResultSource::ApplicationCatalog | ResultSource::FileSystem
+    ) {
         return None;
     }
     // An expression the calculator answers has to reach the screen with the
@@ -251,18 +316,16 @@ pub(crate) fn commit_provider_results(
         // What is owed decides this, and how long the user has been typing does not.
         // A pause says the word is finished; it says nothing about whether the file
         // provider has answered, and a path query leaves this hold the only thing
-        // between the panel and the flash for as long as the indexer takes - measured
-        // here at about 250 ms for a typed path, and 533 ms for `f:\maxim` (see
-        // `core_ready`). A typing-window release therefore opened the hold inside
-        // exactly that window, and the smaller snapshot painted. The release belongs
-        // to the provider, and every provider that can be owed here already has its
-        // own bound: the probe gives up after `PATH_PROBE_PUBLISH_GATE_MS`, the file
-        // provider answers within its own query timeout whether or not it found
-        // anything, and the applications scan is local. So the answer arrives, the
-        // snapshot is complete, this hold ends by itself, and nothing is left
-        // showing an older query's rows - which is what the quiet tick used to be
-        // for. It still publishes everything else it holds: a snapshot deferred above
-        // lands on it, and a user who acts on the panel settles it at once.
+        // between the panel and the flash for as long as the indexer takes. The
+        // release belongs to the provider, and every provider that can be owed here
+        // already has its own bound: the probe gives up after
+        // `PATH_PROBE_PUBLISH_GATE_MS`, the file provider answers within its own
+        // query timeout whether or not it found anything, and the applications
+        // scan is local. So the answer arrives, the snapshot is complete, this hold
+        // ends by itself, and nothing is left showing an older query's rows - which
+        // is what the quiet tick used to be for. It still publishes everything else
+        // it holds: a snapshot deferred above lands on it, and a user who acts on
+        // the panel settles it at once.
         //
         // Do not credit this query as published: the key handler must still be able
         // to resolve Enter against the text the user actually typed.
@@ -526,6 +589,113 @@ mod tests {
                 &[application_row("application:uninstall", "Uninstall")],
                 "3d sdk"
             ),
+            None,
+            "a row the screen already shows is not new information"
+        );
+    }
+
+    #[test]
+    fn an_owed_probe_holds_the_snapshot_and_its_answer_releases_it() {
+        let mut providers = ProviderResults::default();
+        providers.reset(4, Vec::new(), true);
+        providers.applications_ready = true;
+        providers.expect_path_probe(1_000);
+
+        assert!(
+            !providers.core_ready(),
+            "the filesystem owes rows, so no provider may commit yet"
+        );
+        assert!(
+            !providers.snapshot_is_complete(),
+            "a snapshot missing the owed probe is not complete"
+        );
+
+        providers.answer_path_probe(vec![SearchResult::from_existing_path(r"C:\Tools\cmd")]);
+
+        assert!(
+            providers.core_ready(),
+            "a confirmed place is actionable without the file provider"
+        );
+        assert!(
+            !providers.snapshot_is_complete(),
+            "the indexer still owes this query"
+        );
+
+        providers.everything_ready = true;
+        assert!(
+            providers.snapshot_is_complete(),
+            "the answer is what ends the hold, not a pause"
+        );
+    }
+
+    #[test]
+    fn a_spent_budget_opens_the_gate_once_and_never_again() {
+        let mut providers = ProviderResults::default();
+        providers.reset(4, Vec::new(), true);
+        providers.applications_ready = true;
+        providers.expect_path_probe(1_000);
+
+        assert!(!providers.path_probe_budget_spent(1_059));
+        assert!(providers.path_probe_budget_spent(1_060));
+        assert!(
+            !providers.path_probe_pending,
+            "the gate opens on the tick's own clock, with no rows owed anymore"
+        );
+        assert!(
+            !providers.path_probe_budget_spent(9_000),
+            "and it opens once, never again for this generation"
+        );
+    }
+
+    #[test]
+    fn a_reset_forgets_the_probe_it_replaced() {
+        let mut providers = ProviderResults::default();
+        providers.reset(4, Vec::new(), true);
+        providers.expect_path_probe(1_000);
+        providers.answer_path_probe(vec![SearchResult::from_existing_path(r"C:\Tools\cmd")]);
+
+        providers.reset(5, Vec::new(), true);
+
+        assert!(providers.path_hits.is_empty());
+        assert!(
+            !providers.path_probe_pending,
+            "the new keystroke has to ask again before anything waits for it"
+        );
+    }
+
+    #[test]
+    fn the_probe_spelling_of_a_place_wins_the_merge() {
+        let mut providers = ProviderResults::default();
+        providers.reset(4, Vec::new(), true);
+        providers.path_hits = vec![SearchResult::from_existing_path(r"C:\Tools\cmd")];
+        // The indexer spells the same folder its own way, which is a different id.
+        providers.everything = vec![SearchResult::file(
+            String::from(r"c:\tools\CMD"),
+            String::from("CMD"),
+            String::from(r"c:\tools"),
+        )];
+
+        let merged = providers.merged(r"c:\tools\cmd", &[]);
+
+        assert_eq!(merged.len(), 1, "one place is one row");
+        assert_eq!(
+            merged[0].source,
+            ResultSource::FileSystem,
+            "the probe is chained first, so its spelling of what the user typed wins"
+        );
+    }
+
+    #[test]
+    fn a_filesystem_head_is_new_information_even_while_typing() {
+        let place = SearchResult::from_existing_path(r"C:\Tools\cmd");
+        let merged = vec![place.clone()];
+        assert_eq!(
+            unseen_head(&merged, &[], r"c:\tools\cmd"),
+            Some(place.id.as_str()),
+            "the exact place escapes the typing hold, or it only lands on the quiet tick"
+        );
+        assert_eq!(
+            unseen_head(&merged, std::slice::from_ref(&place), r"c:\tools\cmd"),
             None,
             "a row the screen already shows is not new information"
         );

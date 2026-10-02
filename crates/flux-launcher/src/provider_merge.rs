@@ -107,7 +107,9 @@ fn application_source_rank(result: &SearchResult) -> u8 {
     match result.source {
         ResultSource::ApplicationCatalog if subtitle.contains("start menu") => 0,
         ResultSource::ApplicationCatalog => 1,
-        ResultSource::Everything => 2,
+        // A locally resolved path is the same kind of evidence as an indexed one,
+        // so neither displaces the other; the row that arrived first is kept.
+        ResultSource::Everything | ResultSource::FileSystem => 2,
         ResultSource::Plugin => 3,
         ResultSource::BuiltIn => 4,
     }

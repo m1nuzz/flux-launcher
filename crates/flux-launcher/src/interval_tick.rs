@@ -4,8 +4,8 @@ use std::rc::Rc;
 use std::sync::{atomic::Ordering, Arc, RwLock};
 
 use flux_core::{
-    MonitorPreference, PriorityEntry, SearchModel, SearchResult, Settings, MAX_LAUNCHER_HEIGHT,
-    MAX_LAUNCHER_WIDTH, MIN_LAUNCHER_HEIGHT, MIN_LAUNCHER_WIDTH,
+    path_query_body, MonitorPreference, PriorityEntry, SearchModel, SearchResult, Settings,
+    MAX_LAUNCHER_HEIGHT, MAX_LAUNCHER_WIDTH, MIN_LAUNCHER_HEIGHT, MIN_LAUNCHER_WIDTH,
 };
 use windui::app::{App, WindowOpHandle, WindowPositionHandle, WindowSizeHandle};
 use windui::signal::Signal;
@@ -13,6 +13,7 @@ use windui::signal::Signal;
 use super::applications::ApplicationWorker;
 use super::everything::EverythingWorker;
 use super::launch;
+use super::path_probe::{is_remote_path_query, PathProbeWorker};
 use super::plugins::{FlowPluginWorker, NativePluginWorker, PluginAction};
 use super::provider_merge::normalize_built_in_executable_targets;
 use super::provider_snapshot::{
@@ -80,6 +81,7 @@ pub(crate) fn register_interval(
     window_position: WindowPositionHandle,
     application_worker: ApplicationWorker,
     everything_worker: EverythingWorker,
+    path_probe_worker: PathProbeWorker,
     plugin_worker: FlowPluginWorker,
     native_plugin_worker: NativePluginWorker,
     recycle_bin_confirmation: Signal<bool>,
@@ -147,6 +149,7 @@ pub(crate) fn register_interval(
     let mut last_query_change_ms: u64 = 0;
     let mut slow_sent_sequence: u64 = 0;
     let mut everything_sent_sequence: u64 = 0;
+    let mut path_probe_sent_sequence: u64 = 0;
     let mut last_fitted_height: i32 = 0;
     let mut visual_preview_process: Option<visual_preview::PreviewProcess> = None;
     let mut last_visual_preview_request: Option<(u16, u16)> = None;
@@ -543,9 +546,31 @@ pub(crate) fn register_interval(
             // for the same query would rebuild every row again and read as a
             // full-list flash. Once the query has been quiet, it lands.
             let query_is_quiet = now_ms.saturating_sub(last_query_change_ms) >= TYPING_QUIET_MS;
+            // A share is only asked about once the query stands still: one `stat`
+            // there can hold the probe's whole thread for the redirector's timeout,
+            // and while the user types that would be a generation that never
+            // closes. Tracked per generation so a settled query asks once.
+            if query_is_quiet
+                && has_query
+                && path_probe_sent_sequence != sequence
+                && is_remote_path_query(&next_query)
+            {
+                path_probe_sent_sequence = sequence;
+                super::paint_trace::note(
+                    "request-path",
+                    &format!("query={next_query} late=true"),
+                );
+                path_probe_worker.request(sequence, next_query.clone());
+            }
             let mut providers = providers_for_interval.borrow_mut();
             providers.typing_active = !query_is_quiet;
-            if query_is_quiet && providers.pending_publish {
+            // The budget decides how long the probe may hold the list, not how often
+            // the list is published - that is decided inside `commit_provider_results`.
+            // So opening the gate is not a licence to publish a half snapshot: the
+            // commit below still holds while another provider owes rows.
+            let probe_gate_opened =
+                providers.path_probe_budget_spent(now_ms) && providers.core_ready();
+            if (query_is_quiet && providers.pending_publish) || probe_gate_opened {
                 let priority_ids = priorities_for_interval
                     .get()
                     .into_iter()
@@ -628,6 +653,17 @@ pub(crate) fn register_interval(
             super::paint_trace::note("request-everything", &format!("query={next_query}"));
             everything_worker.request(sequence, normalize_everything_query(&next_query));
         }
+        // A typed path is answered by the filesystem itself, not only by the
+        // indexer: a volume Everything does not cover still holds real folders. A
+        // share is not asked about here - one `stat` on a dead one cannot be
+        // cancelled and would hold the worker across the keystrokes that follow.
+        let path_probe_requested =
+            path_query_body(&next_query).is_some() && !is_remote_path_query(&next_query);
+        if path_probe_requested {
+            path_probe_sent_sequence = sequence;
+            super::paint_trace::note("request-path", &format!("query={next_query}"));
+            path_probe_worker.request(sequence, next_query.clone());
+        }
         model.set_query(&next_query);
         // Ghost completion is a pure function of (query, applications,
         // selection): derive it synchronously from the previous generation
@@ -651,6 +687,9 @@ pub(crate) fn register_interval(
                 && next_query.trim().len() >= EVERYTHING_MIN_QUERY_LEN;
             let mut providers = providers_for_interval.borrow_mut();
             providers.reset(sequence, built_in_results.clone(), everything_expected);
+            if path_probe_requested {
+                providers.expect_path_probe(now_ms);
+            }
             let publish_initial_results = should_publish_initial_query_results(
                 has_query,
                 results_for_interval.with(|rows| rows.is_empty()),
