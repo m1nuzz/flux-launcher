@@ -1,0 +1,897 @@
+#requires -Version 5.1
+<#
+.SYNOPSIS
+    Regression smoke for result-list flicker.
+
+.DESCRIPTION
+    Drives a Flux Launcher build on this desktop with posted window messages,
+    samples the launcher's own surface every ~15 ms, and reads the app's paint
+    trace (FLUX_PAINT_TRACE_FILE).
+
+    Two phases are measured: typing a word letter by letter, then appending and
+    deleting the same letters quickly - the repro where the panel collapsed to a
+    single row and refilled, which reads as a full-list flash.
+
+    A third phase acts on the list while it still shows an earlier keystroke's
+    rows, which is the fast-typing case where Enter opened the previous prefix's
+    top hit instead of what was typed.
+
+    A fourth phase navigates to another row and then erases a character: the
+    highlight must return to the first row of the shorter query instead of staying
+    pinned to the row the arrows (or a recalled history entry) picked.
+
+    A first phase types one character into an empty field, which is where the
+    hidden suggestion menu can be revealed instead of an answer.
+
+    While keystrokes keep coming, every step must hold:
+      * at most one list publish (one row-tree rebuild),
+      * no repaint caused by shell-icon arrivals before the query has been quiet,
+      * no publish of a snapshot smaller than the rows on screen while a provider
+        still owes its answer (that collapse-and-refill is the flash),
+      * no force-publish from a keystroke that only edits the field: settling the
+        panel is what Enter and the navigation keys do, never typing.
+
+    The final step is watched through the quiet window, so its deferred publish is
+    expected and only the rebuild budget is checked.
+
+    Input is posted (WM_CHAR for text, WM_KEYDOWN for the backspace and the
+    acting key) rather than typed as keystrokes: the launcher is translucent, so
+    grabbing the foreground would type into whatever the user actually has focused.
+    The window is also shown without activation (WINDUI_SMOKE_NO_FOREGROUND), so a
+    fullscreen game is not minimized by this run; -TakeForeground restores the old
+    behaviour for a run whose operator wants to watch focus.
+    The surface is captured with PrintWindow because a screen grab also contains
+    the desktop behind the panel.
+
+.PARAMETER Executable
+    Path to the flux-launcher.exe under test (debug or release).
+
+.PARAMETER Query
+    Text typed one character at a time.
+
+.PARAMETER Toggle
+    Characters appended and then deleted again in the second phase.
+
+.PARAMETER InterKeyMs
+    Delay between synthetic keystrokes. Keep it below -QuietMs and below the
+    build's TYPING_QUIET_MS: the one-publish-per-keystroke rule only holds while
+    the launcher still considers the user to be typing, and the run throws if
+    this value would measure the paused-typing case instead.
+
+.PARAMETER QuietMs
+    How long the harness leaves the launcher alone before it reads the list
+    again, so a deferred result has had time to land. This is the harness's
+    own wait, not a launcher constant: the product's typing window is
+    TYPING_QUIET_MS, which -InterKeyMs is checked against above.
+
+.PARAMETER Settle
+    Query used by the last phase, which acts on the list while an earlier
+    keystroke is still on screen.
+
+.PARAMETER SettleKeyMs
+    Delay between characters of -Settle. Shorter than -InterKeyMs on purpose: the
+    panel must still belong to an earlier keystroke when the action arrives.
+
+.PARAMETER SettleActMs
+    Base delay added to the sweep in -SettleRounds: attempt N acts N*10 ms after
+    the final character. Keep it small - the phase measures the stale state on
+    purpose.
+
+.PARAMETER SaveFrames
+    Write one PNG per measured step into $OutDirrames, named
+    <phase>-<label>-<unix>.png. For looking at what a step actually showed.
+
+.PARAMETER SettleRounds
+    Attempts, because whether the panel is still stale when the action lands is a
+    race with the providers. Every attempt that does catch a stale panel must
+    settle it; an attempt that finds the panel fresh is reported and skipped.
+#>
+[CmdletBinding()]
+param(
+    [Parameter(Mandatory = $true)][string]$Executable,
+    [string]$Query = 'chatgpt',
+    [string]$Toggle = 'pt',
+    [int]$Rounds = 4,
+    [int]$InterKeyMs = 90,
+    [int]$QuietMs = 250,
+    [int]$IconBudgetMs = 150,
+    [string]$Settle = 'chat',
+    [int]$SettleKeyMs = 25,
+    [int]$SettleActMs = 0,
+    [int]$SettleRounds = 6,
+    [switch]$TakeForeground,
+    [switch]$SaveFrames,
+    [int]$SampleEveryMs = 15,
+    # Idle time before any measurement: 0 measures a cold process, which is what the
+    # owner sees on the first open; 25000 measures after the idle icon warm-up.
+    [int]$IdleBeforeMs = 0,
+    [int]$RowHeight = 24,
+    [int]$HeaderHeight = 56,
+    [string]$OutDir = (Join-Path $env:TEMP 'flux-list-flicker'),
+    [string]$SettingsFile = (Join-Path $env:APPDATA 'FluxLauncher\settings.json')
+)
+
+$ErrorActionPreference = 'Stop'
+Add-Type -AssemblyName System.Drawing
+
+if (-not (Test-Path $Executable)) { throw "Executable not found: $Executable" }
+if ($InterKeyMs -ge $QuietMs) {
+    throw "InterKeyMs ($InterKeyMs) must stay below QuietMs ($QuietMs) or the test measures the paused-typing case."
+}
+# "One list publish per keystroke" is a promise the launcher makes only while it still
+# considers the user to be typing. TYPING_QUIET_MS is that window: past it the app
+# stops holding a late provider answer back and publishes it, which is what a person
+# who has finished a word expects. So the invariant below is only meaningful at a
+# cadence inside the window. The constant is read from the source rather than copied
+# here, so the two cannot drift apart unnoticed again - a run that measured the
+# paused-typing case reported a violation for behaviour the product intends.
+$typingConstants = Join-Path $PSScriptRoot '..\crates\flux-launcher\src\ui_constants.rs'
+$typingQuietMs = $null
+if (Test-Path $typingConstants) {
+    $match = Select-String -Path $typingConstants -Pattern 'TYPING_QUIET_MS: u64 = (\d+)' |
+        Select-Object -First 1
+    if ($match) { $typingQuietMs = [int]$match.Matches[0].Groups[1].Value }
+}
+if ($null -ne $typingQuietMs -and $InterKeyMs -ge $typingQuietMs) {
+    throw "InterKeyMs ($InterKeyMs) must stay below TYPING_QUIET_MS ($typingQuietMs). At or above it the launcher treats the gap as a pause, publishes the late answer without holding it, and the one-publish-per-keystroke invariant no longer applies - the run would be judging intended behaviour."
+}
+if (Test-Path $OutDir) { Remove-Item -Recurse -Force $OutDir }
+New-Item -ItemType Directory -Force -Path $OutDir | Out-Null
+
+$tracePath = Join-Path $OutDir 'paint.trace'
+$frameDir = Join-Path $OutDir 'frames'
+if ($SaveFrames) { New-Item -ItemType Directory -Force -Path $frameDir | Out-Null }
+$scratchAppData = Join-Path $OutDir 'appdata'
+New-Item -ItemType Directory -Force -Path (Join-Path $scratchAppData 'FluxLauncher') | Out-Null
+
+# The application catalog takes the user Start Menu from %APPDATA%. Pointing that
+# variable at an empty profile therefore deletes every per-user app from the search
+# index - the Steam .url shortcuts among them - and any measurement of "the app
+# result showed up late" would then be measuring the harness. Mirror the real Start
+# Menu with a junction: read-only for the app, and removed with $OutDir.
+$realStartMenu = Join-Path $env:APPDATA 'Microsoft\Windows\Start Menu'
+$scratchStartMenu = Join-Path $scratchAppData 'Microsoft\Windows\Start Menu'
+if (Test-Path $realStartMenu) {
+    New-Item -ItemType Directory -Force -Path (Split-Path $scratchStartMenu) | Out-Null
+    if (-not (Test-Path $scratchStartMenu)) {
+        & cmd /c mklink /J "$scratchStartMenu" "$realStartMenu" | Out-Null
+    }
+    Write-Host "user Start Menu mirrored into the scratch profile"
+}
+
+# The collapse this smoke guards is a race between the applications commit and
+# Everything's, and it only happens for queries that already have built-in rows on
+# screen - which means the profile matters. Seed the scratch profile from a real
+# settings file (read only: the instance under test writes to the copy) so the run
+# measures the same provider mix the user sees.
+if ($SettingsFile -and (Test-Path $SettingsFile)) {
+    Copy-Item -Path $SettingsFile -Destination (Join-Path $scratchAppData 'FluxLauncher\settings.json') -Force
+    Write-Host "seeded profile from $SettingsFile"
+} else {
+    Write-Host 'no settings file to seed: running with default settings (built-in providers off)'
+}
+
+Add-Type -Namespace Flicker -Name Input -UsingNamespace 'System.Threading' -MemberDefinition @'
+[DllImport("user32.dll")] public static extern bool SetProcessDpiAwarenessContext(IntPtr ctx);
+[DllImport("user32.dll", CharSet=CharSet.Unicode)]
+public static extern IntPtr SendMessage(IntPtr hWnd, uint Msg, IntPtr wParam, IntPtr lParam);
+[DllImport("user32.dll")] public static extern bool PostMessage(IntPtr hWnd, uint Msg, UIntPtr wParam, IntPtr lParam);
+[DllImport("user32.dll")] public static extern bool GetWindowRect(IntPtr hWnd, out RECT rect);
+[DllImport("user32.dll")] public static extern bool IsWindowVisible(IntPtr hWnd);
+[DllImport("user32.dll")] public static extern IntPtr GetForegroundWindow();
+[DllImport("user32.dll")] public static extern bool EnumWindows(EnumProc cb, IntPtr arg);
+[DllImport("user32.dll")] public static extern uint GetWindowThreadProcessId(IntPtr hWnd, out uint pid);
+[DllImport("user32.dll")] public static extern short MapVirtualKey(uint vk, uint mapType);
+public delegate bool EnumProc(IntPtr hWnd, IntPtr arg);
+public struct RECT { public int Left; public int Top; public int Right; public int Bottom; }
+
+// Posting messages needs no foreground right, so the harness never steals the
+// user's focus and cannot type into another window.
+public static void PostVk(IntPtr hWnd, uint vk) {
+    uint scan = (uint)MapVirtualKey(vk, 0);
+    PostMessage(hWnd, 0x0100, new UIntPtr(vk), (IntPtr)(long)(scan << 16 | 1u));
+    PostMessage(hWnd, 0x0101, new UIntPtr(vk), (IntPtr)(long)((scan << 16) | 1u | 0x40000000u | unchecked((int)0xC0000000)));
+}
+public static void TypeChar(IntPtr hWnd, char value) {
+    // windui turns WM_CHAR into a `Key::Char` key event, so this reaches the same
+    // handlers a physical keystroke does, including the one that settles a held
+    // panel - which is how a keystroke that only edits the field can flash the list.
+    PostMessage(hWnd, 0x0102, new UIntPtr((uint)value), IntPtr.Zero);
+    Thread.Sleep(12);
+}
+public static void Backspace(IntPtr hWnd) {
+    // The search field edits on the key-down path; a posted WM_CHAR backspace is
+    // delivered and ignored, which once let this harness measure a query that
+    // still carried its probe character.
+    PostVk(hWnd, 0x08);
+    Thread.Sleep(12);
+}
+public static IntPtr FindByPid(uint targetPid) {
+    IntPtr best = IntPtr.Zero;
+    long bestArea = 0;
+    EnumWindows((hWnd, arg) => {
+        uint pid;
+        GetWindowThreadProcessId(hWnd, out pid);
+        if (pid == targetPid) {
+            RECT r;
+            GetWindowRect(hWnd, out r);
+            long area = (long)(r.Right - r.Left) * (r.Bottom - r.Top);
+            if (area > bestArea) { bestArea = area; best = hWnd; }
+        }
+        return true;
+    }, IntPtr.Zero);
+    return best;
+}
+'@
+
+Add-Type -Namespace Flicker -Name Sampler -ReferencedAssemblies 'System.Drawing' -UsingNamespace 'System.Drawing','System.Drawing.Imaging','System.Text','System.Threading' -MemberDefinition @'
+[StructLayout(LayoutKind.Sequential)]
+public struct RECT { public int Left; public int Top; public int Right; public int Bottom; }
+
+public static class Worker {
+    [DllImport("user32.dll")] public static extern bool GetWindowRect(IntPtr hWnd, out RECT rect);
+    [DllImport("user32.dll")] public static extern bool PrintWindow(IntPtr hWnd, IntPtr hdc, uint flags);
+
+    static byte[] Grab(IntPtr hWnd, out int height, out int stride) {
+        RECT r;
+        GetWindowRect(hWnd, out r);
+        height = 0; stride = 0;
+        int width = r.Right - r.Left;
+        height = r.Bottom - r.Top;
+        if (width <= 0 || height <= 0) { height = 0; return null; }
+        using (Bitmap bmp = new Bitmap(width, height)) {
+            using (Graphics g = Graphics.FromImage(bmp)) {
+                // PW_RENDERFULLCONTENT: the panel is translucent and painted through
+                // DirectComposition, so a screen grab would capture the desktop behind
+                // it rather than the rows.
+                IntPtr hdc = g.GetHdc();
+                PrintWindow(hWnd, hdc, 2u);
+                g.ReleaseHdc(hdc);
+            }
+            BitmapData data = bmp.LockBits(new Rectangle(0, 0, width, height), ImageLockMode.ReadOnly, PixelFormat.Format32bppRgb);
+            byte[] buffer = new byte[data.Stride * height];
+            Marshal.Copy(data.Scan0, buffer, 0, buffer.Length);
+            bmp.UnlockBits(data);
+            stride = data.Stride;
+            return buffer;
+        }
+    }
+
+    public static void Save(IntPtr hWnd, string path) {
+        RECT r;
+        GetWindowRect(hWnd, out r);
+        int w = r.Right - r.Left, h = r.Bottom - r.Top;
+        if (w <= 0 || h <= 0) { return; }
+        using (Bitmap bmp = new Bitmap(w, h)) {
+            using (Graphics g = Graphics.FromImage(bmp)) {
+                IntPtr hdc = g.GetHdc();
+                PrintWindow(hWnd, hdc, 2u);
+                g.ReleaseHdc(hdc);
+            }
+            bmp.Save(path, ImageFormat.Png);
+        }
+    }
+
+    public static string Run(IntPtr hWnd, int durationMs, int intervalMs, int header, int rowHeight, string frameDir) {
+        StringBuilder report = new StringBuilder();
+        byte[] previous = null;
+        int previousHeight = 0, previousStride = 0;
+        long previousUnix = 0;
+        int deadline = Environment.TickCount + durationMs;
+        while (true) {
+            if (deadline - Environment.TickCount <= 0) { break; }
+            int height; int stride;
+            byte[] current = Grab(hWnd, out height, out stride);
+            long unix = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
+            if (current != null && previous != null && stride == previousStride && height == previousHeight) {
+                int bands = Math.Max(1, (height - header) / rowHeight);
+                StringBuilder changed = new StringBuilder();
+                int samples = 0;
+                int moved = 0;
+                for (int band = 0; band < bands; band++) {
+                    int rowStart = header + band * rowHeight;
+                    int rowEnd = Math.Min(height, rowStart + rowHeight);
+                    long delta = 0;
+                    int bandSamples = 0;
+                    int bandMoved = 0;
+                    for (int y = rowStart; y < rowEnd; y++) {
+                        int line = y * stride;
+                        for (int x = 0; x + 3 < stride; x += 4) {
+                            int pixel = Math.Abs((int)current[line + x] - previous[line + x])
+                                     + Math.Abs((int)current[line + x + 1] - previous[line + x + 1])
+                                     + Math.Abs((int)current[line + x + 2] - previous[line + x + 2]);
+                            delta += pixel;
+                            bandSamples++;
+                            if (pixel > 30) { bandMoved++; }
+                        }
+                    }
+                    samples += bandSamples;
+                    moved += bandMoved;
+                    double mean = delta / (double)Math.Max(1, bandSamples);
+                    if (mean > 1.0) {
+                        if (changed.Length > 0) { changed.Append(','); }
+                        changed.Append(band).Append(':').Append((100.0 * bandMoved / Math.Max(1, bandSamples)).ToString("0"));
+                    }
+                }
+                if (changed.Length > 0) {
+                    if (frameDir != null && frameDir.Length > 0) {
+                        Save(hWnd, System.IO.Path.Combine(frameDir, "s-" + unix + ".png"));
+                    }
+                    report.AppendLine("sample unix=" + unix + " after=" + (unix - previousUnix)
+                        + "ms changed=" + (100.0 * moved / Math.Max(1, samples)).ToString("0.0")
+                        + " bands=[" + changed + "]");
+                }
+            }
+            previous = current; previousHeight = height; previousStride = stride; previousUnix = unix;
+            Thread.Sleep(intervalMs);
+        }
+        return report.ToString();
+    }
+}
+'@
+
+function Get-TraceEvents {
+    if (-not (Test-Path $tracePath)) { return @() }
+    $parsed = @()
+    foreach ($line in (Get-Content $tracePath)) {
+        if ($line -match 'unix=(\d+) seq=(\d+) .*event=([a-z-]+) (.*)') {
+            $parsed += [pscustomobject]@{
+                unix   = [long]$matches[1]
+                seq    = [long]$matches[2]
+                event  = $matches[3]
+                detail = $matches[4]
+            }
+        }
+    }
+    return $parsed
+}
+
+# The capture must see the same physical pixels the launcher writes.
+[void][Flicker.Input]::SetProcessDpiAwarenessContext([IntPtr](-4))
+
+$previousAppData = $env:APPDATA
+$env:APPDATA = $scratchAppData
+$env:FLUX_DISABLE_SINGLE_INSTANCE = '1'
+# Never take the foreground: showing the launcher normally activates it, and a
+# fullscreen game minimizes the moment it loses focus. The window still lays out,
+# paints and receives the posted keys, and PrintWindow reads its own surface.
+if (-not $TakeForeground) { $env:WINDUI_SMOKE_NO_FOREGROUND = '1' }
+$env:FLUX_DISABLE_UPDATE_CHECKS = '1'
+$env:FLUX_DISABLE_EVERYTHING_PROMPT = '1'
+$env:FLUX_PAINT_TRACE_FILE = $tracePath
+
+$violations = @()
+$script:observations = @()
+$script:reshows = 0
+$script:iconPageWarmed = $false
+$script:maxAttempts = 0
+$script:totalAttempts = 0
+$script:totalDefers = 0
+$process = Start-Process -FilePath $Executable -PassThru
+Write-Host "pid=$($process.Id) query=$Query toggle=$Toggle rounds=$Rounds inter_key=${InterKeyMs}ms quiet=${QuietMs}ms sample=${SampleEveryMs}ms"
+
+function Show-Launcher([IntPtr]$handle) {
+    # The run never takes the foreground, and the launcher hides itself when it
+    # loses activation, so a posted key can land on a window that is gone. Posted
+    # keys do nothing on a hidden window, which reads as a lost character.
+    if (-not [Flicker.Input]::IsWindowVisible($handle)) {
+        $script:reshows++
+        Write-Host "           (harness recovery: the launcher window was not visible, re-showing it; a show clears the query by design)"
+        [void][Flicker.Input]::SendMessage($handle, 0x0312, [IntPtr]::Zero, [IntPtr]::Zero)
+        Start-Sleep -Milliseconds 250
+    }
+}
+
+function Send-Char([IntPtr]$handle, [string]$char) {
+    Show-Launcher $handle
+    [Flicker.Input]::TypeChar($handle, $char)
+}
+
+function Send-Backspace([IntPtr]$handle) {
+    Show-Launcher $handle
+    [Flicker.Input]::Backspace($handle)
+}
+
+function Send-Vk([IntPtr]$handle, [uint16]$vk) {
+    Show-Launcher $handle
+    [Flicker.Input]::PostVk($handle, $vk)
+}
+
+function Add-Observation([string]$phase, [string]$label, [string]$after, [long]$unix, $samples) {
+    # Harness self-check: the launcher must actually hold the text this harness
+    # believes it typed, otherwise the run measures a query that never existed.
+    #
+    # The check asks "did this keystroke land?", so it waits for the expected value
+    # instead of reading the log once. It used to read the *last* query event in the
+    # whole run and demand it match, which is a different question and a wrong one:
+    # the query event is written by the interval tick (interval_tick.rs, on
+    # query_changed), not by the keystroke, so it lags the key by up to a tick; and
+    # the last event in a session-long log is whatever the launcher did most
+    # recently. A show/activation clear - which the launcher performs on purpose, and
+    # which republishes the home menu and resizes the panel to 420x56 - lands after
+    # the key and rewrites that last line, so a keystroke that was delivered
+    # correctly got reported as "the launcher does not hold 'chatg'". It flaked about
+    # one run in five and survived both foreground modes, because it was never the
+    # foreground or the hide-on-deactivate path: it was this read.
+    $expected = "value={0} *" -f $after
+    $actual = 'nothing'
+    $landed = $false
+    for ($wait = 0; $wait -lt 80; $wait++) {
+        $seen = @(Get-TraceEvents | Where-Object {
+            $_.event -eq 'query' -and $_.unix -ge $unix
+        } | Select-Object -Last 1)
+        if ($seen.Count -gt 0) { $actual = $seen[0].detail }
+        if ($seen.Count -gt 0 -and $actual -like $expected) { $landed = $true; break }
+        Start-Sleep -Milliseconds 25
+    }
+    if (-not $landed) {
+        $cause = ''
+        if ($script:reshows -gt 0) {
+            # The harness re-showed a window it had lost, and a show clears the
+            # field by design. Say that instead of blaming the launcher.
+            $cause = " (this harness re-showed the window $($script:reshows) time(s); a show clears the query by design, so the keystroke it measured was destroyed by the harness, not lost by the launcher)"
+        }
+        throw "phase '$phase' step '$label': expected the launcher to hold '$after', it holds '$actual'$cause"
+    }
+    $script:observations += [pscustomobject]@{
+        phase = $phase; label = $label; after = $after; unix = $unix; samples = $samples
+    }
+}
+
+try {
+    $handle = [IntPtr]::Zero
+    for ($attempt = 0; $attempt -lt 80; $attempt++) {
+        $handle = [Flicker.Input]::FindByPid([uint32]$process.Id)
+        if ($handle -ne [IntPtr]::Zero) { break }
+        Start-Sleep -Milliseconds 250
+    }
+    if ($handle -eq [IntPtr]::Zero) { throw 'launcher window never appeared' }
+
+    # Tray-resident start: WM_HOTKEY toggles it deterministically, because the real
+    # Alt+Space may be registered by the user's own instance.
+    [void][Flicker.Input]::SendMessage($handle, 0x0312, [IntPtr]::Zero, [IntPtr]::Zero)
+    Start-Sleep -Milliseconds 700
+
+    # The point of WINDUI_SMOKE_NO_FOREGROUND: a game that minimizes when it loses
+    # the foreground must not be disturbed by this run, so assert the launcher never
+    # becomes the foreground window while it is being measured.
+    $foreground = [Flicker.Input]::GetForegroundWindow()
+    $foregroundPid = [uint32]0
+    [void][Flicker.Input]::GetWindowThreadProcessId($foreground, [ref]$foregroundPid)
+    Write-Host ("foreground during the run: pid={0} launcher_pid={1}" -f $foregroundPid, $process.Id)
+    if (-not $TakeForeground -and [int]$foregroundPid -eq $process.Id) {
+        throw 'the smoke took the foreground: WINDUI_SMOKE_NO_FOREGROUND did not take effect'
+    }
+
+    Send-Char $handle 'z'
+    Start-Sleep -Milliseconds 400
+    if (@(Get-TraceEvents | Where-Object { $_.event -eq 'query' -and $_.detail -like 'value=z *' }).Count -eq 0) {
+        throw 'posted characters never reached the launcher window'
+    }
+    for ($i = 0; $i -lt 4; $i++) { Send-Backspace $handle }
+    Start-Sleep -Milliseconds 400
+    if ($IdleBeforeMs -gt 0) {
+        Write-Host "idling ${IdleBeforeMs}ms before measuring (icon warm-up)"
+        Start-Sleep -Milliseconds $IdleBeforeMs
+    }
+
+    Write-Host ''
+    Write-Host 'home: the first character typed into an empty field'
+    # While the field is empty the result list is hidden and its rows are the
+    # suggestion menu - "About Flux Launcher" and the other commands. A keystroke
+    # shows the list again, so if the new query publishes nothing the reveal is
+    # that menu, and it stays for the whole file provider round trip. One character
+    # is enough to ask Everything, so the window is open on purpose; '/' is the
+    # owner's repro and matches no local row, 'c' is the common case that does.
+    foreach ($probe in @('/', 'c')) {
+        Show-Launcher $handle
+        $unix = [DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds()
+        Send-Char $handle $probe
+        $samples = [Flicker.Sampler+Worker]::Run($handle, $InterKeyMs, $SampleEveryMs, $HeaderHeight, $RowHeight, '')
+        Add-Observation 'home' "first $probe" $probe $unix $samples
+        $events = @(Get-TraceEvents)
+        # What the panel shows is whatever the last write put there, so a write for
+        # this query strictly before the provider answered is the whole requirement.
+        # The answer is waited for, not assumed: it lands around the sampling window
+        # itself, and reading the trace too early would throw on a build that is fine.
+        $answer = @()
+        for ($wait = 0; $wait -lt 60; $wait++) {
+            $events = @(Get-TraceEvents)
+            $answer = @($events | Where-Object {
+                $_.event -eq 'response-everything' -and $_.detail -like "query=$probe *"
+            })
+            if ($answer.Count -gt 0) { break }
+            Start-Sleep -Milliseconds 25
+        }
+        if ($answer.Count -eq 0) {
+            throw "home probe '$probe': the file provider never answered, so the reveal window was never measured"
+        }
+        # The reveal window ends at the EARLIEST answer, and a millisecond stamp cannot
+        # order two events that share one. The trace sequence is the exact write order
+        # under the sink lock, so the tie is resolved by (unix, seq): a publish in the
+        # same millisecond as the answer still counts, and a publish that genuinely
+        # follows the answer inside that millisecond is still a violation.
+        $firstAnswer = $answer | Sort-Object @{ Expression = 'unix' }, @{ Expression = 'seq' } |
+            Select-Object -First 1
+        $answered = $firstAnswer.unix
+        $answeredSeq = $firstAnswer.seq
+        $forProbe = @($events | Where-Object {
+            $beforeAnswer = $_.unix -lt $answered -or ($_.unix -eq $answered -and $_.seq -lt $answeredSeq)
+            $beforeAnswer -and $_.unix -ge $unix -and $_.detail -like "query=$probe *" -and
+            ($_.event -eq 'publish-initial' -or $_.event -eq 'list-write')
+        })
+        Write-Host ("           '{0}' republished {1} time(s) in the {2}ms before the answer" -f $probe, $forProbe.Count, ($answered - $unix))
+        if ($forProbe.Count -eq 0) {
+            $violations += "typing the first '$probe' into an empty field left the suggestion menu on screen for $($answered - $unix)ms: nothing was published for '$probe' before the file provider answered"
+        }
+        Send-Backspace $handle
+        Start-Sleep -Milliseconds ($QuietMs + 150)
+    }
+
+    $typed = ''
+    foreach ($char in $Query.ToCharArray()) {
+        $typed += [string]$char
+        Show-Launcher $handle
+        $unix = [DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds()
+        Send-Char $handle $char
+        $samples = [Flicker.Sampler+Worker]::Run($handle, $InterKeyMs, $SampleEveryMs, $HeaderHeight, $RowHeight, $(if ($SaveFrames) { $frameDir } else { '' }))
+        if ($SaveFrames) {
+            $safe = ($label -replace '[^A-Za-z0-9_.-]', '_')
+            [Flicker.Sampler+Worker]::Save($handle, (Join-Path $frameDir ($phase + '-' + $safe + '-' + $unix + '.png')))
+        }
+        Add-Observation 'type' "add $char" $typed $unix $samples
+    }
+
+    $base = $Query
+    if ($base.Length -gt $Toggle.Length) { $base = $base.Substring(0, $base.Length - $Toggle.Length) }
+    # Walk back to the reported starting point: the field holds $Query here, and
+    # each backspace removes the last character.
+    $held = $Query
+    for ($k = 0; $k -lt $Toggle.Length; $k++) {
+        $held = $held.Substring(0, $held.Length - 1)
+        $unix = [DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds()
+        Send-Backspace $handle
+        $samples = [Flicker.Sampler+Worker]::Run($handle, $InterKeyMs, $SampleEveryMs, $HeaderHeight, $RowHeight, $(if ($SaveFrames) { $frameDir } else { '' }))
+        if ($SaveFrames) {
+            $safe = ($label -replace '[^A-Za-z0-9_.-]', '_')
+            [Flicker.Sampler+Worker]::Save($handle, (Join-Path $frameDir ($phase + '-' + $safe + '-' + $unix + '.png')))
+        }
+        Add-Observation 'settle' "drop $($k + 1)" $held $unix $samples
+    }
+
+    for ($round = 1; $round -le $Rounds; $round++) {
+        $current = $base
+        foreach ($char in $Toggle.ToCharArray()) {
+            $current += [string]$char
+            $unix = [DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds()
+            Send-Char $handle $char
+            $samples = [Flicker.Sampler+Worker]::Run($handle, $InterKeyMs, $SampleEveryMs, $HeaderHeight, $RowHeight, $(if ($SaveFrames) { $frameDir } else { '' }))
+            Add-Observation 'toggle' "r$round add $char" $current $unix $samples
+        }
+        for ($k = 0; $k -lt $Toggle.Length; $k++) {
+            $current = $current.Substring(0, $current.Length - 1)
+            $unix = [DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds()
+            Send-Backspace $handle
+            $samples = [Flicker.Sampler+Worker]::Run($handle, $InterKeyMs, $SampleEveryMs, $HeaderHeight, $RowHeight, $(if ($SaveFrames) { $frameDir } else { '' }))
+            Add-Observation 'toggle' "r$round delete" $current $unix $samples
+        }
+    }
+
+    Write-Host ''
+    Write-Host 'phase    step             list-writes   attempts   defers   icon-paints   max-changed%'
+    for ($index = 0; $index -lt $observations.Count; $index++) {
+        $entry = $observations[$index]
+        $from = $entry.unix
+        if ($index -lt $observations.Count - 1) {
+            $to = $observations[$index + 1].unix
+        } else {
+            $to = $from + $InterKeyMs + $QuietMs + 200
+        }
+        $events = @(Get-TraceEvents | Where-Object { $_.unix -ge $from -and $_.unix -lt $to })
+        $writes = @($events | Where-Object { $_.event -eq 'list-write' })
+        # Commit ATTEMPTS, reported and never judged. `list-writes` above is a content
+        # check: a provider that commits a snapshot identical to the one on screen
+        # writes nothing, because the row tree is only rebuilt when the value changes.
+        # That is the behaviour the owner wants, but it also means a wasted commit pass
+        # is invisible to a publish count - with the typing hold removed, a second
+        # provider commit still showed one write per letter.
+        # Measured on this machine, 4 rounds at 70 ms: the attempt column does NOT
+        # discriminate (38 attempts, busiest window 3, identical with the hold removed -
+        # the hold changes what happens after a commit, not how many arrive). The defer
+        # column does: 1-2 per keystroke with the hold, 0 everywhere without it. Both are
+        # reported rather than judged, because the normal spread has not been fixed by
+        # measurement yet, and `attempts` on its own would be a number without a verdict.
+        $attempts = @($events | Where-Object { $_.event -like 'commit-*' })
+        $deferred = @($events | Where-Object { $_.event -eq 'list-deferred' -or $_.event -eq 'list-shrunk' })
+        $script:maxAttempts = [Math]::Max($script:maxAttempts, $attempts.Count)
+        $script:totalAttempts += $attempts.Count
+        $script:totalDefers += $deferred.Count
+        # The collapse this smoke exists for: publishing a snapshot smaller than
+        # the rows already on screen while a provider still owes an answer, which
+        # blanks most of the panel for a frame and refills it on the next. One case
+        # is allowed and only reported: the shorter list puts an application the
+        # screen has never shown at the top, which is the result the user typed for.
+        $newHeads = @($events | Where-Object { $_.event -eq 'list-new-head' } | ForEach-Object {
+            if ($_.detail -match 'query=(\S+)') { $matches[1] }
+        })
+        $premature = @($writes | Where-Object {
+            $_.detail -match 'query=(\S+) rows=(\d+) shown=(\d+) complete=0' -and [int]$matches[2] -lt [int]$matches[3] -and $newHeads -notcontains $matches[1]
+        })
+        $acceptedShort = @($writes | Where-Object {
+            $_.detail -match 'query=(\S+) rows=(\d+) shown=(\d+) complete=0' -and [int]$matches[2] -lt [int]$matches[3] -and $newHeads -contains $matches[1]
+        })
+        if ($acceptedShort.Count -gt 0) {
+            Write-Host ("           accepted {0} short publish(es) that surfaced a new application" -f $acceptedShort.Count)
+        }
+        $iconPaints = 0
+        $maxChanged = 0.0
+        foreach ($line in @($entry.samples -split "`r?`n" | Where-Object { $_ -like 'sample *' })) {
+            if ($line -match 'unix=(\d+) after=(\d+)ms changed=([0-9.]+)') {
+                $sampleUnix = [long]$matches[1]
+                $changedPct = [double]$matches[3]
+                if ($changedPct -gt $maxChanged) { $maxChanged = $changedPct }
+                $gapStart = $sampleUnix - [int]$matches[2]
+                $gapEvents = @($events | Where-Object { $_.unix -gt $gapStart -and $_.unix -le $sampleUnix })
+                if (@($gapEvents | Where-Object { $_.event -eq 'icon-refresh' }).Count -gt 0) { $iconPaints++ }
+            }
+        }
+        $isLast = $index -eq ($observations.Count - 1)
+        Write-Host ("{0,-8} {1,-15} {2,11}   {3,9}   {4,6}   {5,11}   {6,12}" -f $entry.phase, $entry.label, $writes.Count, $attempts.Count, $deferred.Count, $iconPaints, [Math]::Round($maxChanged, 1))
+        # These two steps type and erase characters, so nothing here is allowed to
+        # publish a snapshot the panel then has to grow back: that collapse-and-refill
+        # is the flash, and a keystroke that only edits the field must never trigger it.
+        $resolves = @($events | Where-Object { $_.event -eq 'resolve' })
+        if ($resolves.Count -gt 0) {
+            $violations += "typing '$($entry.after)' acted on the list like Enter does ( $($resolves.Count) force-publish(es)), which repaints a half-filled snapshot"
+        }
+        $movedSelections = @($events | Where-Object { $_.event -eq 'select' })
+        if ($movedSelections.Count -gt 0) {
+            $violations += "typing '$($entry.after)' rewrote the row highlight every keystroke ( $($movedSelections.Count) write(s) on the selection signals), which repaints rows the user never moved"
+        }
+        if ($premature.Count -gt 0) {
+            $violations += "query '$($entry.after)' painted $($premature.Count) snapshot(s) smaller than the rows on screen while a provider still owed its answer (the panel collapses and refills)"
+        }
+        # One shell extraction per icon class on the page: sixteen `.mp4` rows are
+        # sixteen copies of the same picture, so paying the shell sixteen times is
+        # the load-in the owner watches while he types. Groups of four or more rows
+        # of one extension must be served by a single extraction.
+        $iconJobs = @($events | Where-Object { $_.event -eq 'icon-loaded' })
+        # Mirrors PER_FILE_ICON_EXTENSIONS: those targets own their picture, so one
+        # extraction each is correct and must not be judged.
+        $ownIcon = @('exe', 'dll', 'ocx', 'sys', 'drv', 'cpl', 'msc', 'tlb', 'efi', 'lnk', 'url', 'appref-ms')
+        $groups = @{}
+        foreach ($job in $iconJobs) {
+            if ($job.detail -notmatch 'target=(.*)$') { continue }
+            $target = $matches[1]
+            $extension = [System.IO.Path]::GetExtension($target).TrimStart('.').ToLowerInvariant()
+            if (-not $extension -or $ownIcon -contains $extension) { continue }
+            if (-not $groups.ContainsKey($extension)) { $groups[$extension] = @{ rows = 0; extracted = 0 } }
+            $groups[$extension].rows++
+            if ($job.detail -notmatch 'extracted=0') { $groups[$extension].extracted++ }
+        }
+        foreach ($extension in $groups.Keys) {
+            $group = $groups[$extension]
+            if ($group.rows -ge 4 -and $group.extracted -gt 1) {
+                $violations += "query '$($entry.after)' paid the shell $($group.extracted) times for $($group.rows) '.$extension' rows that share one icon"
+            }
+        }
+        # The home probes watch a whole provider round trip plus the erase that
+        # follows it, so counting repaints there measures nothing; the invariants
+        # above still apply.
+        if (-not $isLast -and $entry.phase -ne 'home') {
+            if ($writes.Count -gt 1) {
+                $violations += "query '$($entry.after)' rebuilt the list $($writes.Count) times before the next keystroke (expected exactly 1)"
+            }
+            # One icon repaint per keystroke is the point: the page of icons is
+            # propagated once the icon thread has drained, so a new query gains its
+            # icons promptly without one full-panel repaint per icon.
+            if ($iconPaints -gt 1) {
+                $violations += "query '$($entry.after)' was repainted $iconPaints times by shell-icon arrivals (expected at most 1: one page, one repaint)"
+            }
+            # A cold page must reach the screen without waiting for the typing to
+            # stop: measure the gap between the last icon the thread loaded and the
+            # refresh that propagated it. Nothing was loaded in this window means
+            # the page was already cached, which is not a delay. The default budget
+            # is above the ~100 ms the first page of a run can wait for the tick that
+            # polls it, and far below the 207-771 ms the held-back propagation cost.
+            # The number this check exists for is that 207-771 ms, so only judge a warm page: the
+            # first step that has to fill the icon cache measures a cold cache, and
+            # which step that is depends on how many probes ran before it.
+            $allEvents = @(Get-TraceEvents)
+            # Only the arrivals a row was waiting for: the idle warm-up deliberately
+            # fills the cache without telling the tree, so its arrivals must not be
+            # held to a propagation the page never asked for.
+            $loads = @($allEvents | Where-Object {
+                $_.event -eq 'icon-loaded' -and $_.unix -ge $from -and $_.unix -lt $to -and
+                $_.detail -notmatch 'awaited=0'
+            })
+            if ($loads.Count -eq 0) {
+                # Nothing was loaded in this window: the page was already cached.
+            } elseif (-not $script:iconPageWarmed) {
+                $script:iconPageWarmed = $true
+                Write-Host ("           icons: cold page of {0} load(s), not judged" -f $loads.Count)
+            } else {
+                $lastLoad = ($loads | Measure-Object -Property unix -Maximum).Maximum
+                $refresh = @($allEvents | Where-Object { $_.event -eq 'icon-refresh' -and $_.unix -ge $lastLoad } | Select-Object -First 1)
+                if ($refresh.Count -eq 0) {
+                    $violations += "query '$($entry.after)' loaded $($loads.Count) icon(s) that were never propagated to the screen"
+                } else {
+                    $delay = $refresh[0].unix - $lastLoad
+                    Write-Host ("           icons: loaded={0} propagated {1}ms after the last load" -f $loads.Count, $delay)
+                    if ($delay -gt $IconBudgetMs) {
+                        $violations += "query '$($entry.after)' showed its icons $delay ms after the last one finished loading (budget ${IconBudgetMs}ms)"
+                    }
+                }
+            }
+            }
+    }
+    Write-Host ''
+    Write-Host ("commit attempts: {0} in total, busiest window {1}; defers: {2} (reported, not judged)" -f $script:totalAttempts, $script:maxAttempts, $script:totalDefers)
+    Write-Host ''
+    Write-Host 'settle: act on a panel that still shows an earlier keystroke'
+    # Deliberately faster than the typing phases and repeated: whether the panel is
+    # still stale when the action lands is a race with Everything, so several attempts
+    # measure the case the user actually hits - typing a word and acting on it in the
+    # same breath.
+    $stale = 0
+    for ($attempt = 1; $attempt -le $SettleRounds; $attempt++) {
+        # Sweep the delay instead of pinning it: the state this phase needs - the
+        # applications provider has answered the new character, Everything has not -
+        # lasts tens of milliseconds, and which attempt lands inside it depends on
+        # how warm the Everything index is right now.
+        $actDelayMs = $SettleActMs + $attempt * 10
+        for ($k = 0; $k -lt ($Settle.Length + 4); $k++) { Send-Backspace $handle }
+        Start-Sleep -Milliseconds 300
+        foreach ($char in $Settle.ToCharArray()) {
+            Send-Char $handle $char
+            Start-Sleep -Milliseconds $SettleKeyMs
+        }
+        Start-Sleep -Milliseconds $actDelayMs
+        # VK_DOWN moves the highlight without opening anything: the keystroke still
+        # runs the whole action path, which is the path that must not act on a row
+        # the user never asked for. The stamp is taken around the post, so what counts
+        # as "on screen when the user acted" is the state the handler itself sees.
+        $keyUnix = [DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds()
+        Send-Vk $handle 0x28
+        $keyUnix = [DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds()
+        Start-Sleep -Milliseconds 700
+        $allEvents = @(Get-TraceEvents)
+        if (@($allEvents | Where-Object { $_.event -eq 'query' -and $_.detail -like "value=$Settle *" }).Count -eq 0) {
+            throw "phase 'settle' attempt $attempt : the launcher never held '$Settle', the posted characters were lost"
+        }
+        $before = @($allEvents | Where-Object { $_.event -eq 'list-write' -and $_.unix -le $keyUnix } | Select-Object -Last 1)
+        $painted = 'nothing'
+        if ($before.Count -gt 0 -and $before[0].detail -match 'query=(\S+)') { $painted = $matches[1] }
+        $resolves = @($allEvents | Where-Object { $_.event -eq 'resolve' -and $_.unix -ge $keyUnix })
+        $settledWrites = @($allEvents | Where-Object {
+            $_.event -eq 'list-write' -and $_.unix -ge $keyUnix -and $_.unix -le ($keyUnix + 80) -and $_.detail -like "query=$Settle *"
+        })
+        $seen = 'fresh'
+        if ($painted -ne $Settle) { $stale++; $seen = "stale('$painted')" }
+        Write-Host ("         attempt {0}: panel {1} for '{2}'; keystroke +{3}ms -> {4} resolve, {5} repaint of '{2}'" -f $attempt, $seen, $Settle, $actDelayMs, $resolves.Count, $settledWrites.Count)
+        foreach ($entry in $resolves) {
+            Write-Host "           $($entry.detail)"
+            if ($entry.detail -notmatch "query=$Settle ") {
+                $violations += "acting on the stale '$painted' panel while '$Settle' was typed resolved against a different query"
+            }
+            # An empty snapshot is only a dead end once every provider has answered;
+            # while one still owes a reply the panel is about to be refilled.
+            if ($entry.detail -match 'rows=0 complete=1') {
+                $violations += "settling '$Settle' emptied a panel the providers had already answered, which turns the keystroke into a silent no-op"
+            }
+        }
+        if ($painted -ne $Settle -and $settledWrites.Count -eq 0) {
+            # The rows on screen belong to an earlier keystroke and nothing painted
+            # the typed text around the action, so Enter would have opened the
+            # previous keystroke's top hit - the reported bug.
+            $violations += "acting on the stale '$painted' panel while '$Settle' was typed left '$painted' rows on screen (Enter would have launched one of them)"
+        }
+    }
+    if ($stale -eq 0) {
+        Write-Host '         note: every provider answered before each keystroke, so no attempt caught a stale panel'
+    } else {
+        Write-Host "         $stale of $SettleRounds attempts caught the panel showing an earlier keystroke"
+    }
+    Write-Host ''
+    Write-Host 'recall: editing the text must not keep a navigated row highlighted'
+    for ($k = 0; $k -lt ($Settle.Length + 6); $k++) { Send-Backspace $handle }
+    Start-Sleep -Milliseconds 400
+    foreach ($char in $Settle.ToCharArray()) {
+        Send-Char $handle $char
+        Start-Sleep -Milliseconds $InterKeyMs
+    }
+    Start-Sleep -Milliseconds $QuietMs
+    function Get-HeadAfterEdit([string]$label, [string]$expect, [long]$since) {
+        # The end-to-end form of his report: after the query got shorter, the row the
+        # app calls selected must be the row the new list actually starts with. The
+        # violation is returned rather than appended, because a function cannot write
+        # to the caller's $violations and a silently dropped one would always pass.
+        $writes = @(Get-TraceEvents | Where-Object {
+            $_.event -eq 'list-write' -and $_.unix -ge $since -and $_.detail -like "query=$expect *"
+        })
+        if ($writes.Count -eq 0) {
+            Write-Host "         ${label}: no publish of '$expect' yet, nothing to compare"
+            return $null
+        }
+        $match = [regex]::Match($writes[-1].detail, 'head=(?<head>.*?) selected=(?<sel>.*)@(?<idx>\d+)$')
+        if (-not $match.Success) {
+            Write-Host "         ${label}: could not read head/selected out of '$($writes[-1].detail)'"
+            return $null
+        }
+        $onHead = $match.Groups['sel'].Value -eq $match.Groups['head'].Value
+        Write-Host ("         {0}: query='{1}' selected_index={2} on_head={3}" -f $label, $expect, $match.Groups['idx'].Value, $onHead)
+        if ($onHead) { return $null }
+        return "${label}: after erasing a character the highlight stayed on '$($match.Groups['sel'].Value)' instead of the top hit of '$expect'"
+    }
+    # Step A - move the highlight with the arrow keys, then erase one character: the
+    # list belongs to the shorter query now, so the highlight has to return to row 0.
+    Send-Vk $handle 0x28
+    Start-Sleep -Milliseconds 80
+    Send-Vk $handle 0x28
+    Start-Sleep -Milliseconds 80
+    $eraseUnix = [DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds()
+    Send-Backspace $handle
+    Start-Sleep -Milliseconds 900
+    $moved = @(Get-TraceEvents | Where-Object { $_.event -eq 'select' -and $_.unix -ge $eraseUnix })
+    if ($moved.Count -eq 0) {
+        # Legitimately silent when the pinned row already was the first row: the
+        # reset writes nothing, and the head check below is what decides.
+        Write-Host '         (no selection write: the pinned row was already the first one)'
+    }
+    foreach ($entry in $moved) {
+        if ($entry.detail -notmatch 'index=0') {
+            $violations += "erasing one character moved the highlight to an index other than 0: $($entry.detail)"
+        }
+    }
+    $problem = Get-HeadAfterEdit 'arrows+erase' ($Settle.Substring(0, $Settle.Length - 1)) $eraseUnix
+    if ($problem) { $violations += $problem }
+    # Step B - his actual flow: recall a query from the history (plain Up on an empty
+    # field takes the newest one, which is the same code path Alt+Up uses) and erase a
+    # character of the recalled text.
+    for ($k = 0; $k -lt ($Settle.Length + 6); $k++) { Send-Backspace $handle }
+    Start-Sleep -Milliseconds 500
+    $upUnix = [DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds()
+    Send-Vk $handle 0x26
+    # Wait for the recall to reach the field instead of sleeping once: the tick owns
+    # when the note appears, and reading too early looks like a lost keystroke.
+    # Only notes at or after the Up count. The last note in the whole log is not a
+    # verdict on this keystroke - a note written before it, or a clear written after
+    # it, says nothing about whether the recall reached the field.
+    $recalled = @()
+    for ($wait = 0; $wait -lt 80; $wait++) {
+        $recalled = @(Get-TraceEvents | Where-Object {
+            $_.event -eq 'query' -and $_.unix -ge $upUnix
+        } | Select-Object -Last 1)
+        if ($recalled.Count -gt 0 -and $recalled[0].detail -match '^value=\S+ ') { break }
+        Start-Sleep -Milliseconds 25
+    }
+    if ($recalled.Count -eq 0 -or $recalled[0].detail -notmatch '^value=(\S+) ') {
+        throw "phase 'recall': the field text after Up could not be read"
+    }
+    $recalledQuery = $recalled[0].detail -replace '^value=(\S+) .*', '$1'
+    if ($recalledQuery.Length -lt 2) {
+        Write-Host "         recall+erase: skipped, the profile recalled '$recalledQuery' (needs a query of two or more characters)"
+    } else {
+        $recallEraseUnix = [DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds()
+        Send-Backspace $handle
+        Start-Sleep -Milliseconds 900
+        $problem = Get-HeadAfterEdit 'recall+erase' ($recalledQuery.Substring(0, $recalledQuery.Length - 1)) $recallEraseUnix
+        if ($problem) { $violations += $problem }
+    }
+} finally {
+    Stop-Process -Id $process.Id -Force -ErrorAction SilentlyContinue
+    $env:APPDATA = $previousAppData
+    Remove-Item Env:FLUX_DISABLE_SINGLE_INSTANCE -ErrorAction SilentlyContinue
+    Remove-Item Env:FLUX_DISABLE_UPDATE_CHECKS -ErrorAction SilentlyContinue
+    Remove-Item Env:FLUX_DISABLE_EVERYTHING_PROMPT -ErrorAction SilentlyContinue
+    Remove-Item Env:FLUX_PAINT_TRACE_FILE -ErrorAction SilentlyContinue
+    Remove-Item Env:WINDUI_SMOKE_NO_FOREGROUND -ErrorAction SilentlyContinue
+    Write-Host ''
+    Write-Host "trace and samples kept under: $OutDir"
+}
+
+if ($violations.Count -gt 0) {
+    foreach ($violation in $violations) { Write-Host "FAIL: $violation" }
+    throw "list flicker smoke failed with $($violations.Count) violation(s)"
+}
+Write-Host 'PASS: one list publish per keystroke, at most one icon repaint, and icons reach the screen within budget.'

@@ -18,10 +18,14 @@ pub use game_mode::{
     WindowClass,
 };
 pub use search::{ResultKind, ResultSource, SearchResult};
-pub use search_match::{matches_search_text, rank_results, rank_results_with_priorities};
+pub use search_match::{
+    candidate_keys, is_application_path, matches_search_text, rank_results,
+    rank_results_with_priorities, CandidateKeys, PreparedQuery,
+};
 pub use search_model::{history_results, SearchModel};
 pub use settings::{
     HotkeyConfig, LaunchCount, MonitorPreference, PriorityEntry, Settings, DEFAULT_LAUNCHER_HEIGHT,
     DEFAULT_LAUNCHER_WIDTH, MAX_LAUNCHER_HEIGHT, MAX_LAUNCHER_WIDTH, MAX_QUERY_HISTORY,
     MIN_LAUNCHER_HEIGHT, MIN_LAUNCHER_WIDTH,
 };
+pub use settings_store::SettingsLoadOutcome;

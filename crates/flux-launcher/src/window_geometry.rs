@@ -9,7 +9,8 @@ use windui::app::{WindowPositionHandle, WindowSizeHandle};
 use super::monitor;
 use super::ui_constants::{
     COMPACT_WINDOW_HEIGHT, EVERYTHING_PROMPT_WINDOW_HEIGHT, EVERYTHING_PROMPT_WINDOW_WIDTH,
-    SETTINGS_WINDOW_HEIGHT, SETTINGS_WINDOW_WIDTH,
+    LAUNCHER_CHROME_HEIGHT, RESULT_ROWS_VISIBLE, RESULT_ROW_PITCH, SETTINGS_WINDOW_HEIGHT,
+    SETTINGS_WINDOW_WIDTH,
 };
 
 pub(crate) fn monitor_preference_index(preference: MonitorPreference) -> usize {
@@ -37,6 +38,19 @@ pub(crate) fn request_monitor_position(
     if let Some((x, y)) = monitor::centered_position(preference, width, height) {
         position.set(x, y);
     }
+}
+
+/// Shrink the results window to the rows it actually holds.
+///
+/// The configured `launcher_height` is a maximum: the result viewport is a fixed
+/// six-row area, so a query that answers with one row used to leave five rows of
+/// empty acrylic under it - which reads as a broken panel for as long as it takes
+/// to type the next character. The search strip and the footer stay, the viewport
+/// follows the row count, and anything past the six visible rows still scrolls.
+pub(crate) fn launcher_content_height(result_count: usize, configured_height: i32) -> i32 {
+    let rows = result_count.min(RESULT_ROWS_VISIBLE as usize) as i32;
+    let content = LAUNCHER_CHROME_HEIGHT + rows * RESULT_ROW_PITCH;
+    content.min(configured_height).max(COMPACT_WINDOW_HEIGHT)
 }
 
 #[cfg(test)]
@@ -211,6 +225,18 @@ mod tests {
         DEFAULT_LAUNCHER_HEIGHT, DEFAULT_LAUNCHER_WIDTH, MAX_LAUNCHER_HEIGHT, MAX_LAUNCHER_WIDTH,
         MIN_LAUNCHER_HEIGHT, MIN_LAUNCHER_WIDTH,
     };
+
+    #[test]
+    fn the_results_window_grows_with_the_rows_it_holds() {
+        // The strip and the footer stay, the viewport is as tall as the rows.
+        assert_eq!(launcher_content_height(0, 382), 94);
+        assert_eq!(launcher_content_height(1, 382), 142);
+        assert_eq!(launcher_content_height(3, 382), 238);
+        // Six rows fill the configured viewport; the configured height is a ceiling.
+        assert_eq!(launcher_content_height(6, 382), 382);
+        assert_eq!(launcher_content_height(16, 382), 382);
+        assert_eq!(launcher_content_height(4, 200), 200);
+    }
 
     #[test]
     fn dimension_sliders_round_trip_at_safe_bounds() {

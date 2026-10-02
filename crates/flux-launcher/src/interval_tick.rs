@@ -4,7 +4,7 @@ use std::rc::Rc;
 use std::sync::{atomic::Ordering, Arc, RwLock};
 
 use flux_core::{
-    MonitorPreference, SearchModel, SearchResult, Settings, MAX_LAUNCHER_HEIGHT,
+    MonitorPreference, PriorityEntry, SearchModel, SearchResult, Settings, MAX_LAUNCHER_HEIGHT,
     MAX_LAUNCHER_WIDTH, MIN_LAUNCHER_HEIGHT, MIN_LAUNCHER_WIDTH,
 };
 use windui::app::{App, WindowOpHandle, WindowPositionHandle, WindowSizeHandle};
@@ -15,20 +15,22 @@ use super::everything::EverythingWorker;
 use super::launch;
 use super::plugins::{FlowPluginWorker, NativePluginWorker, PluginAction};
 use super::provider_merge::normalize_built_in_executable_targets;
-use super::provider_snapshot::{should_publish_initial_query_results, ProviderResults};
+use super::provider_snapshot::{
+    commit_provider_results, should_publish_initial_query_results, ProviderResults, Publish,
+};
 use super::request_scroll;
 use super::shell_icon_cache::{
-    icon_completion_generation_changed, SHELL_ICON_COMPLETION_GENERATION,
+    icon_completion_generation_changed, shell_icons_in_flight, SHELL_ICON_COMPLETION_GENERATION,
 };
 use super::theme_text::normalize_everything_query;
 use super::ui_constants::{
-    EVERYTHING_MIN_QUERY_LEN, PLUGIN_MIN_QUERY_LEN, SEARCH_INTERVAL, SETTINGS_WINDOW_HEIGHT,
-    SETTINGS_WINDOW_WIDTH, SLOW_PROVIDER_DEBOUNCE_MS,
+    EVERYTHING_MIN_QUERY_LEN, ICON_SETTLE_TICKS, PLUGIN_MIN_QUERY_LEN, SEARCH_INTERVAL,
+    SETTINGS_WINDOW_HEIGHT, SETTINGS_WINDOW_WIDTH, SLOW_PROVIDER_DEBOUNCE_MS, TYPING_QUIET_MS,
 };
 use super::update_tasks::{request_update_check, update_check_due};
 use super::visual_preview;
 use super::window_geometry::{
-    apply_launcher_size, dimension_from_slider, dimension_slider_fraction,
+    apply_launcher_size, dimension_from_slider, dimension_slider_fraction, launcher_content_height,
     launcher_window_geometry_with_prompt, parse_dimension_input, request_monitor_position,
 };
 
@@ -51,6 +53,7 @@ pub(crate) fn register_interval(
     selection_touched: Signal<bool>,
     current_sequence: Signal<u64>,
     providers: Rc<RefCell<ProviderResults>>,
+    priorities: Signal<Vec<PriorityEntry>>,
     scroll_request: Signal<bool>,
     plugin_actions: Rc<RefCell<HashMap<String, PluginAction>>>,
     auto_enable_everything: Signal<bool>,
@@ -98,6 +101,7 @@ pub(crate) fn register_interval(
     let selection_touched_for_interval = selection_touched;
     let sequence_for_interval = current_sequence;
     let providers_for_interval = Rc::clone(&providers);
+    let priorities_for_interval = priorities;
     let scroll_request_for_interval = scroll_request;
     let actions_for_interval = Rc::clone(&plugin_actions);
     let auto_enable_everything_for_interval = auto_enable_everything;
@@ -121,13 +125,29 @@ pub(crate) fn register_interval(
     ));
     let tray_settings_smoke_pending_for_interval = Rc::clone(&tray_settings_smoke_pending);
     let mut last_icon_generation = icon_refresh_generation.get();
+    let mut icon_wait_ticks: u32 = 0;
     let mut last_launcher_width = launcher_width.get();
     let mut last_launcher_height = launcher_height.get();
     let mut last_settings_visible = settings_visible.get();
     let mut last_everything_prompt_visible = everything_prompt_visible.get();
+    // The search clock, and the reason it is not `EventCtx::now_ms`: that reads the
+    // shared animation clock, which the host refreshes before a frame, a pointer
+    // event and a key, and which is frozen in between - windui's own doc says so and
+    // warns against reading a frozen period as how long the user has been away.
+    // Inside an interval callback there is no guarantee of a refresh at all, so the
+    // tick stamped a query change with a time that could be hundreds of milliseconds
+    // old, and the next tick read a fresh clock, called a live query quiet, and let
+    // every typing hold stand down. Measured on a failing flicker run: the keystroke
+    // and its tick were 5 ms apart, yet the tick stamped `now_ms=5401` and the tick
+    // after it read 5603 and declared a 202 ms pause. This clock is monotonic and
+    // read live, so `query_is_quiet` and the probe's publish budget both mean what
+    // they say.
+    let search_clock = std::time::Instant::now();
     let mut last_query = String::new();
     let mut last_query_change_ms: u64 = 0;
     let mut slow_sent_sequence: u64 = 0;
+    let mut everything_sent_sequence: u64 = 0;
+    let mut last_fitted_height: i32 = 0;
     let mut visual_preview_process: Option<visual_preview::PreviewProcess> = None;
     let mut last_visual_preview_request: Option<(u16, u16)> = None;
     let mut last_visual_preview_generation = visual_preview_generation.get();
@@ -461,12 +481,6 @@ pub(crate) fn register_interval(
                 );
             }
         }
-        let completed_icon_generation =
-            SHELL_ICON_COMPLETION_GENERATION.load(Ordering::Acquire);
-        if icon_completion_generation_changed(last_icon_generation, completed_icon_generation) {
-            last_icon_generation = completed_icon_generation;
-            icon_refresh_generation_for_interval.set(completed_icon_generation);
-        }
         if tray_settings_smoke_pending_for_interval.replace(false) {
             // Exercise the same lifecycle order as the tray Settings item,
             // without relying on brittle screen-coordinate tray automation.
@@ -476,12 +490,16 @@ pub(crate) fn register_interval(
             return;
         }
         let next_query = query_for_interval.get();
-        let now_ms = ctx.now_ms();
+        let now_ms = search_clock.elapsed().as_millis() as u64;
         let query_changed = next_query != last_query;
         let has_query = !next_query.trim().is_empty();
         if query_changed {
             last_query = next_query.clone();
             last_query_change_ms = now_ms;
+            super::paint_trace::note(
+                "query",
+                &format!("value={next_query} len={}", next_query.chars().count()),
+            );
         } else {
             // Settled tick: fire debounced slow providers at most once per
             // query generation; everything else already ran on change.
@@ -495,13 +513,18 @@ pub(crate) fn register_interval(
                 )
             {
                 slow_sent_sequence = sequence;
-                // Everything is the always-on file provider for every non-empty
-                // query. Native Everything syntax such as `ext:zip`, `parent:`,
-                // `file:`, and `dm:today` stays unchanged; a leading `.ext`
-                // shorthand is normalized only for this provider.
-                if auto_enable_everything_for_interval.get()
+                // Normally the change tick already asked; this covers a query that
+                // became eligible without changing (Everything auto-enabled while
+                // the text stood still).
+                if everything_sent_sequence != sequence
+                    && auto_enable_everything_for_interval.get()
                     && next_query.trim().len() >= EVERYTHING_MIN_QUERY_LEN
                 {
+                    everything_sent_sequence = sequence;
+                    super::paint_trace::note(
+                        "request-everything",
+                        &format!("query={next_query} late=true"),
+                    );
                     everything_worker.request(sequence, normalize_everything_query(&next_query));
                 }
                 if next_query.trim().len() >= PLUGIN_MIN_QUERY_LEN {
@@ -516,23 +539,95 @@ pub(crate) fn register_interval(
                     native_plugin_worker.request(sequence, next_query.clone());
                 }
             }
+            // Late answers were kept back while the user typed: a second publish
+            // for the same query would rebuild every row again and read as a
+            // full-list flash. Once the query has been quiet, it lands.
+            let query_is_quiet = now_ms.saturating_sub(last_query_change_ms) >= TYPING_QUIET_MS;
+            let mut providers = providers_for_interval.borrow_mut();
+            providers.typing_active = !query_is_quiet;
+            if query_is_quiet && providers.pending_publish {
+                let priority_ids = priorities_for_interval
+                    .get()
+                    .into_iter()
+                    .map(|entry| entry.id)
+                    .collect::<Vec<_>>();
+                commit_provider_results(
+                    &mut providers,
+                    &next_query,
+                    &priority_ids,
+                    selected_id,
+                    selected_index,
+                    selection_touched_for_interval,
+                    results_for_interval,
+                    history_mode_for_interval, Publish::DeferWhileTyping);
+            }
+            drop(providers);
+            // Shell icons are not held back that way - a new query would show
+            // placeholder squares until the typing paused. They are held back
+            // *per page*: the generation only reaches the tree once the icon
+            // thread has nothing left to load, so a page of rows gains its icons
+            // in one repaint instead of one repaint per icon. A queue that never
+            // drains (a shell item that hangs) is cut off after the tick budget.
+            let completed_icon_generation =
+                SHELL_ICON_COMPLETION_GENERATION.load(Ordering::Acquire);
+            if !icon_completion_generation_changed(last_icon_generation, completed_icon_generation) {
+                icon_wait_ticks = 0;
+            } else if !shell_icons_in_flight() || {
+                icon_wait_ticks = icon_wait_ticks.saturating_add(1);
+                icon_wait_ticks >= ICON_SETTLE_TICKS
+            } {
+                icon_wait_ticks = 0;
+                last_icon_generation = completed_icon_generation;
+                super::paint_trace::note(
+                    "icon-refresh",
+                    &format!("generation={completed_icon_generation}"),
+                );
+                icon_refresh_generation_for_interval.set(completed_icon_generation);
+            }
+            // A provider can also answer after the keystroke that opened the
+            // generation, and the window has to follow the row count then too. The
+            // action bar owns its own height while it is open: refitting the window
+            // to the row count would cut off the actions the user just opened.
+            if has_query
+                && !settings_visible_for_interval.get()
+                && !everything_prompt_visible_for_interval.get()
+                && !action_mode.get()
+            {
+                // `with` reads the length in place. `get` would deep-clone the whole
+                // result vector - every title, subtitle and path of every row - on
+                // every 16 ms tick, only to be dropped after taking a len.
+                let row_count = results_for_interval.with(|rows| rows.len());
+                let fitted = launcher_content_height(
+                    row_count,
+                    launcher_height.get() as i32,
+                );
+                if fitted != last_fitted_height {
+                    last_fitted_height = fitted;
+                    let width = launcher_width.get() as i32;
+                    size_for_interval.set(width, fitted);
+                    super::paint_trace::note(
+                        "resize",
+                        &format!("size={width}x{fitted} has_query=true fitted=true"),
+                    );
+                }
+            }
             return;
         }
         history_mode_for_interval.set(false);
         show_results_for_interval.set(has_query);
-        // Query cleanup also happens when hide-on-deactivate hides the
-        // launcher. Do not let that asynchronous query transition resize
-        // an already-open Settings panel back to the compact search strip.
-        let (target_width, target_height) = launcher_window_geometry_with_prompt(
-            settings_visible_for_interval.get(),
-            everything_prompt_visible_for_interval.get(),
-            has_query,
-            launcher_width.get() as i32,
-            launcher_height.get() as i32,
-        );
-        size_for_interval.set(target_width, target_height);
         sequence = sequence.wrapping_add(1);
         sequence_for_interval.set(sequence);
+        // Ask the file provider about the text the user just typed, in this same
+        // tick. Waiting for a settled tick first put 16-30 ms in front of
+        // Everything's own round trip, which is the whole of the window during
+        // which the panel can only show the previous prefix's rows.
+        if auto_enable_everything_for_interval.get()
+            && next_query.trim().len() >= EVERYTHING_MIN_QUERY_LEN
+        {
+            everything_sent_sequence = sequence;
+            super::paint_trace::note("request-everything", &format!("query={next_query}"));
+            everything_worker.request(sequence, normalize_everything_query(&next_query));
+        }
         model.set_query(&next_query);
         // Ghost completion is a pure function of (query, applications,
         // selection): derive it synchronously from the previous generation
@@ -558,9 +653,14 @@ pub(crate) fn register_interval(
             providers.reset(sequence, built_in_results.clone(), everything_expected);
             let publish_initial_results = should_publish_initial_query_results(
                 has_query,
-                results_for_interval.get().is_empty(),
+                results_for_interval.with(|rows| rows.is_empty()),
+                providers.published_query.is_empty(),
             );
             if publish_initial_results {
+                super::paint_trace::note(
+                    "publish-initial",
+                    &format!("query={next_query} rows={}", built_in_results.len()),
+                );
                 selection_touched_for_interval.set(false);
                 selected_index.set(0);
                 selected_id.set(
@@ -570,16 +670,52 @@ pub(crate) fn register_interval(
                         .unwrap_or_default(),
                 );
                 // Built-in/system commands are synchronous and must be actionable
-                // immediately. External providers still replace this snapshot once
-                // their responses arrive for the same query sequence.
+                // immediately. This list holds no provider rows, so it must not
+                // count as this query being published: otherwise the applications
+                // and Everything commits for the same keystroke would defer
+                // themselves behind the quiet window.
+                providers.published_query = next_query.clone();
+                providers.published_providers = false;
                 results_for_interval.set(built_in_results);
             }
         }
-        request_scroll(scroll_request_for_interval);
+        // A keystroke closes the action bar, and the height that bar was given is
+        // not the height of the next page: reset it before the panel is measured.
         action_mode.set(false);
         action_index.set(0);
         action_items.set(Vec::new());
         actions_for_interval.borrow_mut().clear();
+        // Size the panel from the rows this keystroke actually published, which is
+        // why this runs after them: fitting first would leave the previous
+        // generation's height for a frame on every keystroke that shortens the list.
+        //
+        // Query cleanup also happens when hide-on-deactivate hides the
+        // launcher. Do not let that asynchronous query transition resize
+        // an already-open Settings panel back to the compact search strip.
+        let (target_width, target_height) = launcher_window_geometry_with_prompt(
+            settings_visible_for_interval.get(),
+            everything_prompt_visible_for_interval.get(),
+            has_query,
+            launcher_width.get() as i32,
+            launcher_height.get() as i32,
+        );
+        // The configured height is a maximum: one result must not leave five empty
+        // rows of acrylic under it, which is the frame the owner reads as broken.
+        let target_height = if has_query
+            && !settings_visible_for_interval.get()
+            && !everything_prompt_visible_for_interval.get()
+        {
+            launcher_content_height(results_for_interval.with(|rows| rows.len()), target_height)
+        } else {
+            target_height
+        };
+        last_fitted_height = target_height;
+        size_for_interval.set(target_width, target_height);
+        super::paint_trace::note(
+            "resize",
+            &format!("size={target_width}x{target_height} has_query={has_query}"),
+        );
+        request_scroll(scroll_request_for_interval);
         if !has_query {
             inline_completion_for_interval.set(String::new());
             status_for_interval.set(String::from("Ready"));

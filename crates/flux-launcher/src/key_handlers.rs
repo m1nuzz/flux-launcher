@@ -10,10 +10,15 @@ use windui::signal::Signal;
 
 use super::history_priorities::{record_launch, record_query_history, set_result_priority};
 use super::hotkeys;
-use super::input_keys::{alt_key_is_down, is_history_key, is_run_as_admin_key, shift_key_is_down};
+use super::input_keys::{
+    acts_on_the_selected_row, alt_key_is_down, is_history_key, is_run_as_admin_key,
+    shift_key_is_down,
+};
 use super::launch;
 use super::plugins::PluginAction;
-use super::provider_snapshot::{refresh_merged_results, ProviderResults};
+use super::provider_snapshot::{
+    refresh_merged_results, reset_selection_after_edit, settle_results_for_query, ProviderResults,
+};
 use super::result_actions::{
     actions_for_result, copy_result_file, copy_result_path, execute_result_action, selected_result,
     ActionItem, ActionKind,
@@ -104,9 +109,49 @@ pub(crate) fn register_key_handlers(
     let show_results_for_keys = show_results;
     app.on_key(move |event: KeyEvent| {
         if activation_recording_for_keys.get() {
+            // Recording is only meaningful while the dialog that started it is on
+            // screen. Exiting Settings any other way (tray toggle, the Visual
+            // tab's Apply) leaves the flag armed, and then the launcher swallows
+            // every keystroke with the global hotkey still disabled. Repair that
+            // orphaned state on the first key that arrives without the dialog.
+            if !settings_visible_for_keys.get() {
+                hotkeys::end_recording(
+                    activation_recording_for_keys,
+                    activation_display_for_keys,
+                    activation_key_for_keys,
+                    activation_ctrl_for_keys,
+                    activation_alt_for_keys,
+                    activation_shift_for_keys,
+                    activation_meta_for_keys,
+                    &activation_handle_for_recorder,
+                );
+                return false;
+            }
             if event.pressed {
+                let recorder_alt = alt_key_is_down();
+                let recorder_meta = hotkeys::meta_key_is_down();
+                // Escape is Flux's dismiss key everywhere else, so it cancels
+                // recording rather than becoming the global activation hotkey.
+                if event.key == Key::Escape
+                    && !event.ctrl
+                    && !event.shift
+                    && !recorder_alt
+                    && !recorder_meta
+                {
+                    hotkeys::end_recording(
+                        activation_recording_for_keys,
+                        activation_display_for_keys,
+                        activation_key_for_keys,
+                        activation_ctrl_for_keys,
+                        activation_alt_for_keys,
+                        activation_shift_for_keys,
+                        activation_meta_for_keys,
+                        &activation_handle_for_recorder,
+                    );
+                    return true;
+                }
                 if let Some(configuration) =
-                    hotkeys::capture_config(&event, alt_key_is_down(), hotkeys::meta_key_is_down())
+                    hotkeys::capture_config(&event, recorder_alt, recorder_meta)
                 {
                     activation_key_for_keys.set(configuration.key.clone());
                     activation_ctrl_for_keys.set(configuration.ctrl);
@@ -124,12 +169,70 @@ pub(crate) fn register_key_handlers(
             return false;
         }
         let alt_down = alt_key_is_down();
-        if !event.ctrl
-            && !alt_down
-            && matches!(event.key, Key::Char(_) | Key::Backspace | Key::Delete)
-        {
-            history_cursor_for_keys.set(None);
+        // Erasing is an edit whatever modifier is held - Alt+Up to recall a query
+        // and then hitting Backspace with Alt still down is the ordinary flow - while
+        // Alt+letter is a shortcut, not text.
+        let edits_the_field = matches!(event.key, Key::Backspace | Key::Delete)
+            || (!alt_down && matches!(event.key, Key::Char(_)));
+        if edits_the_field {
+            if !event.ctrl && !alt_down {
+                history_cursor_for_keys.set(None);
+            }
             cursor_visibility_for_keys.hide();
+            if !history_mode_for_keys.get()
+                && reset_selection_after_edit(
+                    selection_touched_for_keys,
+                    selected_index_for_keys,
+                    selected_id_for_keys,
+                    results_for_keys,
+                )
+            {
+                request_scroll(scroll_request_for_keys);
+            }
+        }
+        let query = query_for_keys.get();
+        let mut current_results = results_for_keys.get();
+        // The panel is held back on purpose while a new query generation is still
+        // answering, so a fast typist can be looking at rows from an earlier
+        // keystroke: typing "chat" and pressing Enter within Everything's round
+        // trip would otherwise launch the top hit of "cha". Acting on the panel
+        // settles the generation - the rows, the highlight and this keystroke all
+        // move to the text the user typed. Typing itself must not: on the key-down
+        // path the field still holds the previous text, and publishing then is the
+        // collapse-and-refill flash. History rows are excluded: there the list on
+        // screen is the point of the keystroke.
+        if !history_mode_for_keys.get()
+            && acts_on_the_selected_row(&event)
+            && providers_for_keys.borrow().published_query != query
+        {
+            let shown_head = current_results
+                .first()
+                .map(|result| result.id.clone())
+                .unwrap_or_default();
+            settle_results_for_query(
+                &providers_for_keys,
+                query_for_keys,
+                priorities_for_keys,
+                selected_id_for_keys,
+                selected_index_for_keys,
+                selection_touched_for_keys,
+                results_for_keys,
+                history_mode_for_keys,
+            );
+            current_results = results_for_keys.get();
+            let complete = providers_for_keys.borrow().snapshot_is_complete();
+            super::paint_trace::note(
+                "resolve",
+                &format!(
+                    "query={query} resolved={} shown={shown_head} rows={} complete={}",
+                    current_results
+                        .first()
+                        .map(|result| result.id.clone())
+                        .unwrap_or_default(),
+                    current_results.len(),
+                    complete as u8
+                ),
+            );
         }
         if event.ctrl
             && (event.shift || shift_key_is_down())
@@ -138,17 +241,11 @@ pub(crate) fn register_key_handlers(
                 Key::Other(0x43) | Key::Char('c') | Key::Char('C')
             )
         {
-            eprintln!(
-                "Ctrl+Shift+C dispatch: event_shift={} physical_shift={}",
-                event.shift,
-                shift_key_is_down()
-            );
             if let Some(result) = selected_result(
                 &results_for_keys.get(),
                 &selected_id_for_keys.get(),
                 selected_index_for_keys.get(),
             ) {
-                eprintln!("Ctrl+Shift+C target={:?}", result.target);
                 if copy_result_file(&result) {
                     // Copying a hit is as much a committed search as running
                     // it, so the typed query has to come back on Alt+Up.
@@ -211,6 +308,10 @@ pub(crate) fn register_key_handlers(
                     .unwrap_or_default(),
             );
             results_for_keys.set(filtered);
+            // These rows belong to no search generation, so the published list
+            // is no longer what is on screen. Providers keep filling in for the
+            // typed query and republish it as soon as history mode ends.
+            providers_for_keys.borrow_mut().published_query.clear();
             show_results_for_keys.set(true);
             size_for_keys.set(
                 i32::from(launcher_width.get()),
@@ -218,7 +319,6 @@ pub(crate) fn register_key_handlers(
             );
             return true;
         }
-        let query = query_for_keys.get();
         let history = query_history_for_keys.borrow();
         if alt_down && !event.ctrl && !event.shift && matches!(event.key, Key::Up | Key::Down) {
             if history.is_empty() {
@@ -273,7 +373,6 @@ pub(crate) fn register_key_handlers(
         if query.trim().is_empty() && !history_mode_for_keys.get() {
             return false;
         }
-        let current_results = results_for_keys.get();
         if current_results.is_empty() {
             return false;
         }

@@ -1771,14 +1771,29 @@ impl Widget for TextInput {
         // 组合态期间不画自绘光标：系统组合浮层自带随组合进度前进的光标，
         // 两者并存会显得我们的光标"卡在组合开始前"。
         // Caret blink: solid right after interaction, toggling when idle.
-        // Frames are driven only while focused (damage is scoped to this
-        // node); with global animation off the caret stays solid and costs
-        // no frames, respecting reduced-motion settings.
-        if focused && crate::anim::enabled() {
-            crate::anim::request_repaint();
-        }
+        // A focused caret has to keep blinking, but the only frame worth asking for is
+        // the one that shows the next toggle: asking on every paint pinned the host to
+        // the display refresh rate for as long as the field stayed focused, so one
+        // focused search field made the whole window repaint continuously. So the blink
+        // registers *when* its next frame is due and the host idles until then - two
+        // frames per CARET_BLINK_HALF_MS is what a blinking caret actually costs. With
+        // global animation off the caret stays solid and costs no frames, respecting
+        // reduced-motion settings.
         let caret_shown =
             !crate::anim::enabled() || caret_blink_on(now_ms, self.caret_activity_ms.get());
+        if focused && crate::anim::enabled() {
+            // Wake once per blink half-period - the next moment the caret can change -
+            // and every frame only while the smooth-caret slide is still running. The
+            // interval is a constant on purpose: it must not be derived from the frame
+            // clock, which is frozen between frames and would collapse the deadline to
+            // zero and spin the host at the refresh rate again.
+            let due = if self.caret_x.get().is_active() {
+                std::time::Duration::from_millis(16)
+            } else {
+                std::time::Duration::from_millis(CARET_BLINK_HALF_MS)
+            };
+            crate::anim::schedule_repaint_after(due);
+        }
         if focused && !self.composing.get() && caret_shown {
             // 反色光标：先铺光标条，再裁到光标矩形、用输入框底色把本行文字重画一遍。
             // 于是压在字形笔画上的那一段翻成浅色（等同经典 XOR 插入符的观感），

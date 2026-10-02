@@ -92,6 +92,14 @@ impl Widget for ResultRowAnchor {
         // the viewport to the selected row (usually the top).
         if selected && scroll_requested {
             let row_id = ctx.id();
+            // The reactive pass runs before measure/arrange, so on the frame a row
+            // is rebuilt its bounds are still empty and a scroll computed from them
+            // would clamp against a zero rect and the previous frame's content
+            // height. Leave the request pending and let the next pass, which sees
+            // real geometry, do the scroll.
+            if ctx.bounds().is_empty() {
+                return;
+            }
             let _ = ctx.tree_mut().scroll_into_view(row_id);
             self.scroll_pending.set(false);
         }
@@ -219,6 +227,11 @@ impl Widget for ActionRowAnchor {
     fn on_update(&mut self, ctx: &mut EventCtx) {
         if self.action_index.get() == self.item_index && self.scroll_pending.get() {
             let row_id = ctx.id();
+            // Same reason as the result row: the reactive pass precedes arrange, so
+            // a row built this frame has no geometry to scroll by yet.
+            if ctx.bounds().is_empty() {
+                return;
+            }
             let _ = ctx.tree_mut().scroll_into_view(row_id);
             self.scroll_pending.set(false);
         }
@@ -444,5 +457,80 @@ mod tests {
         assert!(hover_position_changed(&mut last, (240, 120)));
         assert!(!hover_position_changed(&mut last, (240, 120)));
         assert!(hover_position_changed(&mut last, (241, 120)));
+    }
+
+    /// A row that asks to be scrolled into view is handed to the reactive pass, which
+    /// runs before measure/arrange. Without the guard the row's bounds are still empty
+    /// and the scroll is clamped against a zero rect, so the viewport lands somewhere
+    /// the user never asked for. With the guard the request survives the frame and is
+    /// honoured once real geometry exists.
+    #[test]
+    fn a_row_only_scrolls_once_it_has_geometry() {
+        use std::cell::Cell;
+        use windui::prelude::*;
+
+        /// Scrolls itself into view the first time it is updated, exactly like the
+        /// result row does when the selection moves.
+        struct ScrollOnUpdate {
+            done: Rc<Cell<bool>>,
+            scrolled: Rc<Cell<bool>>,
+        }
+
+        impl Widget for ScrollOnUpdate {
+            fn measure(
+                &self,
+                _avail: Size,
+                _style: &Style,
+                _text: &mut dyn windui::text::TextEngine,
+            ) -> Size {
+                Size::new(200, 40)
+            }
+
+            fn on_update(&mut self, ctx: &mut EventCtx) {
+                if self.done.get() {
+                    return;
+                }
+                if ctx.bounds().is_empty() {
+                    // No geometry yet: the request has to stay pending.
+                    return;
+                }
+                self.scrolled.set(true);
+                self.done.set(true);
+            }
+        }
+
+        let done = Rc::new(Cell::new(false));
+        let scrolled = Rc::new(Cell::new(false));
+        let element = Element::leaf()
+            .widget(ScrollOnUpdate {
+                done: Rc::clone(&done),
+                scrolled: Rc::clone(&scrolled),
+            })
+            .reactive()
+            .width(200)
+            .height(40);
+        let mut tree = windui::core::Tree::new();
+        let root = element.build(&mut tree);
+        tree.root = Some(root);
+        let mut engine = windui::text::NullTextEngine;
+
+        // The first layout is the one that dispatches reactive updates before arrange,
+        // so it must leave the request pending and the row unscrolled.
+        tree.layout_root(Size::new(400, 300), &mut engine);
+        assert!(
+            !scrolled.get(),
+            "a row with no geometry must not be treated as scrolled"
+        );
+        assert!(
+            !done.get(),
+            "the pending request must survive the frame that had no geometry"
+        );
+
+        // The next layout has the previous frame's bounds, so the scroll may run.
+        tree.layout_root(Size::new(400, 300), &mut engine);
+        assert!(
+            scrolled.get(),
+            "once the row has geometry the pending scroll must happen"
+        );
     }
 }

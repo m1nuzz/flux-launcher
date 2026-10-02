@@ -2,6 +2,7 @@ use std::sync::Arc;
 
 use windui::prelude::*;
 
+use super::hotkeys;
 use super::settings_ui::SettingsUi;
 use super::ui_constants::COMPACT_WINDOW_HEIGHT;
 use super::window_geometry::request_monitor_position;
@@ -45,6 +46,17 @@ pub(crate) fn build_settings_panel(
     let size_for_back = ui.window_size.clone();
     let launcher_width = ui.launcher_width;
     let launcher_height = ui.launcher_height;
+    // Closing Settings must not leave the global key recorder armed: while the
+    // flag is set the launcher swallows every keystroke and the activation
+    // hotkey stays unregistered.
+    let activation_recording_for_back = ui.activation_recording;
+    let activation_display_for_back = ui.activation_display;
+    let activation_key_for_back = ui.activation_key;
+    let activation_ctrl_for_back = ui.activation_ctrl;
+    let activation_alt_for_back = ui.activation_alt;
+    let activation_shift_for_back = ui.activation_shift;
+    let activation_meta_for_back = ui.activation_meta;
+    let activation_handle_for_back = ui.activation_handle.clone();
     // Settings shares the same continuous Acrylic surface as the launcher.
     // Do not add a dark card here: it hides the blur and creates the old opaque
     // search-style slab inside the transparent window.
@@ -80,6 +92,16 @@ pub(crate) fn build_settings_panel(
                         .neutral()
                         .outline_soft()
                         .on_click(move |_| {
+                            hotkeys::end_recording(
+                                activation_recording_for_back,
+                                activation_display_for_back,
+                                activation_key_for_back,
+                                activation_ctrl_for_back,
+                                activation_alt_for_back,
+                                activation_shift_for_back,
+                                activation_meta_for_back,
+                                &activation_handle_for_back,
+                            );
                             settings_visible.set(false);
                             let height = if show_results_for_back.get() {
                                 launcher_height.get() as i32

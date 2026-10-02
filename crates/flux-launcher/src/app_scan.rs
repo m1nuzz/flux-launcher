@@ -1,4 +1,3 @@
-use std::ffi::OsString;
 use std::path::{Path, PathBuf};
 
 use flux_core::{ResultKind, ResultSource, SearchResult};
@@ -60,13 +59,13 @@ unsafe fn property_store_arguments(
 ) -> Option<String> {
     use windows::core::Interface;
     use windows::Win32::Storage::EnhancedStorage::PKEY_Link_Arguments;
-    use windows::Win32::System::Com::StructuredStorage::PROPVARIANT;
+    use windows::Win32::System::Com::StructuredStorage::{PropVariantClear, PROPVARIANT};
     use windows::Win32::System::Variant::VT_LPWSTR;
     use windows::Win32::UI::Shell::PropertiesSystem::IPropertyStore;
 
     let store: IPropertyStore = link.cast().ok()?;
-    let value: PROPVARIANT = store.GetValue(&PKEY_Link_Arguments).ok()?;
-    (|| {
+    let mut value: PROPVARIANT = store.GetValue(&PKEY_Link_Arguments).ok()?;
+    let arguments = (|| {
         let header = unsafe { &value.Anonymous.Anonymous };
         if header.vt != VT_LPWSTR {
             return None;
@@ -76,7 +75,11 @@ unsafe fn property_store_arguments(
             return None;
         }
         unsafe { pointer.to_string().ok() }
-    })()
+    })();
+    // GetValue hands back an owned variant, so the string it points at leaks
+    // unless the variant is cleared here.
+    let _ = unsafe { PropVariantClear(&mut value) };
+    arguments
 }
 
 #[cfg(not(windows))]
@@ -186,13 +189,9 @@ pub(crate) fn collect_files(root: &Path, depth: usize, candidates: &mut Vec<Sear
 
 #[cfg(windows)]
 fn is_application_file(path: &Path) -> bool {
-    matches!(
-        path.extension()
-            .and_then(|extension| extension.to_str())
-            .map(|extension| extension.to_ascii_lowercase())
-            .as_deref(),
-        Some("lnk") | Some("url") | Some("exe") | Some("com") | Some("bat") | Some("cmd")
-    )
+    // One rule for the whole app: flux-core also classifies executables by path
+    // when it turns a file hit into a result, and the two must not disagree.
+    flux_core::is_application_path(&path.to_string_lossy())
 }
 
 #[cfg(windows)]
@@ -343,9 +342,6 @@ pub(crate) fn collect_files(_root: &Path, _depth: usize, _candidates: &mut Vec<S
 
 #[cfg(not(windows))]
 pub(crate) fn collect_app_paths(_candidates: &mut Vec<SearchResult>) {}
-
-#[allow(dead_code)]
-fn _keep_os_string_type_available(_: OsString) {}
 
 #[cfg(test)]
 mod tests {

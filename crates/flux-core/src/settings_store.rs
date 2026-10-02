@@ -4,6 +4,18 @@ use std::path::{Path, PathBuf};
 
 use super::settings::Settings;
 
+/// What happened to the settings file on disk while loading.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum SettingsLoadOutcome {
+    /// The stored settings were parsed, or there is no settings file yet.
+    Loaded,
+    /// The file could not be parsed and was renamed to this path, so its bytes
+    /// survive while this run uses defaults.
+    MovedAside(PathBuf),
+    /// The file could not be parsed and could not be renamed either.
+    Unreadable,
+}
+
 impl Settings {
     pub fn config_path() -> PathBuf {
         let base = std::env::var_os("APPDATA")
@@ -14,8 +26,23 @@ impl Settings {
         base.join("FluxLauncher").join("settings.json")
     }
 
-    pub fn load_or_default() -> Self {
-        Self::load_from(&Self::config_path()).unwrap_or_default()
+    /// Load settings from `path`, falling back to defaults, and report what
+    /// became of the file.
+    ///
+    /// A file that exists but cannot be parsed is moved aside first: the launcher
+    /// saves settings after every launch, so leaving unreadable bytes in place
+    /// would replace the only copy of the user's history and priorities with
+    /// defaults. Replacing the file takes the same directory rename permission as
+    /// moving it aside, so a save cannot destroy anything the move could not.
+    pub fn load_or_default_from(path: &Path) -> (Self, SettingsLoadOutcome) {
+        match Self::load_from(path) {
+            Ok(settings) => (settings, SettingsLoadOutcome::Loaded),
+            Err(error) if error.kind() == io::ErrorKind::InvalidData => match quarantine(path) {
+                Ok(backup) => (Self::default(), SettingsLoadOutcome::MovedAside(backup)),
+                Err(_) => (Self::default(), SettingsLoadOutcome::Unreadable),
+            },
+            Err(_) => (Self::default(), SettingsLoadOutcome::Loaded),
+        }
     }
 
     pub fn load_from(path: &Path) -> io::Result<Self> {
@@ -47,6 +74,19 @@ impl Settings {
         fs::write(&temporary, payload)?;
         fs::rename(temporary, path)
     }
+}
+
+/// Rename an unreadable settings file to a free `*.json.corrupt[-N]` name so its
+/// bytes survive, and report where they went.
+fn quarantine(path: &Path) -> io::Result<PathBuf> {
+    let mut backup = path.with_extension("json.corrupt");
+    let mut index = 1_u32;
+    while backup.exists() {
+        backup = path.with_extension(format!("json.corrupt-{index}"));
+        index += 1;
+    }
+    fs::rename(path, &backup)?;
+    Ok(backup)
 }
 
 #[cfg(test)]
@@ -167,5 +207,55 @@ mod tests {
             io::ErrorKind::InvalidData
         );
         fs::remove_file(path).unwrap();
+    }
+
+    #[test]
+    fn malformed_settings_are_moved_aside_before_defaults_can_replace_them() {
+        let path = temporary_path("settings-quarantine");
+        let backup = path.with_extension("json.corrupt");
+        fs::write(&path, r#"{"query_history": [unclosed"#).unwrap();
+
+        let (settings, outcome) = Settings::load_or_default_from(&path);
+        assert_eq!(settings, Settings::default());
+        assert_eq!(outcome, SettingsLoadOutcome::MovedAside(backup.clone()));
+        assert!(!path.exists(), "unreadable bytes must not stay");
+        assert_eq!(
+            fs::read_to_string(&backup).unwrap(),
+            r#"{"query_history": [unclosed"#
+        );
+
+        // The next save writes fresh defaults; the preserved file is untouched.
+        Settings::default().save_to(&path).unwrap();
+        assert_eq!(
+            fs::read_to_string(&backup).unwrap(),
+            r#"{"query_history": [unclosed"#
+        );
+        fs::remove_file(path).unwrap();
+        fs::remove_file(backup).unwrap();
+    }
+
+    #[test]
+    fn each_malformed_settings_file_keeps_its_own_backup() {
+        let path = temporary_path("settings-quarantine-twice");
+        let first = path.with_extension("json.corrupt");
+        let second = path.with_extension("json.corrupt-1");
+        fs::write(&path, "one").unwrap();
+        let _ = Settings::load_or_default_from(&path);
+        fs::write(&path, "two").unwrap();
+        let _ = Settings::load_or_default_from(&path);
+
+        assert_eq!(fs::read_to_string(&first).unwrap(), "one");
+        assert_eq!(fs::read_to_string(&second).unwrap(), "two");
+        fs::remove_file(first).unwrap();
+        fs::remove_file(second).unwrap();
+    }
+
+    #[test]
+    fn an_absent_settings_file_falls_back_without_renaming_anything() {
+        let path = temporary_path("settings-absent");
+        let (settings, outcome) = Settings::load_or_default_from(&path);
+        assert_eq!(settings, Settings::default());
+        assert_eq!(outcome, SettingsLoadOutcome::Loaded);
+        assert!(!path.with_extension("json.corrupt").exists());
     }
 }

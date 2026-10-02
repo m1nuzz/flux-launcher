@@ -407,6 +407,30 @@ impl Renderer {
     }
 }
 
+/// Asks the host to run the app's interval callbacks on the next loop turn instead of
+/// after a whole period. Returns nothing; the platform picks it up.
+///
+/// An interval is the natural clock for periodic bookkeeping, but it is also usually the
+/// only thing that *notices* a change the user just made. Work that begins with "did the
+/// input change since last time" therefore pays up to one period before it starts, and
+/// that wait lands in front of every keystroke: a launcher that asks its providers from
+/// an interval cannot answer faster than the interval, however quick the providers are.
+/// A widget asks for this from the event that starts the work, and the host shrinks the
+/// timer only until the callback has actually run, so the timer keeps its own period for
+/// everything else.
+pub fn request_interval_tick() {
+    INTERVAL_TICK_REQUESTED.with(|c| c.set(true));
+}
+
+/// Host: take the pending request, if any.
+pub(crate) fn take_interval_tick_request() -> bool {
+    INTERVAL_TICK_REQUESTED.with(|c| c.replace(false))
+}
+
+thread_local! {
+    static INTERVAL_TICK_REQUESTED: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
 /// 平台驱动的应用逻辑：渲染一帧 + 处理输入。返回 true 表示需要重绘。
 pub trait AppHandler {
     fn render(&mut self, target: &mut dyn crate::render::RenderTarget, size: Size);

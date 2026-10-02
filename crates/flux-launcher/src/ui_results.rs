@@ -43,8 +43,8 @@ pub(crate) fn build_action_bar(show_results: Signal<bool>, action_mode: Signal<b
         .height(22)
         .spacing(8)
         .child(action_hint("↵", "Open"))
-        .child(action_hint("Ctrl + R", "Run as admin"))
-        .child(action_hint("Alt + Enter", "Open file location"));
+        .child(action_hint("Ctrl + R", "Admin"))
+        .child(action_hint("Alt + Enter", "Location"));
     Element::stack()
         .width(ACTION_BAR_WIDTH)
         .height(ACTION_BAR_HEIGHT)
@@ -121,7 +121,12 @@ pub(crate) fn build_result_list(
     .padding_edges(6, 6, 18, 6);
     Element::scroll()
         .width_match()
-        .height(RESULT_VIEWPORT_HEIGHT)
+        // The window is fitted to the row count, so the viewport has to take what
+        // is left rather than pin six rows: a fixed 288 made the column taller than
+        // the fitted window and pushed the footer out of the client area for every
+        // short query.
+        .weight(1.0)
+        .max_height(RESULT_VIEWPORT_HEIGHT)
         .child(result_list_body)
         .visible_when(move || show_results.get() && !action_mode.get())
 }
@@ -229,4 +234,52 @@ pub(crate) fn build_action_list(
     .height(174)
     .corner(12.0)
     .visible_signal(action_mode)
+}
+
+#[cfg(test)]
+mod action_bar_fit {
+    use super::build_action_bar;
+    use windui::core::Tree;
+    use windui::geometry::Size;
+    use windui::text::DWriteEngine;
+
+    /// The action bar as main.rs nests it, measured with the real font. The three key
+    /// hints fill the 340 px bar centred, with free space at each edge.
+    #[test]
+    fn the_key_hints_fit_the_action_bar() {
+        let mut tree = Tree::new();
+        let root = windui::ui::Element::col()
+            .width_match()
+            .padding_edges(10, 13, 10, 7)
+            .child(build_action_bar(
+                windui::signal::signal(true),
+                windui::signal::signal(false),
+            ))
+            .build(&mut tree);
+        tree.root = Some(root);
+        let mut engine = DWriteEngine::new();
+        tree.layout_root(Size::new(420, 382), &mut engine);
+        let bar_id = tree.get(root).unwrap().children[0];
+        let bar = tree.abs_bounds(bar_id);
+        let hints = tree.abs_bounds(tree.get(bar_id).unwrap().children[0]);
+
+        assert_eq!(bar.w, super::super::ui_constants::ACTION_BAR_WIDTH);
+        assert!(
+            hints.w <= bar.w,
+            "the key hints must fit the bar: hints {} vs bar {}",
+            hints.w,
+            bar.w
+        );
+        assert_eq!(
+            hints.w, 238,
+            "the hints' measured width; a different value means a hint changed, and the \
+             free space a status could use has to be re-measured"
+        );
+        assert_eq!(hints.x - bar.x, 51, "free space at the leading edge");
+        assert_eq!(
+            (bar.x + bar.w) - (hints.x + hints.w),
+            51,
+            "free space at the trailing edge"
+        );
+    }
 }

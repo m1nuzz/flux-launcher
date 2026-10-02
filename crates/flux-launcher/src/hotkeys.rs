@@ -1,6 +1,8 @@
 use flux_core::HotkeyConfig;
+use windui::app::HotkeyHandle;
 use windui::event::{Key as EventKey, KeyEvent};
 use windui::prelude::{Hotkey, Key};
+use windui::signal::Signal;
 
 pub fn activation_hotkey(config: &HotkeyConfig) -> Hotkey {
     let mut hotkey = Hotkey::new(parse_key(&config.key));
@@ -57,6 +59,65 @@ pub fn display_config(config: &HotkeyConfig) -> String {
     }
     parts.push(config.key.clone());
     parts.join(" + ")
+}
+
+/// The state a finished key recording leaves behind, as data: the combination Apply
+/// would persist, and that nothing is recording any more.
+///
+/// Split out of [`end_recording`] because a global hotkey cannot be registered in a
+/// test, and this transition is the whole failure the caller exists to prevent: a
+/// flag left set keeps the launcher swallowing every keystroke. `None` means there was
+/// nothing to end, so a caller that was never armed touches neither the display nor
+/// the flag.
+pub(crate) fn finished_recording_state(
+    recording: bool,
+    ctrl: bool,
+    alt: bool,
+    shift: bool,
+    meta: bool,
+    key: &str,
+) -> Option<(String, bool)> {
+    if !recording {
+        return None;
+    }
+    let config = HotkeyConfig {
+        ctrl,
+        alt,
+        shift,
+        meta,
+        key: key.to_owned(),
+    };
+    Some((display_config(&config), false))
+}
+
+/// End an interrupted key recording: re-arm the activation hotkey and show the
+/// combination that Apply would persist. Recording is the only path that
+/// disables the global hotkey, so a recording flag left set by a cancelled or
+/// abandoned dialog would keep swallowing every keystroke in the launcher.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn end_recording(
+    recording: Signal<bool>,
+    display: Signal<String>,
+    key: Signal<String>,
+    ctrl: Signal<bool>,
+    alt: Signal<bool>,
+    shift: Signal<bool>,
+    meta: Signal<bool>,
+    handle: &HotkeyHandle,
+) {
+    let Some((combination, armed)) = finished_recording_state(
+        recording.get(),
+        ctrl.get(),
+        alt.get(),
+        shift.get(),
+        meta.get(),
+        &key.get(),
+    ) else {
+        return;
+    };
+    display.set(combination);
+    recording.set(armed);
+    handle.set_enabled(true);
 }
 
 pub fn meta_key_is_down() -> bool {
@@ -187,7 +248,9 @@ fn function_key(value: &str) -> Option<u32> {
 
 #[cfg(test)]
 mod tests {
-    use super::{capture_config, display_config, function_key, key_name, parse_key};
+    use super::{
+        capture_config, display_config, finished_recording_state, function_key, key_name, parse_key,
+    };
     use windui::event::{Key, KeyEvent};
     use windui::prelude::Key as HotkeyKey;
 
@@ -235,6 +298,32 @@ mod tests {
             key: String::from("Numpad5"),
         };
         assert_eq!(display_config(&config), "Ctrl + Alt + Numpad5");
+    }
+
+    #[test]
+    fn an_armed_recording_ends_with_its_combination_and_clears_the_flag() {
+        assert_eq!(
+            finished_recording_state(true, false, true, false, false, "Space"),
+            Some((String::from("Alt + Space"), false)),
+            "the flag has to be false afterwards: a recording left set swallows every keystroke"
+        );
+    }
+
+    #[test]
+    fn a_recording_that_was_never_armed_has_nothing_to_end() {
+        assert_eq!(
+            finished_recording_state(false, true, true, true, true, "Space"),
+            None,
+            "an unarmed caller must leave the display and the flag exactly as they were"
+        );
+    }
+
+    #[test]
+    fn the_combination_an_ended_recording_shows_follows_the_modifiers_down() {
+        assert_eq!(
+            finished_recording_state(true, true, false, true, false, "Numpad5"),
+            Some((String::from("Ctrl + Shift + Numpad5"), false))
+        );
     }
 
     #[test]

@@ -1,9 +1,10 @@
+use std::collections::{HashMap, HashSet};
 use std::fs::OpenOptions;
 use std::io::Write;
 use std::sync::{mpsc, Arc, Mutex};
 use std::thread;
 
-use flux_core::{matches_search_text, rank_results, SearchResult};
+use flux_core::{candidate_keys, rank_results, CandidateKeys, PreparedQuery, SearchResult};
 use windui::prelude::Sender;
 
 pub(crate) use super::app_identity::{
@@ -28,9 +29,49 @@ struct ApplicationRequest {
     query: String,
 }
 
+/// One catalog row with the two matcher forms of its title and of its executable name.
+///
+/// The forms are derived from the row and never change, so they are built once when the
+/// catalog is loaded. A keystroke re-tests every row, and deriving them per test was the
+/// whole cost of a keystroke on the applications path: the compact form lowercases every
+/// character through the Unicode mapping and grows a string, for 878 rows and up to two
+/// tests each. They live in the same struct as the row so the two cannot drift apart.
+#[derive(Clone, Debug)]
+struct CatalogEntry {
+    result: SearchResult,
+    title_keys: CandidateKeys,
+    executable_keys: CandidateKeys,
+}
+
+impl CatalogEntry {
+    fn new(result: SearchResult) -> Self {
+        let title_keys = candidate_keys(&result.title);
+        let executable_keys = candidate_keys(executable_name(&result));
+        Self {
+            result,
+            title_keys,
+            executable_keys,
+        }
+    }
+}
+
+/// The executable name a row is also searched by, or an empty string when the row is not
+/// an application target.
+fn executable_name(result: &SearchResult) -> &str {
+    let Some(identity) = result.id.strip_prefix("application:target:") else {
+        return "";
+    };
+    identity
+        .split_once('|')
+        .map_or(identity, |(target, _)| target)
+        .rsplit('\\')
+        .next()
+        .unwrap_or_default()
+}
+
 #[derive(Clone, Debug, Default)]
 struct ApplicationCatalog {
-    entries: Vec<SearchResult>,
+    entries: Vec<CatalogEntry>,
 }
 
 pub struct ApplicationWorker {
@@ -39,7 +80,7 @@ pub struct ApplicationWorker {
 }
 
 impl ApplicationWorker {
-    pub fn spawn(output: Sender<ApplicationResponse>) -> Self {
+    pub fn spawn(output: Sender<ApplicationResponse>, preferred_ids: Vec<String>) -> Self {
         let latest = Arc::new(Mutex::new(None::<ApplicationRequest>));
         let latest_for_worker = Arc::clone(&latest);
         let (wake, receiver) = mpsc::sync_channel::<()>(1);
@@ -47,6 +88,12 @@ impl ApplicationWorker {
             .name(String::from("flux-applications"))
             .spawn(move || {
                 let catalog = ApplicationCatalog::load();
+                // The catalog is known before the first keystroke, so its pictures can
+                // be loaded while nothing is on screen. A page of application rows
+                // otherwise costs one shell round trip per row, every session.
+                super::shell_icon_cache::warm_shell_icons(
+                    catalog.icon_targets_in_order(&preferred_ids),
+                );
                 while receiver.recv().is_ok() {
                     let Some(request) = latest_for_worker
                         .lock()
@@ -92,20 +139,68 @@ impl ApplicationCatalog {
         let mut entries = super::app_identity::merge_catalog_candidates(candidates);
         entries.sort_by_key(|result| result.title.to_ascii_lowercase());
         entries.truncate(MAX_CATALOG_ENTRIES);
-        Self { entries }
+        Self::from_results(entries)
+    }
+
+    /// Builds the catalog from its rows, deriving each row's matcher forms once.
+    fn from_results(entries: Vec<SearchResult>) -> Self {
+        Self {
+            entries: entries.into_iter().map(CatalogEntry::new).collect(),
+        }
+    }
+
+    /// Every icon target the catalog holds, without duplicates, for the idle
+    /// warm-up. The ids the owner launches most go first: the pass is slow enough
+    /// that its order decides which icons are ready when he opens the launcher
+    /// right after start, and everything else keeps the catalog order.
+    fn icon_targets_in_order(&self, preferred_ids: &[String]) -> Vec<String> {
+        let ranks: HashMap<&str, usize> = preferred_ids
+            .iter()
+            .enumerate()
+            .map(|(rank, id)| (id.as_str(), rank))
+            .collect();
+        let mut ordered: Vec<(usize, String)> = self
+            .entries
+            .iter()
+            .filter_map(|entry| {
+                let target = entry.result.target.clone()?;
+                Some((
+                    ranks
+                        .get(entry.result.id.as_str())
+                        .copied()
+                        .unwrap_or(usize::MAX),
+                    target,
+                ))
+            })
+            .collect();
+        ordered.sort_by_key(|(rank, _target)| *rank);
+        let mut seen = HashSet::new();
+        let warmed = ordered
+            .into_iter()
+            .filter_map(|(_rank, target)| seen.insert(target.clone()).then_some(target))
+            .collect::<Vec<_>>();
+        // Warming more icons than the cache holds would evict the ones it just
+        // loaded, so the pass stops at the capacity: the list is ordered by what the
+        // owner launches, so what fits is what matters.
+        let capacity = super::shell_icon_cache::MAX_SHELL_ICON_CACHE_ENTRIES;
+        warmed.into_iter().take(capacity).collect()
     }
 
     fn search(&self, query: &str) -> Vec<SearchResult> {
-        let normalized = normalize(query);
-        if normalized.is_empty() {
+        // The query is prepared once and every entry's two matcher forms were built when
+        // the catalog was loaded, so a keystroke is 878 substring tests and nothing else:
+        // 878 entries used to re-derive the query's forms and each entry's own on every
+        // character typed.
+        let prepared = PreparedQuery::new(query);
+        if normalize(query).is_empty() {
             return Vec::new();
         }
-        let mut results = self
-            .entries
-            .iter()
-            .filter(|result| application_matches_query(result, &normalized))
-            .cloned()
-            .collect::<Vec<_>>();
+        let mut results = Vec::new();
+        for entry in &self.entries {
+            if application_matches_query(&entry.title_keys, &entry.executable_keys, &prepared) {
+                results.push(entry.result.clone());
+            }
+        }
         rank_results(query, &mut results);
         results.truncate(MAX_APPLICATION_RESULTS);
         trace_application_probe(query, &results);
@@ -139,20 +234,18 @@ fn trace_application_probe(query: &str, results: &[SearchResult]) {
     }
 }
 
-fn application_matches_query(result: &SearchResult, normalized_query: &str) -> bool {
-    if matches_search_text(&result.title, normalized_query) {
+fn application_matches_query(
+    title_keys: &CandidateKeys,
+    executable_keys: &CandidateKeys,
+    prepared: &PreparedQuery,
+) -> bool {
+    if prepared.matches_keys(title_keys) {
         return true;
     }
-    let Some(identity) = result.id.strip_prefix("application:target:") else {
+    if executable_keys.normalized.is_empty() && executable_keys.compact.is_empty() {
         return false;
-    };
-    let executable = identity
-        .split_once('|')
-        .map_or(identity, |(target, _)| target)
-        .rsplit('\\')
-        .next()
-        .unwrap_or_default();
-    matches_search_text(executable, normalized_query)
+    }
+    prepared.matches_keys(executable_keys)
 }
 
 #[cfg(test)]
@@ -162,16 +255,14 @@ mod tests {
 
     #[test]
     fn application_catalog_search_is_title_based_and_application_tiered() {
-        let catalog = ApplicationCatalog {
-            entries: vec![SearchResult {
-                id: String::from("application:steam"),
-                title: String::from("Steam"),
-                subtitle: String::from("Application • Start Menu"),
-                kind: ResultKind::Application,
-                source: ResultSource::ApplicationCatalog,
-                target: Some(String::from(r"C:\\Program Files (x86)\\Steam\\steam.exe")),
-            }],
-        };
+        let catalog = ApplicationCatalog::from_results(vec![SearchResult {
+            id: String::from("application:steam"),
+            title: String::from("Steam"),
+            subtitle: String::from("Application вЂў Start Menu"),
+            kind: ResultKind::Application,
+            source: ResultSource::ApplicationCatalog,
+            target: Some(String::from(r"C:\\Program Files (x86)\\Steam\\steam.exe")),
+        }]);
         let results = catalog.search("steam");
         assert_eq!(results.len(), 1);
         assert_eq!(results[0].title, "Steam");
@@ -179,11 +270,44 @@ mod tests {
     }
 
     #[test]
+    fn the_warm_up_loads_the_apps_he_launches_before_the_rest_of_the_catalog() {
+        let entry = |id: &str, title: &str, target: &str| SearchResult {
+            id: id.to_owned(),
+            title: title.to_owned(),
+            subtitle: String::from("Application вЂў Start Menu"),
+            kind: ResultKind::Application,
+            source: ResultSource::ApplicationCatalog,
+            target: Some(target.to_owned()),
+        };
+        let catalog = ApplicationCatalog::from_results(vec![
+            entry("application:calibre", "calibre", r"C:\calibre\calibre.exe"),
+            entry("application:spotify", "Spotify", r"C:\Spotify\Spotify.exe"),
+            entry("application:steam", "Steam", r"C:\Steam\steam.exe"),
+            entry("application:calibre", "calibre", r"C:\calibre\calibre.exe"),
+        ]);
+
+        let ordered = catalog.icon_targets_in_order(&[
+            String::from("application:steam"),
+            String::from("application:spotify"),
+        ]);
+
+        assert_eq!(
+            ordered,
+            vec![
+                r"C:\Steam\steam.exe",
+                r"C:\Spotify\Spotify.exe",
+                // Not launched: still warmed, in the catalog's own order, once.
+                r"C:\calibre\calibre.exe",
+            ]
+        );
+    }
+
+    #[test]
     fn compact_query_finds_spaced_lm_studio_application_before_ranking() {
         let spaced_title = SearchResult {
             id: String::from(r"application:target:c:\\program files\\lm studio\\lm studio.exe"),
             title: String::from("LM Studio"),
-            subtitle: String::from("Application • Start Menu"),
+            subtitle: String::from("Application вЂў Start Menu"),
             kind: ResultKind::Application,
             source: ResultSource::ApplicationCatalog,
             target: Some(String::from(r"C:\\Users\\m1nus\\LM Studio.lnk")),
@@ -191,43 +315,49 @@ mod tests {
         let executable_title = SearchResult {
             id: String::from(r"application:target:c:\\tools\\lm studio.exe"),
             title: String::from("Local Model Runner"),
-            subtitle: String::from("Application • App Paths"),
+            subtitle: String::from("Application вЂў App Paths"),
             kind: ResultKind::Application,
             source: ResultSource::ApplicationCatalog,
             target: Some(String::from(r"C:\\Tools\\LM Studio.exe")),
         };
-        let catalog = ApplicationCatalog {
-            entries: vec![spaced_title.clone(), executable_title],
-        };
+        let catalog =
+            ApplicationCatalog::from_results(vec![spaced_title.clone(), executable_title]);
         let results = catalog.search("lmstudio");
         assert_eq!(results.len(), 2);
         assert_eq!(results[0].title, "LM Studio");
-        assert!(application_matches_query(&spaced_title, "lmstudio"));
-        assert!(!application_matches_query(&spaced_title, "!!!"));
+        let spaced = CatalogEntry::new(spaced_title.clone());
+        assert!(application_matches_query(
+            &spaced.title_keys,
+            &spaced.executable_keys,
+            &PreparedQuery::new("lmstudio"),
+        ));
+        assert!(!application_matches_query(
+            &spaced.title_keys,
+            &spaced.executable_keys,
+            &PreparedQuery::new("!!!"),
+        ));
     }
 
     #[test]
     fn compact_application_queries_match_common_spaced_titles_and_preserve_literal_precedence() {
-        let catalog = ApplicationCatalog {
-            entries: vec![
-                SearchResult {
-                    id: String::from(r"application:target:c:\\apps\\visual-studio-code.exe"),
-                    title: String::from("Visual Studio Code"),
-                    subtitle: String::from("Application • Start Menu"),
-                    kind: ResultKind::Application,
-                    source: ResultSource::ApplicationCatalog,
-                    target: Some(String::from(r"C:\\Apps\\Visual Studio Code.lnk")),
-                },
-                SearchResult {
-                    id: String::from(r"application:target:c:\\apps\\visualstudiocode.exe"),
-                    title: String::from("visualstudiocode"),
-                    subtitle: String::from("Application • App Paths"),
-                    kind: ResultKind::Application,
-                    source: ResultSource::ApplicationCatalog,
-                    target: Some(String::from(r"C:\\Apps\\visualstudiocode.exe")),
-                },
-            ],
-        };
+        let catalog = ApplicationCatalog::from_results(vec![
+            SearchResult {
+                id: String::from(r"application:target:c:\\apps\\visual-studio-code.exe"),
+                title: String::from("Visual Studio Code"),
+                subtitle: String::from("Application вЂў Start Menu"),
+                kind: ResultKind::Application,
+                source: ResultSource::ApplicationCatalog,
+                target: Some(String::from(r"C:\\Apps\\Visual Studio Code.lnk")),
+            },
+            SearchResult {
+                id: String::from(r"application:target:c:\\apps\\visualstudiocode.exe"),
+                title: String::from("visualstudiocode"),
+                subtitle: String::from("Application вЂў App Paths"),
+                kind: ResultKind::Application,
+                source: ResultSource::ApplicationCatalog,
+                target: Some(String::from(r"C:\\Apps\\visualstudiocode.exe")),
+            },
+        ]);
 
         let compact_results = catalog.search("visualstudiocode");
         assert_eq!(compact_results.len(), 2);
@@ -239,30 +369,28 @@ mod tests {
 
     #[test]
     fn chrome_web_apps_match_by_proxy_executable_and_keep_distinct_app_ids() {
-        let catalog = ApplicationCatalog {
-            entries: vec![
-                SearchResult {
-                    id: String::from(
-                        r"application:target:c:\\program files\\google\\chrome\\application\\chrome_proxy.exe|args:--profile-directory=default --app-id=perplexity",
-                    ),
-                    title: String::from("Perplexity"),
-                    subtitle: String::from("Application • Start Menu"),
-                    kind: ResultKind::Application,
-                    source: ResultSource::ApplicationCatalog,
-                    target: Some(String::from(r"C:\\Users\\m1nus\\Perplexity.lnk")),
-                },
-                SearchResult {
-                    id: String::from(
-                        r"application:target:c:\\program files\\google\\chrome\\application\\chrome_proxy.exe|args:--profile-directory=default --app-id=grok",
-                    ),
-                    title: String::from("Grok"),
-                    subtitle: String::from("Application • Start Menu"),
-                    kind: ResultKind::Application,
-                    source: ResultSource::ApplicationCatalog,
-                    target: Some(String::from(r"C:\\Users\\m1nus\\Grok.lnk")),
-                },
-            ],
-        };
+        let catalog = ApplicationCatalog::from_results(vec![
+            SearchResult {
+                id: String::from(
+                    r"application:target:c:\\program files\\google\\chrome\\application\\chrome_proxy.exe|args:--profile-directory=default --app-id=perplexity",
+                ),
+                title: String::from("Perplexity"),
+                subtitle: String::from("Application вЂў Start Menu"),
+                kind: ResultKind::Application,
+                source: ResultSource::ApplicationCatalog,
+                target: Some(String::from(r"C:\\Users\\m1nus\\Perplexity.lnk")),
+            },
+            SearchResult {
+                id: String::from(
+                    r"application:target:c:\\program files\\google\\chrome\\application\\chrome_proxy.exe|args:--profile-directory=default --app-id=grok",
+                ),
+                title: String::from("Grok"),
+                subtitle: String::from("Application вЂў Start Menu"),
+                kind: ResultKind::Application,
+                source: ResultSource::ApplicationCatalog,
+                target: Some(String::from(r"C:\\Users\\m1nus\\Grok.lnk")),
+            },
+        ]);
         let results = catalog.search("chrome");
         assert_eq!(results.len(), 2);
         assert!(results.iter().any(|result| result.title == "Perplexity"));

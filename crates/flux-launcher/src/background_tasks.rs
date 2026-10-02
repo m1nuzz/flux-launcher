@@ -9,12 +9,12 @@ use windui::prelude::Sender;
 use windui::signal::Signal;
 
 use super::applications::{ApplicationResponse, ApplicationWorker};
-use super::everything::{self, EverythingResponse, EverythingWorker, InstallationState};
+use super::everything::{self, EverythingResponse, EverythingWorker};
 use super::plugins::{
     FlowPluginWorker, NativePluginQueryResponse, NativePluginWorker, PluginAction,
     PluginQueryResponse,
 };
-use super::provider_snapshot::{commit_provider_results, ProviderResults};
+use super::provider_snapshot::{commit_provider_results, ProviderResults, Publish};
 use super::theme_text::normalize_everything_query;
 use super::ui_constants::CURRENT_VERSION;
 use super::update_tasks::format_update_progress;
@@ -139,6 +139,8 @@ pub(crate) fn spawn_application_pipeline(
     current_sequence: Signal<u64>,
     providers: Rc<RefCell<ProviderResults>>,
     priorities: Signal<Vec<PriorityEntry>>,
+    history_mode: Signal<bool>,
+    preferred_ids: Vec<String>,
 ) -> ApplicationWorker {
     let query_for_applications = query;
     let results_for_applications = results;
@@ -150,6 +152,7 @@ pub(crate) fn spawn_application_pipeline(
     let sequence_for_applications = current_sequence;
     let providers_for_applications = Rc::clone(&providers);
     let priorities_for_applications = priorities;
+    let history_mode_for_applications = history_mode;
     let application_sender = app.channel::<ApplicationResponse>(move |_, response| {
         if response.sequence != sequence_for_applications.get()
             || response.query != query_for_applications.get()
@@ -163,19 +166,29 @@ pub(crate) fn spawn_application_pipeline(
         providers.applications = response.results;
         providers.applications_ready = true;
         if providers.core_ready() {
+            super::paint_trace::note(
+                "commit-applications",
+                &format!(
+                    "query={} rows={}",
+                    query_for_applications.get(),
+                    providers.built_in.len() + providers.applications.len()
+                ),
+            );
             let priorities = priorities_for_applications
                 .get()
                 .iter()
                 .map(|entry| entry.id.clone())
                 .collect::<Vec<_>>();
             commit_provider_results(
-                &providers,
+                &mut providers,
                 &query_for_applications.get(),
                 &priorities,
                 selected_id_for_applications,
                 selected_index_for_applications,
                 selection_touched_for_applications,
                 results_for_applications,
+                history_mode_for_applications,
+                Publish::DeferWhileTyping,
             );
             // Ghost completion has a single writer per query generation (this
             // pipeline). Refreshing it in every pipeline would flip the hint
@@ -190,7 +203,7 @@ pub(crate) fn spawn_application_pipeline(
         }
         status_for_applications.set(response.status);
     });
-    ApplicationWorker::spawn(application_sender)
+    ApplicationWorker::spawn(application_sender, preferred_ids)
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -206,6 +219,7 @@ pub(crate) fn spawn_everything_pipeline(
     current_sequence: Signal<u64>,
     providers: Rc<RefCell<ProviderResults>>,
     priorities: Signal<Vec<PriorityEntry>>,
+    history_mode: Signal<bool>,
     auto_enable_everything: Signal<bool>,
     everything_installed: Signal<bool>,
     everything_status: Signal<String>,
@@ -221,10 +235,15 @@ pub(crate) fn spawn_everything_pipeline(
     let sequence_for_everything = current_sequence;
     let providers_for_everything = Rc::clone(&providers);
     let priorities_for_everything = priorities;
+    let history_mode_for_everything = history_mode;
     let auto_enable_everything_for_response = auto_enable_everything;
     let everything_installed_for_response = everything_installed;
     let everything_status_for_response = everything_status;
     let everything_sender = app.channel::<EverythingResponse>(move |_, response| {
+        super::paint_trace::note(
+            "response-everything",
+            &format!("query={} seq={}", response.query, response.sequence),
+        );
         if !auto_enable_everything_for_response.get() {
             everything_status_for_response.set(String::from(
                 "Everything auto-enable is disabled in Flux settings",
@@ -255,41 +274,49 @@ pub(crate) fn spawn_everything_pipeline(
             ));
         }
         if providers.core_ready() {
+            super::paint_trace::note(
+                "commit-everything",
+                &format!(
+                    "query={} rows={}",
+                    query_for_everything.get(),
+                    providers.built_in.len() + providers.applications.len()
+                ),
+            );
             let priorities = priorities_for_everything
                 .get()
                 .iter()
                 .map(|entry| entry.id.clone())
                 .collect::<Vec<_>>();
             commit_provider_results(
-                &providers,
+                &mut providers,
                 &query_for_everything.get(),
                 &priorities,
                 selected_id_for_everything,
                 selected_index_for_everything,
                 selection_touched_for_everything,
                 results_for_everything,
+                history_mode_for_everything,
+                Publish::DeferWhileTyping,
             );
         }
         status_for_everything.set(response.status);
     });
     let worker = EverythingWorker::spawn(everything_sender);
     if settings_auto_enable {
-        match everything::start_background_if_installed() {
-            Ok(InstallationState::Installed(_)) => {
-                everything_installed.set(true);
-                everything_status.set(String::from(
-                    "Everything is already installed; Flux is enabling local IPC automatically",
-                ));
-            }
-            Ok(InstallationState::Missing) => {
-                everything_installed.set(false);
-                everything_status.set(String::from(
-                    "Everything is not installed. Install it with winget to enable file search.",
-                ));
-            }
-            Err(error) => {
-                everything_status.set(error);
-            }
+        // Starting the service asks tasklist whether Everything is running and
+        // tries the IPC pipe: measured 170-210 ms of blocking, which used to
+        // stall the first paint and the hotkey registration at startup. The
+        // install state and status text already come from the cheap directory
+        // scan in main, and a failed start reports itself through the status on
+        // the first query, so this can run on its own thread.
+        if let Err(error) = std::thread::Builder::new()
+            .name(String::from("flux-everything-start"))
+            .spawn(|| match everything::start_background_if_installed() {
+                Ok(_) => {}
+                Err(error) => eprintln!("Could not start Everything in the background: {error}"),
+            })
+        {
+            eprintln!("Could not start Everything in the background: {error}");
         }
     } else {
         everything_status.set(String::from(
@@ -312,6 +339,7 @@ pub(crate) fn spawn_plugin_pipeline(
     current_sequence: Signal<u64>,
     providers: Rc<RefCell<ProviderResults>>,
     priorities: Signal<Vec<PriorityEntry>>,
+    history_mode: Signal<bool>,
     plugin_actions: Rc<RefCell<HashMap<String, PluginAction>>>,
 ) -> FlowPluginWorker {
     let query_for_plugins = query;
@@ -324,6 +352,7 @@ pub(crate) fn spawn_plugin_pipeline(
     let sequence_for_plugins = current_sequence;
     let providers_for_plugins = Rc::clone(&providers);
     let priorities_for_plugins = priorities;
+    let history_mode_for_plugins = history_mode;
     let actions_for_plugins = Rc::clone(&plugin_actions);
     let plugin_sender = app.channel::<PluginQueryResponse>(move |_, response| {
         if response.sequence != sequence_for_plugins.get()
@@ -339,19 +368,29 @@ pub(crate) fn spawn_plugin_pipeline(
             providers.plugins = response.results;
             *actions_for_plugins.borrow_mut() = response.actions;
             if providers.core_ready() {
+                super::paint_trace::note(
+                    "commit-plugins",
+                    &format!(
+                        "query={} rows={}",
+                        query_for_plugins.get(),
+                        providers.built_in.len() + providers.applications.len()
+                    ),
+                );
                 let priorities = priorities_for_plugins
                     .get()
                     .iter()
                     .map(|entry| entry.id.clone())
                     .collect::<Vec<_>>();
                 commit_provider_results(
-                    &providers,
+                    &mut providers,
                     &query_for_plugins.get(),
                     &priorities,
                     selected_id_for_plugins,
                     selected_index_for_plugins,
                     selection_touched_for_plugins,
                     results_for_plugins,
+                    history_mode_for_plugins,
+                    Publish::DeferWhileTyping,
                 );
             }
         }
@@ -373,6 +412,7 @@ pub(crate) fn spawn_native_pipeline(
     current_sequence: Signal<u64>,
     providers: Rc<RefCell<ProviderResults>>,
     priorities: Signal<Vec<PriorityEntry>>,
+    history_mode: Signal<bool>,
     plugin_actions: Rc<RefCell<HashMap<String, PluginAction>>>,
 ) -> NativePluginWorker {
     let query_for_native_plugins = query;
@@ -385,6 +425,7 @@ pub(crate) fn spawn_native_pipeline(
     let sequence_for_native_plugins = current_sequence;
     let providers_for_native_plugins = Rc::clone(&providers);
     let priorities_for_native_plugins = priorities;
+    let history_mode_for_native_plugins = history_mode;
     let actions_for_native_plugins = Rc::clone(&plugin_actions);
     let native_sender = app.channel::<NativePluginQueryResponse>(move |_, response| {
         if response.sequence != sequence_for_native_plugins.get()
@@ -407,19 +448,29 @@ pub(crate) fn spawn_native_pipeline(
             }
         }
         if providers.core_ready() {
+            super::paint_trace::note(
+                "commit-native_plugins",
+                &format!(
+                    "query={} rows={}",
+                    query_for_native_plugins.get(),
+                    providers.built_in.len() + providers.applications.len()
+                ),
+            );
             let priorities = priorities_for_native_plugins
                 .get()
                 .iter()
                 .map(|entry| entry.id.clone())
                 .collect::<Vec<_>>();
             commit_provider_results(
-                &providers,
+                &mut providers,
                 &query_for_native_plugins.get(),
                 &priorities,
                 selected_id_for_native_plugins,
                 selected_index_for_native_plugins,
                 selection_touched_for_native_plugins,
                 results_for_native_plugins,
+                history_mode_for_native_plugins,
+                Publish::DeferWhileTyping,
             );
         }
     });
