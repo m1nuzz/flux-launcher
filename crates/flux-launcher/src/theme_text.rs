@@ -1,6 +1,6 @@
 use std::sync::{Arc, RwLock};
 
-use flux_core::{ResultKind, SearchResult, Settings};
+use flux_core::{path_query_body, ResultKind, SearchResult, Settings};
 use windui::app::ThemeHandle;
 use windui::core::EventCtx;
 use windui::event::Key;
@@ -318,6 +318,20 @@ pub(crate) fn title_match_doc(title: &str, query: &str) -> RichDoc {
 
 pub(crate) fn normalize_everything_query(query: &str) -> String {
     let trimmed = query.trim();
+    // A path wrapped in one pair of quotes names the same place, but Everything
+    // reads the quote characters as part of the name and answers nothing at all.
+    // Neither `"` nor `\` can occur in a Windows file or folder name, so a quoted
+    // text that is a path could never have been a search for a name - which is what
+    // makes dropping the pair safe. Everything else goes to the provider exactly
+    // as it was typed.
+    if let Some(unquoted) = trimmed
+        .strip_prefix('"')
+        .and_then(|value| value.strip_suffix('"'))
+    {
+        if !unquoted.contains('"') && path_query_body(unquoted).is_some() {
+            return unquoted.to_owned();
+        }
+    }
     let Some(rest) = trimmed.strip_prefix('.') else {
         return trimmed.to_owned();
     };
@@ -646,6 +660,34 @@ mod tests {
         assert_eq!(normalize_everything_query("ext:zip"), "ext:zip");
         assert_eq!(normalize_everything_query("settings"), "settings");
         assert_eq!(normalize_everything_query("."), ".");
+    }
+
+    #[test]
+    fn one_pair_of_quotes_around_a_path_is_dropped_and_nothing_else_is() {
+        // Everything searches the quote characters themselves, so a quoted path is
+        // an empty answer; the pair is only dropped when what is inside really is
+        // a path.
+        assert_eq!(
+            normalize_everything_query("\"c:\\Tools\\cmd\""),
+            r"c:\Tools\cmd"
+        );
+        assert_eq!(
+            normalize_everything_query("\"\\\\nas\\media\\films\""),
+            r"\\nas\media\films"
+        );
+        // A quoted phrase, an alternation and a quoted extension are searches for
+        // names: none of them is a path, so all of them reach the provider as
+        // typed.
+        assert_eq!(
+            normalize_everything_query("\"artist name\""),
+            "\"artist name\""
+        );
+        assert_eq!(normalize_everything_query("\"a|b\""), "\"a|b\"");
+        assert_eq!(normalize_everything_query("\".zip\""), "\".zip\"");
+        assert_eq!(normalize_everything_query("ext:\"x y\""), "ext:\"x y\"");
+        assert_eq!(normalize_everything_query("\"\""), "\"\"");
+        // Only the .zip rule translates, and it still does around a path.
+        assert_eq!(normalize_everything_query(".zip"), "ext:zip");
     }
 
     #[test]
