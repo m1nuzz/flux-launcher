@@ -8,6 +8,108 @@ fn is_path_query(normalized_query: &str) -> bool {
     normalized_query.contains('/') || normalized_query.contains('\\')
 }
 
+/// The typed text as a path in the form the filesystem takes, when the text *is* a
+/// path. One pair of quotes and a trailing separator are not part of the place, and
+/// `/` and `\` separate steps the same way, so both are handled here while the
+/// caller's own spelling is kept - a folder row has to read like the path typed.
+///
+/// Accepted: `X:\...`, `X:/...`, a bare drive or drive root, `\\host\share\...`,
+/// and a drive-less chain of two or more non-empty steps (`projects\warlocktest`).
+pub fn path_query_body(query: &str) -> Option<String> {
+    let body = strip_one_quote_pair(query.trim());
+    if body.is_empty() || body.contains(':') && !has_drive_prefix(body) {
+        // A `:` anywhere else is Everything's own syntax (`ext:zip`, `parent:`,
+        // `dm:today`, `size:1mb`) or a URI, not a drive.
+        return None;
+    }
+    let separators_unified = body.replace('/', "\\");
+    let unified = strip_trailing_separator(&separators_unified);
+    if unified.starts_with("\\\\") || has_drive_prefix(unified) {
+        return Some(unified.to_owned());
+    }
+    // Drive-less: only a chain of real steps counts, so a lone word stays a word.
+    let mut steps = unified.split('\\');
+    let first = steps.next().unwrap_or_default();
+    let second = steps.next().unwrap_or_default();
+    if !first.is_empty() && !second.is_empty() {
+        return Some(unified.to_owned());
+    }
+    None
+}
+
+/// [`path_query_body`] in the comparison form: which volume a path names is not part
+/// of what the user meant, so case is dropped here and nowhere else.
+pub fn path_query_text(query: &str) -> Option<String> {
+    path_query_body(query).map(|body| body.to_lowercase())
+}
+
+/// The comparison form of a path: case and separator style are not identity, and a
+/// trailing separator is punctuation the caller did not mean.
+pub fn normalized_path_key(path: &str) -> String {
+    let unified = normalize_path_text(path);
+    strip_trailing_separator(&unified).to_owned()
+}
+
+/// How well a full path answers a path query: the place itself, something inside
+/// it, something that merely mentions it.
+///
+/// Steps are compared as whole steps, so the folder `cmd` is not "inside" a query
+/// for `cmdline`, and a drive the user did not type does not hide the place.
+pub fn path_match_tier(candidate: &str, normalized_query: &str) -> u8 {
+    if normalized_query.is_empty() {
+        return 9;
+    }
+    let candidate = normalize_path_text(candidate);
+    let candidate = strip_trailing_separator(&candidate);
+    if candidate.is_empty() {
+        return 9;
+    }
+    let names_the_place = candidate == normalized_query
+        || candidate
+            .strip_suffix(normalized_query)
+            .is_some_and(|head| head.ends_with('\\'));
+    if names_the_place {
+        0
+    } else if holds_the_place(candidate, normalized_query) {
+        1
+    } else if candidate.contains(normalized_query) {
+        2
+    } else {
+        9
+    }
+}
+
+/// True when the query is a run of complete steps somewhere inside the candidate,
+/// which is what "a child of that folder" means once a root is prefixed to it.
+fn holds_the_place(candidate: &str, query: &str) -> bool {
+    format!("\\{candidate}").contains(&format!("\\{query}\\"))
+}
+
+fn strip_one_quote_pair(value: &str) -> &str {
+    if value.len() > 1 && value.starts_with('"') && value.ends_with('"') {
+        &value[1..value.len() - 1]
+    } else {
+        value
+    }
+}
+
+fn has_drive_prefix(value: &str) -> bool {
+    let bytes = value.as_bytes();
+    matches!(bytes.get(1), Some(b':')) && bytes[0].is_ascii_alphabetic()
+}
+
+fn normalize_path_text(value: &str) -> String {
+    value
+        .trim()
+        .trim_matches('"')
+        .to_lowercase()
+        .replace('/', "\\")
+}
+
+fn strip_trailing_separator(value: &str) -> &str {
+    value.trim_end_matches('\\')
+}
+
 /// How well a title matches, best first: the whole title, its first characters,
 /// the start of any word inside it, and only then a substring anywhere. Release
 /// folders are titled like `[Hi-Res] LiSA／紅蓮華 [FLAC]`, so the word rule is what
@@ -268,7 +370,7 @@ mod tests {
             "lmstudio.json",
             "chatgpt.md",
             "D:\\Music\\Song.mp4",
-            "F:\\Maxim\\cmd",
+            "C:\\Tools\\cmd",
             "serialisable.pyi",
             "elisam@nvidia.com",
             "日本語のアプリ",
@@ -288,7 +390,7 @@ mod tests {
             "song",
             "d:/",
             "d:\\",
-            "f:\\maxim\\cmd",
+            "c:\\tools\\cmd",
             "ext:zip",
             "dm:today",
             "2026-08",
@@ -448,6 +550,116 @@ mod tests {
         // Without a separator the loose match stays: `lmstudio` still finds
         // "LM Studio", which is what makes a launcher usable.
         assert!(matches_search_text("LM Studio", "lmstudio"));
+    }
+
+    #[test]
+    fn path_query_text_accepts_windows_paths_and_refuses_everything_syntax() {
+        for path in [
+            r"C:\Tools\cmd",
+            r"c:/Tools/cmd",
+            r"C:\Tools\cmd\",
+            "C:",
+            r"C:\",
+            r"\\nas\media\films",
+            r"projectrs\warlocktest",
+            "\"C:\\Tools\\cmd\"",
+        ] {
+            assert!(path_query_text(path).is_some(), "{path} names a place");
+        }
+        let expected = r"c:\tools\cmd";
+        assert_eq!(
+            path_query_text(r"C:\Tools\cmd"),
+            Some(String::from(expected))
+        );
+        assert_eq!(
+            path_query_text(r"C:\Tools\cmd\"),
+            Some(String::from(expected))
+        );
+        assert_eq!(
+            path_query_text("c:/Tools/cmd"),
+            Some(String::from(expected))
+        );
+        assert_eq!(
+            path_query_text("\"C:\\Tools\\cmd\""),
+            Some(String::from(expected)),
+            "quotes are allowed but are not what makes it a path"
+        );
+        for not_a_path in [
+            "cmd",
+            "notepad.exe",
+            "ext:zip",
+            "parent:C:\\Tools",
+            "dm:today",
+            "size:1mb",
+            "regex:^cmd",
+            "2026-08",
+            "12+34",
+            ".mp4",
+            "",
+            "   ",
+        ] {
+            assert!(
+                path_query_text(not_a_path).is_none(),
+                "{not_a_path} is a search, not a place"
+            );
+        }
+    }
+
+    #[test]
+    fn the_path_body_keeps_the_spelling_that_has_to_be_displayed() {
+        assert_eq!(
+            path_query_body(r"C:\Tools\cmd"),
+            Some(String::from(r"C:\Tools\cmd"))
+        );
+        assert_eq!(
+            path_query_body("c:/Tools/Cmd/"),
+            Some(String::from(r"c:\Tools\Cmd")),
+            "separators are unified, spelling is not rewritten"
+        );
+        assert_eq!(
+            path_query_text("c:/Tools/Cmd/"),
+            Some(String::from(r"c:\tools\cmd")),
+            "only the comparison form loses case"
+        );
+        assert_eq!(
+            normalized_path_key(r"D:\Music\Song.mp4\"),
+            r"d:\music\song.mp4"
+        );
+    }
+
+    #[test]
+    fn an_exact_path_beats_its_own_descendants() {
+        let query = r"c:\tools\cmd";
+        assert_eq!(path_match_tier(r"C:\Tools\cmd", query), 0);
+        assert_eq!(path_match_tier(r"c:\tools\cmd\", query), 0);
+        assert_eq!(
+            path_match_tier(r"c:\tools\cmd\download office.url", query),
+            1
+        );
+        assert_eq!(path_match_tier(r"c:\tools\cmdline.txt", query), 2);
+        assert_eq!(path_match_tier(r"d:\media\!LAUNCH", query), 9);
+        assert_eq!(path_match_tier("", query), 9);
+        assert_eq!(path_match_tier(r"C:\Windows", ""), 9);
+    }
+
+    #[test]
+    fn a_drive_less_path_finds_the_place_the_user_did_not_name_a_drive_for() {
+        let query = r"projectrs\warlocktest";
+        assert_eq!(
+            path_match_tier(r"C:\Projectrs\warlocktest", query),
+            0,
+            "the folder itself, whatever drive holds it"
+        );
+        assert_eq!(path_match_tier(r"D:\Projectrs\warlocktest", query), 0);
+        assert_eq!(
+            path_match_tier(r"C:\Projectrs\warlocktest\data\db.sqlite", query),
+            1
+        );
+        assert_eq!(
+            path_match_tier(r"C:\Projectrs\warlocktest-helper\notes.txt", query),
+            2
+        );
+        assert_eq!(path_match_tier(r"C:\cmd", query), 9);
     }
 
     #[test]
