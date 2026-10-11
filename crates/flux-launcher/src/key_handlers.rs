@@ -20,8 +20,8 @@ use super::provider_snapshot::{
     refresh_merged_results, reset_selection_after_edit, settle_results_for_query, ProviderResults,
 };
 use super::result_actions::{
-    actions_for_result, copy_result_file, copy_result_path, execute_result_action, selected_result,
-    ActionItem, ActionKind,
+    actions_for_result, arm_recycle_confirmation, copy_result_file, copy_result_path,
+    execute_result_action, selected_result, ActionItem, ActionKind,
 };
 use super::theme_text::{
     history_cursor_step, list_cursor_step, recall_history_row, refresh_inline_completion,
@@ -694,7 +694,15 @@ pub(crate) fn register_key_handlers(
                     selected_index_for_keys.get(),
                 ) {
                     if result.id == "empty-recycle-bin" {
-                        recycle_bin_confirmation_for_keys.set(true);
+                        // Arm on the false->true edge only: a second Enter while the
+                        // native prompt is already in flight must not queue another.
+                        // The tick owns the hide and the spawn - hiding from here would
+                        // stop the interval timers before that tick could run, and the
+                        // prompt would never appear. A key press already asks the host
+                        // for an immediate tick, so the prompt follows the gesture.
+                        if arm_recycle_confirmation(&recycle_bin_confirmation_for_keys) {
+                            super::paint_trace::note("recycle-confirm-armed", "");
+                        }
                     } else if result.id == "flux-settings" {
                         settings_visible_for_keys.set(true);
                         size_for_keys.set(SETTINGS_WINDOW_WIDTH, SETTINGS_WINDOW_HEIGHT);

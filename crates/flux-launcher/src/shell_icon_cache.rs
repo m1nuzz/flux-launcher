@@ -495,9 +495,18 @@ impl ShellIconWorker {
 
 /// Gives back one slot of the drain gate without ever wrapping below zero.
 fn release_icon_slot(in_flight: &AtomicUsize) {
-    let _ = in_flight.fetch_update(Ordering::AcqRel, Ordering::Acquire, |value| {
-        value.checked_sub(1)
-    });
+    let mut current = in_flight.load(Ordering::Acquire);
+    while current > 0 {
+        match in_flight.compare_exchange_weak(
+            current,
+            current - 1,
+            Ordering::AcqRel,
+            Ordering::Acquire,
+        ) {
+            Ok(_) => break,
+            Err(actual) => current = actual,
+        }
+    }
 }
 
 /// Takes a row job out of the queue, false when a sibling already settled it.

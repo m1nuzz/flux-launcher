@@ -43,6 +43,10 @@ jobs:
         shell: pwsh
         run: ./scripts/single-instance-smoke.ps1 -Executable ./target/x86_64-pc-windows-msvc/release/flux-launcher.exe -WorkDirectory ./artifacts/single-instance-smoke
 
+      - name: Smoke Recycle Bin confirmation flow
+        shell: pwsh
+        run: ./scripts/recycle-confirm-smoke.ps1 -Executable ./target/x86_64-pc-windows-msvc/release/flux-launcher.exe -WorkDirectory ./artifacts/recycle-confirm-smoke
+
       - name: Upload release bundle
         uses: actions/upload-artifact@v4
         with:

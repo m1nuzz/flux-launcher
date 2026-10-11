@@ -14,7 +14,7 @@ use windui::style::Style;
 use super::applications::resolve_bare_executable_path;
 use super::launcher_icons::bundled_icon_rgba;
 use super::plugins::{execute_async, PluginAction};
-use super::result_actions::{actions_for_result, ActionItem};
+use super::result_actions::{actions_for_result, arm_recycle_confirmation, ActionItem};
 use super::result_widgets::{ResultIconView, ResultRowAnchor};
 use super::ui_constants::{LAUNCHER_FONT_FAMILY, SETTINGS_WINDOW_HEIGHT, SETTINGS_WINDOW_WIDTH};
 use super::{
@@ -210,7 +210,13 @@ pub(crate) fn result_row(
                 selected_index.set(index);
             }
             if id == "empty-recycle-bin" {
-                recycle_bin_confirmation.set(true);
+                // Arm on the false->true edge only, then ask the host to run the tick
+                // now: a click does not request an interval pass the way a key press
+                // does, and the tick is what hides the launcher and starts the prompt.
+                if arm_recycle_confirmation(&recycle_bin_confirmation) {
+                    super::paint_trace::note("recycle-confirm-armed", "");
+                    ctx.request_interval_tick();
+                }
                 return;
             }
             if id == "flux-settings" {

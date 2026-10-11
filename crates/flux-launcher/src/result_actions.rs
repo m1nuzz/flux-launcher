@@ -15,9 +15,22 @@ use windows::Win32::UI::Shell::DROPFILES;
 
 use flux_core::{ResultKind, SearchResult};
 use windui::core::ClipboardProvider;
+use windui::signal::Signal;
 
 use super::launch;
 use super::plugins::{execute_async, PluginAction};
+
+/// Arms a Recycle Bin empty confirmation. Returns true only on the false->true edge:
+/// a second Enter or click while a confirmation is already in flight is a no-op, so
+/// one user gesture can never queue two native prompts. The search tick owns the
+/// hide-and-spawn that follows the arm.
+pub(crate) fn arm_recycle_confirmation(flag: &Signal<bool>) -> bool {
+    if flag.get() {
+        return false;
+    }
+    flag.set(true);
+    true
+}
 
 #[derive(Clone, Debug)]
 pub(crate) enum ActionKind {
@@ -305,5 +318,16 @@ mod tests {
             quoted_result_path(&already_quoted).as_deref(),
             Some(r#""C:\Users\m1nus\AppData\Roaming""#)
         );
+    }
+
+    #[test]
+    fn recycle_confirmation_arms_once_until_reaped() {
+        let flag = windui::signal::signal(false);
+        assert!(arm_recycle_confirmation(&flag));
+        assert!(flag.get());
+        assert!(!arm_recycle_confirmation(&flag));
+        assert!(flag.get());
+        flag.set(false);
+        assert!(arm_recycle_confirmation(&flag));
     }
 }

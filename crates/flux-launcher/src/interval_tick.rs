@@ -12,7 +12,6 @@ use windui::signal::Signal;
 
 use super::applications::ApplicationWorker;
 use super::everything::EverythingWorker;
-use super::launch;
 use super::path_probe::{is_remote_path_query, PathProbeWorker};
 use super::plugins::{FlowPluginWorker, NativePluginWorker, PluginAction};
 use super::provider_merge::normalize_built_in_executable_targets;
@@ -166,17 +165,45 @@ pub(crate) fn register_interval(
     let update_check_in_flight_for_interval = Rc::clone(&update_check_in_flight);
     let recycle_bin_confirmation_for_interval = recycle_bin_confirmation;
     let window_op_for_interval = window_op;
+    // Smoke hooks. None of these fire in normal use: they are gated on env vars
+    // that the recycle-confirm smoke sets, and they let the automated suite drive
+    // the real spawn/reap state machine without synthesising keystrokes or a
+    // re-show gesture. `no_hide` keeps the interval timers alive after the child
+    // spawns (normally the hide kills them until the next activation), so the
+    // parent reaps the child on a later tick and the whole flow runs headless.
+    let recycle_smoke_no_hide = std::env::var_os("FLUX_SMOKE_RECYCLE_NO_HIDE").is_some();
+    let recycle_smoke_arm = std::env::var_os("FLUX_SMOKE_RECYCLE_ARM").is_some();
+    let recycle_smoke_rearm_left = std::cell::Cell::new(
+        std::env::var("FLUX_SMOKE_RECYCLE_REARM")
+            .ok()
+            .and_then(|value| value.parse::<u32>().ok())
+            .unwrap_or(0),
+    );
+    if recycle_smoke_arm {
+        recycle_bin_confirmation_for_interval.set(true);
+        super::paint_trace::note("recycle-confirm-armed", "smoke");
+    }
     let mut recycle_confirm_child: Option<std::process::Child> = None;
     app.on_interval(SEARCH_INTERVAL, move |ctx| {
         // Emptying the Recycle Bin uses the native Windows shell confirmation. The
-        // launcher hides itself and spawns a short-lived child process that runs the
-        // blocking shell prompt off the UI thread, then reshows when the child exits
-        // (exit 0 = emptied, non-zero = declined or failed).
+        // launcher hides itself and spawns a short-lived child process that owns the
+        // blocking shell prompt, so the launcher's UI thread never enters a nested
+        // modal loop (exit 0 = emptied, non-zero = declined or failed). The parent must
+        // never empty the bin itself: the child already raised the one prompt the
+        // gesture asked for, and a second call here is what used to re-pop the dialog
+        // on every activation that followed.
+        //
+        // Hiding stops the interval timers, so this tick cannot run again until the
+        // launcher is shown. The child is therefore reaped on the first tick after the
+        // next activation, and that tick is what publishes the outcome.
         if recycle_bin_confirmation_for_interval.get() {
             if recycle_confirm_child.is_none() {
                 match std::env::current_exe() {
                     Ok(exe) => {
-                        window_op_for_interval.hide_window();
+                        if !recycle_smoke_no_hide {
+                            window_op_for_interval.hide_window();
+                        }
+                        super::paint_trace::note("recycle-confirm-spawn", "");
                         match std::process::Command::new(exe)
                             .arg("--empty-recycle-confirm")
                             .spawn()
@@ -184,7 +211,9 @@ pub(crate) fn register_interval(
                             Ok(child) => recycle_confirm_child = Some(child),
                             Err(error) => {
                                 eprintln!("Could not start Recycle Bin confirmation: {error}");
-                                window_op_for_interval.show_window();
+                                if !recycle_smoke_no_hide {
+                                    window_op_for_interval.show_window();
+                                }
                                 recycle_bin_confirmation_for_interval.set(false);
                             }
                         }
@@ -199,17 +228,26 @@ pub(crate) fn register_interval(
                     Ok(Some(status)) => {
                         recycle_confirm_child = None;
                         if status.success() {
-                            if launch::empty_recycle_bin() {
-                                status_for_interval.set(String::from("Recycle Bin emptied"));
-                            } else {
-                                status_for_interval
-                                    .set(String::from("Could not empty the Recycle Bin"));
-                            }
+                            super::paint_trace::note("recycle-confirm-emptied", "");
+                            status_for_interval.set(String::from("Recycle Bin emptied"));
                         } else {
+                            super::paint_trace::note("recycle-confirm-declined", "");
                             status_for_interval.set(String::from("Ready"));
                         }
-                        recycle_bin_confirmation_for_interval.set(false);
-                        window_op_for_interval.show_window();
+                        // Smoke re-arm: a re-show after the prompt is what arms the
+                        // confirmation again in real use. Re-arming here, up to the
+                        // requested count, proves each gesture spawns exactly one child
+                        // and never cascades into several.
+                        if recycle_smoke_rearm_left.get() > 0 {
+                            recycle_smoke_rearm_left.set(recycle_smoke_rearm_left.get() - 1);
+                            recycle_bin_confirmation_for_interval.set(true);
+                            super::paint_trace::note("recycle-confirm-armed", "smoke-rearm");
+                        } else {
+                            recycle_bin_confirmation_for_interval.set(false);
+                        }
+                        if !recycle_smoke_no_hide {
+                            window_op_for_interval.show_window();
+                        }
                     }
                     Ok(None) => {}
                     Err(error) => {
