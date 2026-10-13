@@ -384,7 +384,7 @@ pub(crate) fn title_match_doc(title: &str, query: &str) -> RichDoc {
         );
         start = end;
     }
-    RichDoc::new().para(para)
+    RichDoc::new().para(para.max_lines_plain(1))
 }
 
 pub(crate) fn inline_completion_suffix(query: &str, results: &[SearchResult]) -> String {

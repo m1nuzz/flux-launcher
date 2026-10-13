@@ -199,6 +199,10 @@ pub struct Para {
     max_lines: Option<usize>,
     /// clamp 展开态（true = 已展开不截断）。状态与文档分离，同 Section 折叠。
     clamp_expanded: Option<Signal<bool>>,
+    /// 纯省略号行数截断（无「… 展开」可点击标记）：语义单行、无展开语义的富文本
+    /// （如搜索结果行标题）用。与 `clamp` 互斥；设此位时布局按它限行，溢出处以「…」
+    /// 收尾，`clamp_expanded` 保持 None（不进折叠快照）。
+    plain_lines: Option<usize>,
 }
 
 impl Para {
@@ -303,6 +307,14 @@ impl Para {
     pub fn clamp(mut self, max_lines: usize, expanded: Signal<bool>) -> Self {
         self.max_lines = Some(max_lines.max(1));
         self.clamp_expanded = Some(expanded);
+        self
+    }
+
+    /// 纯省略号行数截断：超出 `n` 行处以「…」收尾，不附加可点击的「展开」标记。
+    /// 用于语义单行、无展开语义的富文本（如搜索结果行标题）——区别于 [`Para::clamp`]
+    /// 的「… 展开」可展开标记：点击不会展开、也不会破坏所在布局。
+    pub fn max_lines_plain(mut self, n: usize) -> Self {
+        self.plain_lines = Some(n.max(1));
         self
     }
 }
@@ -857,10 +869,15 @@ impl Walker<'_> {
             x += it.box_w();
             line.push(it);
         }
-        // clamp：未展开时只排 max_lines 行，最后一行将溢出处截断缀「… 展开」。
-        let clamp = match (p.max_lines, p.clamp_expanded) {
-            (Some(n), Some(sig)) if !sig.get() => Some((n, sig)),
-            _ => None,
+        // 行数钳制分两种：纯省略（`plain_lines`，缀「…」，无展开标记）与可展开
+        // （`clamp`，缀「… 展开」可点击）。二者互斥，纯省略优先。
+        let clamp: Option<(usize, Option<Signal<bool>>)> = if let Some(n) = p.plain_lines {
+            Some((n, None))
+        } else {
+            match (p.max_lines, p.clamp_expanded) {
+                (Some(n), Some(sig)) if !sig.get() => Some((n, Some(sig))),
+                _ => None,
+            }
         };
         let start_line = self.line_no;
         let spans = p.spans.clone();
@@ -869,9 +886,9 @@ impl Walker<'_> {
             if fs.chip {
                 // 胶囊整体不拆分。
                 let it = self.item(&span.text, &fs, false, false, span.id.clone());
-                if let Some((n, sig)) = clamp {
+                if let Some((n, expand)) = clamp {
                     if self.clamp_would_exceed(&line, x, n, start_line, &it) {
-                        self.truncate_line(&mut line, &mut x, base, sig);
+                        self.truncate_line(&mut line, &mut x, base, expand);
                         break 'spans;
                     }
                 }
@@ -881,10 +898,10 @@ impl Walker<'_> {
             for (kind, tok) in tokenize(&span.text) {
                 match kind {
                     TokKind::Newline => {
-                        if let Some((n, sig)) = clamp {
+                        if let Some((n, expand)) = clamp {
                             // 硬换行也吃行数：已在最后一行则就地截断。
                             if (self.line_no - start_line) as usize + 1 >= n {
-                                self.truncate_line(&mut line, &mut x, base, sig);
+                                self.truncate_line(&mut line, &mut x, base, expand);
                                 break 'spans;
                             }
                         }
@@ -908,9 +925,9 @@ impl Walker<'_> {
                     }
                     TokKind::Word => {
                         let it = self.item(tok, &fs, false, false, span.id.clone());
-                        if let Some((n, sig)) = clamp {
+                        if let Some((n, expand)) = clamp {
                             if self.clamp_would_exceed(&line, x, n, start_line, &it) {
-                                self.truncate_line(&mut line, &mut x, base, sig);
+                                self.truncate_line(&mut line, &mut x, base, expand);
                                 break 'spans;
                             }
                         }
@@ -945,7 +962,7 @@ impl Walker<'_> {
         line: &mut Vec<Item>,
         x: &mut i32,
         base: &Style,
-        sig: Signal<bool>,
+        expand: Option<Signal<bool>>,
     ) {
         let fs = FragStyle {
             size: base.font_size,
@@ -958,8 +975,19 @@ impl Walker<'_> {
             strike: false,
             chip: false,
         };
-        let mut ell = self.item("… 展开", &fs, false, false, None);
-        ell.expand = Some(sig);
+        // 纯省略（expand=None）：仅「…」，不可点击、不展开；可展开：缀「… 展开」。
+        let mut ell = self.item(
+            if expand.is_some() {
+                "… 展开"
+            } else {
+                "…"
+            },
+            &fs,
+            false,
+            false,
+            None,
+        );
+        ell.expand = expand;
         if let Some(w) = self.wrap_w {
             // 从行尾弹出内容给标记腾位（至少留一项，防清空整行）。
             while line.len() > 1 && *x + ell.box_w() > w {
@@ -2581,6 +2609,38 @@ mod tests {
         let text = rt.selected_text().unwrap();
         assert!(!text.contains("展开"), "「… 展开」标记不应进入复制文本");
         assert!(text.starts_with("汉"), "选区应为正文内容");
+    }
+
+    #[test]
+    fn max_lines_plain_truncates_to_single_line_with_plain_ellipsis() {
+        // 回归：结果行标题等语义单行富文本需纯省略号单行截断——既不多行折行把下方
+        // 副标题挤走，也不追加可点击的「… 展开」标记（标题无可展开内容，点击会破坏布局）。
+        let doc = RichDoc::new().para(Para::new().text("汉".repeat(20)).max_lines_plain(1));
+        let (tree, node) = build(Element::rich(doc).width(60), 300, 300);
+        assert_eq!(node_h(&tree, node), 14, "max_lines_plain(1) 应只排一行");
+
+        // 纯省略截断：末片为「…」，且无任何可展开标记（点击不会展开）。
+        let rt = RichText::new(
+            RichDoc::new().para(Para::new().text("汉".repeat(20)).max_lines_plain(1)),
+        );
+        rt.measure(
+            Size::new(60, 0),
+            &Style::default(),
+            &mut crate::text::NullTextEngine,
+        );
+        let n = {
+            let layout = rt.cache.borrow();
+            let layout = layout.as_ref().unwrap();
+            assert!(
+                layout.frags.iter().all(|f| f.expand.is_none()),
+                "纯省略截断不得产出可点击展开标记"
+            );
+            layout.frags.len()
+        };
+        rt.sel.set(Some((0, n - 1)));
+        let text = rt.selected_text().unwrap();
+        assert!(!text.contains("展开"), "纯省略截断不得含「展开」标记");
+        assert!(text.ends_with('…'), "应以纯省略号收尾");
     }
 
     #[test]
