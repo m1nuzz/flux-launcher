@@ -12,7 +12,7 @@ use std::mem::size_of;
 
 use crate::signal::Signal;
 
-use windows::core::PCWSTR;
+use windows::core::{w, PCWSTR};
 use windows::Win32::Foundation::POINT;
 use windows::Win32::Foundation::{HWND, LPARAM, TRUE};
 use windows::Win32::Graphics::Gdi::{
@@ -25,13 +25,52 @@ use windows::Win32::UI::Shell::{
 };
 use windows::Win32::UI::WindowsAndMessaging::{
     AppendMenuW, CreateIconIndirect, CreatePopupMenu, DestroyIcon, DestroyMenu, GetCursorPos,
-    LoadIconW, SetForegroundWindow, TrackPopupMenu, HICON, HMENU, ICONINFO, IDI_APPLICATION,
-    MF_CHECKED, MF_GRAYED, MF_SEPARATOR, MF_STRING, TPM_BOTTOMALIGN, TPM_RETURNCMD, TPM_RIGHTALIGN,
-    TPM_RIGHTBUTTON, WM_APP, WM_LBUTTONDBLCLK, WM_LBUTTONUP, WM_RBUTTONUP,
+    LoadIconW, RegisterWindowMessageW, SetForegroundWindow, TrackPopupMenu, HICON, HMENU, ICONINFO,
+    IDI_APPLICATION, MF_CHECKED, MF_GRAYED, MF_SEPARATOR, MF_STRING, TPM_BOTTOMALIGN,
+    TPM_RETURNCMD, TPM_RIGHTALIGN, TPM_RIGHTBUTTON, WM_APP, WM_LBUTTONDBLCLK, WM_LBUTTONUP,
+    WM_RBUTTONUP,
 };
 
 /// 托盘回调消息（WM_APP+1）：lParam 低位为鼠标动作（legacy v0 编码）。
 pub(crate) const WM_TRAYICON: u32 = WM_APP + 1;
+
+/// Shell 重建托盘区后广播的「请重新登记图标」消息号。
+///
+/// 托盘图标登记在 explorer.exe 的托盘窗口里，不是内核资源：explorer 崩溃或重启后
+/// 所有登记随旧 shell 蒸发，进程还活着却再没有可见入口（用户看到的就是「图标没了」）。
+/// 新 shell 起来后向所有**顶层**窗口广播这条消息，每个托盘程序必须自己接住并重新
+/// `NIM_ADD`；Win32 不做任何自动恢复。
+///
+/// 消息号是运行期向系统申请的（同名字符串全系统同号），非编译期常量，故走
+/// `RegisterWindowMessageW`。结果缓存在线程局部：托盘本就是 UI 线程单例，且每条
+/// 消息都要拿它来比对。返回 0 表示申请失败，调用方必须先排除 0 再比对——否则会把
+/// 所有未处理消息都当成 shell 重启。
+pub(crate) fn taskbar_created_msg() -> u32 {
+    thread_local! {
+        static MSG: u32 = {
+            let m = unsafe { RegisterWindowMessageW(w!("TaskbarCreated")) };
+            // 注册失败整条恢复路径就此失效，而症状与原 bug 一模一样（图标没了、进程
+            // 还在、零线索）。留一行是这种情况下唯一能定位的东西；thread_local 只初始化
+            // 一次，不会刷屏。
+            if m == 0 {
+                eprintln!("[windui] TaskbarCreated 注册失败，shell 重启后托盘图标将无法自动恢复");
+            }
+            m
+        };
+    }
+    MSG.with(|m| *m)
+}
+
+/// 这条消息是不是 shell 重启广播。
+///
+/// 单独成函数只为一件事：把 `registered != 0` 这个判断钉在测试里。它看着像句多余的
+/// 防御，实则是整条路径最脆的一环——`RegisterWindowMessageW` 失败返回 0，而窗口过程
+/// 里凡是走到这个判定的都是**未被前面各臂匹配的消息**，其中 `msg == 0` 的恰恰是
+/// `WM_NULL`。少了这半句，注册一旦失败，每条 WM_NULL 都会被当成一次 shell 重启，
+/// 白白拖慢整个消息循环。
+pub(crate) fn is_taskbar_created(msg: u32, registered: u32) -> bool {
+    registered != 0 && msg == registered
+}
 
 /// 托盘回调想做的事。**纯意图，不含任何 OS 调用**。
 ///
@@ -266,6 +305,38 @@ pub(crate) fn install(hwnd: HWND, tray: Tray) -> Option<TrayState> {
         owns_icon,
         tray,
     })
+}
+
+/// 登记用的完整 NOTIFYICONDATAW（图标 + 回调消息 + 提示）。
+///
+/// 首次安装与 shell 重启后的重登记共用同一份构造：两者必须逐字段一致，否则恢复出来的
+/// 图标会少点什么（最典型是漏了 `uCallbackMessage`——图标看着在，点了没反应）。
+fn add_nid(hwnd: HWND, uid: u32, hicon: HICON, tip: &str) -> NOTIFYICONDATAW {
+    let mut nid = base_nid(hwnd, uid);
+    nid.uFlags = NIF_ICON | NIF_MESSAGE | NIF_TIP;
+    nid.uCallbackMessage = WM_TRAYICON;
+    nid.hIcon = hicon;
+    copy_wide(&mut nid.szTip, tip);
+    nid
+}
+
+impl TrayState {
+    /// Shell 重启后按现值重登记托盘图标（详见 `taskbar_created_msg`）。
+    ///
+    /// **不能写成「先 DELETE 再 ADD」**：第一次广播时新 shell 本就不认识这个
+    /// (hwnd, uid)，删除只是失败一下；但第二次广播时删掉的是一个**正在正常工作**的
+    /// 图标，能否加回来全押在 `NIM_ADD` 上——而 `NIM_ADD` 恰恰是这条路上最会失败的
+    /// 一步（见下）。那等于把「重复广播」从无害变成可能亲手弄丢图标。故用 `NIM_MODIFY`
+    /// 探路：图标还在就就地更新（什么也没变），不在才 `NIM_ADD`。
+    pub(crate) fn readd(&self) -> bool {
+        unsafe {
+            let nid = add_nid(self.hwnd, self.uid, self.hicon, &self.tray.tooltip);
+            if Shell_NotifyIconW(NIM_MODIFY, &nid).as_bool() {
+                return true;
+            }
+            Shell_NotifyIconW(NIM_ADD, &nid).as_bool()
+        }
+    }
 }
 
 /// 跑左键/双击回调，取回它声明的意图队列。
@@ -545,5 +616,59 @@ mod tests {
             TrayMenuItem::separator().kind,
             ItemKind::Separator
         ));
+    }
+
+    /// 登记数据必须三要素齐全（图标 + 回调消息 + 提示）。
+    ///
+    /// 钉的是 `add_nid` 文档点名的坑：漏了 `uCallbackMessage`，图标看着好好的，点了
+    /// 却没反应——首装与 shell 重启后的重登记共用这一份构造，这里错一次是两处错。
+    /// 纯数据构造不碰 OS，句柄传空指针即可。
+    #[test]
+    fn 登记数据带齐图标回调与提示() {
+        let nid = add_nid(
+            HWND(std::ptr::null_mut()),
+            1,
+            HICON(std::ptr::null_mut()),
+            "提示",
+        );
+        assert_eq!(nid.uFlags, NIF_ICON | NIF_MESSAGE | NIF_TIP);
+        assert_eq!(nid.uCallbackMessage, WM_TRAYICON, "漏了它则图标点了没反应");
+        assert_eq!(nid.uID, 1);
+        let tip: String = nid
+            .szTip
+            .iter()
+            .take_while(|c| **c != 0)
+            .map(|c| char::from_u32(*c as u32).unwrap())
+            .collect();
+        assert_eq!(tip, "提示");
+    }
+
+    /// 超长提示按缓冲长度截断，且**始终**以 NUL 收尾。
+    #[test]
+    fn 超长提示被截断且以空字符收尾() {
+        let long = "提".repeat(500);
+        let nid = add_nid(
+            HWND(std::ptr::null_mut()),
+            1,
+            HICON(std::ptr::null_mut()),
+            &long,
+        );
+        let n = nid.szTip.len();
+        assert_eq!(nid.szTip[n - 1], 0, "定长缓冲必须以 NUL 收尾");
+        assert!(nid.szTip[..n - 1].iter().all(|c| *c != 0), "截断前应写满");
+    }
+
+    /// 注册成功时按消息号精确匹配。
+    #[test]
+    fn 匹配已注册的广播消息号() {
+        assert!(is_taskbar_created(0xC123, 0xC123));
+        assert!(!is_taskbar_created(0xC124, 0xC123));
+    }
+
+    /// 注册失败（返回 0）时**任何**消息都不算 —— 包括 WM_NULL 自己。
+    #[test]
+    fn 注册失败时一律不匹配() {
+        assert!(!is_taskbar_created(0, 0), "WM_NULL 不该被当成 shell 重启");
+        assert!(!is_taskbar_created(0xC123, 0));
     }
 }

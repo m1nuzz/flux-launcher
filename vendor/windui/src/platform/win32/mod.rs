@@ -64,29 +64,29 @@ use windows::Win32::UI::Shell::{
     DragAcceptFiles, DragFinish, DragQueryFileW, DragQueryPoint, ShellExecuteW, HDROP,
 };
 use windows::Win32::UI::WindowsAndMessaging::{
-    CreateIconIndirect, CreateWindowExW, DefWindowProcW, DestroyIcon, DestroyWindow,
-    DispatchMessageW, GetClientRect, GetCursorPos, GetForegroundWindow, GetMessageExtraInfo,
-    GetMessageTime, GetMessageW, GetSystemMetrics, GetWindowLongPtrW, GetWindowRect,
-    GetWindowThreadProcessId, IsIconic, IsWindowVisible, IsZoomed, KillTimer, LoadCursorW,
-    LoadIconW, MsgWaitForMultipleObjectsEx, PeekMessageW, PostMessageW, PostQuitMessage,
-    RegisterClassExW, SetCursor, SetCursorPos, SetForegroundWindow, SetLayeredWindowAttributes,
-    SetTimer, SetWindowLongPtrW, SetWindowPos, ShowWindow, SystemParametersInfoW, TranslateMessage,
-    CREATESTRUCTW, CW_USEDEFAULT, GWLP_USERDATA, HICON, HTBOTTOM, HTBOTTOMLEFT, HTBOTTOMRIGHT,
-    HTCAPTION, HTCLIENT, HTLEFT, HTRIGHT, HTTOP, HTTOPLEFT, HTTOPRIGHT, ICONINFO, IDC_ARROW,
-    IDC_HAND, IDC_IBEAM, LWA_ALPHA, MINMAXINFO, MSG, MWMO_INPUTAVAILABLE, NCCALCSIZE_PARAMS,
-    PM_REMOVE, QS_ALLINPUT, SIZE_MINIMIZED, SM_CXDOUBLECLK, SM_CXFRAME, SM_CXPADDEDBORDER,
-    SM_CXSCREEN, SM_CYDOUBLECLK, SM_CYFRAME, SM_CYSCREEN, SM_CYVIRTUALSCREEN, SM_REMOTESESSION,
-    SM_XVIRTUALSCREEN, SM_YVIRTUALSCREEN, SPI_GETCLIENTAREAANIMATION, SWP_FRAMECHANGED,
-    SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE, SWP_NOZORDER, SW_HIDE, SW_MAXIMIZE, SW_MINIMIZE,
-    SW_RESTORE, SW_SHOW, SW_SHOWNOACTIVATE, SW_SHOWNORMAL, SYSTEM_PARAMETERS_INFO_UPDATE_FLAGS,
-    WA_INACTIVE, WINDOW_EX_STYLE, WINDOW_STYLE, WM_ACTIVATE, WM_APP, WM_CAPTURECHANGED, WM_CHAR,
-    WM_CLOSE, WM_DESTROY, WM_DPICHANGED, WM_DROPFILES, WM_ENTERSIZEMOVE, WM_EXITSIZEMOVE,
-    WM_GETMINMAXINFO, WM_HOTKEY, WM_IME_CHAR, WM_IME_COMPOSITION, WM_IME_ENDCOMPOSITION,
-    WM_IME_STARTCOMPOSITION, WM_KEYDOWN, WM_LBUTTONDOWN, WM_LBUTTONUP, WM_MOUSEMOVE, WM_MOUSEWHEEL,
-    WM_NCCALCSIZE, WM_NCCREATE, WM_NCHITTEST, WM_NCMOUSEMOVE, WM_PAINT, WM_QUIT, WM_RBUTTONDOWN,
-    WM_RBUTTONUP, WM_SETCURSOR, WM_SIZE, WM_SYSKEYDOWN, WM_TIMER, WM_TOUCH, WNDCLASSEXW,
-    WS_EX_LAYERED, WS_EX_NOACTIVATE, WS_EX_TOOLWINDOW, WS_MAXIMIZEBOX, WS_OVERLAPPEDWINDOW,
-    WS_POPUP, WS_THICKFRAME,
+    ChangeWindowMessageFilterEx, CreateIconIndirect, CreateWindowExW, DefWindowProcW, DestroyIcon,
+    DestroyWindow, DispatchMessageW, GetClientRect, GetCursorPos, GetForegroundWindow,
+    GetMessageExtraInfo, GetMessageTime, GetMessageW, GetSystemMetrics, GetWindowLongPtrW,
+    GetWindowRect, GetWindowThreadProcessId, IsIconic, IsWindowVisible, IsZoomed, KillTimer,
+    LoadCursorW, LoadIconW, MsgWaitForMultipleObjectsEx, PeekMessageW, PostMessageW,
+    PostQuitMessage, RegisterClassExW, SetCursor, SetCursorPos, SetForegroundWindow,
+    SetLayeredWindowAttributes, SetTimer, SetWindowLongPtrW, SetWindowPos, ShowWindow,
+    SystemParametersInfoW, TranslateMessage, CREATESTRUCTW, CW_USEDEFAULT, GWLP_USERDATA, HICON,
+    HTBOTTOM, HTBOTTOMLEFT, HTBOTTOMRIGHT, HTCAPTION, HTCLIENT, HTLEFT, HTRIGHT, HTTOP, HTTOPLEFT,
+    HTTOPRIGHT, ICONINFO, IDC_ARROW, IDC_HAND, IDC_IBEAM, LWA_ALPHA, MINMAXINFO, MSG, MSGFLT_ALLOW,
+    MWMO_INPUTAVAILABLE, NCCALCSIZE_PARAMS, PM_REMOVE, QS_ALLINPUT, SIZE_MINIMIZED, SM_CXDOUBLECLK,
+    SM_CXFRAME, SM_CXPADDEDBORDER, SM_CXSCREEN, SM_CYDOUBLECLK, SM_CYFRAME, SM_CYSCREEN,
+    SM_CYVIRTUALSCREEN, SM_REMOTESESSION, SM_XVIRTUALSCREEN, SM_YVIRTUALSCREEN,
+    SPI_GETCLIENTAREAANIMATION, SWP_FRAMECHANGED, SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE,
+    SWP_NOZORDER, SW_HIDE, SW_MAXIMIZE, SW_MINIMIZE, SW_RESTORE, SW_SHOW, SW_SHOWNOACTIVATE,
+    SW_SHOWNORMAL, SYSTEM_PARAMETERS_INFO_UPDATE_FLAGS, WA_INACTIVE, WINDOW_EX_STYLE, WINDOW_STYLE,
+    WM_ACTIVATE, WM_APP, WM_CAPTURECHANGED, WM_CHAR, WM_CLOSE, WM_DESTROY, WM_DPICHANGED,
+    WM_DROPFILES, WM_ENTERSIZEMOVE, WM_EXITSIZEMOVE, WM_GETMINMAXINFO, WM_HOTKEY, WM_IME_CHAR,
+    WM_IME_COMPOSITION, WM_IME_ENDCOMPOSITION, WM_IME_STARTCOMPOSITION, WM_KEYDOWN, WM_LBUTTONDOWN,
+    WM_LBUTTONUP, WM_MOUSEMOVE, WM_MOUSEWHEEL, WM_NCCALCSIZE, WM_NCCREATE, WM_NCHITTEST,
+    WM_NCMOUSEMOVE, WM_PAINT, WM_QUIT, WM_RBUTTONDOWN, WM_RBUTTONUP, WM_SETCURSOR, WM_SIZE,
+    WM_SYSKEYDOWN, WM_TIMER, WM_TOUCH, WNDCLASSEXW, WS_EX_LAYERED, WS_EX_NOACTIVATE,
+    WS_EX_TOOLWINDOW, WS_MAXIMIZEBOX, WS_OVERLAPPEDWINDOW, WS_POPUP, WS_THICKFRAME,
 };
 // 只用于 d2d 后端选择（RDP 远程会话下强制软渲染），随该 feature 一起门控。
 #[cfg(feature = "d2d")]
@@ -998,6 +998,13 @@ unsafe fn run_windowed(
             panic!("CreateWindowExW 失败: {e:?}");
         }
     };
+    // 放行 shell 重启广播（TaskbarCreated）：它由 explorer.exe 发出，若本进程以管理员
+    // 身份运行，UIPI 会默默拦下——表现为「平时好好的，只有提权跑时图标恢复不了」，
+    // 是只在部分用户机器上复现、极难查的形态。非提权进程调这个是空操作。
+    let taskbar_created = tray::taskbar_created_msg();
+    if taskbar_created != 0 {
+        let _ = ChangeWindowMessageFilterEx(hwnd, taskbar_created, MSGFLT_ALLOW, None);
+    }
     if translucent_fallback {
         // Keep the fallback close to the reference: neutral charcoal
         // translucency without pretending to be a blurred desktop surface.
@@ -1748,6 +1755,19 @@ unsafe extern "system" fn wnd_proc(
                 // 已释放的 WindowState。
                 SetWindowLongPtrW(hwnd, GWLP_USERDATA, 0);
                 drop(Box::from_raw(ptr));
+            }
+            LRESULT(0)
+        }
+        // Shell 重启（explorer.exe 崩溃或被重启）后重新登记托盘图标。
+        //
+        // TaskbarCreated 是 HWND_BROADCAST 广播，只送达**顶层**窗口；主窗正是顶层窗，
+        // 哪怕当时隐藏也收得到（广播不看可见性，只看是不是顶层）。漏掉这里，托盘类应用
+        // 里最常见的那一种（有主窗 + 启动即隐藏）就永远恢复不了图标。托盘挂在
+        // `WindowState` 上，这里按现值重放 `readd`（NIM_MODIFY 探路，图标还在就地更新，
+        // 重复广播无害，无需去重）。
+        m if tray::is_taskbar_created(m, tray::taskbar_created_msg()) => {
+            if let Some(ts) = state_from(hwnd).and_then(|s| s.tray.as_ref()) {
+                ts.readd();
             }
             LRESULT(0)
         }
