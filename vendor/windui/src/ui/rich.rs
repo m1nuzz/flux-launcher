@@ -969,7 +969,9 @@ impl Walker<'_> {
             weight: base.font_weight,
             family: base.font_family.clone(),
             line_height: base.line_height,
-            fg: Some(RichColor::Accent),
+            // 可点击的「… 展开」用 Accent 标示可交互；纯省略不可点击，fg 置 None
+            // 继承正文色（绘制走 text_fg），避免把普通截断省略号渲染成链接蓝。
+            fg: expand.is_some().then_some(RichColor::Accent),
             bg: None,
             underline: false,
             strike: false,
@@ -2605,6 +2607,20 @@ mod tests {
         let style = Style::default();
         rt.measure(Size::new(60, 0), &style, &mut crate::text::NullTextEngine);
         let n = rt.cache.borrow().as_ref().unwrap().frags.len();
+        {
+            let layout = rt.cache.borrow();
+            let layout = layout.as_ref().unwrap();
+            let expander = layout
+                .frags
+                .iter()
+                .find(|f| f.text.contains("展开"))
+                .expect("clamp 截断应产出「… 展开」标记");
+            assert_eq!(
+                expander.style.fg,
+                Some(RichColor::Accent),
+                "可点击「… 展开」应保持 Accent 色标示可交互（与纯省略的正文色相区分）"
+            );
+        }
         rt.sel.set(Some((0, n - 1)));
         let text = rt.selected_text().unwrap();
         assert!(!text.contains("展开"), "「… 展开」标记不应进入复制文本");
@@ -2634,6 +2650,15 @@ mod tests {
             assert!(
                 layout.frags.iter().all(|f| f.expand.is_none()),
                 "纯省略截断不得产出可点击展开标记"
+            );
+            let ell = layout
+                .frags
+                .iter()
+                .find(|f| f.text.contains('…'))
+                .expect("截断后应存在纯省略号碎片");
+            assert!(
+                ell.style.fg.is_none(),
+                "纯省略号必须继承正文色（fg=None），不得渲染成链接 Accent 蓝"
             );
             layout.frags.len()
         };
