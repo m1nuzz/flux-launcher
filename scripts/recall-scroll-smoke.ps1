@@ -27,7 +27,7 @@
     Path to the flux-launcher.exe under test.
 
 .PARAMETER OutputDirectory
-    Directory for the paint trace and the recall screenshot.
+    Directory for the paint trace and the isolated profile.
 #>
 [CmdletBinding()]
 param(
@@ -39,7 +39,6 @@ param(
 )
 
 $ErrorActionPreference = 'Stop'
-Add-Type -AssemblyName System.Drawing
 
 $Executable = [System.IO.Path]::GetFullPath($Executable)
 $OutputDirectory = [System.IO.Path]::GetFullPath($OutputDirectory)
@@ -49,12 +48,11 @@ $runDirectory = Join-Path $OutputDirectory ('run-' + [DateTimeOffset]::UtcNow.To
 New-Item -ItemType Directory -Force -Path $runDirectory | Out-Null
 
 $tracePath = Join-Path $runDirectory 'paint.trace'
-$screenshotPath = Join-Path $runDirectory 'recall-short-list.png'
 $scratchAppData = Join-Path $runDirectory 'appdata'
 $settingsDirectory = Join-Path $scratchAppData 'FluxLauncher'
 New-Item -ItemType Directory -Force -Path $settingsDirectory | Out-Null
 
-Add-Type -Namespace RecallSmoke -Name Native -ReferencedAssemblies 'System.Drawing' -UsingNamespace 'System.Drawing','System.Drawing.Imaging','System.Threading' -MemberDefinition @'
+Add-Type -Namespace RecallSmoke -Name Native -MemberDefinition @'
 [DllImport("user32.dll")] public static extern bool PostMessage(IntPtr hWnd, uint msg, UIntPtr wParam, IntPtr lParam);
 [DllImport("user32.dll")] public static extern IntPtr SendMessage(IntPtr hWnd, uint msg, IntPtr wParam, IntPtr lParam);
 [DllImport("user32.dll")] public static extern bool GetWindowRect(IntPtr hWnd, out RECT rect);
@@ -62,7 +60,6 @@ Add-Type -Namespace RecallSmoke -Name Native -ReferencedAssemblies 'System.Drawi
 [DllImport("user32.dll")] public static extern bool EnumWindows(EnumProc cb, IntPtr arg);
 [DllImport("user32.dll")] public static extern uint GetWindowThreadProcessId(IntPtr hWnd, out uint pid);
 [DllImport("user32.dll")] public static extern short MapVirtualKey(uint vk, uint mapType);
-[DllImport("user32.dll")] public static extern bool PrintWindow(IntPtr hWnd, IntPtr hdc, uint flags);
 public delegate bool EnumProc(IntPtr hWnd, IntPtr arg);
 public struct RECT { public int Left; public int Top; public int Right; public int Bottom; }
 
@@ -84,30 +81,12 @@ public static IntPtr FindByPid(uint targetPid) {
 
 public static void TypeChar(IntPtr hWnd, char value) {
     PostMessage(hWnd, 0x0102, new UIntPtr((uint)value), IntPtr.Zero);
-    Thread.Sleep(25);
 }
 
 public static void PostVk(IntPtr hWnd, uint vk) {
     uint scan = (uint)MapVirtualKey(vk, 0);
     PostMessage(hWnd, 0x0100, new UIntPtr(vk), (IntPtr)(long)(scan << 16 | 1u));
     PostMessage(hWnd, 0x0101, new UIntPtr(vk), (IntPtr)(long)((scan << 16) | 1u | 0x40000000u | unchecked((int)0xC0000000u)));
-    Thread.Sleep(25);
-}
-
-public static void Save(IntPtr hWnd, string path) {
-    RECT r;
-    if (!GetWindowRect(hWnd, out r)) { return; }
-    int width = r.Right - r.Left;
-    int height = r.Bottom - r.Top;
-    if (width <= 0 || height <= 0) { return; }
-    using (Bitmap bmp = new Bitmap(width, height)) {
-        using (Graphics g = Graphics.FromImage(bmp)) {
-            IntPtr hdc = g.GetHdc();
-            PrintWindow(hWnd, hdc, 2u);
-            g.ReleaseHdc(hdc);
-        }
-        bmp.Save(path, ImageFormat.Png);
-    }
 }
 '@
 
@@ -160,6 +139,7 @@ function Show-Launcher([IntPtr]$handle) {
 function Send-Text([IntPtr]$handle, [string]$text) {
     foreach ($char in $text.ToCharArray()) {
         [RecallSmoke.Native]::TypeChar($handle, $char)
+        Start-Sleep -Milliseconds 25
     }
 }
 
@@ -196,11 +176,13 @@ try {
     Start-Sleep -Milliseconds 900
     for ($i = 0; $i -lt $DownPresses; $i++) {
         [RecallSmoke.Native]::PostVk($handle, 0x28)
+        Start-Sleep -Milliseconds 25
     }
     Start-Sleep -Milliseconds 250
 
     for ($i = 0; $i -lt $LongQuery.Length; $i++) {
         [RecallSmoke.Native]::PostVk($handle, 0x08)
+        Start-Sleep -Milliseconds 25
     }
     Start-Sleep -Milliseconds 250
 
@@ -265,9 +247,7 @@ try {
         throw "one result fitted to ${height} DIP instead of 152 DIP; the viewport keeps a stale scroll range"
     }
 
-    [RecallSmoke.Native]::Save($handle, $screenshotPath)
     Write-Host "PASS: recalled '$RecalledQuery' selected $selected and fitted one row to ${height} DIP."
-    Write-Host "screenshot: $screenshotPath"
     Write-Host "trace: $tracePath"
 } finally {
     if ($null -ne $process -and -not $process.HasExited) {
