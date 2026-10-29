@@ -125,6 +125,19 @@ impl Widget for ResultRowAnchor {
             if ctx.bounds().is_empty() {
                 return;
             }
+            // A list without results collapses the window to a strip, and the
+            // viewport is then a few pixels tall. A scroll computed against that
+            // geometry is a number, not a place: the window grows back a frame
+            // later and the offset stays, clipping the first row. Wait for a
+            // viewport that can actually show the row.
+            let tree = ctx.tree_mut();
+            let viewport = tree
+                .scroll_ancestor(row_id)
+                .and_then(|scroll_id| tree.scroll_viewport_height(scroll_id))
+                .unwrap_or(0);
+            if viewport < ctx.bounds().h {
+                return;
+            }
             let _ = ctx.tree_mut().scroll_into_view(row_id);
             self.scroll_pending.set(false);
         }
@@ -245,36 +258,79 @@ impl Widget for ResultRowAnchor {
 /// drag the list up by hand.
 ///
 /// A query is a new list, and a new list starts at its first row. This anchor is
-/// the first child of the scroll container, so revealing it *is* scrolling to the
-/// top. It is built once and survives every row rebuild, which is what lets it act
-/// on the query change itself - before the recalled rows exist.
+/// the first child of the scroll container, so its scroll node is the result
+/// viewport, and it is built once and survives every row rebuild - which is what
+/// lets it act on the query change itself, before the recalled rows exist.
 pub(crate) struct ScrollTopAnchor {
     pub(crate) query: Signal<String>,
     pub(crate) history_mode: Signal<bool>,
+    /// Bumped by a history recall.
+    ///
+    /// A recall has to put the list back on its first row even when it recalls
+    /// the query that is already in the field: then the query string does not
+    /// change, and nothing else would reset the viewport. The old offset then
+    /// survives, and the minimal alignment that reveals the selected row puts it
+    /// on the list's own top inset - which is exactly the "the top row is
+    /// clipped" report.
+    pub(crate) reset_request: Signal<u64>,
     pub(crate) last_query: String,
     pub(crate) last_history_mode: bool,
+    pub(crate) last_reset_request: u64,
+    /// The offset the trace last reported. A driver script proves the viewport is
+    /// really on the first row from these numbers, so they are written whenever
+    /// the offset changes and never otherwise.
+    pub(crate) traced_offset: i32,
 }
 
 impl Widget for ScrollTopAnchor {
     fn on_update(&mut self, ctx: &mut EventCtx) {
         let query = self.query.get();
         let history_mode = self.history_mode.get();
-        if query == self.last_query && history_mode == self.last_history_mode {
-            return;
+        let reset_request = self.reset_request.get();
+        if query != self.last_query
+            || history_mode != self.last_history_mode
+            || reset_request != self.last_reset_request
+        {
+            self.last_query = query.clone();
+            self.last_history_mode = history_mode;
+            self.last_reset_request = reset_request;
+            // The Ctrl+H list is a new list too, and it does not change the query.
+            //
+            // Write the offset directly instead of revealing this anchor: a
+            // zero-height anchor that has not been laid out yet has no rect, so
+            // `scroll_into_view` finds nothing to align and quietly leaves the old
+            // offset in place. That is the one frame that matters - the recalled
+            // rows are measured right after - and it made the reset depend on
+            // whether the anchor happened to have geometry already.
+            let anchor_id = ctx.id();
+            let tree = ctx.tree_mut();
+            let scroll_id = tree.scroll_ancestor(anchor_id);
+            let changed = scroll_id.is_some_and(|scroll_id| tree.set_scroll_y(scroll_id, 0));
+            super::paint_trace::note(
+                "scroll-top",
+                &format!(
+                    "query={query} history={} changed={}",
+                    u8::from(history_mode),
+                    u8::from(changed)
+                ),
+            );
         }
-        self.last_query = query.clone();
-        self.last_history_mode = history_mode;
-        // The Ctrl+H list is a new list too, and it does not change the query.
-        let anchor_id = ctx.id();
-        let changed = ctx.tree_mut().scroll_into_view(anchor_id);
-        super::paint_trace::note(
-            "scroll-top",
-            &format!(
-                "query={query} history={} changed={}",
-                u8::from(history_mode),
-                u8::from(changed)
-            ),
-        );
+        // The offset itself, not just the fact that it was reset: a screenshot of a
+        // clipped top row is only diagnosable if the trace says what the viewport
+        // was actually scrolled to, and when.
+        if super::paint_trace::enabled() {
+            let anchor_id = ctx.id();
+            let tree = ctx.tree_mut();
+            if let Some((offset, max)) = tree
+                .scroll_ancestor(anchor_id)
+                .and_then(|scroll_id| tree.scroll_range(scroll_id))
+            {
+                if offset != self.traced_offset {
+                    self.traced_offset = offset;
+                    super::paint_trace::note("scroll-offset", &format!("y={offset} max={max}"));
+                }
+            }
+        }
     }
 }
 
@@ -572,8 +628,11 @@ mod tests {
                     .widget(ScrollTopAnchor {
                         query,
                         history_mode,
+                        reset_request: signal(0_u64),
                         last_query: query.get(),
                         last_history_mode: false,
+                        last_reset_request: 0,
+                        traced_offset: 0,
                     })
                     .reactive()
                     .height(0),
@@ -600,6 +659,58 @@ mod tests {
         query.set(String::from("perp"));
         tree.layout_root(Size::new(300, 100), &mut engine);
         assert_eq!(offset(&tree), Some(0), "a new list starts at its first row");
+    }
+
+    /// A recall that names the query that is already in the field changes nothing
+    /// about the query, so nothing but the recall itself can put the list back on
+    /// its first row. Without that the old offset survives and the top row comes
+    /// back clipped.
+    #[test]
+    fn a_recall_resets_the_viewport_even_when_the_query_does_not_change() {
+        use windui::prelude::*;
+        use windui::signal::signal;
+
+        let query = signal(String::from("perp"));
+        let history_mode = signal(false);
+        let reset_request = signal(0_u64);
+        let element = Element::scroll()
+            .width(300)
+            .height(100)
+            .child(
+                Element::leaf()
+                    .widget(ScrollTopAnchor {
+                        query,
+                        history_mode,
+                        reset_request,
+                        last_query: query.get(),
+                        last_history_mode: false,
+                        last_reset_request: 0,
+                        traced_offset: 0,
+                    })
+                    .reactive()
+                    .height(0),
+            )
+            .child(Element::col().height(400));
+        let mut tree = windui::core::Tree::new();
+        let root = element.build(&mut tree);
+        tree.root = Some(root);
+        let mut engine = windui::text::NullTextEngine;
+        tree.layout_root(Size::new(300, 100), &mut engine);
+        tree.layout_root(Size::new(300, 100), &mut engine);
+        let offset = |tree: &windui::core::Tree| tree.scroll_range(root).map(|(y, _)| y);
+
+        assert!(tree.set_scroll_y(root, 120));
+        tree.layout_root(Size::new(300, 100), &mut engine);
+        assert_eq!(offset(&tree), Some(120));
+
+        // The recall asks for the reset, and the query text stays the same.
+        reset_request.set(1);
+        tree.layout_root(Size::new(300, 100), &mut engine);
+        assert_eq!(
+            offset(&tree),
+            Some(0),
+            "a recall puts the list back on its first row"
+        );
     }
 
     /// A row that asks to be scrolled into view is handed to the reactive pass, which

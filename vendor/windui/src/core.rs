@@ -1986,6 +1986,33 @@ impl Tree {
         chain
     }
 
+    /// 滚动容器的可视高度（视口高度）。
+    ///
+    /// 结果列表在还没有结果时会把窗口收成一条窄边（只剩搜索条），此时视口只有
+    /// 几个像素高。按这种高度算出来的滚动偏移是废数：窗口随后长回去，偏移却
+    /// 留在那里，于是第一行被裁掉。调用方要先确认视口够高再滚动。
+    pub fn scroll_viewport_height(&self, id: NodeId) -> Option<i32> {
+        let n = self.get(id)?;
+        if !matches!(n.layout, Layout::Scroll) {
+            return None;
+        }
+        Some((n.bounds.h - n.padding.vertical()).max(0))
+    }
+
+    /// 节点最近的滚动祖先（自身不算）。没有则 None。
+    ///
+    /// 滚动量只能由滚动容器自己读写，而控件想**观测**它（"这一行现在是不是被
+    /// 裁掉了"、诊断用的偏移轨迹）就得先拿到容器的 id：`scroll_range` 只认 id。
+    pub fn scroll_ancestor(&self, id: NodeId) -> Option<NodeId> {
+        self.ancestor_chain(id)
+            .into_iter()
+            .skip(1)
+            .find(|candidate| {
+                self.get(*candidate)
+                    .is_some_and(|node| matches!(node.layout, Layout::Scroll))
+            })
+    }
+
     /// 收集可聚焦节点（前序遍历顺序），供 Tab 导航。
     ///
     /// 有可见模态层时只收集**最上层**模态子树内的节点（焦点陷阱）：对话框弹出后

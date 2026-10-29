@@ -31,6 +31,13 @@ use std::sync::atomic::{AtomicU64, Ordering};
 
 static SEQ: AtomicU64 = AtomicU64::new(0);
 
+/// Whether anything is being recorded. Callers that would have to compute a
+/// value only to note it (walking the tree for a scroll offset, say) check this
+/// first, so the trace costs nothing in a normal run.
+pub(crate) fn enabled() -> bool {
+    sink().is_some()
+}
+
 /// Append `event=<name> <detail>` with both a monotonic and a wall-clock stamp,
 /// so the trace can be aligned against screenshots taken by a driver script.
 pub(crate) fn note(event: &str, detail: &str) {

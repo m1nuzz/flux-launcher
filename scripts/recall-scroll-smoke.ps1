@@ -41,6 +41,7 @@ param(
 
 $ErrorActionPreference = 'Stop'
 
+
 $Executable = [System.IO.Path]::GetFullPath($Executable)
 $OutputDirectory = [System.IO.Path]::GetFullPath($OutputDirectory)
 if (-not (Test-Path $Executable)) { throw "Executable not found: $Executable" }
@@ -135,6 +136,9 @@ function Start-LauncherRun([string]$name, [string[]]$history, [hashtable]$select
     $env:FLUX_DISABLE_UPDATE_CHECKS = '1'
     $env:FLUX_DISABLE_EVERYTHING_PROMPT = '1'
     $env:WINDUI_SMOKE_NO_FOREGROUND = '1'
+    # The launcher parks itself off every monitor, click-through and
+    # non-activating, so a run cannot cover the user's windows or be clicked.
+    $env:WINDUI_SMOKE_PARK = '1'
     $env:FLUX_PAINT_TRACE_FILE = $tracePath
 
     $info = New-Object System.Diagnostics.ProcessStartInfo
@@ -169,7 +173,16 @@ function Start-LauncherRun([string]$name, [string[]]$history, [hashtable]$select
         $process.Kill()
         throw "launcher did not become visible after WM_HOTKEY ($name)"
     }
-    Start-Sleep -Milliseconds 500
+    # Out of sight, click-through and non-activating: a smoke must not take the
+    # user's focus or cover the windows they are working in. This checks the hook
+    # rather than trusting it - a regression must fail the smoke, not quietly
+    # start covering the desktop.
+    $rect = New-Object RecallSmoke.Native+RECT
+    [void][RecallSmoke.Native]::GetWindowRect($handle, [ref]$rect)
+    if ($rect.Left -gt -20000 -or $rect.Top -gt -20000) {
+        $process.Kill()
+        throw "the smoke window is on screen at $($rect.Left),$($rect.Top); WINDUI_SMOKE_PARK did not take effect ($name)"
+    }
 
     [pscustomobject]@{
         Name = $name
@@ -324,7 +337,7 @@ try {
 } finally {
     Stop-LauncherRun $offsetRun
     $env:APPDATA = $script:previousAppData
-    foreach ($name in @('FLUX_DISABLE_SINGLE_INSTANCE', 'FLUX_DISABLE_UPDATE_CHECKS', 'FLUX_DISABLE_EVERYTHING_PROMPT', 'WINDUI_SMOKE_NO_FOREGROUND', 'FLUX_PAINT_TRACE_FILE')) {
+    foreach ($name in @('FLUX_DISABLE_SINGLE_INSTANCE', 'FLUX_DISABLE_UPDATE_CHECKS', 'FLUX_DISABLE_EVERYTHING_PROMPT', 'WINDUI_SMOKE_NO_FOREGROUND', 'WINDUI_SMOKE_PARK', 'FLUX_PAINT_TRACE_FILE')) {
         Remove-Item "Env:$name" -ErrorAction SilentlyContinue
     }
 }

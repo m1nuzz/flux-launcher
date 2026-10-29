@@ -66,12 +66,24 @@ pub(crate) fn shift_key_is_down() -> bool {
 #[cfg(windows)]
 pub(crate) fn alt_key_is_down() -> bool {
     use windows::Win32::UI::Input::KeyboardAndMouse::{GetKeyState, VK_MENU};
-    unsafe { GetKeyState(VK_MENU.0 as i32) < 0 }
+    (unsafe { GetKeyState(VK_MENU.0 as i32) < 0 }) || smoke_alt_held()
 }
 
 #[cfg(not(windows))]
 pub(crate) fn alt_key_is_down() -> bool {
-    false
+    smoke_alt_held()
+}
+
+/// Alt held on behalf of a smoke driver.
+///
+/// `GetKeyState` only reports real input, and synthesized input only reaches it
+/// when the window owns the foreground. The recall smoke deliberately runs in the
+/// background - it must not take the user's focus or cover their windows - so it
+/// creates this marker file for the length of one Alt+Up and removes it again.
+/// Without `FLUX_SMOKE_ALT_FILE` in the environment this costs one lookup and is
+/// always false.
+fn smoke_alt_held() -> bool {
+    std::env::var_os("FLUX_SMOKE_ALT_FILE").is_some_and(|path| std::path::Path::new(&path).exists())
 }
 
 #[cfg(windows)]

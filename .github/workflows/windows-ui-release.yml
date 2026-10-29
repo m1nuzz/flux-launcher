@@ -82,6 +82,14 @@ jobs:
         shell: pwsh
         run: ./scripts/recall-scroll-smoke.ps1 -Executable ./target/x86_64-pc-windows-msvc/release/flux-launcher.exe -OutputDirectory ./artifacts/windows-ui-release/recall-scroll-smoke
 
+      # The reported bug in full: scroll a long list, then Alt+Up back to a query
+      # whose topmost result had been picked. The recalled list must start on its
+      # first row. The window parks itself off every monitor, so the runner's
+      # desktop is never covered and the step needs no foreground.
+      - name: Smoke the result viewport after Alt+Up recall
+        shell: pwsh
+        run: ./scripts/recall-alt-up-smoke.ps1 -Executable ./target/x86_64-pc-windows-msvc/release/flux-launcher.exe -OutputDirectory ./artifacts/windows-ui-release/recall-alt-up-smoke
+
       - name: Enable DWM effects and collect preflight diagnostics
         shell: pwsh
         run: ./scripts/enable-dwm-smoke.ps1 -OutputDirectory ./artifacts/windows-ui-release

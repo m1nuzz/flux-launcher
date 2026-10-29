@@ -79,14 +79,14 @@ use windows::Win32::UI::WindowsAndMessaging::{
     SM_XVIRTUALSCREEN, SM_YVIRTUALSCREEN, SPI_GETCLIENTAREAANIMATION, SWP_FRAMECHANGED,
     SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE, SWP_NOZORDER, SW_HIDE, SW_MAXIMIZE, SW_MINIMIZE,
     SW_RESTORE, SW_SHOW, SW_SHOWNOACTIVATE, SW_SHOWNORMAL, SYSTEM_PARAMETERS_INFO_UPDATE_FLAGS,
-    WA_INACTIVE, WINDOW_EX_STYLE, WINDOW_STYLE, WM_ACTIVATE, WM_APP, WM_CAPTURECHANGED, WM_CHAR,
-    WM_CLOSE, WM_DESTROY, WM_DPICHANGED, WM_DROPFILES, WM_ENTERSIZEMOVE, WM_EXITSIZEMOVE,
+    WA_INACTIVE, WINDOWPOS, WINDOW_EX_STYLE, WINDOW_STYLE, WM_ACTIVATE, WM_APP, WM_CAPTURECHANGED,
+    WM_CHAR, WM_CLOSE, WM_DESTROY, WM_DPICHANGED, WM_DROPFILES, WM_ENTERSIZEMOVE, WM_EXITSIZEMOVE,
     WM_GETMINMAXINFO, WM_HOTKEY, WM_IME_CHAR, WM_IME_COMPOSITION, WM_IME_ENDCOMPOSITION,
     WM_IME_STARTCOMPOSITION, WM_KEYDOWN, WM_LBUTTONDOWN, WM_LBUTTONUP, WM_MOUSEMOVE, WM_MOUSEWHEEL,
     WM_NCCALCSIZE, WM_NCCREATE, WM_NCHITTEST, WM_NCMOUSEMOVE, WM_PAINT, WM_QUIT, WM_RBUTTONDOWN,
-    WM_RBUTTONUP, WM_SETCURSOR, WM_SIZE, WM_SYSKEYDOWN, WM_TIMER, WM_TOUCH, WNDCLASSEXW,
-    WS_EX_LAYERED, WS_EX_NOACTIVATE, WS_EX_TOOLWINDOW, WS_MAXIMIZEBOX, WS_OVERLAPPEDWINDOW,
-    WS_POPUP, WS_THICKFRAME,
+    WM_RBUTTONUP, WM_SETCURSOR, WM_SIZE, WM_SYSKEYDOWN, WM_TIMER, WM_TOUCH, WM_WINDOWPOSCHANGING,
+    WNDCLASSEXW, WS_EX_LAYERED, WS_EX_NOACTIVATE, WS_EX_TOOLWINDOW, WS_EX_TRANSPARENT,
+    WS_MAXIMIZEBOX, WS_OVERLAPPEDWINDOW, WS_POPUP, WS_THICKFRAME,
 };
 // 只用于 d2d 后端选择（RDP 远程会话下强制软渲染），随该 feature 一起门控。
 #[cfg(feature = "d2d")]
@@ -142,6 +142,23 @@ fn show_takes_foreground() -> bool {
         std::env::var_os("WINDUI_SMOKE_NO_FOREGROUND").is_some_and(|value| value == "1")
     })
 }
+
+/// Test hook: `WINDUI_SMOKE_PARK=1` keeps the window off every monitor and
+/// click-through for its whole life.
+///
+/// A smoke has to drive a real window - layout, painting and the paint trace all
+/// need one - but it must not cover the user's windows, take their focus, or be
+/// clicked by accident. Moving it once is not enough: the launcher re-places
+/// itself on every show and resize, so `WM_WINDOWPOSCHANGING` rewrites the target
+/// position instead and the window can never land on a monitor at all.
+fn smoke_park_enabled() -> bool {
+    static DECISION: OnceLock<bool> = OnceLock::new();
+    *DECISION
+        .get_or_init(|| std::env::var_os("WINDUI_SMOKE_PARK").is_some_and(|value| value == "1"))
+}
+
+/// Off-screen parking spot: far outside any monitor's coordinate range.
+const SMOKE_PARK_POSITION: i32 = -32000;
 
 unsafe fn os_animations_enabled() -> bool {
     let mut on = windows::core::BOOL(1);
@@ -982,6 +999,12 @@ unsafe fn run_windowed(
     };
     if cfg.no_activate {
         ex_style |= WS_EX_NOACTIVATE;
+    }
+    if smoke_park_enabled() {
+        // Parked windows are also click-through and never activate, so a stray
+        // click where the window used to be cannot reach it and typing keeps
+        // going to whatever the user had focused.
+        ex_style |= WS_EX_TRANSPARENT | WS_EX_NOACTIVATE;
     }
     let hwnd = match CreateWindowExW(
         ex_style,
@@ -1830,6 +1853,18 @@ unsafe extern "system" fn wnd_proc(
                 drop(Box::from_raw(ptr));
             }
             LRESULT(0)
+        }
+        // Test hook (`WINDUI_SMOKE_PARK`): every move, wherever it came from -
+        // first placement, centering, the launcher's own re-place on resize - is
+        // redirected off every monitor, so a smoke window cannot cover the
+        // desktop even for one frame. Size, z-order and activation are untouched.
+        WM_WINDOWPOSCHANGING if smoke_park_enabled() => {
+            let pos = lparam.0 as *mut WINDOWPOS;
+            if !pos.is_null() && (*pos).flags.0 & SWP_NOMOVE.0 == 0 {
+                (*pos).x = SMOKE_PARK_POSITION;
+                (*pos).y = SMOKE_PARK_POSITION;
+            }
+            DefWindowProcW(hwnd, msg, wparam, lparam)
         }
         _ => DefWindowProcW(hwnd, msg, wparam, lparam),
     }

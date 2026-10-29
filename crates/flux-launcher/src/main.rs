@@ -77,6 +77,14 @@ fn request_scroll(scroll_pending: Signal<bool>) {
     scroll_pending.set(true);
 }
 
+/// Asks the result viewport to go back to its first row.
+///
+/// A counter, not a flag: a recall of the query that is already in the field
+/// changes nothing else, and two recalls in a row must both count.
+fn request_viewport_reset(viewport_reset: Signal<u64>) {
+    viewport_reset.set(viewport_reset.get().wrapping_add(1));
+}
+
 pub(crate) use window_geometry::*;
 
 pub(crate) use history_priorities::*;
@@ -125,6 +133,9 @@ fn main() {
     let action_mode = signal(false);
     let action_index = signal(0_usize);
     let action_scroll_pending = signal(false);
+    // Bumped by a history recall so the result viewport goes back to its first
+    // row even when the recall does not change the query text.
+    let viewport_reset = signal(0_u64);
     let recycle_bin_confirmation = signal(false);
     let clear_history_confirm = signal(false);
     let action_items = signal(Vec::<ActionItem>::new());
@@ -263,6 +274,7 @@ fn main() {
         stats_usage,
         stats_top,
         history_mode,
+        viewport_reset,
         recycle_bin_confirmation,
         settings_visible,
         Rc::clone(&action_window_slot),
@@ -538,6 +550,7 @@ fn main() {
         stats_top,
         history_mode,
         history_cursor,
+        viewport_reset,
         Arc::clone(&shared_settings),
         priorities,
         Rc::clone(&provider_results),

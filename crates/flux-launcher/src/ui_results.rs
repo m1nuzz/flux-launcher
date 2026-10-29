@@ -83,6 +83,7 @@ pub(crate) fn build_result_list(
     stats_usage: Signal<String>,
     stats_top: Signal<String>,
     history_mode: Signal<bool>,
+    viewport_reset: Signal<u64>,
     recycle_bin_confirmation: Signal<bool>,
     settings_visible: Signal<bool>,
     window_size_slot: Rc<RefCell<Option<WindowSizeHandle>>>,
@@ -141,8 +142,11 @@ pub(crate) fn build_result_list(
                 .widget(ScrollTopAnchor {
                     query,
                     history_mode,
+                    reset_request: viewport_reset,
                     last_query: query.get(),
                     last_history_mode: history_mode.get(),
+                    last_reset_request: 0,
+                    traced_offset: 0,
                 })
                 .reactive()
                 .height(0),

@@ -27,7 +27,7 @@ use super::theme_text::{
     history_cursor_step, list_cursor_step, recall_history_row, refresh_inline_completion,
 };
 use super::ui_constants::{ACTION_WINDOW_HEIGHT, SETTINGS_WINDOW_HEIGHT, SETTINGS_WINDOW_WIDTH};
-use super::{plugins, request_scroll};
+use super::{plugins, request_scroll, request_viewport_reset};
 
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn register_key_handlers(
@@ -60,6 +60,7 @@ pub(crate) fn register_key_handlers(
     stats_top: Signal<String>,
     history_mode: Signal<bool>,
     history_cursor: Signal<Option<usize>>,
+    viewport_reset: Signal<u64>,
     shared_settings: Arc<RwLock<Settings>>,
     priorities: Signal<Vec<PriorityEntry>>,
     providers: Rc<RefCell<ProviderResults>>,
@@ -98,6 +99,7 @@ pub(crate) fn register_key_handlers(
     let stats_top_for_keys = stats_top;
     let history_mode_for_keys = history_mode;
     let history_cursor_for_keys = history_cursor;
+    let viewport_reset_for_keys = viewport_reset;
     let settings_for_history_for_keys = Arc::clone(&shared_settings);
     let settings_for_priority_for_keys = Arc::clone(&shared_settings);
     let priorities_for_keys = priorities;
@@ -345,6 +347,11 @@ pub(crate) fn register_key_handlers(
             // `ScrollTopAnchor`), but a query recalled twice in a row keeps the
             // same list - the restored row still has to be shown.
             request_scroll(scroll_request_for_keys);
+            // The recall may name the query that is already in the field, and
+            // then the query text does not change - so the viewport has to be
+            // reset by the recall itself. Without this the list keeps the
+            // offset it had, and the top row comes back clipped.
+            request_viewport_reset(viewport_reset_for_keys);
             return true;
         }
         if !history_mode_for_keys.get()
@@ -368,6 +375,7 @@ pub(crate) fn register_key_handlers(
                     selection_touched_for_keys,
                 );
                 request_scroll(scroll_request_for_keys);
+                request_viewport_reset(viewport_reset_for_keys);
                 return true;
             }
         }
