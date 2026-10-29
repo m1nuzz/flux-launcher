@@ -58,7 +58,8 @@ jobs:
           ./scripts/update-smoke.ps1 `
             -Executable ./target/x86_64-pc-windows-msvc/release/flux-launcher.exe `
             -Installer ./artifacts/FluxLauncher-Windows11-x64/FluxLauncher-Setup.exe `
-            -WorkDirectory ./artifacts/update-smoke
+            -WorkDirectory ./artifacts/update-smoke `
+            -CurrentVersion "v${{ inputs.app_version }}"
 
       - name: Upload release artifact
         uses: actions/upload-artifact@v4
