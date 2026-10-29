@@ -125,10 +125,16 @@ function Wait-ForWindow([System.Diagnostics.Process]$process) {
 }
 
 function Show-Launcher([IntPtr]$handle) {
-    [void][RecallSmoke.Native]::SendMessage($handle, 0x0312, [IntPtr]::Zero, [IntPtr]::Zero)
-    for ($attempt = 0; $attempt -lt 40; $attempt++) {
+    # A hosted runner can create the window before its hotkey callback is wired.
+    # Post the activation message again instead of failing on the first race.
+    for ($send = 0; $send -lt 20; $send++) {
+        [void][RecallSmoke.Native]::SendMessage($handle, 0x0312, [IntPtr]::Zero, [IntPtr]::Zero)
+        for ($attempt = 0; $attempt -lt 10; $attempt++) {
+            if ([RecallSmoke.Native]::IsWindowVisible($handle)) { break }
+            Start-Sleep -Milliseconds 50
+        }
         if ([RecallSmoke.Native]::IsWindowVisible($handle)) { break }
-        Start-Sleep -Milliseconds 50
+        Start-Sleep -Milliseconds 100
     }
     if (-not [RecallSmoke.Native]::IsWindowVisible($handle)) {
         throw 'launcher did not become visible after WM_HOTKEY'
@@ -147,6 +153,7 @@ $settings = [ordered]@{
     auto_enable_everything = $false
     update_checks_enabled = $false
     start_with_windows = $false
+    ignore_hotkeys_in_fullscreen = $false
     launcher_height = 382
     query_history = @($RecalledQuery)
     history_selections = @{ $RecalledQuery.ToLowerInvariant() = 'builtin:calculator' }
