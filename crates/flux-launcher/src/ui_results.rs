@@ -13,7 +13,7 @@ use super::plugins::PluginAction;
 use super::provider_snapshot::{refresh_merged_results, ProviderResults};
 use super::result_actions::{execute_result_action, selected_result, ActionItem, ActionKind};
 use super::result_row::{result_row, ActionBarGeometryProbe};
-use super::result_widgets::{ActionRowAnchor, ScrollTopAnchor};
+use super::result_widgets::{ActionRowAnchor, ScrollTopAnchor, SelectionTrace};
 use super::ui_constants::{
     ACTION_BAR_HEIGHT, ACTION_BAR_WIDTH, RESULT_LIST_VERTICAL_INSET, RESULT_VIEWPORT_HEIGHT,
 };
@@ -152,6 +152,19 @@ pub(crate) fn build_result_list(
                 .height(0),
         )
         .child(result_list_body)
+        .child(
+            // Reports the live selection to the paint trace so a smoke can wait
+            // for the row it expects instead of assuming a key sequence landed on
+            // it. Zero height, so it never affects the fitted window.
+            Element::leaf()
+                .widget(SelectionTrace {
+                    selected_id,
+                    selected_index,
+                    last: None,
+                })
+                .reactive()
+                .height(0),
+        )
         .visible_when(move || show_results.get() && !action_mode.get())
 }
 

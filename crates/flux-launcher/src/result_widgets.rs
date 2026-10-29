@@ -334,6 +334,40 @@ impl Widget for ScrollTopAnchor {
     }
 }
 
+/// Publishes the live selection to the paint trace.
+///
+/// A UI smoke has to know which row is selected before it presses Enter, and the
+/// only honest way to know is to be told. A driver that assumes "Down then Up
+/// lands on the first row" is wrong the moment an async provider republishes a
+/// longer list between the two keys - the selection then sits on a row that
+/// launches nothing, and the test has no way to tell. This is the completion
+/// signal for that: one trace line per selection change, and nothing at all when
+/// the trace is off.
+pub(crate) struct SelectionTrace {
+    pub(crate) selected_id: Signal<String>,
+    pub(crate) selected_index: Signal<usize>,
+    pub(crate) last: Option<(String, usize)>,
+}
+
+impl Widget for SelectionTrace {
+    fn on_update(&mut self, _ctx: &mut EventCtx) {
+        if !super::paint_trace::enabled() {
+            return;
+        }
+        let id = self.selected_id.get();
+        let index = self.selected_index.get();
+        let unchanged = self
+            .last
+            .as_ref()
+            .is_some_and(|(last_id, last_index)| *last_id == id && *last_index == index);
+        if unchanged {
+            return;
+        }
+        super::paint_trace::note("selection", &format!("index={index} id={id}"));
+        self.last = Some((id, index));
+    }
+}
+
 /// A reactive action-menu row that paints its own selection state and asks the
 /// nearest scroll container to reveal the selected row after keyboard or pointer
 /// navigation. It mirrors the result-list interaction contract so the submenu

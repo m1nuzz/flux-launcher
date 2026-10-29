@@ -257,6 +257,58 @@ function Get-LauncherWindowHandle([System.Diagnostics.Process]$Process) {
     return [IntPtr]::Zero
 }
 
+<#
+    Reads the launcher's live selection from the paint trace.
+
+    The Enter smoke has to know which row is selected before it presses Enter,
+    and the only honest way to know is to be told. Polling the state the app
+    publishes beats assuming that a fixed key sequence landed where the test
+    expected - see Select-FluxResultRow for why that assumption breaks.
+#>
+function Get-FluxSelection {
+    param([Parameter(Mandatory = $true)][string]$TracePath)
+    if (!(Test-Path $TracePath)) { return $null }
+    $line = Get-Content $TracePath | Where-Object { $_ -match ' event=selection ' } | Select-Object -Last 1
+    if (!$line) { return $null }
+    if ($line -match 'event=selection index=(?<index>\d+) id=(?<id>.*)$') {
+        return [pscustomobject]@{ Index = [int]$matches['index']; Id = $matches['id'] }
+    }
+    return $null
+}
+
+<#
+    Steps the selection onto the row whose id matches `ExpectedPattern`, one key
+    at a time, re-reading the published selection after each step.
+
+    A fixed "Home, Down, Up" dance only lands on the first row while the list
+    holds one or two rows. Async providers republish, so between two keys the
+    list can grow and the selection ends up on a row that launches nothing -
+    the smoke then retries the same dance into the same state. Waiting on the
+    observable selection removes the guess entirely, and a row that never
+    appears fails with the row that *was* selected instead of a bare timeout.
+#>
+function Select-FluxResultRow {
+    param(
+        [Parameter(Mandatory = $true)][IntPtr]$Handle,
+        [Parameter(Mandatory = $true)][string]$TracePath,
+        [Parameter(Mandatory = $true)][string]$ExpectedPattern,
+        [int]$TimeoutSeconds = 8
+    )
+    $deadline = (Get-Date).AddSeconds($TimeoutSeconds)
+    $selection = $null
+    while ((Get-Date) -lt $deadline) {
+        $selection = Get-FluxSelection -TracePath $TracePath
+        if ($null -ne $selection -and $selection.Id -match $ExpectedPattern) { return $selection }
+        # Below the first row: walk up. No selection yet: one Down establishes it.
+        # A first row that is not the expected one means the list reordered, so
+        # walk forward; the deadline bounds the search either way.
+        $virtualKey = if ($null -ne $selection -and $selection.Index -gt 0) { 0x26 } else { 0x28 }
+        [FluxWallpaper]::SendMessage($Handle, 0x0100, [UIntPtr]::new($virtualKey), [IntPtr]::Zero) | Out-Null
+        Start-Sleep -Milliseconds 150
+    }
+    return $selection
+}
+
 function Save-Screenshot([string]$FileName) {
     $bounds = [System.Windows.Forms.SystemInformation]::VirtualScreen
     $bitmap = New-Object System.Drawing.Bitmap $bounds.Width, $bounds.Height
@@ -470,8 +522,13 @@ $stdoutPath = Join-Path $OutputDirectory "launcher.stdout.log"
 $stderrPath = Join-Path $OutputDirectory "launcher.stderr.log"
 $launchTracePath = Join-Path $OutputDirectory "launch-trace.log"
 $inputTracePath = Join-Path $OutputDirectory "input-trace.log"
-Remove-Item $launchTracePath, $inputTracePath -Force -ErrorAction SilentlyContinue
+# The paint trace carries the live selection (`event=selection index=<n> id=<id>`).
+# The Enter smoke waits for the row it expects instead of assuming that a fixed
+# key dance landed on it; see Select-FluxResultRow.
+$paintTracePath = Join-Path $OutputDirectory "paint-trace.log"
+Remove-Item $launchTracePath, $inputTracePath, $paintTracePath -Force -ErrorAction SilentlyContinue
 $env:FLUX_LAUNCH_TRACE_FILE = $launchTracePath
+$env:FLUX_PAINT_TRACE_FILE = $paintTracePath
 $env:FLUX_COMPACT_APP_PROBE_FILE = $compactAppProbePath
 if ($ImeMessageSmoke) {
     $env:FLUX_INPUT_TRACE_FILE = $inputTracePath
@@ -2025,13 +2082,11 @@ try {
     # runner its cold process spawn can exceed the product QUERY_TIMEOUT, so
     # the plugin row is legitimately absent for the whole run). Never gate on
     # the plugin row: instead wait for a STABLE list (app row observed plus no
-    # new icon-probe lines for 3s, 60s budget). Navigation is then
-    # deterministic in both states: on a single-row list Down/Up wrap in place
-    # (index 0 = app fixture), on a two-row list Down then Up returns to index
-    # 0. Home only moves the caret (it has no selection arm in key_handlers),
-    # so Down then Up exercises keyboard selection. Enter on the plugin row
-    # would silently run plugins::execute_async (which traces nothing) instead
-    # of the shell launch asserted below, hence the return to index 0.
+    # new icon-probe lines for 3s, 60s budget). Selection then waits on the
+    # state the app publishes (see Select-FluxResultRow) instead of assuming a
+    # key sequence landed on the app row: Enter on the plugin row silently runs
+    # plugins::execute_async, which traces nothing, so a wrong guess looks
+    # exactly like a lost keystroke.
     $enterBudget = (Get-Date).AddSeconds(60)
     $enterAppSeen = $false
     $enterPluginSeen = $false
@@ -2072,16 +2127,24 @@ try {
             "Probe tail:`n$enterProbeTail")
     }
     $enterLaunchVerified = $false
-    # Selection is live: async providers can republish (or one synthesized key
-    # can be lost) between the dance and Enter. The silent plugin row then hides
-    # the window with zero trace; a stale selection may hide nothing at all.
-    # Retry the dance bounded times; only a real dispatch ends the loop.
+    # Selection is live: async providers republish, so a fixed key dance can land
+    # on the silent plugin row - or on nothing at all - and Enter then dispatches
+    # nothing. Wait for the selection the shell will actually launch, and only
+    # then press Enter. Retries stay bounded; only a real dispatch ends the loop.
+    # The published id is the resolved launch target (the shortcut's Name is
+    # "Zq7LaunchProbe", but the row id is "application:target:<resolved cmd.exe>|args:/c exit"),
+    # so we match on the distinctive launch arguments, not the display name.
     for ($enterAttempt = 1; $enterAttempt -le 3 -and !$enterLaunchVerified; $enterAttempt++) {
-    [FluxWallpaper]::SendMessage($launcherHandle, $wmKeyDown, [UIntPtr]::new(0x24), [IntPtr]::Zero) | Out-Null
-    [FluxWallpaper]::SendMessage($launcherHandle, $wmKeyDown, [UIntPtr]::new(0x28), [IntPtr]::Zero) | Out-Null
-    Start-Sleep -Milliseconds 150
-    [FluxWallpaper]::SendMessage($launcherHandle, $wmKeyDown, [UIntPtr]::new(0x26), [IntPtr]::Zero) | Out-Null
-    Start-Sleep -Milliseconds 350
+    $enterSelection = Select-FluxResultRow -Handle $launcherHandle -TracePath $paintTracePath -ExpectedPattern 'args:/c exit'
+    if ($null -eq $enterSelection -or $enterSelection.Id -notmatch 'args:/c exit') {
+        $lastSelectionText = if ($null -ne $enterSelection) {
+            "index=$($enterSelection.Index) id='$($enterSelection.Id)'"
+        } else {
+            "<no selection event in $paintTracePath>"
+        }
+        throw ("Enter launch smoke never selected the app row; last selection: $lastSelectionText. " +
+            "The list must hold the Zq7LaunchProbe application fixture (resolved launch id ends in 'args:/c exit').")
+    }
     if ($enterAttempt -eq 1) { Save-Screenshot "keyboard-selection.png" }
     Start-Sleep -Milliseconds 100
     # Clear modifier state left by the preceding Alt+Space cycles before testing
