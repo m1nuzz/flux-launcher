@@ -341,6 +341,10 @@ pub(crate) fn register_key_handlers(
                 selected_id_for_keys,
                 selection_touched_for_keys,
             );
+            // The recalled query starts a new list at its first row (see
+            // `ScrollTopAnchor`), but a query recalled twice in a row keeps the
+            // same list - the restored row still has to be shown.
+            request_scroll(scroll_request_for_keys);
             return true;
         }
         if !history_mode_for_keys.get()
@@ -363,6 +367,7 @@ pub(crate) fn register_key_handlers(
                     selected_id_for_keys,
                     selection_touched_for_keys,
                 );
+                request_scroll(scroll_request_for_keys);
                 return true;
             }
         }

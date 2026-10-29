@@ -9,7 +9,18 @@ use windui::prelude::*;
 use windui::render::{Canvas, Paint};
 
 use super::result_actions::ActionItem;
-use super::ui_constants::ACTION_WINDOW_HEIGHT;
+use super::ui_constants::{ACTION_WINDOW_HEIGHT, RESULT_ROWS_VISIBLE};
+
+/// A row the first page cannot show has to be revealed as soon as it exists.
+///
+/// A history recall restores the row the query last launched, and that row can sit
+/// far below the viewport the recalled list starts at: no key was pressed to move
+/// there, so nothing asks for it, and the highlight ends up invisible. Rows on the
+/// first page are left alone - the viewport already starts there, and revealing
+/// them on every repaint is what pins the list to the highlight.
+pub(crate) fn needs_reveal_on_build(selected: bool, index: Option<usize>) -> bool {
+    selected && index.is_some_and(|index| index >= RESULT_ROWS_VISIBLE as usize)
+}
 
 /// Invisible reactive widget that keeps the keyboard-selected row inside the
 /// surrounding windui scroll viewport without painting an additional surface.
@@ -37,6 +48,9 @@ pub(crate) struct ResultRowAnchor {
     pub(crate) last_pointer: Option<(i32, i32)>,
     pub(crate) last_selected: Option<bool>,
     pub(crate) last_query: String,
+    /// Armed at build time for a selected row the first page cannot show; cleared
+    /// once it has been brought into view. See [`needs_reveal_on_build`].
+    pub(crate) reveal_on_build: bool,
 }
 
 pub(crate) fn hover_position_changed(last: &mut Option<(i32, i32)>, position: (i32, i32)) -> bool {
@@ -86,6 +100,17 @@ impl Widget for ResultRowAnchor {
         }
         self.last_selected = Some(selected);
         self.last_query = query;
+        // A restored selection is not navigation: no key asked for it, so nothing
+        // else scrolls to it. Reveal it once, on the first pass that has geometry.
+        if self.reveal_on_build {
+            if ctx.bounds().is_empty() {
+                return;
+            }
+            self.reveal_on_build = false;
+            let row_id = ctx.id();
+            let _ = ctx.tree_mut().scroll_into_view(row_id);
+            super::paint_trace::note("scroll-reveal", &format!("id={}", self.result_id));
+        }
         // Scroll only after an explicit query/keyboard request. Wheel scrolling,
         // hover selection, and list repaints must never call scroll_into_view;
         // doing so feeds a layout mutation back into the ScrollWidget and pins
@@ -207,6 +232,48 @@ impl Widget for ResultRowAnchor {
             bounds.h as f32,
             10.0,
             &Paint::fill(color),
+        );
+    }
+}
+
+/// Puts the result viewport back on the first row of every new list.
+///
+/// The scroll offset lives on the windui scroll node and replacing the rows does
+/// not touch it. Recalling a query with Alt+Up therefore handed the previous
+/// list's offset to the recalled rows: the row the user had just recalled - the
+/// top one - was clipped by up to a row height, and the only way to read it was to
+/// drag the list up by hand.
+///
+/// A query is a new list, and a new list starts at its first row. This anchor is
+/// the first child of the scroll container, so revealing it *is* scrolling to the
+/// top. It is built once and survives every row rebuild, which is what lets it act
+/// on the query change itself - before the recalled rows exist.
+pub(crate) struct ScrollTopAnchor {
+    pub(crate) query: Signal<String>,
+    pub(crate) history_mode: Signal<bool>,
+    pub(crate) last_query: String,
+    pub(crate) last_history_mode: bool,
+}
+
+impl Widget for ScrollTopAnchor {
+    fn on_update(&mut self, ctx: &mut EventCtx) {
+        let query = self.query.get();
+        let history_mode = self.history_mode.get();
+        if query == self.last_query && history_mode == self.last_history_mode {
+            return;
+        }
+        self.last_query = query.clone();
+        self.last_history_mode = history_mode;
+        // The Ctrl+H list is a new list too, and it does not change the query.
+        let anchor_id = ctx.id();
+        let changed = ctx.tree_mut().scroll_into_view(anchor_id);
+        super::paint_trace::note(
+            "scroll-top",
+            &format!(
+                "query={query} history={} changed={}",
+                u8::from(history_mode),
+                u8::from(changed)
+            ),
         );
     }
 }
@@ -457,6 +524,82 @@ mod tests {
         assert!(hover_position_changed(&mut last, (240, 120)));
         assert!(!hover_position_changed(&mut last, (240, 120)));
         assert!(hover_position_changed(&mut last, (241, 120)));
+    }
+
+    /// Only a selection the first page cannot show asks to be revealed. A row on
+    /// the first page is where the viewport already is, and revealing it on every
+    /// rebuild is what pins the list to the highlight.
+    #[test]
+    fn only_a_selection_below_the_first_page_reveals_itself() {
+        let first_page = RESULT_ROWS_VISIBLE as usize;
+        assert!(
+            !needs_reveal_on_build(false, Some(first_page + 2)),
+            "an unselected row never scrolls"
+        );
+        assert!(
+            !needs_reveal_on_build(true, Some(0)),
+            "the first row is where a new list starts"
+        );
+        assert!(
+            !needs_reveal_on_build(true, Some(first_page - 1)),
+            "the last row of the first page is already visible"
+        );
+        assert!(
+            needs_reveal_on_build(true, Some(first_page)),
+            "a row past the first page has to be brought into view"
+        );
+        assert!(
+            !needs_reveal_on_build(true, None),
+            "a row that is not in the list cannot be revealed"
+        );
+    }
+
+    /// Recalling a query hands the previous list's scroll offset to the new rows:
+    /// the top row - the one the user just recalled - was clipped by up to a row
+    /// height. A query is a new list, and a new list starts at its first row.
+    #[test]
+    fn a_new_query_puts_the_list_back_on_its_first_row() {
+        use windui::prelude::*;
+        use windui::signal::signal;
+
+        let query = signal(String::from("developer"));
+        let history_mode = signal(false);
+        let element = Element::scroll()
+            .width(300)
+            .height(100)
+            .child(
+                Element::leaf()
+                    .widget(ScrollTopAnchor {
+                        query,
+                        history_mode,
+                        last_query: query.get(),
+                        last_history_mode: false,
+                    })
+                    .reactive()
+                    .height(0),
+            )
+            .child(Element::col().height(400));
+        let mut tree = windui::core::Tree::new();
+        let root = element.build(&mut tree);
+        tree.root = Some(root);
+        let mut engine = windui::text::NullTextEngine;
+        tree.layout_root(Size::new(300, 100), &mut engine);
+        tree.layout_root(Size::new(300, 100), &mut engine);
+        let offset = |tree: &windui::core::Tree| tree.scroll_range(root).map(|(y, _)| y);
+
+        // The list of the query the user is leaving was scrolled down.
+        assert!(tree.set_scroll_y(root, 120));
+        tree.layout_root(Size::new(300, 100), &mut engine);
+        assert_eq!(offset(&tree), Some(120));
+
+        // A repaint for the same query must not move the viewport: wheel
+        // scrolling would otherwise be undone by every provider commit.
+        tree.layout_root(Size::new(300, 100), &mut engine);
+        assert_eq!(offset(&tree), Some(120), "a repaint must not scroll");
+
+        query.set(String::from("perp"));
+        tree.layout_root(Size::new(300, 100), &mut engine);
+        assert_eq!(offset(&tree), Some(0), "a new list starts at its first row");
     }
 
     /// A row that asks to be scrolled into view is handed to the reactive pass, which

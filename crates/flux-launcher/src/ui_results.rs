@@ -13,7 +13,7 @@ use super::plugins::PluginAction;
 use super::provider_snapshot::{refresh_merged_results, ProviderResults};
 use super::result_actions::{execute_result_action, selected_result, ActionItem, ActionKind};
 use super::result_row::{result_row, ActionBarGeometryProbe};
-use super::result_widgets::ActionRowAnchor;
+use super::result_widgets::{ActionRowAnchor, ScrollTopAnchor};
 use super::ui_constants::{
     ACTION_BAR_HEIGHT, ACTION_BAR_WIDTH, RESULT_LIST_VERTICAL_INSET, RESULT_VIEWPORT_HEIGHT,
 };
@@ -134,6 +134,19 @@ pub(crate) fn build_result_list(
         // short query.
         .weight(1.0)
         .max_height(RESULT_VIEWPORT_HEIGHT)
+        // First child on purpose: revealing this zero-height anchor scrolls the
+        // list to its first row, which is where every new query starts.
+        .child(
+            Element::leaf()
+                .widget(ScrollTopAnchor {
+                    query,
+                    history_mode,
+                    last_query: query.get(),
+                    last_history_mode: history_mode.get(),
+                })
+                .reactive()
+                .height(0),
+        )
         .child(result_list_body)
         .visible_when(move || show_results.get() && !action_mode.get())
 }

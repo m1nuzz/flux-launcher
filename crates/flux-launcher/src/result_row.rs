@@ -122,6 +122,13 @@ pub(crate) fn result_row(
         .height(32)
         .corner(7.0);
     let selected = selected_id.get() == id;
+    // A recalled query restores the row it last launched. When that row sits below
+    // the first page the recalled list starts at, the row has to bring itself into
+    // view: no key was pressed to move there, so no scroll was ever requested.
+    let reveal_on_build = super::result_widgets::needs_reveal_on_build(
+        selected,
+        rows_refresh.with(|rows| rows.iter().position(|row| row.id == id)),
+    );
     let title_doc_signal = signal(title_match_doc(&title, &query.get()));
     let trailing_signal = signal(if selected {
         String::from("↵")
@@ -153,6 +160,7 @@ pub(crate) fn result_row(
             last_pointer: None,
             last_selected: None,
             last_query: query.get(),
+            reveal_on_build,
         })
         .reactive()
         .width_match()

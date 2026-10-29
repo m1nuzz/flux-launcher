@@ -78,7 +78,7 @@ jobs:
         shell: pwsh
         run: ./scripts/single-instance-smoke.ps1 -Executable ./target/x86_64-pc-windows-msvc/release/flux-launcher.exe -WorkDirectory ./artifacts/windows-ui-release/single-instance-smoke
 
-      - name: Smoke history recall short-list fit
+      - name: Smoke the result viewport after a history recall
         shell: pwsh
         run: ./scripts/recall-scroll-smoke.ps1 -Executable ./target/x86_64-pc-windows-msvc/release/flux-launcher.exe -OutputDirectory ./artifacts/windows-ui-release/recall-scroll-smoke
 

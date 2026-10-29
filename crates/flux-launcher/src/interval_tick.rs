@@ -738,14 +738,19 @@ pub(crate) fn register_interval(
                     "publish-initial",
                     &format!("query={next_query} rows={}", built_in_results.len()),
                 );
-                selection_touched_for_interval.set(false);
-                selected_index.set(0);
-                selected_id.set(
-                    built_in_results
-                        .first()
-                        .map(|result| result.id.clone())
-                        .unwrap_or_default(),
-                );
+                // A recall pins the row that query last launched (`selection_touched`
+                // plus its id). Publishing the built-in rows must not unpin it: the
+                // provider commit that follows is what restores the row, and clearing
+                // the pin here drops it before it is ever shown.
+                if !selection_touched_for_interval.get() {
+                    selected_index.set(0);
+                    selected_id.set(
+                        built_in_results
+                            .first()
+                            .map(|result| result.id.clone())
+                            .unwrap_or_default(),
+                    );
+                }
                 // Built-in/system commands are synchronous and must be actionable
                 // immediately. This list holds no provider rows, so it must not
                 // count as this query being published: otherwise the applications
