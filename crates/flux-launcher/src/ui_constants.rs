@@ -15,12 +15,18 @@ pub(crate) const ACTION_BAR_HEIGHT: i32 = 22;
 // Keep the result palette compact like the reference while exposing a six-row
 // viewport; additional results remain available through the native wheel scroll.
 pub(crate) const ACTION_WINDOW_HEIGHT: i32 = 250;
-// Six 46-DIP result rows plus local scroll padding keep the footer close to the results.
-pub(crate) const RESULT_VIEWPORT_HEIGHT: i32 = 288;
-/// How many result rows fit before the list scrolls locally, and the pitch each
-/// one occupies inside the fixed viewport.
+/// One result row's outer height.
+pub(crate) const RESULT_ROW_HEIGHT: i32 = 46;
+/// Vertical padding inside the result list's scroll body. It belongs to the
+/// scroll content once, not to every row, so the fitted window has to budget it
+/// separately or a short list keeps a few pixels of unnecessary scroll range.
+pub(crate) const RESULT_LIST_VERTICAL_INSET: i32 = 6;
+/// How many result rows fit before the list scrolls locally.
 pub(crate) const RESULT_ROWS_VISIBLE: i32 = 6;
-pub(crate) const RESULT_ROW_PITCH: i32 = RESULT_VIEWPORT_HEIGHT / RESULT_ROWS_VISIBLE;
+/// Six 46-DIP result rows plus local scroll padding keep the footer close to
+/// the results.
+pub(crate) const RESULT_VIEWPORT_HEIGHT: i32 =
+    RESULT_ROWS_VISIBLE * RESULT_ROW_HEIGHT + 2 * RESULT_LIST_VERTICAL_INSET;
 /// The search strip plus the footer and their padding: everything the window shows
 /// apart from the result rows themselves.
 pub(crate) const LAUNCHER_CHROME_HEIGHT: i32 = COMPACT_WINDOW_HEIGHT + 38;

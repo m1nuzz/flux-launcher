@@ -16,7 +16,9 @@ use super::launcher_icons::bundled_icon_rgba;
 use super::plugins::{execute_async, PluginAction};
 use super::result_actions::{actions_for_result, arm_recycle_confirmation, ActionItem};
 use super::result_widgets::{ResultIconView, ResultRowAnchor};
-use super::ui_constants::{LAUNCHER_FONT_FAMILY, SETTINGS_WINDOW_HEIGHT, SETTINGS_WINDOW_WIDTH};
+use super::ui_constants::{
+    LAUNCHER_FONT_FAMILY, RESULT_ROW_HEIGHT, SETTINGS_WINDOW_HEIGHT, SETTINGS_WINDOW_WIDTH,
+};
 use super::{
     launch, record_launch, record_query_history, request_shell_icon, title_match_doc,
     trace_result_icon_probe,
@@ -154,7 +156,7 @@ pub(crate) fn result_row(
         })
         .reactive()
         .width_match()
-        .height(46)
+        .height(RESULT_ROW_HEIGHT)
         .padding_xy(12, 3)
         .spacing(10)
         .corner(10.0)

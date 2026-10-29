@@ -9,8 +9,8 @@ use windui::app::{WindowPositionHandle, WindowSizeHandle};
 use super::monitor;
 use super::ui_constants::{
     COMPACT_WINDOW_HEIGHT, EVERYTHING_PROMPT_WINDOW_HEIGHT, EVERYTHING_PROMPT_WINDOW_WIDTH,
-    LAUNCHER_CHROME_HEIGHT, RESULT_ROWS_VISIBLE, RESULT_ROW_PITCH, SETTINGS_WINDOW_HEIGHT,
-    SETTINGS_WINDOW_WIDTH,
+    LAUNCHER_CHROME_HEIGHT, RESULT_LIST_VERTICAL_INSET, RESULT_ROWS_VISIBLE, RESULT_ROW_HEIGHT,
+    SETTINGS_WINDOW_HEIGHT, SETTINGS_WINDOW_WIDTH,
 };
 
 pub(crate) fn monitor_preference_index(preference: MonitorPreference) -> usize {
@@ -47,9 +47,19 @@ pub(crate) fn request_monitor_position(
 /// empty acrylic under it - which reads as a broken panel for as long as it takes
 /// to type the next character. The search strip and the footer stay, the viewport
 /// follows the row count, and anything past the six visible rows still scrolls.
+///
+/// The list's vertical padding is part of its scroll content exactly once. It
+/// must not be folded into a per-row pitch: for one to five rows that made the
+/// viewport shorter than the content and left a stale scroll offset of up to ten
+/// pixels, which clipped the top row after an Alt+Up history recall.
 pub(crate) fn launcher_content_height(result_count: usize, configured_height: i32) -> i32 {
     let rows = result_count.min(RESULT_ROWS_VISIBLE as usize) as i32;
-    let content = LAUNCHER_CHROME_HEIGHT + rows * RESULT_ROW_PITCH;
+    let list_inset = if rows == 0 {
+        0
+    } else {
+        2 * RESULT_LIST_VERTICAL_INSET
+    };
+    let content = LAUNCHER_CHROME_HEIGHT + rows * RESULT_ROW_HEIGHT + list_inset;
     content.min(configured_height).max(COMPACT_WINDOW_HEIGHT)
 }
 
@@ -221,6 +231,7 @@ pub(crate) fn apply_launcher_size(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::ui_constants::RESULT_VIEWPORT_HEIGHT;
     use flux_core::{
         DEFAULT_LAUNCHER_HEIGHT, DEFAULT_LAUNCHER_WIDTH, MAX_LAUNCHER_HEIGHT, MAX_LAUNCHER_WIDTH,
         MIN_LAUNCHER_HEIGHT, MIN_LAUNCHER_WIDTH,
@@ -228,14 +239,35 @@ mod tests {
 
     #[test]
     fn the_results_window_grows_with_the_rows_it_holds() {
-        // The strip and the footer stay, the viewport is as tall as the rows.
+        // The strip and the footer stay, the viewport is exactly as tall as the
+        // rows plus the list's one-time vertical padding.
         assert_eq!(launcher_content_height(0, 382), 94);
-        assert_eq!(launcher_content_height(1, 382), 142);
-        assert_eq!(launcher_content_height(3, 382), 238);
+        assert_eq!(launcher_content_height(1, 382), 152);
+        assert_eq!(launcher_content_height(2, 382), 198);
+        assert_eq!(launcher_content_height(3, 382), 244);
+        assert_eq!(launcher_content_height(4, 382), 290);
+        assert_eq!(launcher_content_height(5, 382), 336);
         // Six rows fill the configured viewport; the configured height is a ceiling.
         assert_eq!(launcher_content_height(6, 382), 382);
         assert_eq!(launcher_content_height(16, 382), 382);
         assert_eq!(launcher_content_height(4, 200), 200);
+    }
+
+    #[test]
+    fn short_lists_have_no_residual_scroll_range() {
+        for rows in 1..=RESULT_ROWS_VISIBLE {
+            let fitted = launcher_content_height(rows as usize, 382);
+            let viewport = fitted - LAUNCHER_CHROME_HEIGHT;
+            let content = rows * RESULT_ROW_HEIGHT + 2 * RESULT_LIST_VERTICAL_INSET;
+            assert_eq!(
+                viewport, content,
+                "{rows} rows must not leave an unnecessary scroll range"
+            );
+        }
+
+        // A seventh row is clipped by the six-row viewport and must still scroll.
+        let content = 7 * RESULT_ROW_HEIGHT + 2 * RESULT_LIST_VERTICAL_INSET;
+        assert!(content > RESULT_VIEWPORT_HEIGHT);
     }
 
     #[test]

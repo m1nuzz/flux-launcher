@@ -14,7 +14,9 @@ use super::provider_snapshot::{refresh_merged_results, ProviderResults};
 use super::result_actions::{execute_result_action, selected_result, ActionItem, ActionKind};
 use super::result_row::{result_row, ActionBarGeometryProbe};
 use super::result_widgets::ActionRowAnchor;
-use super::ui_constants::{ACTION_BAR_HEIGHT, ACTION_BAR_WIDTH, RESULT_VIEWPORT_HEIGHT};
+use super::ui_constants::{
+    ACTION_BAR_HEIGHT, ACTION_BAR_WIDTH, RESULT_LIST_VERTICAL_INSET, RESULT_VIEWPORT_HEIGHT,
+};
 
 pub(crate) fn build_action_bar(show_results: Signal<bool>, action_mode: Signal<bool>) -> Element {
     let action_hint = |key: &'static str, label: &'static str| {
@@ -118,7 +120,12 @@ pub(crate) fn build_result_list(
     // Acrylic surface. Only individual result rows draw controls. The extra
     // right inset is local to the scroll content: it keeps the thumb clear of
     // row cards without changing the launcher window width.
-    .padding_edges(6, 6, 18, 6);
+    .padding_edges(
+        RESULT_LIST_VERTICAL_INSET,
+        RESULT_LIST_VERTICAL_INSET,
+        18,
+        RESULT_LIST_VERTICAL_INSET,
+    );
     Element::scroll()
         .width_match()
         // The window is fitted to the row count, so the viewport has to take what
