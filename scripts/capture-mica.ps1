@@ -3113,6 +3113,40 @@ try {
             }
             $visualPreviewExactGeometryProbe = $true
 
+            # The sidebar footer carries one Reset tab action for the visible tab.
+            # It is the only button in that column, so sweep the lower sidebar band
+            # and accept the click that reports the reset marker for tab index 1.
+            $tabResetMarker = "Settings tab reset: 1"
+            $tabResetBaseline = ([regex]::Matches(
+                (Get-Content $settingsStderrPath -Raw),
+                [regex]::Escape($tabResetMarker)
+            )).Count
+            $tabResetFoundAt = ""
+            foreach ($yOffset in @(24, 32, 40)) {
+                foreach ($xOffset in @(150, 120, 90, 60)) {
+                    $probeX = $settingsRect.Left + [int]($xOffset * $settingsScale)
+                    $probeY = $settingsRect.Bottom - [int]($yOffset * $settingsScale)
+                    [FluxWallpaper]::SetCursorPos($probeX, $probeY) | Out-Null
+                    [FluxWallpaper]::mouse_event(0x0002, 0, 0, 0, [UIntPtr]::Zero)
+                    [FluxWallpaper]::mouse_event(0x0004, 0, 0, 0, [UIntPtr]::Zero)
+                    Start-Sleep -Milliseconds 400
+                    $probeCount = ([regex]::Matches(
+                        (Get-Content $settingsStderrPath -Raw),
+                        [regex]::Escape($tabResetMarker)
+                    )).Count
+                    if ($probeCount -gt $tabResetBaseline) {
+                        $tabResetFoundAt = "$probeX,$probeY"
+                        break
+                    }
+                }
+                if ($tabResetFoundAt -ne "") { break }
+            }
+            if ($tabResetFoundAt -eq "") {
+                Save-Screenshot "settings-visual-tab-reset-failed.png"
+                throw "Visual Settings smoke could not activate the sidebar Reset tab button."
+            }
+            Write-Host "Visual Reset tab activated at $tabResetFoundAt"
+
             # Reset each control through the real button. The generation counter makes
             # a reset dispatch an IPC resize even if the user is already at that value.
             # The button is found by sweeping its row from the right edge inward, so

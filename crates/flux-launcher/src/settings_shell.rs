@@ -147,7 +147,7 @@ pub(crate) fn build_settings_panel(
                 .on_click(move |ctx| apply_settings(&ui_for_apply, ctx)),
         );
 
-    let reset = Element::button("Reset tab")
+    let reset = Element::button("Reset tab defaults")
         .small()
         .neutral()
         .outline_soft()
