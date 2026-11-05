@@ -15,7 +15,7 @@ pub use win32::clipboard::WinClipboard as Clipboard;
 #[cfg(windows)]
 pub(crate) use win32::run;
 #[cfg(windows)]
-pub use win32::{open_url, Tray, TrayCtx, TrayMenuItem};
+pub use win32::{open_url, system_backdrop_available, Tray, TrayCtx, TrayMenuItem};
 
 #[cfg(target_os = "macos")]
 pub mod macos;

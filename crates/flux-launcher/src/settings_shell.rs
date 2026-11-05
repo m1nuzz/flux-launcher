@@ -171,7 +171,7 @@ pub(crate) fn build_settings_panel(
         .child(Element::list_pill(TAB_NAMES.to_vec(), settings_tab).weight(1.0))
         .child(reset);
 
-    let content = Element::col()
+    let mut content = Element::col()
         .weight(1.0)
         .height_match()
         .padding_edges(18, 16, 14, 6)
@@ -183,6 +183,15 @@ pub(crate) fn build_settings_panel(
         .child(tab_plugins)
         .child(tab_stats)
         .child(footer);
+
+    if super::theme_text::needs_opaque_surface() {
+        // With no system material behind the window, the tab body needs its own
+        // plane or the navigation column and the settings read as one flat field.
+        content = content
+            .bg(super::theme_text::FALLBACK_PANEL)
+            .corner(12.0)
+            .border(super::theme_text::FALLBACK_EDGE, 1);
+    }
 
     // Settings shares the same continuous Acrylic surface as the launcher.
     // Do not add a dark card here: it hides the blur and creates the old opaque

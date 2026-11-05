@@ -155,8 +155,11 @@ pub(crate) fn run_launcher(
         .hide_on_deactivate()
         .focus_first_control_on_show()
         // Keep the HWND background transparent so Acrylic/DWM remains visible
-        // through the launcher and its install prompt instead of adding a solid slab.
-        .bg(Color::TRANSPARENT)
+        // through the launcher and its install prompt instead of adding a solid
+        // slab. Where the system cannot provide the material at all, the same
+        // pixels would show an unblurred desktop, so the window owns a solid
+        // dark background instead.
+        .bg(super::theme_text::window_background())
         .centered()
         .frameless()
         .resizable(false)

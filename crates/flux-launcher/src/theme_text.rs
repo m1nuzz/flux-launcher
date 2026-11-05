@@ -464,11 +464,55 @@ pub(crate) fn recall_history_row(
     }
 }
 
+/// Solid surface tones used when the system cannot provide the requested
+/// material. A transparent window only reads well while DWM blurs the desktop
+/// behind it; on a remote, Server or composition-disabled session the same
+/// pixels show a sharp desktop through the text, so the launcher owns its own
+/// background instead.
+pub(crate) const FALLBACK_SURFACE: Color = Color::rgb(0x1B, 0x1D, 0x22);
+pub(crate) const FALLBACK_PANEL: Color = Color::rgb(0x20, 0x23, 0x2A);
+pub(crate) const FALLBACK_EDGE: Color = Color::rgb(0x2A, 0x2E, 0x37);
+pub(crate) const FALLBACK_FIELD: Color = Color::rgb(0x17, 0x19, 0x1E);
+
+/// Whether this session has to paint its own opaque surface.
+pub(crate) fn needs_opaque_surface() -> bool {
+    #[cfg(windows)]
+    {
+        !windui::platform::system_backdrop_available()
+    }
+    #[cfg(not(windows))]
+    {
+        false
+    }
+}
+
+/// The window background: nothing at all while the system material is live,
+/// a solid panel when it is not.
+pub(crate) fn window_background() -> Color {
+    if needs_opaque_surface() {
+        FALLBACK_SURFACE
+    } else {
+        Color::TRANSPARENT
+    }
+}
+
 pub(crate) fn launcher_theme() -> Theme {
     let mut theme = Theme::dark();
-    theme.palette.bg = Color::rgba(0, 0, 0, 0);
-    theme.palette.surface = Color::rgba(38, 39, 41, 180);
-    theme.palette.surface_alt = Color::rgba(48, 49, 51, 205);
+    theme.palette.bg = if needs_opaque_surface() {
+        FALLBACK_SURFACE
+    } else {
+        Color::rgba(0, 0, 0, 0)
+    };
+    theme.palette.surface = if needs_opaque_surface() {
+        FALLBACK_PANEL
+    } else {
+        Color::rgba(38, 39, 41, 180)
+    };
+    theme.palette.surface_alt = if needs_opaque_surface() {
+        FALLBACK_EDGE
+    } else {
+        Color::rgba(48, 49, 51, 205)
+    };
     theme.palette.border = Color::rgba(255, 255, 255, 22);
     // The Search control is transparent, so its foreground must stay readable
     // over both dark and light Acrylic samples. Keep ordinary text neutral and
@@ -480,7 +524,11 @@ pub(crate) fn launcher_theme() -> Theme {
     // sinks into light blur, so use a bright gray instead; hierarchy
     // against white titles is carried by size.
     theme.palette.text_subtle = Color::hex(0xBCC4D4);
-    theme.input.bg = Some(Color::rgba(29, 30, 32, 188));
+    theme.input.bg = Some(if needs_opaque_surface() {
+        FALLBACK_FIELD
+    } else {
+        Color::rgba(29, 30, 32, 188)
+    });
     theme.input.border = Some(Color::rgba(255, 255, 255, 24));
     theme.input.border_focus = Some(Color::rgba(133, 181, 255, 135));
     theme.input.text = Some(Color::rgba(250, 252, 255, 255));

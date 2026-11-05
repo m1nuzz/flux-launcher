@@ -558,6 +558,24 @@ unsafe fn hicon_from_rgba(w: i32, h: i32, rgba: &[u8]) -> Option<HICON> {
 
 use super::to_skia_color;
 
+/// Whether the desktop can actually show a requested system material here.
+///
+/// Remote sessions, Server SKUs and composition-disabled desktops accept the
+/// Acrylic request and answer with a neutral slab or with nothing at all, so
+/// the app has to paint and keep its own surface. Applications call this before
+/// choosing a window background; `create_window` uses the same answer, so the
+/// two cannot drift apart.
+pub fn system_backdrop_available() -> bool {
+    if std::env::var_os("FLUX_DISABLE_SYSTEM_BACKDROP").is_some() {
+        return false;
+    }
+    let is_remote = unsafe { GetSystemMetrics(SM_REMOTESESSION) } != 0;
+    let composition_enabled = unsafe { DwmIsCompositionEnabled() }
+        .map(|enabled| enabled.as_bool())
+        .unwrap_or(true);
+    system_material_supported() && !is_remote && composition_enabled
+}
+
 /// Return whether the current OS is a Windows Client product that can host the
 /// desktop system material used by Flux. Server products may report DWM
 /// composition as enabled while still exposing only a neutral opaque surface.
@@ -933,19 +951,15 @@ unsafe fn run_windowed(
     // A transparent presenter is safe only when local DWM composition can
     // provide the requested system material. Remote sessions use an opaque
     // dark fallback instead of exposing DWM's neutral material slab.
-    let force_safe_fallback = std::env::var_os("FLUX_DISABLE_SYSTEM_BACKDROP").is_some();
-    let backdrop_available = cfg.backdrop != Backdrop::None
-        && !force_safe_fallback
-        && system_material_supported()
-        && GetSystemMetrics(SM_REMOTESESSION) == 0
-        && DwmIsCompositionEnabled()
-            .map(|enabled| enabled.as_bool())
-            .unwrap_or(true);
+    let backdrop_available = cfg.backdrop != Backdrop::None && system_backdrop_available();
     // A layered top-level window provides a real uniform-alpha fallback when
     // DWM cannot provide the requested system backdrop. It is intentionally
     // excluded from the normal Acrylic path, which needs transparent pixels
-    // and DirectComposition to expose the system material.
-    let translucent_fallback = cfg.backdrop != Backdrop::None && !backdrop_available;
+    // and DirectComposition to expose the system material. An app that already
+    // paints an opaque surface is left alone: dimming a solid panel by uniform
+    // alpha would let the sharp desktop show through it again.
+    let translucent_fallback =
+        cfg.backdrop != Backdrop::None && !backdrop_available && cfg.bg.a < 255;
     // 把 WindowState 装箱，指针随 CreateWindow 传入，在 WM_NCCREATE 挂到 HWND。
     let mut state = Box::new(WindowState::new(handler, cfg.bg, backdrop_available));
     #[cfg(feature = "d2d")]
