@@ -24,9 +24,10 @@ pub(crate) fn build_shell_content(
         .fill()
         .child(launcher_surface)
         .visible_when(move || !settings_visible.get());
+    // The Settings panel owns its insets: the navigation column has to reach the
+    // window edge for the system backdrop to read as one continuous surface.
     let settings_page = Element::col()
         .fill()
-        .padding(18)
         .child(settings_panel)
         .visible_signal(settings_visible);
     if std::env::var_os("FLUX_SMOKE_SETTINGS_UI").is_some() {

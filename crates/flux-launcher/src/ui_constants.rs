@@ -3,6 +3,10 @@ use std::time::Duration;
 pub(crate) const CURRENT_VERSION: &str = env!("CARGO_PKG_VERSION");
 pub(crate) const SINGLE_INSTANCE_ID: &str = "m1nuzz.flux-launcher";
 pub(crate) const SETTINGS_WINDOW_WIDTH: i32 = 720;
+/// Left navigation column of the Settings window. Narrow enough that the tab
+/// body keeps a readable measure at the fixed 720 DIP width, wide enough for
+/// the longest tab name plus its selection pill.
+pub(crate) const SETTINGS_SIDEBAR_WIDTH: i32 = 186;
 pub(crate) const EVERYTHING_PROMPT_WINDOW_WIDTH: i32 = 440;
 pub(crate) const EVERYTHING_PROMPT_WINDOW_HEIGHT: i32 = 242;
 // The empty launcher is a compact search strip; the results state keeps the user-configured height.

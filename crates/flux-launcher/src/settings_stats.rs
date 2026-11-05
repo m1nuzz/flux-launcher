@@ -135,47 +135,55 @@ pub(crate) fn build_stats_tab(ui: &SettingsUi) -> Element {
                         )
                         .child(Element::divider())
                         .child(Element::setting_row_desc(
-                            "Clear history",
+                            "History and counters",
                             "Forget remembered queries and top counts",
-                            Element::button("Clear history").small().on_click(move |_| {
-                                clear_confirm.set(true);
-                            }),
+                            Element::button("Clear history")
+                                .small()
+                                .neutral()
+                                .outline_soft()
+                                .on_click(move |_| {
+                                    clear_confirm.set(true);
+                                }),
                         ))
                         .child(Element::divider())
                         .child(Element::setting_row_desc(
-                            "Share stats",
+                            "Share card",
                             "Copy a stats card image plus a short summary",
-                            Element::button("Share stats").on_click(move |ctx| {
-                                let snapshot = settings_for_share
-                                    .read()
-                                    .map(|settings| {
-                                        (
-                                            settings.total_queries_committed,
-                                            settings.launch_counts.clone(),
-                                        )
-                                    })
-                                    .ok();
-                                let Some((total, launches)) = snapshot else {
-                                    ctx.toast_ok("Could not lock Flux settings");
-                                    return;
-                                };
-                                let text = share_stats_text(total);
-                                let top = top_launches(&launches, MAX_TOP_QUERIES);
-                                #[cfg(windows)]
-                                {
-                                    if let Some((width, height, rgba)) =
-                                        render_share_card_rgba(total, CURRENT_VERSION, &top)
-                                    {
-                                        ctx.clipboard_set_text_and_image(
-                                            &text, width, height, &rgba,
-                                        );
-                                        ctx.toast_ok("Stats card copied to clipboard");
+                            Element::button("Share stats")
+                                .small()
+                                .neutral()
+                                .outline_soft()
+                                .on_click(move |ctx| {
+                                    let snapshot = settings_for_share
+                                        .read()
+                                        .map(|settings| {
+                                            (
+                                                settings.total_queries_committed,
+                                                settings.launch_counts.clone(),
+                                            )
+                                        })
+                                        .ok();
+                                    let Some((total, launches)) = snapshot else {
+                                        ctx.toast_ok("Could not lock Flux settings");
                                         return;
+                                    };
+                                    let text = share_stats_text(total);
+                                    let top = top_launches(&launches, MAX_TOP_QUERIES);
+                                    #[cfg(windows)]
+                                    {
+                                        if let Some((width, height, rgba)) =
+                                            render_share_card_rgba(total, CURRENT_VERSION, &top)
+                                        {
+                                            ctx.clipboard_set_text_and_image(
+                                                &text, width, height, &rgba,
+                                            );
+                                            ctx.toast_ok("Stats card copied to clipboard");
+                                            return;
+                                        }
                                     }
-                                }
-                                ctx.clipboard_set(&text);
-                                ctx.toast_ok("Stats copied as text");
-                            }),
+                                    ctx.clipboard_set(&text);
+                                    ctx.toast_ok("Stats copied as text");
+                                }),
                         )),
                 )
                 .child(settings_scroll_gutter()),

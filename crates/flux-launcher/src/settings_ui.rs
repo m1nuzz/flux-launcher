@@ -13,6 +13,9 @@ use super::updater;
 /// All shared handles the settings UI needs, bundled so each settings tab
 /// builder takes a single parameter instead of a thirty-signal signature.
 /// Every field is a cheap `Copy` signal handle or a cloned `Rc`/`Arc`.
+/// Cloning is how a button callback owns the state it needs: `move` closures
+/// cannot borrow the panel builder's parameter.
+#[derive(Clone)]
 pub(crate) struct SettingsUi {
     pub(crate) shared_settings: Arc<RwLock<Settings>>,
     pub(crate) query_history: Rc<RefCell<Vec<String>>>,

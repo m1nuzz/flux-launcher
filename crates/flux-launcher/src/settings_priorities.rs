@@ -5,7 +5,7 @@ use windui::prelude::*;
 
 use super::history_priorities::{move_priority_entry, remove_priority_entry};
 use super::provider_snapshot::refresh_merged_results;
-use super::settings_shell::{settings_scroll_gutter, settings_section_header};
+use super::settings_shell::settings_scroll_gutter;
 use super::settings_ui::SettingsUi;
 
 pub(crate) fn build_priority_list(ui: &SettingsUi) -> Element {
@@ -157,17 +157,9 @@ pub(crate) fn build_priorities_tab(
                     Element::col()
                         .weight(1.0)
                         .spacing(10)
-                        .child(settings_section_header("Priorities"))
-                        .child(
-                            Element::label("Only applications explicitly added with Set as priority appear here. Rank 1 is searched first.")
-                                .font_size(11.0)
-                                .fg(Color::rgba(235, 241, 255, 235))
-                                .max_lines(2)
-                                .truncate(Truncate::End),
-                        )
                         .child(priorities_empty)
-                        .child(priority_list)
-                    )
-                    .child(settings_scroll_gutter())
+                        .child(priority_list),
+                )
+                .child(settings_scroll_gutter()),
         )
 }

@@ -38,6 +38,7 @@ mod recycle_confirm;
 mod result_actions;
 mod result_row;
 mod result_widgets;
+mod settings_actions;
 mod settings_general;
 mod settings_plugins;
 mod settings_priorities;

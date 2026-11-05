@@ -1,25 +1,15 @@
-use std::sync::Arc;
-
 use windui::prelude::*;
 
-use super::everything::{self, InstallationState};
+use super::everything;
 use super::plugins::native_plugin_install_path;
 use super::settings_shell::{settings_scroll_gutter, settings_section_header};
 use super::settings_ui::SettingsUi;
 
 pub(crate) fn build_plugins_tab(ui: &SettingsUi) -> Element {
-    let settings_for_everything_toggle = Arc::clone(&ui.shared_settings);
-    let auto_enable_everything_for_toggle = ui.auto_enable_everything;
-    let everything_installed_for_toggle = ui.everything_installed;
-    let everything_status_for_toggle = ui.everything_status;
-    let everything_installed_for_ui = ui.everything_installed;
-    let auto_enable_everything = ui.auto_enable_everything;
-    let everything_status = ui.everything_status;
-    let obsidian_enabled = ui.obsidian_enabled;
-    let obsidian_alias = ui.obsidian_alias;
-    let google_enabled = ui.google_enabled;
-    let google_alias = ui.google_alias;
     let settings_tab = ui.settings_tab;
+    let everything_installed = ui.everything_installed;
+    let everything_status = ui.everything_status;
+
     Element::scroll()
         .weight(1.0)
         .visible_when(move || settings_tab.get() == 3)
@@ -30,80 +20,30 @@ pub(crate) fn build_plugins_tab(ui: &SettingsUi) -> Element {
                     Element::col()
                         .weight(1.0)
                         .spacing(12)
-                        .child(settings_section_header("Native plugins"))
+                        .child(settings_section_header("Everything"))
                         .child(
-                            Element::label("Native Flow plugins: %APPDATA%\\FluxLauncher\\Plugins or FLUX_PLUGIN_DIR")
-                                .font_size(12.0)
-                                .fg(Color::rgba(235, 241, 255, 235)),
-                        )
-                        .child(
-                            Element::label("Built-in providers run inside Flux. Community Rust DLL plugins run in one isolated shared worker spawned from this same flux-launcher.exe.")
-                                .font_size(11.0)
-                                .fg(Color::rgba(235, 241, 255, 235))
-                                .max_lines(3)
-                                .truncate(Truncate::End),
-                        )
-                        .child(
-                            Element::label(format!("Community plugin folder: {}", native_plugin_install_path()))
+                            Element::label("Everything provides fast indexed file and folder search.")
                                 .font_size(11.0)
                                 .fg(Color::rgba(235, 241, 255, 235))
                                 .max_lines(2)
                                 .truncate(Truncate::End),
                         )
-                        .child(Element::divider())
-                        .child(settings_section_header("Everything"))
-                        .child(
-                            Element::label("Everything provides fast indexed file and folder search. Configure its automatic use here, alongside the other plugins.")
-                                .font_size(11.0)
-                                .fg(Color::rgba(235, 241, 255, 235))
-                                .max_lines(3)
-                                .truncate(Truncate::End),
-                        )
                         .child(Element::setting_row_desc(
-                            "Everything",
-                            "Auto-enable Everything when installed",
-                            Element::checkbox("", auto_enable_everything)
-                                .on_toggle(move |_| {
-                                let enabled = auto_enable_everything_for_toggle.get();
-                                if let Ok(mut settings) = settings_for_everything_toggle.write() {
-                                    settings.auto_enable_everything = enabled;
-                                    settings.normalize();
-                                    let _ = super::update_tasks::save_settings(&settings);
-                                }
-                                if !enabled {
-                                    everything_status_for_toggle.set(String::from(
-                                        "Everything auto-enable is disabled in Flux settings",
-                                    ));
-                                    return;
-                                }
-                                match everything::start_background_if_installed() {
-                                    Ok(InstallationState::Installed(_)) => {
-                                        everything_installed_for_toggle.set(true);
-                                        everything_status_for_toggle.set(String::from(
-                                            "Everything is already installed; Flux will enable IPC automatically",
-                                        ));
-                                    }
-                                    Ok(InstallationState::Missing) => {
-                                        everything_installed_for_toggle.set(false);
-                                        everything_status_for_toggle.set(String::from(
-                                            "Everything is not installed. Install it with winget to enable file search.",
-                                        ));
-                                    }
-                                    Err(error) => everything_status_for_toggle.set(error),
-                                }
-                            }),
+                            "Auto-enable Everything",
+                            "Use Everything for file results while it is installed",
+                            Element::switch(ui.auto_enable_everything),
                         ))
                         .child(
                             Element::label("Everything is already installed")
                                 .font_size(12.0)
                                 .fg(Color::rgba(180, 255, 205, 235))
-                                .visible_when(move || everything_installed_for_ui.get()),
+                                .visible_when(move || everything_installed.get()),
                         )
                         .child(
                             Element::label("Everything is not installed")
                                 .font_size(12.0)
                                 .fg(Color::rgba(255, 225, 175, 235))
-                                .visible_when(move || !everything_installed_for_ui.get()),
+                                .visible_when(move || !everything_installed.get()),
                         )
                         .child(
                             Element::label_signal(everything_status)
@@ -114,16 +54,11 @@ pub(crate) fn build_plugins_tab(ui: &SettingsUi) -> Element {
                                 .width_match(),
                         )
                         .child(
-                            Element::label("Command: winget install -e --id voidtools.Everything")
-                                .font_size(11.0)
-                                .fg(Color::rgba(235, 241, 255, 235))
-                                .visible_when(move || !everything_installed_for_ui.get())
-                                .width_match(),
-                        )
-                        .child(
                             Element::button("Install Everything")
                                 .small()
-                                .visible_when(move || !everything_installed_for_ui.get())
+                                .neutral()
+                                .outline_soft()
+                                .visible_when(move || !everything_installed.get())
                                 .on_click(move |ctx| {
                                     match everything::launch_winget_install() {
                                         Ok(()) => {
@@ -142,42 +77,69 @@ pub(crate) fn build_plugins_tab(ui: &SettingsUi) -> Element {
                         .child(Element::divider())
                         .child(settings_section_header("Obsidian"))
                         .child(Element::setting_row_desc(
-                            "Obsidian",
-                            "Enable Obsidian vault search",
-                            Element::checkbox("", obsidian_enabled),
+                            "Obsidian vault search",
+                            "Search notes and vault files by keyword",
+                            Element::switch(ui.obsidian_enabled),
                         ))
                         .child(Element::setting_row_desc(
                             "Action keyword",
                             "Prefix typed before the vault query",
-                            Element::text_input(obsidian_alias, "ob").width(180),
+                            Element::text_input(ui.obsidian_alias, "ob").width(140),
                         ))
                         .child(
-                            Element::label("Search notes and vault files with the configured keyword, for example: ob meeting. Use `ob create project` to create a new note.")
+                            Element::label("For example: ob meeting. Use `ob create project` to create a new note.")
                                 .font_size(11.0)
                                 .fg(Color::rgba(235, 241, 255, 235))
-                                .max_lines(3)
+                                .max_lines(2)
                                 .truncate(Truncate::End),
                         )
                         .child(Element::divider())
                         .child(settings_section_header("Google Search"))
                         .child(Element::setting_row_desc(
-                            "Google Search",
-                            "Enable Google web search",
-                            Element::checkbox("", google_enabled),
+                            "Google web search",
+                            "Open a browser search from the launcher",
+                            Element::switch(ui.google_enabled),
                         ))
                         .child(Element::setting_row_desc(
                             "Action keyword",
                             "Prefix typed before the web query",
-                            Element::text_input(google_alias, "g").width(180),
+                            Element::text_input(ui.google_alias, "g").width(140),
                         ))
                         .child(
-                            Element::label("Search the web with the configured keyword, for example: g space exploration. The result opens in your default browser.")
+                            Element::label("For example: g space exploration. The result opens in your default browser.")
+                                .font_size(11.0)
+                                .fg(Color::rgba(235, 241, 255, 235))
+                                .max_lines(2)
+                                .truncate(Truncate::End),
+                        )
+                        .child(Element::divider())
+                        .child(settings_section_header("Native plugins"))
+                        .child(
+                            Element::label("Built-in providers run inside Flux. Community Rust DLL plugins run in one isolated shared worker spawned from this same flux-launcher.exe.")
                                 .font_size(11.0)
                                 .fg(Color::rgba(235, 241, 255, 235))
                                 .max_lines(3)
                                 .truncate(Truncate::End),
                         )
-                    )
-                    .child(settings_scroll_gutter())
+                        .child(
+                            Element::label("Native Flow plugins: %APPDATA%\\FluxLauncher\\Plugins or FLUX_PLUGIN_DIR")
+                                .font_size(11.0)
+                                .fg(Color::rgba(235, 241, 255, 235))
+                                .max_lines(2)
+                                .truncate(Truncate::End),
+                        )
+                        .child(
+                            Element::label(format!(
+                                "Community plugin folder: {}",
+                                native_plugin_install_path()
+                            ))
+                            .font_size(11.0)
+                            .fg(Color::rgba(235, 241, 255, 235))
+                            .max_lines(2)
+                            .truncate(Truncate::End)
+                            .width_match(),
+                        ),
                 )
+                .child(settings_scroll_gutter()),
+        )
 }

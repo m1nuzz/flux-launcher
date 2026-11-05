@@ -3,9 +3,22 @@ use std::sync::Arc;
 use windui::prelude::*;
 
 use super::hotkeys;
+use super::settings_actions::{apply_settings, reset_active_tab, tab_is_resettable};
 use super::settings_ui::SettingsUi;
-use super::ui_constants::COMPACT_WINDOW_HEIGHT;
+use super::ui_constants::{COMPACT_WINDOW_HEIGHT, SETTINGS_SIDEBAR_WIDTH};
 use super::window_geometry::request_monitor_position;
+
+/// Sidebar order is the tab-index contract: the smoke runs select a tab by its
+/// numeric index through `FLUX_SMOKE_SETTINGS_TAB`, and every tab body gates on
+/// the same index, so renaming alone is safe but reordering is not.
+const TAB_NAMES: [&str; 5] = ["General", "Visual", "Priorities", "Plugins", "Stats"];
+const TAB_DESCRIPTIONS: [&str; 5] = [
+    "Startup, activation and update behaviour.",
+    "Caret, selection color and launcher size.",
+    "Applications that always rank first.",
+    "File, note and web search providers.",
+    "What you searched and opened.",
+];
 
 /// A settings group title: semibold, slightly larger than row text, no fill so
 /// the Acrylic backdrop stays untouched. Pair with `Element::divider()` between
@@ -57,72 +70,128 @@ pub(crate) fn build_settings_panel(
     let activation_shift_for_back = ui.activation_shift;
     let activation_meta_for_back = ui.activation_meta;
     let activation_handle_for_back = ui.activation_handle.clone();
-    // Settings shares the same continuous Acrylic surface as the launcher.
-    // Do not add a dark card here: it hides the blur and creates the old opaque
-    // search-style slab inside the transparent window.
-    Element::col()
-        .fill()
-        .padding(24)
-        .spacing(14)
-        .corner(20.0)
-        .bg(Color::rgba(0, 0, 0, 0))
-        .border(Color::rgba(0, 0, 0, 0), 0)
+    let ui_for_reset = ui.clone();
+    let ui_for_apply = ui.clone();
+
+    // Only the active tab's title and summary are shown; the hidden pairs take
+    // no space, so the header keeps a constant height instead of jumping when
+    // descriptions differ in length.
+    let mut heading = Element::col().weight(1.0).spacing(4);
+    for index in 0..TAB_NAMES.len() {
+        heading = heading
+            .child(
+                Element::label(TAB_NAMES[index])
+                    .font_size(21.0)
+                    .font_weight(600)
+                    .fg(Color::WHITE)
+                    .visible_when(move || settings_tab.get() == index),
+            )
+            .child(
+                Element::label(TAB_DESCRIPTIONS[index])
+                    .font_size(12.0)
+                    .fg(Color::rgba(235, 241, 255, 235))
+                    .visible_when(move || settings_tab.get() == index),
+            );
+    }
+
+    let header = Element::row()
+        .width_match()
+        .spacing(12)
+        .cross(Align::End)
+        .child(heading)
         .child(
-            Element::row()
-                .width_match()
-                .spacing(12)
-                .cross(Align::Center)
-                .child(
-                    Element::col()
-                        .weight(1.0)
-                        .spacing(3)
-                        .child(Element::label("Settings").font_size(25.0).fg(Color::WHITE))
-                        .child(
-                            Element::label("Review changes, then press Apply to save")
-                                .font_size(12.0)
-                                .fg(Color::rgba(235, 241, 255, 235)),
-                        ),
-                )
-                .child(Element::segmented(
-                    vec!["General", "Visual", "Priorities", "Plugins", "Stats"],
-                    settings_tab,
-                ))
-                .child(
-                    Element::button("Back")
-                        .neutral()
-                        .outline_soft()
-                        .on_click(move |_| {
-                            hotkeys::end_recording(
-                                activation_recording_for_back,
-                                activation_display_for_back,
-                                activation_key_for_back,
-                                activation_ctrl_for_back,
-                                activation_alt_for_back,
-                                activation_shift_for_back,
-                                activation_meta_for_back,
-                                &activation_handle_for_back,
-                            );
-                            settings_visible.set(false);
-                            let height = if show_results_for_back.get() {
-                                launcher_height.get() as i32
-                            } else {
-                                COMPACT_WINDOW_HEIGHT
-                            };
-                            if let Ok(settings) = settings_for_back_position.read() {
-                                request_monitor_position(
-                                    &position_for_back,
-                                    settings.monitor_preference,
-                                    launcher_width.get() as i32,
-                                    height,
-                                );
-                            }
-                            size_for_back.set(launcher_width.get() as i32, height);
-                        }),
-                ),
+            Element::button("Back")
+                .neutral()
+                .outline_soft()
+                .on_click(move |_| {
+                    hotkeys::end_recording(
+                        activation_recording_for_back,
+                        activation_display_for_back,
+                        activation_key_for_back,
+                        activation_ctrl_for_back,
+                        activation_alt_for_back,
+                        activation_shift_for_back,
+                        activation_meta_for_back,
+                        &activation_handle_for_back,
+                    );
+                    settings_visible.set(false);
+                    let height = if show_results_for_back.get() {
+                        i32::from(launcher_height.get())
+                    } else {
+                        COMPACT_WINDOW_HEIGHT
+                    };
+                    if let Ok(settings) = settings_for_back_position.read() {
+                        request_monitor_position(
+                            &position_for_back,
+                            settings.monitor_preference,
+                            i32::from(launcher_width.get()),
+                            height,
+                        );
+                    }
+                    size_for_back.set(i32::from(launcher_width.get()), height);
+                }),
+        );
+
+    let footer = Element::row()
+        .width_match()
+        .spacing(10)
+        .cross(Align::Center)
+        .child(
+            Element::label("Changes are written when you press Apply settings.")
+                .font_size(11.0)
+                .fg(Color::rgba(235, 241, 255, 210))
+                .weight(1.0),
         )
+        .child(
+            Element::button("Apply settings")
+                .on_click(move |ctx| apply_settings(&ui_for_apply, ctx)),
+        );
+
+    let reset = Element::button("Reset tab")
+        .small()
+        .neutral()
+        .outline_soft()
+        .width_match()
+        .tooltip("Restore this tab's defaults. Nothing is saved until you press Apply settings.")
+        .visible_when(move || tab_is_resettable(settings_tab.get()))
+        .on_click(move |ctx| reset_active_tab(&ui_for_reset, ctx));
+
+    let sidebar = Element::col()
+        .width(SETTINGS_SIDEBAR_WIDTH)
+        .height_match()
+        .padding_edges(18, 18, 12, 14)
+        .spacing(14)
+        .child(
+            Element::label("Flux Launcher")
+                .font_size(13.0)
+                .font_weight(650)
+                .fg(Color::WHITE),
+        )
+        .child(Element::divider())
+        .child(Element::list_pill(TAB_NAMES.to_vec(), settings_tab).weight(1.0))
+        .child(reset);
+
+    let content = Element::col()
+        .weight(1.0)
+        .height_match()
+        .padding_edges(18, 16, 14, 6)
+        .spacing(10)
+        .child(header)
         .child(tab_general)
-        .child(tab_plugins)
         .child(tab_visual)
         .child(tab_priorities)
+        .child(tab_plugins)
         .child(tab_stats)
+        .child(footer);
+
+    // Settings shares the same continuous Acrylic surface as the launcher.
+    // Do not add a dark card here: it hides the blur and creates the old opaque
+    // search-style slab inside the transparent window. The sidebar is separated
+    // from the tab body by its own padding and the divider, not by a fill.
+    Element::row()
+        .fill()
+        .spacing(0)
+        .bg(Color::rgba(0, 0, 0, 0))
+        .child(sidebar)
+        .child(content)
 }
