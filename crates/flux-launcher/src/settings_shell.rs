@@ -13,7 +13,7 @@ use super::window_geometry::request_monitor_position;
 /// the same index, so renaming alone is safe but reordering is not.
 const TAB_NAMES: [&str; 5] = ["General", "Visual", "Priorities", "Plugins", "Stats"];
 const TAB_DESCRIPTIONS: [&str; 5] = [
-    "Startup, activation and update behaviour.",
+    "Startup, activation and update behavior.",
     "Caret, selection color and launcher size.",
     "Applications that always rank first.",
     "File, note and web search providers.",
