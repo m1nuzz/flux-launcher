@@ -1409,8 +1409,15 @@ impl UiHost {
                 }
                 // 键盘聚焦相反——本来就在键盘导航中。焦点环跨节点变化 → 整窗。
                 FocusSource::Keyboard => {
-                    self.focus.visible = true;
-                    self.damage.needs_full = true;
+                    // Only a real focus move opens the ring. A widget that already
+                    // holds focus and asks for it again on every keystroke - a text
+                    // field does exactly that - would otherwise light up whichever
+                    // control a later dialog focused first, reading as a second,
+                    // wrong selection.
+                    if old != Some(f) {
+                        self.focus.visible = true;
+                        self.damage.needs_full = true;
+                    }
                 }
             }
         } else if let Some(pos) = blur_at {
@@ -1728,6 +1735,13 @@ impl AppHandler for UiHost {
             self.damage.needs_relayout = true;
         }
         repaint
+    }
+
+    /// The show path's synthetic Tab is ours, not the user's keyboard navigation:
+    /// keep the focus it hands over, drop the focus ring it armed.
+    fn clear_synthetic_focus_ring(&mut self) {
+        self.focus.visible = false;
+        self.tree.focus_ring_visible = false;
     }
 
     fn on_key(&mut self, ev: crate::event::KeyEvent) -> bool {

@@ -48,6 +48,14 @@ impl UiHost {
                 self.focus.current = None;
             }
         }
+        // No focus, no ring. A page swap hides the node the previous page had
+        // focused, and this is the same pass that lays out the new page: clearing
+        // the "keyboard was in use" flag here keeps the first frame of the new
+        // page from lighting up a control the user never chose. The first real
+        // keyboard move (Tab) turns it back on.
+        if self.focus.current.is_none() {
+            self.focus.visible = false;
+        }
         self.tree.focus_ring_visible = self.focus.visible;
     }
 
@@ -364,6 +372,42 @@ mod tests {
             handler.focus.current,
             handler.focus.order.first().copied(),
             "show policy should focus the first visible control"
+        );
+    }
+
+    /// The show path hands focus over with its own synthetic Tab. That move is
+    /// the framework's, not the user's, so it must not arm the focus ring -
+    /// otherwise every open paints a ring on whatever control got focused first.
+    /// A real Tab afterwards still does.
+    #[test]
+    fn synthetic_show_tab_does_not_arm_the_focus_ring() {
+        use crate::event::Key;
+        use crate::platform::AppHandler;
+        use crate::ui::Element;
+
+        let app = App::new("t", 300, 120)
+            .focus_first_control_on_show()
+            .content(
+                Element::col()
+                    .child(Element::button("A"))
+                    .child(Element::button("B")),
+            );
+        let mut handler = app.into_handler_for_test();
+        handler.on_window_show();
+        let key = key_ev();
+
+        // Exactly what the platform does on show: synthetic Tab, then the reset.
+        handler.on_key(key(Key::Tab));
+        handler.clear_synthetic_focus_ring();
+        assert!(
+            !handler.tree.focus_ring_visible,
+            "the synthetic show Tab must not paint a focus ring"
+        );
+
+        handler.on_key(key(Key::Tab));
+        assert!(
+            handler.focus.visible,
+            "a real Tab must still show the focus ring"
         );
     }
 

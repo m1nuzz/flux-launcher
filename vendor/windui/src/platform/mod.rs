@@ -440,6 +440,10 @@ pub trait AppHandler {
     fn on_key(&mut self, _ev: KeyEvent) -> bool {
         false
     }
+    /// Called right after the show path's synthetic Tab hands focus to the
+    /// window. That move is not user keyboard navigation, so the focus ring it
+    /// would otherwise arm must not appear until the user really presses Tab.
+    fn clear_synthetic_focus_ring(&mut self) {}
     /// 是否请求关闭窗口（事件处理后由平台查询）。
     fn wants_close(&self) -> bool {
         false

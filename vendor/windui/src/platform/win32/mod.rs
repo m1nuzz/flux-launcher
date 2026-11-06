@@ -2552,6 +2552,8 @@ pub(crate) fn show_and_activate(hwnd: HWND) {
                 shift: false,
                 ctrl: false,
             });
+            // The Tab above is ours, not the user's: drop the focus ring it armed.
+            state.handler.clear_synthetic_focus_ring();
             let _ = InvalidateRect(Some(hwnd), None, false);
             let _ = UpdateWindow(hwnd);
         }
