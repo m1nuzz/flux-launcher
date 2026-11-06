@@ -21,8 +21,9 @@ pub fn activation_hotkey(config: &HotkeyConfig) -> Hotkey {
     hotkey
 }
 
-pub fn game_mode_toggle_hotkey() -> Hotkey {
-    Hotkey::new(Key::Other(0x7B)).ctrl()
+/// Game Mode's own toggle, from its editable configuration.
+pub fn game_mode_hotkey(config: &HotkeyConfig) -> Hotkey {
+    activation_hotkey(config)
 }
 
 /// Converts a captured key event into the persisted hotkey configuration.

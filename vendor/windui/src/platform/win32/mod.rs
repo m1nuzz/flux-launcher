@@ -33,10 +33,10 @@ use windows::Win32::Graphics::Dwm::{
     DWM_SYSTEMBACKDROP_TYPE,
 };
 use windows::Win32::Graphics::Gdi::{
-    BeginPaint, CreateBitmap, CreateDIBSection, DeleteObject, EndPaint, GetDC, GetDeviceCaps,
-    InvalidateRect, ReleaseDC, ScreenToClient, SetDIBitsToDevice, UpdateWindow, ValidateRect,
-    BITMAPINFO, BITMAPINFOHEADER, BI_RGB, DEFAULT_CHARSET, DIB_RGB_COLORS, HGDIOBJ, LOGFONTW,
-    PAINTSTRUCT, VREFRESH,
+    BeginPaint, CreateBitmap, CreateDIBSection, CreateRoundRectRgn, DeleteObject, EndPaint, GetDC,
+    GetDeviceCaps, InvalidateRect, ReleaseDC, ScreenToClient, SetDIBitsToDevice, SetWindowRgn,
+    UpdateWindow, ValidateRect, BITMAPINFO, BITMAPINFOHEADER, BI_RGB, DEFAULT_CHARSET,
+    DIB_RGB_COLORS, HGDIOBJ, LOGFONTW, PAINTSTRUCT, VREFRESH,
 };
 use windows::Win32::Media::{timeBeginPeriod, timeEndPeriod};
 use windows::Win32::System::LibraryLoader::{GetModuleHandleW, GetProcAddress};
@@ -333,6 +333,9 @@ struct WindowState {
     handler: Box<dyn AppHandler>,
     bg: Color,
     transparent: bool,
+    /// 申请了系统材质但本机给不了（远程会话 / Server SKU / 关闭合成分）。
+    /// 这类窗口要自己给出圆角：DWM 的圆角偏好设置在这些桌面上不生效。
+    material_fallback: bool,
     #[cfg(feature = "d2d")]
     backdrop: Backdrop,
     /// 当前是否已对窗口调用 OS SetCapture（与 handler 逻辑捕获态同步）。
@@ -350,6 +353,9 @@ struct WindowState {
     hotkeys: Option<hotkey::HotkeyState>,
     /// 无标题栏窗口：wnd_proc 据此处理 WM_NCCALCSIZE / WM_NCHITTEST。
     frameless: bool,
+    /// 窗口能否被拖动缩放。固定尺寸的窗口不提供边缘缩放带：那一圈只会
+    /// 抢走客户区边缘的点击（滚动条、贴边控件），却什么都做不了。
+    resizable: bool,
     /// 是否已向系统申请鼠标离开通知（TrackMouseEvent）。离开后系统清此标志需重新申请。
     mouse_tracked: bool,
     /// A pending high surrogate from WM_CHAR/WM_IME_CHAR or an IME result string.
@@ -448,6 +454,7 @@ impl WindowState {
             handler,
             bg,
             transparent,
+            material_fallback: false,
             #[cfg(feature = "d2d")]
             backdrop: Backdrop::None,
             capturing: false,
@@ -457,6 +464,9 @@ impl WindowState {
             tray: None,
             hotkeys: None,
             frameless: false,
+            // Most windui windows are fixed dialogs; run_windowed overwrites this
+            // from the window config before the window is shown.
+            resizable: true,
             mouse_tracked: false,
             pending_surrogate: None,
             ime_composing: false,
@@ -557,6 +567,24 @@ unsafe fn hicon_from_rgba(w: i32, h: i32, rgba: &[u8]) -> Option<HICON> {
 }
 
 use super::to_skia_color;
+
+/// Whether the desktop can actually show a requested system material here.
+///
+/// Remote sessions, Server SKUs and composition-disabled desktops accept the
+/// Acrylic request and answer with a neutral slab or with nothing at all, so
+/// the app has to paint and keep its own surface. Applications call this before
+/// choosing a window background; `create_window` uses the same answer, so the
+/// two cannot drift apart.
+pub fn system_backdrop_available() -> bool {
+    if std::env::var_os("FLUX_DISABLE_SYSTEM_BACKDROP").is_some() {
+        return false;
+    }
+    let is_remote = unsafe { GetSystemMetrics(SM_REMOTESESSION) } != 0;
+    let composition_enabled = unsafe { DwmIsCompositionEnabled() }
+        .map(|enabled| enabled.as_bool())
+        .unwrap_or(true);
+    system_material_supported() && !is_remote && composition_enabled
+}
 
 /// Return whether the current OS is a Windows Client product that can host the
 /// desktop system material used by Flux. Server products may report DWM
@@ -822,6 +850,30 @@ unsafe fn apply_system_backdrop(hwnd: HWND, backdrop: Backdrop) {
 
 /// Applies the legacy Win32 Acrylic blur policy when the public system backdrop
 /// API is absent or too opaque for a transient launcher surface.
+/// Give the window its own rounded corners where DWM will not do it.
+///
+/// `DWMWA_WINDOW_CORNER_PREFERENCE` is honoured by client desktops, but remote
+/// sessions and Server SKUs ignore it — and those are exactly the desktops that
+/// fall back to an application-painted surface, which would otherwise show a
+/// square panel next to every rounded system window. A region is the shape they
+/// do honour. On success `SetWindowRgn` owns the region, so it is released only
+/// when the call fails.
+unsafe fn apply_material_fallback_region(hwnd: HWND, width: i32, height: i32) {
+    const CORNER_LOGICAL: i32 = 10;
+    if width < 4 || height < 4 {
+        return;
+    }
+    let dpi = i32::try_from(GetDpiForWindow(hwnd).max(96)).unwrap_or(96);
+    let diameter = (CORNER_LOGICAL * 2 * dpi / 96).max(2);
+    let region = CreateRoundRectRgn(0, 0, width + 1, height + 1, diameter, diameter);
+    if (region.0).is_null() {
+        return;
+    }
+    if SetWindowRgn(hwnd, Some(region), true) <= 0 {
+        let _ = DeleteObject(region.into());
+    }
+}
+
 unsafe fn apply_acrylic_policy(hwnd: HWND) {
     #[repr(C)]
     struct AccentPolicy {
@@ -898,6 +950,10 @@ unsafe fn run_windowed(
     single: Option<crate::single_instance::SingleInstance>,
 ) {
     let _ = SetProcessDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2);
+    // A fixed-size window has no resize border, so the scrollbar must not give up
+    // the last strip of the client area to it: with the inset enabled the track
+    // sat 8px away from the edge and the rail beside it ignored clicks.
+    crate::core::scrollbar::set_window_resizable(cfg.resizable);
 
     let hmodule = GetModuleHandleW(None).expect("GetModuleHandleW 失败");
     let hinst = HINSTANCE(hmodule.0);
@@ -933,21 +989,19 @@ unsafe fn run_windowed(
     // A transparent presenter is safe only when local DWM composition can
     // provide the requested system material. Remote sessions use an opaque
     // dark fallback instead of exposing DWM's neutral material slab.
-    let force_safe_fallback = std::env::var_os("FLUX_DISABLE_SYSTEM_BACKDROP").is_some();
-    let backdrop_available = cfg.backdrop != Backdrop::None
-        && !force_safe_fallback
-        && system_material_supported()
-        && GetSystemMetrics(SM_REMOTESESSION) == 0
-        && DwmIsCompositionEnabled()
-            .map(|enabled| enabled.as_bool())
-            .unwrap_or(true);
+    let backdrop_available = cfg.backdrop != Backdrop::None && system_backdrop_available();
     // A layered top-level window provides a real uniform-alpha fallback when
     // DWM cannot provide the requested system backdrop. It is intentionally
     // excluded from the normal Acrylic path, which needs transparent pixels
-    // and DirectComposition to expose the system material.
-    let translucent_fallback = cfg.backdrop != Backdrop::None && !backdrop_available;
+    // and DirectComposition to expose the system material. An app that already
+    // paints an opaque surface is left alone: dimming a solid panel by uniform
+    // alpha would let the sharp desktop show through it again.
+    let translucent_fallback =
+        cfg.backdrop != Backdrop::None && !backdrop_available && cfg.bg.a < 255;
     // 把 WindowState 装箱，指针随 CreateWindow 传入，在 WM_NCCREATE 挂到 HWND。
     let mut state = Box::new(WindowState::new(handler, cfg.bg, backdrop_available));
+    state.material_fallback = cfg.backdrop != Backdrop::None && !backdrop_available;
+    state.resizable = cfg.resizable;
     #[cfg(feature = "d2d")]
     {
         state.backdrop = cfg.backdrop;
@@ -1580,7 +1634,9 @@ unsafe extern "system" fn wnd_proc(
             let w = (lparam.0 & 0xffff) as i32;
             let h = ((lparam.0 >> 16) & 0xffff) as i32;
             trace_show_event(hwnd, "wm_size", &format!("phase=begin size={}x{}", w, h));
+            let mut material_fallback = false;
             if let Some(state) = state_from(hwnd) {
+                material_fallback = state.material_fallback;
                 state.backend.resize(w, h);
                 if state.in_size_move {
                     // 拖拽缩放中：异步重绘，避免每次 WM_SIZE 都同步等 vsync 拖累拖拽手感。
@@ -1591,6 +1647,10 @@ unsafe extern "system" fn wnd_proc(
                     // show presents once at the settled client size.
                     state.paint(hwnd);
                 }
+            }
+            // 借用在上面已结束：SetWindowRgn 会触发布局与重绘，不得在持有 state 时调用。
+            if material_fallback {
+                apply_material_fallback_region(hwnd, w, h);
             }
             LRESULT(0)
         }
@@ -1992,10 +2052,13 @@ unsafe fn handle_nchittest(hwnd: HWND, lparam: LPARAM) -> LRESULT {
         return LRESULT(HTCLIENT as isize);
     }
     // 缩放边框宽度（物理像素，按 DPI 放大；逻辑上恒为 RESIZE_BORDER_LOGICAL）。
+    // 固定尺寸的窗口没有缩放带：否则贴边的那一圈会把这些点击从客户区抢走
+    // （滚动条的抓取区首当其冲），而窗口本身又不会改变大小。
     let dpi = GetDpiForWindow(hwnd).max(96);
     let m = ((RESIZE_BORDER_LOGICAL as f32 * dpi as f32 / 96.0) as i32).max(4);
-    let (left, right) = (pt.x < m, pt.x >= w - m);
-    let (top, bottom) = (pt.y < m, pt.y >= h - m);
+    let resize_edges = state_from(hwnd).map(|s| s.resizable).unwrap_or(true);
+    let (left, right) = (resize_edges && pt.x < m, resize_edges && pt.x >= w - m);
+    let (top, bottom) = (resize_edges && pt.y < m, resize_edges && pt.y >= h - m);
     let ht: i32 = if top && left {
         HTTOPLEFT as i32
     } else if top && right {

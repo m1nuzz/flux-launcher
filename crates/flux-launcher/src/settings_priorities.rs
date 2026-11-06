@@ -5,7 +5,7 @@ use windui::prelude::*;
 
 use super::history_priorities::{move_priority_entry, remove_priority_entry};
 use super::provider_snapshot::refresh_merged_results;
-use super::settings_shell::{settings_scroll_gutter, settings_section_header};
+use super::settings_shell::{settings_group, settings_scroll_gutter};
 use super::settings_ui::SettingsUi;
 
 pub(crate) fn build_priority_list(ui: &SettingsUi) -> Element {
@@ -41,16 +41,15 @@ pub(crate) fn build_priority_list(ui: &SettingsUi) -> Element {
             let id_for_remove = entry_id.clone();
             Element::row()
                 .width_match()
-                .height(58)
-                .padding_xy(10, 5)
+                .height(54)
                 .spacing(8)
-                .corner(9.0)
-                .bg(Color::rgba(255, 255, 255, 12))
+                .cross(Align::Center)
                 .child(
                     Element::label(format!("{rank}"))
-                        .font_size(16.0)
-                        .fg(Color::rgba(170, 204, 255, 245))
-                        .width(24)
+                        .font_size(13.0)
+                        .font_weight(600)
+                        .fg_role(Role::TextSubtle)
+                        .width(20)
                         .align(Align::Center),
                 )
                 .child(
@@ -60,55 +59,44 @@ pub(crate) fn build_priority_list(ui: &SettingsUi) -> Element {
                         .child(
                             Element::label(title)
                                 .font_size(13.0)
-                                .fg(Color::WHITE)
+                                .fg_role(Role::Text)
                                 .max_lines(1)
                                 .truncate(Truncate::End),
                         )
                         .child(
                             Element::label(target)
                                 .font_size(11.0)
-                                .fg(Color::rgba(235, 241, 255, 235))
+                                .fg_role(Role::TextSubtle)
                                 .max_lines(1)
                                 .truncate(Truncate::End),
                         ),
                 )
-                .child(
-                    Element::button("↑")
-                        .neutral()
-                        .outline_soft()
-                        .on_click(move |ctx| {
-                            if move_priority_entry(&settings_for_up, priorities, &id_for_up, -1) {
-                                refresh_merged_results(
-                                    &providers_for_up,
-                                    query_for_up,
-                                    priorities,
-                                    results,
-                                );
-                                ctx.toast_ok("Priority moved up");
-                            }
-                        }),
-                )
-                .child(
-                    Element::button("↓")
-                        .neutral()
-                        .outline_soft()
-                        .on_click(move |ctx| {
-                            if move_priority_entry(&settings_for_down, priorities, &id_for_down, 1)
-                            {
-                                refresh_merged_results(
-                                    &providers_for_down,
-                                    query_for_down,
-                                    priorities,
-                                    results,
-                                );
-                                ctx.toast_ok("Priority moved down");
-                            }
-                        }),
-                )
+                .child(Element::button("↑").small().neutral().on_click(move |ctx| {
+                    if move_priority_entry(&settings_for_up, priorities, &id_for_up, -1) {
+                        refresh_merged_results(
+                            &providers_for_up,
+                            query_for_up,
+                            priorities,
+                            results,
+                        );
+                        ctx.toast_ok("Priority moved up");
+                    }
+                }))
+                .child(Element::button("↓").small().neutral().on_click(move |ctx| {
+                    if move_priority_entry(&settings_for_down, priorities, &id_for_down, 1) {
+                        refresh_merged_results(
+                            &providers_for_down,
+                            query_for_down,
+                            priorities,
+                            results,
+                        );
+                        ctx.toast_ok("Priority moved down");
+                    }
+                }))
                 .child(
                     Element::button("Remove")
+                        .small()
                         .neutral()
-                        .outline_soft()
                         .on_click(move |ctx| {
                             if remove_priority_entry(
                                 &settings_for_remove,
@@ -135,9 +123,10 @@ pub(crate) fn build_priorities_empty(ui: &SettingsUi) -> Element {
         "No explicit priorities yet. Select an application, press Right, then choose Set as priority.",
     )
     .font_size(12.0)
-    .fg(Color::rgba(235, 241, 255, 235))
+    .fg_role(Role::TextSubtle)
     .max_lines(2)
     .truncate(Truncate::End)
+    .width_match()
     .visible_when(move || priorities.get().is_empty())
 }
 
@@ -153,21 +142,10 @@ pub(crate) fn build_priorities_tab(
         .child(
             Element::row()
                 .width_match()
-                .child(
-                    Element::col()
-                        .weight(1.0)
-                        .spacing(10)
-                        .child(settings_section_header("Priorities"))
-                        .child(
-                            Element::label("Only applications explicitly added with Set as priority appear here. Rank 1 is searched first.")
-                                .font_size(11.0)
-                                .fg(Color::rgba(235, 241, 255, 235))
-                                .max_lines(2)
-                                .truncate(Truncate::End),
-                        )
-                        .child(priorities_empty)
-                        .child(priority_list)
-                    )
-                    .child(settings_scroll_gutter())
+                .child(Element::col().weight(1.0).spacing(16).child(settings_group(
+                    "Ranked applications",
+                    vec![priorities_empty, priority_list],
+                )))
+                .child(settings_scroll_gutter()),
         )
 }

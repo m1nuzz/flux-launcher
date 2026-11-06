@@ -63,6 +63,7 @@ pub(crate) fn register_interval(
     google_alias: Signal<String>,
     history_mode: Signal<bool>,
     settings_visible: Signal<bool>,
+    settings_hide_request: Signal<bool>,
     settings_tab: Signal<usize>,
     everything_prompt_visible: Signal<bool>,
     everything_installed: Signal<bool>,
@@ -286,15 +287,19 @@ pub(crate) fn register_interval(
             everything_plugins_smoke_reported = true;
         }
         if settings_is_visible && !last_settings_visible {
+            let mut canvas = (SETTINGS_WINDOW_WIDTH, SETTINGS_WINDOW_HEIGHT);
             if let Ok(settings) = settings_for_interval_geometry.read() {
+                let (width, height) =
+                    super::window_geometry::settings_window_size(settings.monitor_preference);
+                canvas = (width, height);
                 request_monitor_position(
                     &position_for_interval,
                     settings.monitor_preference,
-                    SETTINGS_WINDOW_WIDTH,
-                    SETTINGS_WINDOW_HEIGHT,
+                    width,
+                    height,
                 );
             }
-            size_for_interval.set(SETTINGS_WINDOW_WIDTH, SETTINGS_WINDOW_HEIGHT);
+            size_for_interval.set(canvas.0, canvas.1);
         }
         if prompt_is_visible != last_everything_prompt_visible {
             last_everything_prompt_visible = prompt_is_visible;
@@ -362,6 +367,13 @@ pub(crate) fn register_interval(
             );
             visual_preview_process.take();
             last_visual_preview_request = None;
+        }
+        if settings_hide_request.get() {
+            // Hide only here: dropping the preview above is what keeps the
+            // child from outliving the window, and the timers die with the
+            // hide, so no later tick would ever clean it up.
+            settings_hide_request.set(false);
+            window_op_for_interval.hide_window();
         }
         last_settings_visible = settings_is_visible;
         let slider_width = dimension_from_slider(
@@ -527,7 +539,12 @@ pub(crate) fn register_interval(
             // without relying on brittle screen-coordinate tray automation.
             settings_visible_for_interval.set(true);
             ctx.show_window();
-            size_for_interval.set(SETTINGS_WINDOW_WIDTH, SETTINGS_WINDOW_HEIGHT);
+            let preference = settings_for_interval_geometry
+                .read()
+                .map(|settings| settings.monitor_preference)
+                .unwrap_or_default();
+            let (width, height) = super::window_geometry::settings_window_size(preference);
+            size_for_interval.set(width, height);
             return;
         }
         let next_query = query_for_interval.get();

@@ -2877,14 +2877,12 @@ try {
                 throw "Initial preview client geometry mismatch: requested=${initialLogicalWidth}x${initialLogicalHeight}, reported=${initialReportedClientWidth}x${initialReportedClientHeight}, HWND=${initialClientWidth}x${initialClientHeight}, dpi=${initialReportedDpi}, expected=${expectedInitialWidth}x${expectedInitialHeight}."
             }
 
-            # Settings has stable 18px page padding + 24px panel padding, a 110px
-            # field-label column, a 200px slider, a 76px numeric field, and a Reset button.
-            # Measured 2026-09-19 (dpi 96, scale 1.0): width thumb center (336, 560)
-            # in screen pixels with the Settings window at (152, 100), i.e. track
-            # offsets x=184 / y=460. The height row sits ~78px lower, below the
-            # fold, so scroll the settings view down 2 wheel notches first
-            # (windui ScrollWidget moves exactly 48px per -120 notch) and probe
-            # post-scroll coordinates: width thumb screen y ~464, height ~549.
+            # The Visual tab right-aligns its controls, so the slider track sits
+            # in the middle of the content column rather than after a fixed label
+            # column. The direct probe below is only a fast path: the sweep that
+            # follows searches the content area and accepts a candidate solely
+            # when the native preview reports a width change, so the smoke does
+            # not need to know where the layout put the track.
             Save-Screenshot "settings-visual-discovery.png"
             [ordered]@{
                 SettingsLeft = $settingsRect.Left
@@ -2893,8 +2891,8 @@ try {
                 SettingsBottom = $settingsRect.Bottom
                 SettingsDpi = $settingsDpi
                 SettingsScale = $settingsScale
-                SliderCandidateXOffsets = @(160, 180, 200, 220, 240, 260, 280, 300, 320)
-                SliderCandidateYOffsets = @(332, 344, 356, 368, 380, 392, 404, 416)
+                SliderCandidateXOffsets = @(240, 280, 320, 360, 400, 440)
+                SliderCandidateYOffsets = @(120..470 | Where-Object { $_ % 14 -eq 0 })
             } | ConvertTo-Json | Set-Content -Encoding utf8 (Join-Path $OutputDirectory "visual-discovery-geometry.json")
             # Focus Settings via an inert caption click (wheel goes to the focused
             # window), then scroll the content up 96px so both slider rows are
@@ -2910,8 +2908,8 @@ try {
             [FluxWallpaper]::mouse_event(0x0800, 0, 0, 4294967176, [UIntPtr]::Zero)
             Start-Sleep -Milliseconds 600
             Save-Screenshot "settings-visual-scrolled.png"
-            $directSliderLeft = $settingsRect.Left + [int][Math]::Round(184 * $settingsScale)
-            $directSliderRight = $directSliderLeft + [int][Math]::Round(146 * $settingsScale)
+            $directSliderLeft = $settingsRect.Left + [int][Math]::Round(316 * $settingsScale)
+            $directSliderRight = $directSliderLeft + [int][Math]::Round(140 * $settingsScale)
             $directSliderY = $settingsRect.Top + [int][Math]::Round(364 * $settingsScale)
             $directPointClass = [FluxWallpaper]::WindowClassAtPoint($directSliderLeft, $directSliderY)
             Write-Host "Visual slider direct probe: left=$directSliderLeft right=$directSliderRight y=$directSliderY windowClass=$directPointClass"
@@ -2947,10 +2945,10 @@ try {
                 $widthSliderY = 0
             }
             if (!$directWidthChanged) {
-                foreach ($sliderOffset in (160, 180, 200, 220, 240, 260, 280, 300, 320)) {
+                foreach ($sliderOffset in (240, 280, 320, 360, 400, 440)) {
                     $candidateLeft = $settingsRect.Left + [int][Math]::Round($sliderOffset * $settingsScale)
                     $candidateRight = $candidateLeft + [int][Math]::Round(190 * $settingsScale)
-                    foreach ($candidateOffset in (320..420 | Where-Object { $_ % 12 -eq 8 })) {
+                    foreach ($candidateOffset in (120..470 | Where-Object { $_ % 14 -eq 0 })) {
                         $candidateY = $settingsRect.Top + [int][Math]::Round($candidateOffset * $settingsScale)
                         [FluxWallpaper]::SetCursorPos($candidateLeft, $candidateY) | Out-Null
                         [FluxWallpaper]::mouse_event(0x0002, 0, 0, 0, [UIntPtr]::Zero)
@@ -3011,8 +3009,12 @@ try {
             }
             $heightSliderY = if ($heightDirectChanged) { $heightDirectY } else { 0 }
             if (!$heightDirectChanged) {
-                foreach ($candidateOffset in (380..520 | Where-Object { $_ % 4 -eq 0 })) {
-                    $candidateY = $settingsRect.Top + [int][Math]::Round($candidateOffset * $settingsScale)
+                # The height row always sits below the width row, so search the
+                # remaining content height instead of assuming a fixed offset.
+                $heightStep = [int](14 * $settingsScale)
+                $candidateY = $widthSliderY + [int](24 * $settingsScale)
+                $heightSweepBottom = $settingsRect.Bottom - [int](20 * $settingsScale)
+                while ($candidateY -le $heightSweepBottom -and $heightSliderY -eq 0) {
                     [FluxWallpaper]::SetCursorPos($sliderLeft, $candidateY) | Out-Null
                     [FluxWallpaper]::mouse_event(0x0002, 0, 0, 0, [UIntPtr]::Zero)
                     for ($step = 0; $step -le 6; $step++) {
@@ -3034,7 +3036,7 @@ try {
                             break
                         }
                     }
-                    if ($heightSliderY -ne 0) { break }
+                    $candidateY += $heightStep
                 }
             }
             if ($heightSliderY -eq 0) {
@@ -3111,21 +3113,64 @@ try {
             }
             $visualPreviewExactGeometryProbe = $true
 
+            # The sidebar footer carries one Reset tab action for the visible tab.
+            # It is the only button in that column, so sweep the lower sidebar band
+            # and accept the click that reports the reset marker for tab index 1.
+            $tabResetMarker = "Settings tab reset: 1"
+            $tabResetBaseline = ([regex]::Matches(
+                (Get-Content $settingsStderrPath -Raw),
+                [regex]::Escape($tabResetMarker)
+            )).Count
+            $tabResetFoundAt = ""
+            foreach ($yOffset in @(24, 32, 40)) {
+                foreach ($xOffset in @(150, 120, 90, 60)) {
+                    $probeX = $settingsRect.Left + [int]($xOffset * $settingsScale)
+                    $probeY = $settingsRect.Bottom - [int]($yOffset * $settingsScale)
+                    [FluxWallpaper]::SetCursorPos($probeX, $probeY) | Out-Null
+                    [FluxWallpaper]::mouse_event(0x0002, 0, 0, 0, [UIntPtr]::Zero)
+                    [FluxWallpaper]::mouse_event(0x0004, 0, 0, 0, [UIntPtr]::Zero)
+                    Start-Sleep -Milliseconds 400
+                    $probeCount = ([regex]::Matches(
+                        (Get-Content $settingsStderrPath -Raw),
+                        [regex]::Escape($tabResetMarker)
+                    )).Count
+                    if ($probeCount -gt $tabResetBaseline) {
+                        $tabResetFoundAt = "$probeX,$probeY"
+                        break
+                    }
+                }
+                if ($tabResetFoundAt -ne "") { break }
+            }
+            if ($tabResetFoundAt -eq "") {
+                Save-Screenshot "settings-visual-tab-reset-failed.png"
+                throw "Visual Settings smoke could not activate the sidebar Reset tab button."
+            }
+            Write-Host "Visual Reset tab activated at $tabResetFoundAt"
+
             # Reset each control through the real button. The generation counter makes
             # a reset dispatch an IPC resize even if the user is already at that value.
-            $resetX = $settingsRect.Left + [int][Math]::Round((18 + 24 + 110 + 12 + 200 + 8 + 76 + 8 + 25) * $settingsScale)
+            # The button is found by sweeping its row from the right edge inward, so
+            # the smoke does not depend on where the layout puts the control cluster.
             $resetTargets = @(
                 @{ Y = $widthSliderY; Marker = "Visual width reset clicked: 420x" },
                 @{ Y = $heightSliderY; Marker = "Visual height reset clicked: " }
             )
             foreach ($resetTarget in $resetTargets) {
-                [FluxWallpaper]::SetCursorPos($resetX, $resetTarget.Y) | Out-Null
-                [FluxWallpaper]::mouse_event(0x0002, 0, 0, 0, [UIntPtr]::Zero)
-                [FluxWallpaper]::mouse_event(0x0004, 0, 0, 0, [UIntPtr]::Zero)
-                Start-Sleep -Milliseconds 600
-                $resetLog = if (Test-Path $settingsStderrPath) { Get-Content $settingsStderrPath -Raw } else { "" }
-                if ($resetLog -notmatch [regex]::Escape($resetTarget.Marker)) {
-                    throw "Visual Settings reset smoke could not observe callback marker '$($resetTarget.Marker)' at screen y=$($resetTarget.Y)."
+                $resetFound = $false
+                for ($step = 0; $step -lt 12; $step++) {
+                    $resetProbeX = $settingsRect.Right - [int]((24 + ($step * 26)) * $settingsScale)
+                    [FluxWallpaper]::SetCursorPos($resetProbeX, $resetTarget.Y) | Out-Null
+                    [FluxWallpaper]::mouse_event(0x0002, 0, 0, 0, [UIntPtr]::Zero)
+                    [FluxWallpaper]::mouse_event(0x0004, 0, 0, 0, [UIntPtr]::Zero)
+                    Start-Sleep -Milliseconds 400
+                    $resetLog = if (Test-Path $settingsStderrPath) { Get-Content $settingsStderrPath -Raw } else { "" }
+                    if ($resetLog -match [regex]::Escape($resetTarget.Marker)) {
+                        $resetFound = $true
+                        break
+                    }
+                }
+                if (!$resetFound) {
+                    throw "Visual Settings reset smoke could not observe callback marker '$($resetTarget.Marker)' on its row."
                 }
             }
             $previewLog = if (Test-Path $settingsStderrPath) { Get-Content $settingsStderrPath -Raw } else { "" }
@@ -3136,60 +3181,49 @@ try {
                 throw "Visual Settings reset smoke failed: the native preview did not report logical 420 width and 382 height after Reset callbacks."
             }
 
-            # The Visual page owns an explicit Apply dimensions action. The color
-            # picker below the Selection color row grows the scrolled content, so
-            # Apply no longer sits at a fixed viewport offset. Scroll extra ticks,
-            # then sweep the lower viewport bottom-up and stop at the first click
-            # that produces the Apply callback marker: self-calibrating, immune to
-            # future layout growth above Apply. Apply is the lowest interactive
-            # control, so the sweep cannot overshoot into sliders or checkboxes.
+            # Apply settings is the single persist point and lives in the fixed
+            # footer, outside the scrolled content. Sweep that band from the right
+            # edge inward and stop at the click that produces the callback marker,
+            # so neither the label width nor the tab layout has to be known.
             [FluxWallpaper]::SetForegroundWindow($settingsHwnd) | Out-Null
             $shell.AppActivate($settingsProcess.Id) | Out-Null
-            $scrollX = $settingsRect.Left + [int]($settingsRect.Right - $settingsRect.Left) / 2
-            $scrollY = $settingsRect.Bottom - 48
-            [FluxWallpaper]::SetCursorPos($scrollX, $scrollY) | Out-Null
-            for ($tick = 0; $tick -lt 4; $tick++) {
-                [FluxWallpaper]::mouse_event(0x0800, 0, 0, [uint32]4294965376, [UIntPtr]::Zero)
-                Start-Sleep -Milliseconds 150
-            }
             Start-Sleep -Milliseconds 300
             Save-Screenshot "settings-visual-apply.png"
-            # Apply lives on the right side of its setting row (measured
-            # 2026-09-19: button fill x=666..816 at window left=152, i.e. the
-            # old label-column x no longer hits it since the tab unification).
-            $applyX = $settingsRect.Left + [int][Math]::Round(589 * $settingsScale)
-            $applyMarker = "Visual Apply dimensions clicked: 420x382"
+            $applyMarker = "Settings apply dispatched: 420x382"
             $applyBaseline = ([regex]::Matches(
                 (Get-Content $settingsStderrPath -Raw),
                 [regex]::Escape($applyMarker)
             )).Count
-            $applyFoundY = 0
-            for ($sweep = 0; $sweep -lt 16; $sweep++) {
-                $probeY = $settingsRect.Bottom - 40 - ($sweep * 14)
-                if ($probeY -lt ($settingsRect.Top + 80)) { break }
-                [FluxWallpaper]::SetCursorPos($applyX, $probeY) | Out-Null
-                [FluxWallpaper]::mouse_event(0x0002, 0, 0, 0, [UIntPtr]::Zero)
-                [FluxWallpaper]::mouse_event(0x0004, 0, 0, 0, [UIntPtr]::Zero)
-                Start-Sleep -Milliseconds 400
-                $probeCount = ([regex]::Matches(
-                    (Get-Content $settingsStderrPath -Raw),
-                    [regex]::Escape($applyMarker)
-                )).Count
-                if ($probeCount -gt $applyBaseline) {
-                    $applyFoundY = $probeY
-                    break
+            $applyFoundAt = ""
+            foreach ($yOffset in @(22, 32, 42, 52)) {
+                for ($step = 0; $step -lt 8; $step++) {
+                    $probeX = $settingsRect.Right - [int]((28 + ($step * 30)) * $settingsScale)
+                    $probeY = $settingsRect.Bottom - [int]($yOffset * $settingsScale)
+                    [FluxWallpaper]::SetCursorPos($probeX, $probeY) | Out-Null
+                    [FluxWallpaper]::mouse_event(0x0002, 0, 0, 0, [UIntPtr]::Zero)
+                    [FluxWallpaper]::mouse_event(0x0004, 0, 0, 0, [UIntPtr]::Zero)
+                    Start-Sleep -Milliseconds 400
+                    $probeCount = ([regex]::Matches(
+                        (Get-Content $settingsStderrPath -Raw),
+                        [regex]::Escape($applyMarker)
+                    )).Count
+                    if ($probeCount -gt $applyBaseline) {
+                        $applyFoundAt = "$probeX,$probeY"
+                        break
+                    }
                 }
+                if ($applyFoundAt -ne "") { break }
             }
-            if ($applyFoundY -eq 0) {
+            if ($applyFoundAt -eq "") {
                 Save-Screenshot "settings-visual-apply-failed.png"
-                throw "Visual Apply smoke could not activate the Apply dimensions button via viewport sweep."
+                throw "Visual Apply smoke could not activate the footer Apply settings button."
             }
-            Write-Host "Visual Apply activated at y=$applyFoundY"
+            Write-Host "Visual Apply activated at $applyFoundAt"
             Start-Sleep -Milliseconds 800
             $applyLog = Get-Content $settingsStderrPath -Raw
-            if ($applyLog -notmatch "Visual Apply dimensions clicked: 420x382") {
+            if ($applyLog -notmatch [regex]::Escape($applyMarker)) {
                 Save-Screenshot "settings-visual-apply-failed.png"
-                throw "Visual Apply smoke lost the callback marker after activating at y=$applyFoundY."
+                throw "Visual Apply smoke lost the callback marker after activating at $applyFoundAt."
             }
             Start-Sleep -Milliseconds 1200
             $settingsPath = Join-Path $env:APPDATA "FluxLauncher\settings.json"
@@ -3201,6 +3235,29 @@ try {
                 throw "Visual Apply smoke persisted unexpected dimensions: $($persistedSettings.launcher_width)x$($persistedSettings.launcher_height)."
             }
             $visualPreviewPersistenceProbe = $true
+            # Apply no longer dismisses Settings: the window stays on the page the
+            # user applied. Dismiss it through the title strip here, so the preview
+            # child is torn down before the reopen step below.
+            $applyCloseFound = $false
+            foreach ($yOffset in @(20, 30, 12)) {
+                if ($applyCloseFound) { break }
+                foreach ($xOffset in @(24, 40, 56, 72)) {
+                    $closeX = $settingsRect.Right - [int]($xOffset * $settingsScale)
+                    $closeY = $settingsRect.Top + [int]($yOffset * $settingsScale)
+                    [FluxWallpaper]::SetCursorPos($closeX, $closeY) | Out-Null
+                    [FluxWallpaper]::mouse_event(0x0002, 0, 0, 0, [UIntPtr]::Zero)
+                    [FluxWallpaper]::mouse_event(0x0004, 0, 0, 0, [UIntPtr]::Zero)
+                    Start-Sleep -Milliseconds 400
+                    if (-not [FluxWallpaper]::IsWindowVisible($settingsHwnd)) {
+                        $applyCloseFound = $true
+                        break
+                    }
+                }
+            }
+            if (!$applyCloseFound) {
+                Save-Screenshot "settings-visual-apply-failed.png"
+                throw "Visual Apply smoke could not dismiss Settings from the title strip after applying."
+            }
             # The parent closes the preview on its next tick after Settings hides;
             # a loaded runner can stall the UI thread for seconds, so poll instead
             # of asserting once. A dead parent is a product crash, not a slow tick:
@@ -3257,42 +3314,36 @@ try {
 
             $reopenDpi = [FluxWallpaper]::GetDpiForWindow($reopenedSettingsHwnd)
             if ($reopenDpi -eq 0) { $reopenDpi = 96 }
-            # The Back button follows the header row, whose height depends on how the
-            # subtitle wraps and on how many tabs the segmented control carries, so a
-            # fixed offset silently misses it. Sweep the header band instead and accept
-            # the first probe that collapses Settings back to the compact launcher - a
-            # tab or field click cannot produce that transition, so the sweep cannot
-            # settle on a false positive.
-            $backProbeXOffsets = @(72, 54, 90, 110, 130)
-            $backProbeYOffsets = @(58, 76, 94, 112, 130, 40)
-            $backFoundX = 0
-            $backFoundY = 0
-            foreach ($probeX in $backProbeXOffsets) {
-                if ($backFoundY -ne 0) { break }
-                foreach ($probeY in $backProbeYOffsets) {
+            # The title strip's close control replaced the old Back button. It
+            # hides the window and leaves the process in the tray, so the probe
+            # accepts the first click that makes the HWND invisible - collapsing
+            # was the Back contract, and a hidden window keeps reporting its old
+            # rectangle, so a size test would never pass here.
+            $closeProbeXOffsets = @(24, 40, 56, 72)
+            $closeProbeYOffsets = @(20, 30, 12)
+            $closeFoundX = 0
+            $closeFoundY = 0
+            foreach ($probeX in $closeProbeXOffsets) {
+                if ($closeFoundY -ne 0) { break }
+                foreach ($probeY in $closeProbeYOffsets) {
                     $candidateX = $reopenedSettingsRect.Right - [int][Math]::Round($probeX * ($reopenDpi / 96.0))
                     $candidateY = $reopenedSettingsRect.Top + [int][Math]::Round($probeY * ($reopenDpi / 96.0))
                     [FluxWallpaper]::SetCursorPos($candidateX, $candidateY) | Out-Null
                     [FluxWallpaper]::mouse_event(0x0002, 0, 0, 0, [UIntPtr]::Zero)
                     [FluxWallpaper]::mouse_event(0x0004, 0, 0, 0, [UIntPtr]::Zero)
                     Start-Sleep -Milliseconds 400
-                    $collapsedRect = New-Object FluxWallpaper+RECT
-                    $collapsed = $true
-                    if ([FluxWallpaper]::GetWindowRect($reopenedSettingsHwnd, [ref]$collapsedRect)) {
-                        $collapsed = ($collapsedRect.Bottom - $collapsedRect.Top) -lt 200
-                    }
-                    if ($collapsed) {
-                        $backFoundX = $candidateX
-                        $backFoundY = $candidateY
+                    if (-not [FluxWallpaper]::IsWindowVisible($reopenedSettingsHwnd)) {
+                        $closeFoundX = $candidateX
+                        $closeFoundY = $candidateY
                         break
                     }
                 }
             }
-            if ($backFoundY -eq 0) {
-                Save-Screenshot "settings-back-cleanup-failed.png"
-                throw "Visual Back cleanup smoke could not activate the Back button via header sweep."
+            if ($closeFoundY -eq 0) {
+                Save-Screenshot "settings-close-cleanup-failed.png"
+                throw "Visual close cleanup smoke could not hide the Settings window from the title strip."
             }
-            Write-Host "Visual Back activated at x=$backFoundX y=$backFoundY"
+            Write-Host "Visual close control activated at x=$closeFoundX y=$closeFoundY"
             # Same polling contract as the Apply close check above: the parent
             # closes the preview on its next tick, which a loaded runner can
             # delay; a dead parent is a product crash, not a slow tick.
@@ -3300,7 +3351,7 @@ try {
             for ($waitAttempt = 0; $waitAttempt -lt 40 -and !$previewGone; $waitAttempt++) {
                 $reopenedSettingsProcess.Refresh()
                 if ($reopenedSettingsProcess.HasExited) {
-                    throw "Visual Back cleanup smoke lost the reopened Settings process (exit $($reopenedSettingsProcess.ExitCode)) while waiting for preview PID $reopenedPreviewProcessId to close."
+                    throw "Visual close cleanup smoke lost the reopened Settings process (exit $($reopenedSettingsProcess.ExitCode)) while waiting for preview PID $reopenedPreviewProcessId to close."
                 }
                 $reopenedPreviewAlive = $false
                 try {
@@ -3315,7 +3366,7 @@ try {
             $visualPreviewCleanupProbe = $true
 
             Save-Screenshot "settings-visual-sliders.png"
-            Write-Host "Visual Settings exact preview smoke passed: preview PID $visualPreviewProcessId reported $visualPreviewGeometrySampleCount measured GetClientRect samples and $visualPreviewUpdateCount IPC resizes; Settings remained ${afterDragWidth}x${afterDragHeight} with center delta=${settingsCenterDelta}px; Reset, Apply persistence, reopen, and Back cleanup passed."
+            Write-Host "Visual Settings exact preview smoke passed: preview PID $visualPreviewProcessId reported $visualPreviewGeometrySampleCount measured GetClientRect samples and $visualPreviewUpdateCount IPC resizes; Settings remained ${afterDragWidth}x${afterDragHeight} with center delta=${settingsCenterDelta}px; Reset, Apply persistence, reopen, and title-strip close cleanup passed."
         }
         Save-Screenshot "settings-panel.png"
         if ($EverythingMissingSmoke) {

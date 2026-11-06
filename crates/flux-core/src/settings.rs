@@ -54,6 +54,17 @@ fn default_google_alias() -> String {
     String::from("g")
 }
 
+/// The shortcut Game Mode has always used, now editable: Ctrl+F12.
+fn default_game_mode_hotkey() -> HotkeyConfig {
+    HotkeyConfig {
+        ctrl: true,
+        alt: false,
+        shift: false,
+        meta: false,
+        key: String::from("F12"),
+    }
+}
+
 #[derive(Clone, Debug, Deserialize, PartialEq, Eq, Serialize)]
 #[serde(default)]
 pub struct HotkeyConfig {
@@ -111,6 +122,12 @@ pub struct Settings {
     #[serde(default = "enabled_by_default")]
     pub ignore_hotkeys_in_fullscreen: bool,
     pub game_mode: bool,
+    /// Global shortcut that toggles Game Mode itself.
+    #[serde(default = "default_game_mode_hotkey")]
+    pub game_mode_hotkey: HotkeyConfig,
+    /// Whether that shortcut is registered at all.
+    #[serde(default = "enabled_by_default")]
+    pub game_mode_hotkey_enabled: bool,
     #[serde(default = "enabled_by_default")]
     pub smooth_caret: bool,
     #[serde(default = "enabled_by_default")]
@@ -176,6 +193,8 @@ impl Default for Settings {
             activation_hotkey: HotkeyConfig::default(),
             ignore_hotkeys_in_fullscreen: true,
             game_mode: false,
+            game_mode_hotkey: default_game_mode_hotkey(),
+            game_mode_hotkey_enabled: true,
             smooth_caret: true,
             switch_to_english_layout: true,
             use_system_accent: true,

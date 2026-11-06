@@ -13,6 +13,9 @@ use super::updater;
 /// All shared handles the settings UI needs, bundled so each settings tab
 /// builder takes a single parameter instead of a thirty-signal signature.
 /// Every field is a cheap `Copy` signal handle or a cloned `Rc`/`Arc`.
+/// Cloning is how a button callback owns the state it needs: `move` closures
+/// cannot borrow the panel builder's parameter.
+#[derive(Clone)]
 pub(crate) struct SettingsUi {
     pub(crate) shared_settings: Arc<RwLock<Settings>>,
     pub(crate) query_history: Rc<RefCell<Vec<String>>>,
@@ -42,6 +45,17 @@ pub(crate) struct SettingsUi {
     pub(crate) activation_meta: Signal<bool>,
     pub(crate) activation_recording: Signal<bool>,
     pub(crate) activation_handle: HotkeyHandle,
+    /// Game Mode's own shortcut: drafts, the recorder flag and the live handle
+    /// that Apply rebinds.
+    pub(crate) game_mode_key: Signal<String>,
+    pub(crate) game_mode_display: Signal<String>,
+    pub(crate) game_mode_recording: Signal<bool>,
+    pub(crate) game_mode_ctrl: Signal<bool>,
+    pub(crate) game_mode_alt: Signal<bool>,
+    pub(crate) game_mode_shift: Signal<bool>,
+    pub(crate) game_mode_meta: Signal<bool>,
+    pub(crate) game_mode_hotkey_enabled: Signal<bool>,
+    pub(crate) game_mode_handle: HotkeyHandle,
     pub(crate) ignore_fullscreen: Signal<bool>,
     pub(crate) smooth_caret: Signal<bool>,
     pub(crate) switch_to_english_layout: Signal<bool>,
@@ -74,6 +88,9 @@ pub(crate) struct SettingsUi {
     pub(crate) monitor_preference: Signal<usize>,
     pub(crate) window_size: WindowSizeHandle,
     pub(crate) window_position: WindowPositionHandle,
+    /// Set by the title strip's close control; the interval tick hides the
+    /// window once it has dropped the visual preview child.
+    pub(crate) settings_hide_request: Signal<bool>,
     pub(crate) query: Signal<String>,
     pub(crate) results: Signal<Vec<SearchResult>>,
     pub(crate) providers: Rc<RefCell<super::provider_snapshot::ProviderResults>>,

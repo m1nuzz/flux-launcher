@@ -43,8 +43,8 @@ const DAMAGE_MARGIN: i32 = 2;
 /// 而 `VScrollbar` 的注释却声称"与 core paint 一致"——注释断言的一致性没有编译期约束，
 /// 抽成共享常量后才真正成立。
 pub mod scrollbar {
-    /// 轨道与滑块的视觉宽度。
-    pub const TRACK_W: f32 = 7.0;
+    /// 轨道与滑块的视觉宽度。3 与参考稿实测一致：滑块是一条细指示，不是滚动条槽。
+    pub const TRACK_W: f32 = 3.0;
     /// 轨道距容器右缘（已计入 `WINDOW_EDGE_INSET`）的边距。
     pub const MARGIN: f32 = 3.0;
     /// 滑块最小高度：内容极长时不至于缩成一个点而抓不住。
@@ -54,6 +54,22 @@ pub mod scrollbar {
     pub const CONTENT_GAP: i32 = 6;
     /// 命中区宽度：比视觉宽度宽一倍有余，容忍手抖。
     pub const HIT_W: i32 = 16;
+
+    thread_local! {
+        /// 窗口是否可缩放。只有可缩放的无边框窗口才需要为缩放边框让位；
+        /// 固定尺寸的窗口让出的那 8px 只是死区，滑块因此够不到边缘。
+        static RESIZABLE: std::cell::Cell<bool> = const { std::cell::Cell::new(true) };
+    }
+
+    /// 由平台层在创建窗口时按 `WindowConfig::resizable` 设置。
+    pub fn set_window_resizable(resizable: bool) {
+        RESIZABLE.with(|flag| flag.set(resizable));
+    }
+
+    /// 当前窗口是否仍需为缩放边框内缩。
+    pub(crate) fn edge_inset_enabled() -> bool {
+        RESIZABLE.with(std::cell::Cell::get)
+    }
 
     /// 贴窗口右缘时滚动条整体额外内缩的距离。
     ///
@@ -894,6 +910,13 @@ impl Tree {
     }
 
     fn scrollbar_edge_inset(&self, abs_right: i32) -> i32 {
+        // The inset exists to keep the track out from under the frameless resize
+        // border. A window that cannot be resized has no such border, and there
+        // the strip is pure dead space: the track moves to the edge and the whole
+        // rail becomes grabbable.
+        if !scrollbar::edge_inset_enabled() {
+            return 0;
+        }
         let Some(root_w) = self.root.and_then(|r| self.get(r)).map(|n| n.bounds.w) else {
             return 0;
         };

@@ -464,23 +464,103 @@ pub(crate) fn recall_history_row(
     }
 }
 
+/// Solid surface tones used when the system cannot provide the requested
+/// material. A transparent window only reads well while DWM blurs the desktop
+/// behind it; on a remote, Server or composition-disabled session the same
+/// pixels show a sharp desktop through the text, so the launcher owns its own
+/// background instead.
+pub(crate) const FALLBACK_SURFACE: Color = Color::rgb(0x19, 0x1F, 0x28);
+pub(crate) const FALLBACK_PANEL: Color = Color::rgb(0x1F, 0x25, 0x2E);
+pub(crate) const FALLBACK_EDGE: Color = Color::rgb(0x2C, 0x33, 0x3F);
+pub(crate) const FALLBACK_FIELD: Color = Color::rgb(0x16, 0x1A, 0x21);
+pub(crate) const FALLBACK_TEXT: Color = Color::rgb(0xF0, 0xF3, 0xF8);
+pub(crate) const FALLBACK_NAV_SELECTED: Color = Color::rgb(0x26, 0x38, 0x5C);
+pub(crate) const FALLBACK_NAV_TEXT: Color = Color::rgb(0xEA, 0xF0, 0xFA);
+
+/// Whether this session has to paint its own opaque surface.
+pub(crate) fn needs_opaque_surface() -> bool {
+    #[cfg(windows)]
+    {
+        !windui::platform::system_backdrop_available()
+    }
+    #[cfg(not(windows))]
+    {
+        false
+    }
+}
+
+/// The window background: nothing at all while the system material is live,
+/// a solid panel when it is not.
+pub(crate) fn window_background() -> Color {
+    if needs_opaque_surface() {
+        FALLBACK_SURFACE
+    } else {
+        Color::TRANSPARENT
+    }
+}
+
 pub(crate) fn launcher_theme() -> Theme {
     let mut theme = Theme::dark();
-    theme.palette.bg = Color::rgba(0, 0, 0, 0);
-    theme.palette.surface = Color::rgba(38, 39, 41, 180);
-    theme.palette.surface_alt = Color::rgba(48, 49, 51, 205);
+    theme.palette.bg = if needs_opaque_surface() {
+        FALLBACK_SURFACE
+    } else {
+        Color::rgba(0, 0, 0, 0)
+    };
+    theme.palette.surface = if needs_opaque_surface() {
+        FALLBACK_PANEL
+    } else {
+        Color::rgba(38, 39, 41, 180)
+    };
+    theme.palette.surface_alt = if needs_opaque_surface() {
+        FALLBACK_EDGE
+    } else {
+        Color::rgba(48, 49, 51, 205)
+    };
     theme.palette.border = Color::rgba(255, 255, 255, 22);
+    // The off state of switches, checkboxes and radios is painted from
+    // `palette.track`. The vendor value is an opaque dark blue-gray, which on a
+    // dark material reads as a black hole rather than as an inactive control.
+    theme.palette.track = Color::rgba(255, 255, 255, 46);
     // The Search control is transparent, so its foreground must stay readable
     // over both dark and light Acrylic samples. Keep ordinary text neutral and
     // opaque; reserve accent blue for selection/focus feedback only.
-    theme.palette.text = Color::rgba(250, 252, 255, 255);
+    theme.palette.text = if needs_opaque_surface() {
+        FALLBACK_TEXT
+    } else {
+        Color::rgba(250, 252, 255, 255)
+    };
     theme.palette.placeholder = Color::rgba(238, 243, 255, 230);
     // Tertiary row descriptions (setting_row_desc, field hints) must stay
     // readable over bright Acrylic samples. Vendor dark default (0x76808F)
     // sinks into light blur, so use a bright gray instead; hierarchy
-    // against white titles is carried by size.
-    theme.palette.text_subtle = Color::hex(0xBCC4D4);
-    theme.input.bg = Some(Color::rgba(29, 30, 32, 188));
+    // against white titles is carried by size. On the solid surface there is no
+    // blur to fight, so the descriptions can drop a step and gain hierarchy.
+    theme.palette.text_subtle = if needs_opaque_surface() {
+        Color::hex(0x99A3B1)
+    } else {
+        Color::hex(0xBCC4D4)
+    };
+    // Row labels carry the hierarchy on both surfaces: the reference sets them
+    // semibold at body size, which is also what stops a long description from
+    // reading as the primary text.
+    theme.form.label_size = Some(14.0);
+    theme.form.label_weight = Some(600);
+    if needs_opaque_surface() {
+        // The reference marks the active section with a solid blue pill instead
+        // of a thin accent wash, and keeps its label near white.
+        theme.list.selected_bg = Some(FALLBACK_NAV_SELECTED);
+        theme.list.selected_text = Some(FALLBACK_NAV_TEXT);
+        // Measured off the reference frame: one labelled row there is about 80
+        // logical pixels tall against our 59, because the default padding only
+        // clears the text. Airier rows are what makes a panel read as a list of
+        // choices rather than a dense form.
+        theme.form.row_pad_y = Some(20);
+    }
+    theme.input.bg = Some(if needs_opaque_surface() {
+        FALLBACK_FIELD
+    } else {
+        Color::rgba(29, 30, 32, 188)
+    });
     theme.input.border = Some(Color::rgba(255, 255, 255, 24));
     theme.input.border_focus = Some(Color::rgba(133, 181, 255, 135));
     theme.input.text = Some(Color::rgba(250, 252, 255, 255));
