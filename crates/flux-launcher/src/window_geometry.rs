@@ -412,9 +412,9 @@ mod tests {
             right: 1920,
             bottom: 1080,
         };
-        // Settings 720 wide centered → left 600, right 1320; +24 gap = 1344.
+        // Settings 752 wide centered → left 584, right 1336; +24 gap = 1360.
         let (x, y) = visual_preview_position_in_bounds(bounds, 96, 420, 200);
-        assert_eq!(x, 1344);
+        assert_eq!(x, 1360);
         assert_eq!(y, 440, "vertically centered against Settings");
     }
 

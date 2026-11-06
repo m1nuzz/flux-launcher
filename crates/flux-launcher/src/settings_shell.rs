@@ -87,8 +87,10 @@ pub(crate) fn build_settings_panel(
 
     // Only the active tab's title and summary are shown; the hidden pairs take
     // no space, so the header keeps a constant height instead of jumping when
-    // descriptions differ in length.
-    let mut heading = Element::col().weight(1.0).spacing(4);
+    // descriptions differ in length. No weight here: the header is a column of
+    // the body now, and a weighted column would claim the whole remaining
+    // height and push the tab content below it.
+    let mut heading = Element::col().spacing(4);
     for index in 0..TAB_NAMES.len() {
         heading = heading
             .child(

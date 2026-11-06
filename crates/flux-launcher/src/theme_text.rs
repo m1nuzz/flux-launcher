@@ -469,9 +469,9 @@ pub(crate) fn recall_history_row(
 /// behind it; on a remote, Server or composition-disabled session the same
 /// pixels show a sharp desktop through the text, so the launcher owns its own
 /// background instead.
-pub(crate) const FALLBACK_SURFACE: Color = Color::rgb(0x1B, 0x1F, 0x27);
-pub(crate) const FALLBACK_PANEL: Color = Color::rgb(0x24, 0x28, 0x32);
-pub(crate) const FALLBACK_EDGE: Color = Color::rgb(0x2A, 0x30, 0x38);
+pub(crate) const FALLBACK_SURFACE: Color = Color::rgb(0x19, 0x1F, 0x28);
+pub(crate) const FALLBACK_PANEL: Color = Color::rgb(0x1F, 0x25, 0x2E);
+pub(crate) const FALLBACK_EDGE: Color = Color::rgb(0x2C, 0x33, 0x3F);
 pub(crate) const FALLBACK_FIELD: Color = Color::rgb(0x16, 0x1A, 0x21);
 pub(crate) const FALLBACK_TEXT: Color = Color::rgb(0xF0, 0xF3, 0xF8);
 pub(crate) const FALLBACK_NAV_SELECTED: Color = Color::rgb(0x26, 0x38, 0x5C);
