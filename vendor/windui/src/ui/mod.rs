@@ -1949,6 +1949,31 @@ impl Element {
         scroll
     }
 
+    /// 圆角 pill 单选列表 + 前置图标字形：`items` 为 (标签, 字形) 列表，`glyph_family`
+    /// 是绘制字形用的字族名（如 `Segoe Fluent Icons`）。
+    ///
+    /// 侧栏导航用这一种：图标由系统图标字体提供，应用不必链接图片解码器就能得到
+    /// 矢量、随 DPI 清晰的图标。悬停/选中/键盘行为与 [`list_pill`](Self::list_pill) 相同。
+    pub fn list_pill_glyphs(
+        items: Vec<(impl Into<String>, impl Into<String>)>,
+        selected: Signal<usize>,
+        glyph_family: &str,
+    ) -> Self {
+        let mut scroll = Self::scroll().fill();
+        for (i, (label, glyph)) in items.into_iter().enumerate() {
+            let row = list::ListRow::new(label.into(), selected, i)
+                .glyph(glyph, glyph_family)
+                .pill();
+            scroll = scroll.child(
+                Self::base(Layout::None)
+                    .widget(row)
+                    .width_match()
+                    .height(list::ROW_H),
+            );
+        }
+        scroll
+    }
+
     /// 带 chevron 的导航行：左标签 + 右侧 `>`，悬停高亮，点击/回车触发 `.on_click(...)`。
     /// 适合"钻入子页 / 打开子设置"的设置行。无持久选中态——需要选中高亮的导航用 `list`。
     pub fn nav_row(label: impl Into<TextContent>) -> Self {

@@ -12,6 +12,11 @@ use super::window_geometry::request_monitor_position;
 /// numeric index through `FLUX_SMOKE_SETTINGS_TAB`, and every tab body gates on
 /// the same index, so renaming alone is safe but reordering is not.
 const TAB_NAMES: [&str; 5] = ["General", "Visual", "Priorities", "Plugins", "Stats"];
+/// Segoe Fluent Icons codepoints for the navigation rows, taken from the
+/// documented glyph table: Settings, Color, Sort, Puzzle, AreaChart. The font
+/// ships with Windows 11 and is already used for the Recycle Bin rows.
+const TAB_GLYPHS: [&str; 5] = ["\u{e713}", "\u{e790}", "\u{e8cb}", "\u{ea86}", "\u{e9d2}"];
+const ICON_FONT: &str = "Segoe Fluent Icons";
 const TAB_DESCRIPTIONS: [&str; 5] = [
     "Startup, activation and update behavior.",
     "Caret, selection color and launcher size.",
@@ -46,7 +51,7 @@ pub(crate) fn settings_group(title: &str, rows: Vec<Element>) -> Element {
     if super::theme_text::needs_opaque_surface() {
         body = body
             .bg(super::theme_text::FALLBACK_PANEL)
-            .corner(10.0)
+            .corner(12.0)
             .border(super::theme_text::FALLBACK_EDGE, 1);
     }
     Element::col()
@@ -107,7 +112,7 @@ pub(crate) fn build_settings_panel(
         heading = heading
             .child(
                 Element::label(TAB_NAMES[index])
-                    .font_size(21.0)
+                    .font_size(24.0)
                     .font_weight(600)
                     .fg(Color::WHITE)
                     .visible_when(move || settings_tab.get() == index),
@@ -194,7 +199,18 @@ pub(crate) fn build_settings_panel(
                 .fg(Color::WHITE),
         )
         .child(Element::divider())
-        .child(Element::list_pill(TAB_NAMES.to_vec(), settings_tab).weight(1.0))
+        .child(
+            Element::list_pill_glyphs(
+                TAB_NAMES
+                    .iter()
+                    .zip(TAB_GLYPHS)
+                    .map(|(name, glyph)| ((*name).to_string(), glyph.to_string()))
+                    .collect(),
+                settings_tab,
+                ICON_FONT,
+            )
+            .weight(1.0),
+        )
         .child(reset);
 
     let content = Element::col()

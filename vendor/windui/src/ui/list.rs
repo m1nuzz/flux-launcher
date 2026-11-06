@@ -34,6 +34,8 @@ const PILL_RADIUS: f32 = 7.0;
 pub struct ListRow {
     label: String,
     icon: Option<ImageContent>,
+    /// 前置图标字形 `(文本, 字族)`：侧栏导航用，免得为几个图标链接图片解码器。
+    glyph: Option<(String, String)>,
     group: Signal<usize>,
     index: usize,
     hover: bool,
@@ -53,6 +55,7 @@ impl ListRow {
         Self {
             label,
             icon: None,
+            glyph: None,
             group,
             index,
             hover: false,
@@ -61,6 +64,12 @@ impl ListRow {
             bg_color: Cell::new(Color::TRANSPARENT),
             sel: Cell::new(Transition::new(on)),
         }
+    }
+    /// 前置图标字形，用指定字族绘制（例如 `Segoe Fluent Icons`）。
+    /// 与 [`ListRow::icon_content`] 互斥：两者都设置时字形优先。
+    pub fn glyph(mut self, glyph: impl Into<String>, family: impl Into<String>) -> Self {
+        self.glyph = Some((glyph.into(), family.into()));
+        self
     }
     /// 前置图标（图片内容）。
     pub fn icon_content(mut self, icon: ImageContent) -> Self {
@@ -181,8 +190,30 @@ impl Widget for ListRow {
         } else {
             PAD_X
         };
+        let color = if !enabled {
+            pal.text_disabled
+        } else if sel {
+            lt.selected_text(pal)
+        } else {
+            lt.text(pal)
+        };
         let mut text_x = bounds.x + pad_x;
-        if let Some(icon) = &self.icon {
+        if let Some((glyph, family)) = &self.glyph {
+            // 字形占固定列宽，标签的起始竖线才不随字形宽窄漂移。
+            canvas.draw_text(
+                glyph,
+                Rect::new(text_x, bounds.y, GLYPH_W, bounds.h),
+                color,
+                Align::Center,
+                &crate::text::TextStyle {
+                    family: Some(family.as_str()),
+                    size: GLYPH_SIZE,
+                    weight: crate::text::WEIGHT_NORMAL,
+                    line_height: None,
+                },
+            );
+            text_x += GLYPH_W + ICON_GAP;
+        } else if let Some(icon) = &self.icon {
             let side = (bounds.h - 14).max(0);
             let iy = bounds.y + (bounds.h - side) / 2;
             let istyle = Style {
@@ -197,13 +228,6 @@ impl Widget for ListRow {
             );
             text_x = bounds.x + pad_x + side + ICON_GAP;
         }
-        let color = if !enabled {
-            pal.text_disabled
-        } else if sel {
-            lt.selected_text(pal)
-        } else {
-            lt.text(pal)
-        };
         let tw = (bounds.right() - PAD_X - text_x).max(0);
         let tr = Rect::new(text_x, bounds.y, tw, bounds.h);
         canvas.draw_text(
