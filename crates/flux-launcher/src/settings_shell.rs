@@ -174,7 +174,7 @@ pub(crate) fn build_settings_panel(
                 .weight(1.0),
         )
         .child(
-            Element::button("Apply settings")
+            Element::button("\u{2713} Apply settings")
                 .on_click(move |ctx| apply_settings(&ui_for_apply, ctx)),
         );
 
@@ -190,15 +190,8 @@ pub(crate) fn build_settings_panel(
     let sidebar = Element::col()
         .width(SETTINGS_SIDEBAR_WIDTH)
         .height_match()
-        .padding_edges(18, 18, 12, 14)
+        .padding_edges(14, 12, 12, 14)
         .spacing(14)
-        .child(
-            Element::label("Flux Launcher")
-                .font_size(13.0)
-                .font_weight(650)
-                .fg(Color::WHITE),
-        )
-        .child(Element::divider())
         .child(
             Element::list_pill_glyphs(
                 TAB_NAMES
@@ -212,6 +205,32 @@ pub(crate) fn build_settings_panel(
             .weight(1.0),
         )
         .child(reset);
+
+    // The reference frame puts the brand and the window controls in a strip
+    // above both columns, so the frameless window stays movable and closable
+    // without a system titlebar. Maximize is deliberately absent: the Settings
+    // canvas has one fixed size, so a maximize control would be a dead button.
+    let titlebar = Element::row()
+        .width_match()
+        .height(40)
+        .padding_edges(16, 6, 6, 0)
+        .spacing(8)
+        .cross(Align::Center)
+        .child(
+            Element::label("\u{e945}")
+                .font_size(15.0)
+                .font_family(ICON_FONT)
+                .fg_role(Role::Accent),
+        )
+        .child(
+            Element::label("Flux Launcher")
+                .font_size(13.0)
+                .font_weight(650)
+                .fg(Color::WHITE),
+        )
+        .child(Element::flex_spacer().window_drag())
+        .child(Element::window_button(WindowButtonKind::Minimize))
+        .child(Element::window_button(WindowButtonKind::Close));
 
     let content = Element::col()
         .weight(1.0)
@@ -231,25 +250,33 @@ pub(crate) fn build_settings_panel(
     // solid fallback has no material to edge it, so it draws its own hairline
     // border and a divider between the navigation column and the rows.
     let fallback = super::theme_text::needs_opaque_surface();
-    let mut children = vec![sidebar];
+    let mut body_children = vec![sidebar];
     if fallback {
-        children.push(
+        body_children.push(
             Element::leaf()
                 .width(1)
                 .height_match()
                 .bg(super::theme_text::FALLBACK_EDGE),
         );
     }
-    children.push(content);
+    body_children.push(content);
 
-    let mut root = Element::row()
+    let body = Element::row()
+        .width_match()
+        .weight(1.0)
+        .spacing(0)
+        .children(body_children);
+
+    let mut root = Element::col()
         .fill()
         .spacing(0)
-        .bg(super::theme_text::window_background());
+        .bg(super::theme_text::window_background())
+        .child(titlebar)
+        .child(body);
     if fallback {
         root = root
             .corner(10.0)
             .border(super::theme_text::FALLBACK_EDGE, 1);
     }
-    root.children(children)
+    root
 }
