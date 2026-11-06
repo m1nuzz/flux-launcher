@@ -3291,42 +3291,36 @@ try {
 
             $reopenDpi = [FluxWallpaper]::GetDpiForWindow($reopenedSettingsHwnd)
             if ($reopenDpi -eq 0) { $reopenDpi = 96 }
-            # The Back button follows the header row, whose height depends on how the
-            # subtitle wraps and on how many tabs the segmented control carries, so a
-            # fixed offset silently misses it. Sweep the header band instead and accept
-            # the first probe that collapses Settings back to the compact launcher - a
-            # tab or field click cannot produce that transition, so the sweep cannot
-            # settle on a false positive.
-            $backProbeXOffsets = @(72, 54, 90, 110, 130)
-            $backProbeYOffsets = @(58, 76, 94, 112, 130, 40)
-            $backFoundX = 0
-            $backFoundY = 0
-            foreach ($probeX in $backProbeXOffsets) {
-                if ($backFoundY -ne 0) { break }
-                foreach ($probeY in $backProbeYOffsets) {
+            # The title strip's close control replaced the old Back button. It
+            # hides the window and leaves the process in the tray, so the probe
+            # accepts the first click that makes the HWND invisible - collapsing
+            # was the Back contract, and a hidden window keeps reporting its old
+            # rectangle, so a size test would never pass here.
+            $closeProbeXOffsets = @(24, 40, 56, 72)
+            $closeProbeYOffsets = @(20, 30, 12)
+            $closeFoundX = 0
+            $closeFoundY = 0
+            foreach ($probeX in $closeProbeXOffsets) {
+                if ($closeFoundY -ne 0) { break }
+                foreach ($probeY in $closeProbeYOffsets) {
                     $candidateX = $reopenedSettingsRect.Right - [int][Math]::Round($probeX * ($reopenDpi / 96.0))
                     $candidateY = $reopenedSettingsRect.Top + [int][Math]::Round($probeY * ($reopenDpi / 96.0))
                     [FluxWallpaper]::SetCursorPos($candidateX, $candidateY) | Out-Null
                     [FluxWallpaper]::mouse_event(0x0002, 0, 0, 0, [UIntPtr]::Zero)
                     [FluxWallpaper]::mouse_event(0x0004, 0, 0, 0, [UIntPtr]::Zero)
                     Start-Sleep -Milliseconds 400
-                    $collapsedRect = New-Object FluxWallpaper+RECT
-                    $collapsed = $true
-                    if ([FluxWallpaper]::GetWindowRect($reopenedSettingsHwnd, [ref]$collapsedRect)) {
-                        $collapsed = ($collapsedRect.Bottom - $collapsedRect.Top) -lt 200
-                    }
-                    if ($collapsed) {
-                        $backFoundX = $candidateX
-                        $backFoundY = $candidateY
+                    if (-not [FluxWallpaper]::IsWindowVisible($reopenedSettingsHwnd)) {
+                        $closeFoundX = $candidateX
+                        $closeFoundY = $candidateY
                         break
                     }
                 }
             }
-            if ($backFoundY -eq 0) {
-                Save-Screenshot "settings-back-cleanup-failed.png"
-                throw "Visual Back cleanup smoke could not activate the Back button via header sweep."
+            if ($closeFoundY -eq 0) {
+                Save-Screenshot "settings-close-cleanup-failed.png"
+                throw "Visual close cleanup smoke could not hide the Settings window from the title strip."
             }
-            Write-Host "Visual Back activated at x=$backFoundX y=$backFoundY"
+            Write-Host "Visual close control activated at x=$closeFoundX y=$closeFoundY"
             # Same polling contract as the Apply close check above: the parent
             # closes the preview on its next tick, which a loaded runner can
             # delay; a dead parent is a product crash, not a slow tick.
@@ -3334,7 +3328,7 @@ try {
             for ($waitAttempt = 0; $waitAttempt -lt 40 -and !$previewGone; $waitAttempt++) {
                 $reopenedSettingsProcess.Refresh()
                 if ($reopenedSettingsProcess.HasExited) {
-                    throw "Visual Back cleanup smoke lost the reopened Settings process (exit $($reopenedSettingsProcess.ExitCode)) while waiting for preview PID $reopenedPreviewProcessId to close."
+                    throw "Visual close cleanup smoke lost the reopened Settings process (exit $($reopenedSettingsProcess.ExitCode)) while waiting for preview PID $reopenedPreviewProcessId to close."
                 }
                 $reopenedPreviewAlive = $false
                 try {
@@ -3349,7 +3343,7 @@ try {
             $visualPreviewCleanupProbe = $true
 
             Save-Screenshot "settings-visual-sliders.png"
-            Write-Host "Visual Settings exact preview smoke passed: preview PID $visualPreviewProcessId reported $visualPreviewGeometrySampleCount measured GetClientRect samples and $visualPreviewUpdateCount IPC resizes; Settings remained ${afterDragWidth}x${afterDragHeight} with center delta=${settingsCenterDelta}px; Reset, Apply persistence, reopen, and Back cleanup passed."
+            Write-Host "Visual Settings exact preview smoke passed: preview PID $visualPreviewProcessId reported $visualPreviewGeometrySampleCount measured GetClientRect samples and $visualPreviewUpdateCount IPC resizes; Settings remained ${afterDragWidth}x${afterDragHeight} with center delta=${settingsCenterDelta}px; Reset, Apply persistence, reopen, and title-strip close cleanup passed."
         }
         Save-Screenshot "settings-panel.png"
         if ($EverythingMissingSmoke) {

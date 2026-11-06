@@ -136,7 +136,9 @@ pub(crate) fn build_settings_panel(
         .visible_when(move || tab_is_resettable(settings_tab.get()))
         .on_click(move |ctx| reset_active_tab(&ui_for_reset, ctx));
 
-    let sidebar = Element::col()
+    let fallback = super::theme_text::needs_opaque_surface();
+
+    let mut sidebar = Element::col()
         .width(SETTINGS_SIDEBAR_WIDTH)
         .height_match()
         .padding_edges(14, 12, 12, 14)
@@ -154,6 +156,13 @@ pub(crate) fn build_settings_panel(
             .weight(1.0),
         )
         .child(reset);
+
+    if fallback {
+        // The reference gives the navigation column the same tone as the group
+        // panels; the darker window fill is what shows between the groups and
+        // behind the footer band.
+        sidebar = sidebar.bg(super::theme_text::FALLBACK_PANEL);
+    }
 
     // The reference frame puts the brand and the window controls in a strip
     // above both columns, so the frameless window stays movable and closable
@@ -210,7 +219,6 @@ pub(crate) fn build_settings_panel(
     // dark card here, or the blur disappears behind the old opaque slab. The
     // solid fallback has no material to edge it, so it draws its own hairline
     // border and a divider between the navigation column and the rows.
-    let fallback = super::theme_text::needs_opaque_surface();
     let mut body_children = vec![sidebar];
     if fallback {
         body_children.push(
