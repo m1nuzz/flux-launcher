@@ -652,6 +652,7 @@ fn main() {
         monitor_preference,
         window_size: window_size.clone(),
         window_position: window_position.clone(),
+        window_op: window_op.clone(),
         query,
         results,
         providers: Rc::clone(&provider_results),

@@ -3,7 +3,9 @@ use std::rc::Rc;
 use std::sync::{Arc, RwLock};
 
 use flux_core::{PriorityEntry, SearchResult, Settings};
-use windui::app::{HotkeyHandle, ThemeHandle, WindowPositionHandle, WindowSizeHandle};
+use windui::app::{
+    HotkeyHandle, ThemeHandle, WindowOpHandle, WindowPositionHandle, WindowSizeHandle,
+};
 use windui::prelude::{Color, Sender};
 use windui::signal::Signal;
 
@@ -77,6 +79,9 @@ pub(crate) struct SettingsUi {
     pub(crate) monitor_preference: Signal<usize>,
     pub(crate) window_size: WindowSizeHandle,
     pub(crate) window_position: WindowPositionHandle,
+    /// The title strip's close control hides the window itself. Hiding, not
+    /// quitting: the process stays in the tray and the hotkey brings it back.
+    pub(crate) window_op: WindowOpHandle,
     pub(crate) query: Signal<String>,
     pub(crate) results: Signal<Vec<SearchResult>>,
     pub(crate) providers: Rc<RefCell<super::provider_snapshot::ProviderResults>>,

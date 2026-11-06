@@ -170,6 +170,42 @@ pub(crate) fn apply_settings(ui: &SettingsUi, ctx: &mut EventCtx) {
     ctx.toast_ok("Settings applied");
 }
 
+/// Close the Settings window without quitting: the process stays resident in
+/// the tray and the activation hotkey brings the search strip back.
+///
+/// Dismissing Settings also releases the global key recorder. Left armed it
+/// would swallow every keystroke and keep the hotkey unregistered, which is
+/// why the title strip cannot simply hide the HWND through the framework.
+pub(crate) fn close_settings(ui: &SettingsUi) {
+    hotkeys::end_recording(
+        ui.activation_recording,
+        ui.activation_display,
+        ui.activation_key,
+        ui.activation_ctrl,
+        ui.activation_alt,
+        ui.activation_shift,
+        ui.activation_meta,
+        &ui.activation_handle,
+    );
+    ui.settings_visible.set(false);
+    let height = if ui.show_results.get() {
+        i32::from(ui.launcher_height.get())
+    } else {
+        COMPACT_WINDOW_HEIGHT
+    };
+    if let Ok(settings) = ui.shared_settings.read() {
+        request_monitor_position(
+            &ui.window_position,
+            settings.monitor_preference,
+            i32::from(ui.launcher_width.get()),
+            height,
+        );
+    }
+    ui.window_size
+        .set(i32::from(ui.launcher_width.get()), height);
+    ui.window_op.hide_window();
+}
+
 /// Hand an available update to the installer without leaving Settings.
 pub(crate) fn install_update(ui: &SettingsUi, ctx: &mut EventCtx) {
     if ui.update_installing.get() {
