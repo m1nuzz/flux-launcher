@@ -33,10 +33,10 @@ use windows::Win32::Graphics::Dwm::{
     DWM_SYSTEMBACKDROP_TYPE,
 };
 use windows::Win32::Graphics::Gdi::{
-    BeginPaint, CreateBitmap, CreateDIBSection, DeleteObject, EndPaint, GetDC, GetDeviceCaps,
-    InvalidateRect, ReleaseDC, ScreenToClient, SetDIBitsToDevice, UpdateWindow, ValidateRect,
-    BITMAPINFO, BITMAPINFOHEADER, BI_RGB, DEFAULT_CHARSET, DIB_RGB_COLORS, HGDIOBJ, LOGFONTW,
-    PAINTSTRUCT, VREFRESH,
+    BeginPaint, CreateBitmap, CreateDIBSection, CreateRoundRectRgn, DeleteObject, EndPaint, GetDC,
+    GetDeviceCaps, InvalidateRect, ReleaseDC, ScreenToClient, SetDIBitsToDevice, SetWindowRgn,
+    UpdateWindow, ValidateRect, BITMAPINFO, BITMAPINFOHEADER, BI_RGB, DEFAULT_CHARSET,
+    DIB_RGB_COLORS, HGDIOBJ, LOGFONTW, PAINTSTRUCT, VREFRESH,
 };
 use windows::Win32::Media::{timeBeginPeriod, timeEndPeriod};
 use windows::Win32::System::LibraryLoader::{GetModuleHandleW, GetProcAddress};
@@ -333,6 +333,9 @@ struct WindowState {
     handler: Box<dyn AppHandler>,
     bg: Color,
     transparent: bool,
+    /// 申请了系统材质但本机给不了（远程会话 / Server SKU / 关闭合成分）。
+    /// 这类窗口要自己给出圆角：DWM 的圆角偏好设置在这些桌面上不生效。
+    material_fallback: bool,
     #[cfg(feature = "d2d")]
     backdrop: Backdrop,
     /// 当前是否已对窗口调用 OS SetCapture（与 handler 逻辑捕获态同步）。
@@ -448,6 +451,7 @@ impl WindowState {
             handler,
             bg,
             transparent,
+            material_fallback: false,
             #[cfg(feature = "d2d")]
             backdrop: Backdrop::None,
             capturing: false,
@@ -840,6 +844,30 @@ unsafe fn apply_system_backdrop(hwnd: HWND, backdrop: Backdrop) {
 
 /// Applies the legacy Win32 Acrylic blur policy when the public system backdrop
 /// API is absent or too opaque for a transient launcher surface.
+/// Give the window its own rounded corners where DWM will not do it.
+///
+/// `DWMWA_WINDOW_CORNER_PREFERENCE` is honoured by client desktops, but remote
+/// sessions and Server SKUs ignore it — and those are exactly the desktops that
+/// fall back to an application-painted surface, which would otherwise show a
+/// square panel next to every rounded system window. A region is the shape they
+/// do honour. On success `SetWindowRgn` owns the region, so it is released only
+/// when the call fails.
+unsafe fn apply_material_fallback_region(hwnd: HWND, width: i32, height: i32) {
+    const CORNER_LOGICAL: i32 = 10;
+    if width < 4 || height < 4 {
+        return;
+    }
+    let dpi = GetDpiForWindow(hwnd).max(96);
+    let diameter = (CORNER_LOGICAL * 2 * dpi / 96).max(2);
+    let region = CreateRoundRectRgn(0, 0, width + 1, height + 1, diameter, diameter);
+    if (region.0).is_null() {
+        return;
+    }
+    if SetWindowRgn(hwnd, Some(region), true) <= 0 {
+        let _ = DeleteObject(region.into());
+    }
+}
+
 unsafe fn apply_acrylic_policy(hwnd: HWND) {
     #[repr(C)]
     struct AccentPolicy {
@@ -962,6 +990,7 @@ unsafe fn run_windowed(
         cfg.backdrop != Backdrop::None && !backdrop_available && cfg.bg.a < 255;
     // 把 WindowState 装箱，指针随 CreateWindow 传入，在 WM_NCCREATE 挂到 HWND。
     let mut state = Box::new(WindowState::new(handler, cfg.bg, backdrop_available));
+    state.material_fallback = cfg.backdrop != Backdrop::None && !backdrop_available;
     #[cfg(feature = "d2d")]
     {
         state.backdrop = cfg.backdrop;
@@ -1594,7 +1623,9 @@ unsafe extern "system" fn wnd_proc(
             let w = (lparam.0 & 0xffff) as i32;
             let h = ((lparam.0 >> 16) & 0xffff) as i32;
             trace_show_event(hwnd, "wm_size", &format!("phase=begin size={}x{}", w, h));
+            let mut material_fallback = false;
             if let Some(state) = state_from(hwnd) {
+                material_fallback = state.material_fallback;
                 state.backend.resize(w, h);
                 if state.in_size_move {
                     // 拖拽缩放中：异步重绘，避免每次 WM_SIZE 都同步等 vsync 拖累拖拽手感。
@@ -1605,6 +1636,10 @@ unsafe extern "system" fn wnd_proc(
                     // show presents once at the settled client size.
                     state.paint(hwnd);
                 }
+            }
+            // 借用在上面已结束：SetWindowRgn 会触发布局与重绘，不得在持有 state 时调用。
+            if material_fallback {
+                apply_material_fallback_region(hwnd, w, h);
             }
             LRESULT(0)
         }
