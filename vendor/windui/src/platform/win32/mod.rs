@@ -857,7 +857,7 @@ unsafe fn apply_material_fallback_region(hwnd: HWND, width: i32, height: i32) {
     if width < 4 || height < 4 {
         return;
     }
-    let dpi = GetDpiForWindow(hwnd).max(96);
+    let dpi = i32::try_from(GetDpiForWindow(hwnd).max(96)).unwrap_or(96);
     let diameter = (CORNER_LOGICAL * 2 * dpi / 96).max(2);
     let region = CreateRoundRectRgn(0, 0, width + 1, height + 1, diameter, diameter);
     if (region.0).is_null() {
