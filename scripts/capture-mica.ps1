@@ -3235,6 +3235,29 @@ try {
                 throw "Visual Apply smoke persisted unexpected dimensions: $($persistedSettings.launcher_width)x$($persistedSettings.launcher_height)."
             }
             $visualPreviewPersistenceProbe = $true
+            # Apply no longer dismisses Settings: the window stays on the page the
+            # user applied. Dismiss it through the title strip here, so the preview
+            # child is torn down before the reopen step below.
+            $applyCloseFound = $false
+            foreach ($yOffset in @(20, 30, 12)) {
+                if ($applyCloseFound) { break }
+                foreach ($xOffset in @(24, 40, 56, 72)) {
+                    $closeX = $settingsRect.Right - [int]($xOffset * $settingsScale)
+                    $closeY = $settingsRect.Top + [int]($yOffset * $settingsScale)
+                    [FluxWallpaper]::SetCursorPos($closeX, $closeY) | Out-Null
+                    [FluxWallpaper]::mouse_event(0x0002, 0, 0, 0, [UIntPtr]::Zero)
+                    [FluxWallpaper]::mouse_event(0x0004, 0, 0, 0, [UIntPtr]::Zero)
+                    Start-Sleep -Milliseconds 400
+                    if (-not [FluxWallpaper]::IsWindowVisible($settingsHwnd)) {
+                        $applyCloseFound = $true
+                        break
+                    }
+                }
+            }
+            if (!$applyCloseFound) {
+                Save-Screenshot "settings-visual-apply-failed.png"
+                throw "Visual Apply smoke could not dismiss Settings from the title strip after applying."
+            }
             # The parent closes the preview on its next tick after Settings hides;
             # a loaded runner can stall the UI thread for seconds, so poll instead
             # of asserting once. A dead parent is a product crash, not a slow tick:

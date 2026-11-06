@@ -15,7 +15,7 @@ use super::theme_text::{
 };
 use super::ui_constants::COMPACT_WINDOW_HEIGHT;
 use super::update_tasks::{
-    request_update_check, request_update_install, save_settings, update_check_due,
+    request_update_check, request_update_install, save_settings_async, update_check_due,
 };
 use super::updater;
 use super::window_geometry::{
@@ -61,7 +61,9 @@ pub(crate) fn apply_settings(ui: &SettingsUi, ctx: &mut EventCtx) {
         MAX_LAUNCHER_HEIGHT,
     )
     .unwrap_or(DEFAULT_LAUNCHER_HEIGHT);
+    let mut check_due = false;
     if let Ok(mut settings) = ui.shared_settings.write() {
+        let auto_enable_previous = settings.auto_enable_everything;
         settings.activation_hotkey = configuration;
         settings.game_mode_hotkey = HotkeyConfig {
             ctrl: ui.game_mode_ctrl.get(),
@@ -133,57 +135,55 @@ pub(crate) fn apply_settings(ui: &SettingsUi, ctx: &mut EventCtx) {
             .set_enabled(settings.game_mode_hotkey_enabled);
         ui.game_mode_recording.set(false);
         ui.game_mode_status.set(game_mode_label(settings.game_mode));
-        if settings.auto_enable_everything {
-            match everything::start_background_if_installed() {
-                Ok(InstallationState::Installed(_)) => {
-                    ui.everything_installed.set(true);
-                    ui.everything_status.set(String::from(
-                        "Everything is already installed; Flux will enable IPC automatically",
-                    ));
+        // Starting Everything walks its process and service state, which is the
+        // slowest thing this click could do, so it runs only when the switch
+        // itself moved. An unrelated Apply keeps the status text it already has.
+        if settings.auto_enable_everything != auto_enable_previous {
+            if settings.auto_enable_everything {
+                match everything::start_background_if_installed() {
+                    Ok(InstallationState::Installed(_)) => {
+                        ui.everything_installed.set(true);
+                        ui.everything_status.set(String::from(
+                            "Everything is already installed; Flux will enable IPC automatically",
+                        ));
+                    }
+                    Ok(InstallationState::Missing) => {
+                        ui.everything_installed.set(false);
+                        ui.everything_status.set(String::from(
+                            "Everything is not installed. Install it with winget to enable file search.",
+                        ));
+                    }
+                    Err(error) => ui.everything_status.set(error),
                 }
-                Ok(InstallationState::Missing) => {
-                    ui.everything_installed.set(false);
-                    ui.everything_status.set(String::from(
-                        "Everything is not installed. Install it with winget to enable file search.",
-                    ));
-                }
-                Err(error) => ui.everything_status.set(error),
+            } else {
+                ui.everything_status.set(String::from(
+                    "Everything auto-enable is disabled in Flux settings",
+                ));
             }
-        } else {
-            ui.everything_status.set(String::from(
-                "Everything auto-enable is disabled in Flux settings",
-            ));
         }
-        let _ = save_settings(&settings);
         eprintln!(
             "Settings apply dispatched: {}x{}",
             settings.launcher_width, settings.launcher_height
         );
-        if let Err(error) = startup::set_enabled(settings.start_with_windows) {
-            ctx.toast_ok(format!("Startup setting failed: {error}"));
-        }
-        if settings.update_checks_enabled && update_check_due(&settings) {
-            ui.update_status
-                .set(String::from("Checking stable GitHub releases..."));
-            request_update_check(ui.update_sender.clone(), &ui.update_check_in_flight);
-        }
+        check_due = settings.update_checks_enabled && update_check_due(&settings);
     }
-    ui.settings_visible.set(false);
-    let selected_preference = monitor_preference_from_index(ui.monitor_preference.get());
-    let applied_width = i32::from(ui.launcher_width.get());
-    let applied_height = i32::from(ui.launcher_height.get());
-    let target_height = if ui.show_results.get() {
-        applied_height
-    } else {
-        COMPACT_WINDOW_HEIGHT
-    };
-    request_monitor_position(
-        &ui.window_position,
-        selected_preference,
-        applied_width,
-        target_height,
-    );
-    ui.window_size.set(applied_width, target_height);
+    // Persist off the UI thread and leave the window exactly where it is: Apply
+    // used to write the file, sync the registry and shrink back to the search
+    // strip on the click, which read as a freeze and threw away the page.
+    save_settings_async(&ui.shared_settings);
+    let start_with_windows = ui.start_with_windows.get();
+    let _ = std::thread::Builder::new()
+        .name(String::from("flux-startup-sync"))
+        .spawn(move || {
+            if let Err(error) = startup::set_enabled(start_with_windows) {
+                eprintln!("Could not synchronize Windows startup setting: {error}");
+            }
+        });
+    if check_due {
+        ui.update_status
+            .set(String::from("Checking stable GitHub releases..."));
+        request_update_check(ui.update_sender.clone(), &ui.update_check_in_flight);
+    }
     ctx.toast_ok("Settings applied");
 }
 
