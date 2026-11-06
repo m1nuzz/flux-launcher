@@ -72,21 +72,22 @@ use windows::Win32::UI::WindowsAndMessaging::{
     RegisterClassExW, SetCursor, SetCursorPos, SetForegroundWindow, SetLayeredWindowAttributes,
     SetTimer, SetWindowLongPtrW, SetWindowPos, ShowWindow, SystemParametersInfoW, TranslateMessage,
     CREATESTRUCTW, CW_USEDEFAULT, GWLP_USERDATA, HICON, HTBOTTOM, HTBOTTOMLEFT, HTBOTTOMRIGHT,
-    HTCAPTION, HTCLIENT, HTLEFT, HTRIGHT, HTTOP, HTTOPLEFT, HTTOPRIGHT, ICONINFO, IDC_ARROW,
-    IDC_HAND, IDC_IBEAM, LWA_ALPHA, MINMAXINFO, MSG, MWMO_INPUTAVAILABLE, NCCALCSIZE_PARAMS,
-    PM_REMOVE, QS_ALLINPUT, SIZE_MINIMIZED, SM_CXDOUBLECLK, SM_CXFRAME, SM_CXPADDEDBORDER,
-    SM_CXSCREEN, SM_CYDOUBLECLK, SM_CYFRAME, SM_CYSCREEN, SM_CYVIRTUALSCREEN, SM_REMOTESESSION,
-    SM_XVIRTUALSCREEN, SM_YVIRTUALSCREEN, SPI_GETCLIENTAREAANIMATION, SWP_FRAMECHANGED,
-    SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE, SWP_NOZORDER, SW_HIDE, SW_MAXIMIZE, SW_MINIMIZE,
-    SW_RESTORE, SW_SHOW, SW_SHOWNOACTIVATE, SW_SHOWNORMAL, SYSTEM_PARAMETERS_INFO_UPDATE_FLAGS,
-    WA_INACTIVE, WINDOWPOS, WINDOW_EX_STYLE, WINDOW_STYLE, WM_ACTIVATE, WM_APP, WM_CAPTURECHANGED,
-    WM_CHAR, WM_CLOSE, WM_DESTROY, WM_DPICHANGED, WM_DROPFILES, WM_ENTERSIZEMOVE, WM_EXITSIZEMOVE,
-    WM_GETMINMAXINFO, WM_HOTKEY, WM_IME_CHAR, WM_IME_COMPOSITION, WM_IME_ENDCOMPOSITION,
-    WM_IME_STARTCOMPOSITION, WM_KEYDOWN, WM_LBUTTONDOWN, WM_LBUTTONUP, WM_MOUSEMOVE, WM_MOUSEWHEEL,
-    WM_NCCALCSIZE, WM_NCCREATE, WM_NCHITTEST, WM_NCMOUSEMOVE, WM_PAINT, WM_QUIT, WM_RBUTTONDOWN,
-    WM_RBUTTONUP, WM_SETCURSOR, WM_SIZE, WM_SYSKEYDOWN, WM_TIMER, WM_TOUCH, WM_WINDOWPOSCHANGING,
-    WNDCLASSEXW, WS_EX_LAYERED, WS_EX_NOACTIVATE, WS_EX_TOOLWINDOW, WS_EX_TRANSPARENT,
-    WS_MAXIMIZEBOX, WS_OVERLAPPEDWINDOW, WS_POPUP, WS_THICKFRAME,
+    HTCAPTION, HTCLIENT, HTLEFT, HTRIGHT, HTTOP, HTTOPLEFT, HTTOPRIGHT, HWND_TOPMOST, ICONINFO,
+    IDC_ARROW, IDC_HAND, IDC_IBEAM, LWA_ALPHA, MINMAXINFO, MSG, MWMO_INPUTAVAILABLE,
+    NCCALCSIZE_PARAMS, PM_REMOVE, QS_ALLINPUT, SIZE_MINIMIZED, SM_CXDOUBLECLK, SM_CXFRAME,
+    SM_CXPADDEDBORDER, SM_CXSCREEN, SM_CYDOUBLECLK, SM_CYFRAME, SM_CYSCREEN, SM_CYVIRTUALSCREEN,
+    SM_REMOTESESSION, SM_XVIRTUALSCREEN, SM_YVIRTUALSCREEN, SPI_GETCLIENTAREAANIMATION,
+    SWP_FRAMECHANGED, SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE, SWP_NOZORDER, SW_HIDE, SW_MAXIMIZE,
+    SW_MINIMIZE, SW_RESTORE, SW_SHOW, SW_SHOWNOACTIVATE, SW_SHOWNORMAL,
+    SYSTEM_PARAMETERS_INFO_UPDATE_FLAGS, WA_INACTIVE, WINDOWPOS, WINDOW_EX_STYLE, WINDOW_STYLE,
+    WM_ACTIVATE, WM_APP, WM_CAPTURECHANGED, WM_CHAR, WM_CLOSE, WM_DESTROY, WM_DPICHANGED,
+    WM_DROPFILES, WM_ENTERSIZEMOVE, WM_EXITSIZEMOVE, WM_GETMINMAXINFO, WM_HOTKEY, WM_IME_CHAR,
+    WM_IME_COMPOSITION, WM_IME_ENDCOMPOSITION, WM_IME_STARTCOMPOSITION, WM_KEYDOWN, WM_LBUTTONDOWN,
+    WM_LBUTTONUP, WM_MOUSEMOVE, WM_MOUSEWHEEL, WM_NCCALCSIZE, WM_NCCREATE, WM_NCHITTEST,
+    WM_NCMOUSEMOVE, WM_PAINT, WM_QUIT, WM_RBUTTONDOWN, WM_RBUTTONUP, WM_SETCURSOR, WM_SIZE,
+    WM_SYSKEYDOWN, WM_TIMER, WM_TOUCH, WM_WINDOWPOSCHANGING, WNDCLASSEXW, WS_EX_LAYERED,
+    WS_EX_NOACTIVATE, WS_EX_TOOLWINDOW, WS_EX_TRANSPARENT, WS_MAXIMIZEBOX, WS_OVERLAPPEDWINDOW,
+    WS_POPUP, WS_THICKFRAME,
 };
 // 只用于 d2d 后端选择（RDP 远程会话下强制软渲染），随该 feature 一起门控。
 #[cfg(feature = "d2d")]
@@ -353,6 +354,8 @@ struct WindowState {
     hotkeys: Option<hotkey::HotkeyState>,
     /// 无标题栏窗口：wnd_proc 据此处理 WM_NCCALCSIZE / WM_NCHITTEST。
     frameless: bool,
+    /// 可见期间置于最上层（见 WindowConfig::topmost）。
+    topmost: bool,
     /// 窗口能否被拖动缩放。固定尺寸的窗口不提供边缘缩放带：那一圈只会
     /// 抢走客户区边缘的点击（滚动条、贴边控件），却什么都做不了。
     resizable: bool,
@@ -464,6 +467,7 @@ impl WindowState {
             tray: None,
             hotkeys: None,
             frameless: false,
+            topmost: false,
             // Most windui windows are fixed dialogs; run_windowed overwrites this
             // from the window config before the window is shown.
             resizable: true,
@@ -1002,6 +1006,7 @@ unsafe fn run_windowed(
     let mut state = Box::new(WindowState::new(handler, cfg.bg, backdrop_available));
     state.material_fallback = cfg.backdrop != Backdrop::None && !backdrop_available;
     state.resizable = cfg.resizable;
+    state.topmost = cfg.topmost;
     #[cfg(feature = "d2d")]
     {
         state.backdrop = cfg.backdrop;
@@ -1279,6 +1284,20 @@ unsafe fn run_windowed(
     // the custom non-client frame setup. This is intentionally independent of
     // `frameless`: a regular native frame may also host Mica.
     apply_system_backdrop(hwnd, cfg.backdrop);
+
+    // The topmost band applies from the very first visible frame, not only after
+    // the first hotkey-driven show.
+    if cfg.topmost {
+        let _ = SetWindowPos(
+            hwnd,
+            Some(HWND_TOPMOST),
+            0,
+            0,
+            0,
+            0,
+            SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE,
+        );
+    }
 
     // 启动即隐藏：常驻托盘类应用不该在启动时闪一下窗口。此处**不调用 ShowWindow**，
     // 窗口保持初始的不可见态，等托盘点击或全局热键送来 WindowOp::Show。
@@ -2472,6 +2491,19 @@ pub(crate) fn show_and_activate(hwnd: HWND) {
         }
         set_interval_timers(hwnd, true);
         trace_show_event(hwnd, "show.after_show_window", "phase=after_show_window");
+        // A launcher has to cover other always-on-top windows (IDEs, players):
+        // while visible it sits in the topmost band itself.
+        if state_from(hwnd).is_some_and(|state| state.topmost) {
+            let _ = SetWindowPos(
+                hwnd,
+                Some(HWND_TOPMOST),
+                0,
+                0,
+                0,
+                0,
+                SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE,
+            );
+        }
         // Reapply DWM attributes and recommit the DirectComposition visual only
         // after the HWND is visible. This makes the following UpdateWindow the
         // first visible Present instead of relying on a hidden swapchain frame.

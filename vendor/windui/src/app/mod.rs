@@ -337,6 +337,7 @@ impl App {
                 height,
                 bg: Color::hex(0xF3F3F3),
                 centered: false,
+                topmost: false,
                 initial_position: None,
                 resizable: true,
                 screenshot: None,
@@ -414,6 +415,11 @@ impl App {
     /// 窗口居中显示。
     pub fn centered(mut self) -> Self {
         self.cfg.centered = true;
+        self
+    }
+    /// Keep the window above other always-on-top windows while it is visible.
+    pub fn topmost(mut self) -> Self {
+        self.cfg.topmost = true;
         self
     }
 

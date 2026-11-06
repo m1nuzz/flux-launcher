@@ -282,6 +282,9 @@ pub struct WindowConfig {
     pub bg: Color,
     /// 窗口居中显示。
     pub centered: bool,
+    /// 窗口在可见期间位于最上层。启动器需要盖住别的 always-on-top 窗口
+    /// （IDE、播放器）：普通窗口无论怎么激活都做不到这一点。
+    pub topmost: bool,
     /// Optional initial logical top-left screen position. Platform backends may
     /// use this instead of centering when the window is first created.
     pub initial_position: Option<(i32, i32)>,
@@ -334,6 +337,7 @@ impl Default for WindowConfig {
             height: 600,
             bg: Color::hex(0xF3F3F3),
             centered: false,
+            topmost: false,
             initial_position: None,
             resizable: true,
             screenshot: None,
