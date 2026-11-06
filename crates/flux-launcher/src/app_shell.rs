@@ -158,6 +158,9 @@ pub(crate) fn run_launcher(
         // dark background instead.
         .bg(super::theme_text::window_background())
         .centered()
+        // A launcher that cannot cover another always-on-top window (an IDE, a
+        // player) is useless: it opens under the app the user is working in.
+        .topmost()
         .frameless()
         .resizable(false)
         .min_size(MIN_LAUNCHER_WIDTH as i32, COMPACT_WINDOW_HEIGHT)
@@ -214,6 +217,10 @@ pub(crate) fn run_launcher(
             let settings = Arc::clone(&shared_settings);
             move || {
                 launch::trace_launch_event("window-hide");
+                // Losing focus dismisses Settings rather than merely hiding the
+                // window: otherwise the next activation walks the user back into
+                // a panel they already left instead of opening search.
+                settings_visible.set(false);
                 let (enabled, clear_query) = settings
                     .read()
                     .map(|settings| {
@@ -240,14 +247,16 @@ pub(crate) fn run_launcher(
                     action_items.set(Vec::new());
                     inline_completion.set(String::new());
                     scroll_request.set(false);
-                    let (width, height) = launcher_window_geometry_with_sizes(
-                        settings_visible.get(),
-                        false,
-                        launcher_width.get() as i32,
-                        launcher_height.get() as i32,
-                    );
-                    size_for_visibility.set(width, height);
                 }
+                // Always settle on the strip geometry: a dismissed Settings page
+                // must not leave its 752x520 canvas behind for the search strip.
+                let (width, height) = launcher_window_geometry_with_sizes(
+                    settings_visible.get(),
+                    false,
+                    launcher_width.get() as i32,
+                    launcher_height.get() as i32,
+                );
+                size_for_visibility.set(width, height);
             }
         })
         .run();
