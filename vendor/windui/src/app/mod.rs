@@ -2205,6 +2205,88 @@ mod tests {
         assert!(ran.get(), "平台执行请求后闭包才跑");
     }
 
+    #[test]
+    fn selected_input_keeps_copy_and_arrows_before_app_shortcuts() {
+        use crate::core::ClipboardProvider;
+        use crate::event::{Key, KeyEvent};
+        use crate::render::PixmapTarget;
+        use crate::signal::signal;
+        use tiny_skia::Pixmap;
+
+        struct TestClipboard(Rc<RefCell<String>>);
+        impl ClipboardProvider for TestClipboard {
+            fn get_text(&self) -> Option<String> {
+                Some(self.0.borrow().clone())
+            }
+            fn set_text(&self, text: &str) {
+                *self.0.borrow_mut() = text.to_string();
+            }
+        }
+
+        let text = signal(String::from("selected query"));
+        let caret = signal(0usize);
+        let clipboard = Rc::new(RefCell::new(String::new()));
+        let app_clipboard = clipboard.clone();
+        let mut host = App::new("copy priority", 240, 32)
+            .on_key(move |event| {
+                if event.pressed && event.ctrl && event.key == Key::Other(0x43) {
+                    *app_clipboard.borrow_mut() = String::from("result-path");
+                    true
+                } else if event.pressed && matches!(event.key, Key::Left | Key::Right) {
+                    *app_clipboard.borrow_mut() = String::from("actions");
+                    true
+                } else {
+                    false
+                }
+            })
+            .content(Element::text_input(text, "").cursor_position(caret))
+            .into_handler_for_test();
+        host.tree.clipboard = Some(Box::new(TestClipboard(clipboard.clone())));
+        host.set_scale(1.0);
+        let mut pixmap = Pixmap::new(240, 32).unwrap();
+        host.render(
+            &mut PixmapTarget {
+                pixmap: &mut pixmap,
+            },
+            Size::new(240, 32),
+        );
+        let input = host.tree.root.unwrap();
+        host.focus.current = Some(input);
+        host.tree.set_focused(Some(input), None);
+        let key = |key, ctrl, shift| KeyEvent {
+            key,
+            pressed: true,
+            ctrl,
+            shift,
+        };
+
+        host.on_key(key(Key::Other(0x41), true, false));
+        host.on_key(key(Key::Other(0x43), true, false));
+        assert_eq!(clipboard.borrow().as_str(), "selected query");
+
+        host.on_key(key(Key::Other(0x43), true, true));
+        assert_eq!(clipboard.borrow().as_str(), "result-path");
+
+        clipboard.borrow_mut().clear();
+        host.on_key(key(Key::End, false, false));
+        host.on_key(key(Key::Other(0x43), true, false));
+        assert_eq!(clipboard.borrow().as_str(), "result-path");
+
+        for arrow in [Key::Left, Key::Right] {
+            host.on_key(key(Key::Other(0x41), true, false));
+            clipboard.borrow_mut().clear();
+            host.on_key(key(arrow, false, false));
+            assert!(
+                clipboard.borrow().is_empty(),
+                "selection must own the arrow"
+            );
+            host.on_key(key(Key::Other(0x43), true, false));
+            assert_eq!(clipboard.borrow().as_str(), "result-path");
+            host.on_key(key(arrow, false, false));
+            assert_eq!(clipboard.borrow().as_str(), "actions");
+        }
+    }
+
     /// 定时器回调的副作用同样到达宿主：toast 上屏、`request_close` 变成宿主的关窗意图
     /// （平台在帧路径轮询 `wants_close`）。
     #[test]

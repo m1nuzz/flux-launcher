@@ -23,6 +23,7 @@ param(
     [switch]$ObsidianIconSmoke,
     [switch]$QueryClearOnReopenSmoke,
     [switch]$QueryResponsivenessSmoke,
+    [switch]$QueryMouseSelectionSmoke,
     [switch]$FocusToggleSmoke,
     [switch]$ImeMessageSmoke,
     [switch]$DeactivationClickSmoke,
@@ -147,6 +148,12 @@ public static class FluxWallpaper {
     public static extern bool GetWindowRect(IntPtr hwnd, out RECT rect);
     [DllImport("user32.dll", SetLastError = true)]
     public static extern bool GetClientRect(IntPtr hwnd, out RECT rect);
+    [DllImport("user32.dll", SetLastError = true)]
+    public static extern bool ClientToScreen(IntPtr hwnd, ref POINT point);
+    [DllImport("user32.dll")]
+    public static extern uint GetDoubleClickTime();
+    [DllImport("user32.dll")]
+    public static extern uint GetClipboardSequenceNumber();
     [DllImport("user32.dll", SetLastError = true)]
     public static extern uint GetDpiForWindow(IntPtr hwnd);
     public static int RectWidth(RECT rect) { return rect.Right - rect.Left; }
@@ -320,6 +327,201 @@ function Save-Screenshot([string]$FileName) {
     finally {
         $graphics.Dispose()
         $bitmap.Dispose()
+    }
+}
+
+function Test-QueryMouseSelection([IntPtr]$Handle) {
+    $savedClipboard = Get-Clipboard -Raw
+    $records = [System.Collections.Generic.List[object]]::new()
+    $clickPause = [int][FluxWallpaper]::GetDoubleClickTime() + 75
+    $KEYUP = 0x0002
+    $VK_CONTROL = 0x11
+    $VK_SHIFT = 0x10
+    $VK_BACK = 0x08
+    $VK_END = 0x23
+    $VK_A = 0x41
+    $VK_C = 0x43
+    $VK_V = 0x56
+    $VK_Z = 0x5A
+    $record = $null
+    $press = {
+        param([byte]$Vk, [switch]$Ctrl, [switch]$Shift)
+        if ($Ctrl) { [FluxWallpaper]::keybd_event($VK_CONTROL, 0, 0, [UIntPtr]::Zero) }
+        if ($Shift) { [FluxWallpaper]::keybd_event($VK_SHIFT, 0, 0, [UIntPtr]::Zero) }
+        Start-Sleep -Milliseconds 30
+        [FluxWallpaper]::keybd_event($Vk, 0, 0, [UIntPtr]::Zero)
+        Start-Sleep -Milliseconds 30
+        [FluxWallpaper]::keybd_event($Vk, 0, $KEYUP, [UIntPtr]::Zero)
+        Start-Sleep -Milliseconds 30
+        if ($Shift) { [FluxWallpaper]::keybd_event($VK_SHIFT, 0, $KEYUP, [UIntPtr]::Zero) }
+        if ($Ctrl) { [FluxWallpaper]::keybd_event($VK_CONTROL, 0, $KEYUP, [UIntPtr]::Zero) }
+    }
+    $copyText = {
+        param([switch]$All)
+        $sentinel = "flux-selection-" + [Guid]::NewGuid().ToString("N")
+        Set-Clipboard -Value $sentinel
+        $sequence = [FluxWallpaper]::GetClipboardSequenceNumber()
+        if ($All) { & $press $VK_A -Ctrl }
+        & $press $VK_C -Ctrl
+        $deadline = [DateTime]::UtcNow.AddSeconds(3)
+        do {
+            if ([FluxWallpaper]::GetClipboardSequenceNumber() -ne $sequence) {
+                $value = Get-Clipboard -Raw -ErrorAction SilentlyContinue
+                if ($null -ne $value -and $value -cne $sentinel) { return [string]$value }
+            }
+            Start-Sleep -Milliseconds 25
+        } while ([DateTime]::UtcNow -lt $deadline)
+        $clip = Get-Clipboard -Raw -ErrorAction SilentlyContinue
+        $fg = [FluxWallpaper]::GetForegroundWindow()
+        $vis = [FluxWallpaper]::IsWindowVisible($Handle)
+        throw "Query selection copy did not update the clipboard: foreground=$($Handle -eq $fg) fg=$fg launcher=$Handle visible=$vis clip=$clip sentinel=$sentinel."
+    }
+    $reopen = {
+        [FluxWallpaper]::SetForegroundWindow($Handle) | Out-Null
+        Start-Sleep -Milliseconds 250
+        if ([FluxWallpaper]::IsWindowVisible($Handle)) {
+            [FluxWallpaper]::SendMessage($Handle, 0x0312, [UIntPtr]::Zero, [IntPtr]::Zero) | Out-Null
+            Start-Sleep -Milliseconds 450
+            if ([FluxWallpaper]::IsWindowVisible($Handle)) { throw "Query selection hotkey did not hide the launcher." }
+        }
+        [FluxWallpaper]::SendMessage($Handle, 0x0312, [UIntPtr]::Zero, [IntPtr]::Zero) | Out-Null
+        Start-Sleep -Milliseconds 650
+        if (![FluxWallpaper]::IsWindowVisible($Handle)) {
+            throw "Query selection hotkey did not restore the launcher."
+        }
+        [FluxWallpaper]::SetForegroundWindow($Handle) | Out-Null
+        Start-Sleep -Milliseconds 250
+        if ([FluxWallpaper]::GetForegroundWindow() -ne $Handle) {
+            throw "Query selection smoke could not take the foreground."
+        }
+    }
+    $prepare = {
+        param([string]$Query)
+        $origin = New-Object FluxWallpaper+POINT
+        if (![FluxWallpaper]::ClientToScreen($Handle, [ref]$origin)) { throw "Unable to locate client." }
+        $scale = [FluxWallpaper]::GetDpiForWindow($Handle) / 96.0
+        $clickX = $origin.X + [int][Math]::Round(115 * $scale)
+        $clickY = $origin.Y + [int][Math]::Round(28 * $scale)
+        [FluxWallpaper]::SetCursorPos($clickX, $clickY) | Out-Null
+        Start-Sleep -Milliseconds 150
+        [FluxWallpaper]::mouse_event(0x0002, 0, 0, 0, [UIntPtr]::Zero)
+        Start-Sleep -Milliseconds 50
+        [FluxWallpaper]::mouse_event(0x0004, 0, 0, 0, [UIntPtr]::Zero)
+        Start-Sleep -Milliseconds 250
+        & $press $VK_A -Ctrl
+        & $press $VK_BACK
+        Start-Sleep -Milliseconds 150
+        Set-Clipboard -Value $Query
+        & $press $VK_V -Ctrl
+        Start-Sleep -Milliseconds 250
+        $actual = & $copyText -All
+        if ($actual -cne $Query) { throw "Query selection input mismatch: expected '$Query', got '$actual'." }
+        & $press $VK_END
+        Start-Sleep -Milliseconds 150
+    }
+    $unicodeQuery = -join @(0x43F, 0x43E, 0x438, 0x441, 0x43A, 0x444, 0x430, 0x439, 0x43B, 0x43E, 0x432, 0x442, 0x435, 0x43A, 0x441, 0x442, 0x430 | ForEach-Object { [char]$_ })
+    $longQuery = "C:/selection/" + ((0..19 | ForEach-Object { "folder-{0:D2}/" -f $_ }) -join "") + "unique-abcdefghijklmnopqrstuvwxyz.zip"
+    $cases = @(
+        @{ Name = "left"; Query = "resultmouseprobe"; Start = 140; End = 88 },
+        @{ Name = "right"; Query = "resultmouseprobe"; Start = 88; End = 140 },
+        @{ Name = "outside"; Query = "resultmouseprobe"; Start = 140; End = -24 },
+        @{ Name = "unicode"; Query = $unicodeQuery; Start = 140; End = 88 },
+        @{ Name = "horizontal-scroll"; Query = $longQuery; Start = -80; End = -165 }
+    )
+    try {
+        foreach ($case in $cases) {
+            $record = [ordered]@{ Case = $case.Name; Query = $case.Query; Selected = $null; Result = $null; Passed = $false; Error = $null }
+            $records.Add($record)
+            & $reopen
+            & $prepare $case.Query
+            $client = New-Object FluxWallpaper+RECT
+            $origin = New-Object FluxWallpaper+POINT
+            if (![FluxWallpaper]::GetClientRect($Handle, [ref]$client) -or ![FluxWallpaper]::ClientToScreen($Handle, [ref]$origin)) {
+                throw "Unable to locate the query selection client area."
+            }
+            $scale = [FluxWallpaper]::GetDpiForWindow($Handle) / 96.0
+            $startX = $origin.X + [int][Math]::Round($case.Start * $scale)
+            $endX = $origin.X + [int][Math]::Round($case.End * $scale)
+            if ($case.Name -eq "horizontal-scroll") {
+                $startX += $client.Right
+                $endX += $client.Right
+            }
+            $y = $origin.Y + [int][Math]::Round(28 * $scale)
+            Save-Screenshot "query-mouse-$($case.Name)-before.png"
+            [FluxWallpaper]::SetCursorPos($startX, $y) | Out-Null
+            Start-Sleep -Milliseconds $clickPause
+            [FluxWallpaper]::mouse_event(0x0002, 0, 0, 0, [UIntPtr]::Zero)
+            try {
+                Start-Sleep -Milliseconds 150
+                for ($step = 1; $step -le 8; $step++) {
+                    $x = [int][Math]::Round($startX + ($endX - $startX) * $step / 8.0)
+                    [FluxWallpaper]::SetCursorPos($x, $y) | Out-Null
+                    Start-Sleep -Milliseconds 40
+                }
+                Save-Screenshot "query-mouse-$($case.Name)-held.png"
+            }
+            finally {
+                [FluxWallpaper]::mouse_event(0x0004, 0, 0, 0, [UIntPtr]::Zero)
+            }
+            Start-Sleep -Milliseconds 200
+            [FluxWallpaper]::SetCursorPos($startX, $y) | Out-Null
+            Start-Sleep -Milliseconds 150
+            Save-Screenshot "query-mouse-$($case.Name)-released.png"
+            $selected = & $copyText
+            $record.Selected = $selected
+            $index = $case.Query.IndexOf($selected, [StringComparison]::Ordinal)
+            if ([string]::IsNullOrEmpty($selected) -or $selected.Length -ge $case.Query.Length -or $index -lt 0) {
+                throw "Mouse drag must copy a strict query substring; got '$selected' from '$($case.Query)'."
+            }
+            if ($case.Query.IndexOf($selected, $index + 1, [StringComparison]::Ordinal) -ge 0) {
+                throw "Selected substring '$selected' is ambiguous in the test query."
+            }
+            if ($case.Name -eq "horizontal-scroll" -and $index -lt $case.Query.IndexOf("unique-", [StringComparison]::Ordinal)) {
+                throw "Scrolled selection '$selected' did not come from the visible trailing suffix."
+            }
+            $expected = $case.Query.Substring(0, $index) + "Z" + $case.Query.Substring($index + $selected.Length)
+            [FluxWallpaper]::SendMessage($Handle, 0x0102, [UIntPtr]0x5A, [IntPtr]1) | Out-Null
+            Start-Sleep -Milliseconds 200
+            $actual = & $copyText -All
+            $record.Result = $actual
+            if ($actual -cne $expected) { throw "Selection replacement mismatch: expected '$expected', got '$actual'." }
+            $record.Passed = $true
+            Write-Host "Query mouse selection $($case.Name): selected='$selected', replacement='$actual'"
+        }
+        $record = [ordered]@{ Case = "double-click"; Query = "one two three"; Selected = $null; Result = $null; Passed = $false; Error = $null }
+        $records.Add($record)
+        & $reopen
+        & $prepare $record.Query
+        $origin = New-Object FluxWallpaper+POINT
+        if (![FluxWallpaper]::ClientToScreen($Handle, [ref]$origin)) { throw "Unable to locate query for double-click." }
+        $scale = [FluxWallpaper]::GetDpiForWindow($Handle) / 96.0
+        [FluxWallpaper]::SetCursorPos($origin.X + [int](80 * $scale), $origin.Y + [int](28 * $scale)) | Out-Null
+        Start-Sleep -Milliseconds $clickPause
+        $clickGap = [int][Math]::Max(1, [Math]::Min(50, [FluxWallpaper]::GetDoubleClickTime() / 5))
+        for ($click = 0; $click -lt 2; $click++) {
+            [FluxWallpaper]::mouse_event(0x0002, 0, 0, 0, [UIntPtr]::Zero)
+            Start-Sleep -Milliseconds $clickGap
+            [FluxWallpaper]::mouse_event(0x0004, 0, 0, 0, [UIntPtr]::Zero)
+            Start-Sleep -Milliseconds $clickGap
+        }
+        Start-Sleep -Milliseconds 200
+        Save-Screenshot "query-mouse-double-click.png"
+        $selected = & $copyText
+        $record.Selected = $selected
+        if (@("one", "two", "three") -cnotcontains $selected) { throw "Double-click did not preserve word selection: '$selected'." }
+        $record.Passed = $true
+        & $reopen
+        return $records.ToArray()
+    }
+    catch {
+        if ($null -ne $record) { $record.Error = $_.Exception.Message }
+        Save-Screenshot "query-mouse-failed.png"
+        throw
+    }
+    finally {
+        [FluxWallpaper]::mouse_event(0x0004, 0, 0, 0, [UIntPtr]::Zero)
+        $records.ToArray() | ConvertTo-Json -Depth 4 | Set-Content -Encoding utf8 (Join-Path $OutputDirectory "query-mouse-selection.json")
+        Set-Clipboard -Value ([string]$savedClipboard)
     }
 }
 
@@ -623,6 +825,8 @@ try {
     if (!$hiddenAfterFirstHotkey -or !$visibleAfterSecondHotkey) {
         throw "Alt+Space visibility regression: hidden=$hiddenAfterFirstHotkey visible=$visibleAfterSecondHotkey"
     }
+
+    $queryMouseSelectionDetails = @()
 
     if ($ImeMessageSmoke) {
         # First-keystroke regression: after a real global hotkey show, the focused
@@ -3140,6 +3344,13 @@ try {
         Remove-Item Env:FLUX_DISABLE_SINGLE_INSTANCE -ErrorAction SilentlyContinue
     }
 
+    # The query selection smoke drives hotkey re-shows, cursor presses and
+    # clipboard swaps; run it after every other probe so none of them inherits
+    # a launcher that just lost foreground mid-cycle.
+    if ($QueryMouseSelectionSmoke) {
+        $queryMouseSelectionDetails = @(Test-QueryMouseSelection -Handle $launcherHandle)
+    }
+
     $os = Get-CimInstance Win32_OperatingSystem
     [ordered]@{
         Caption = $os.Caption
@@ -3183,6 +3394,8 @@ try {
         ActionBarProbe = (!$ActionBarSmoke) -or $actionBarProbe
         ActionBarGeometry = $actionBarGeometry
         QueryClearOnReopenProbe = (!$QueryClearOnReopenSmoke) -or $queryClearOnReopenProbe
+        QueryMouseSelectionSmoke = [bool]$QueryMouseSelectionSmoke
+        QueryMouseSelectionCases = @($queryMouseSelectionDetails).Count
         CtrlRProbe = (!$CtrlRSmoke) -or $ctrlRProbe
         CtrlCProbe = (!$CtrlCSmoke) -or $ctrlCProbe
         CtrlShiftCopyProbe = (!$CtrlCSmoke) -or $resultCtrlShiftCopyProbe

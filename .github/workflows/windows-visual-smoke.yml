@@ -33,6 +33,11 @@ on:
         required: false
         default: false
         type: boolean
+      query_mouse_selection_smoke:
+        description: "Drive search-field mouse selection through real mouse_event drag"
+        required: false
+        default: false
+        type: boolean
       result_mouse_interaction_smoke:
         description: "Reproduce result right-click launch and Ctrl-dependent title selection"
         required: false
@@ -170,6 +175,9 @@ jobs:
             CalculatorPolicySmoke = $true
             QueryResponsivenessSmoke = $true
             ImeMessageSmoke = $true
+          }
+          if ("${{ inputs.query_mouse_selection_smoke }}" -eq "true") {
+            $captureParams.QueryMouseSelectionSmoke = $true
           }
           if ("${{ inputs.force_translucent_fallback }}" -eq "true") {
             $captureParams.ForceTranslucentFallback = $true

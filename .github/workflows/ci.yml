@@ -16,15 +16,26 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 2
 
       - name: Install stable toolchain
         uses: dtolnay/rust-toolchain@stable
         with:
-          targets: x86_64-pc-windows-msvc
+          targets: x86_64-pc-windows-msvc, x86_64-pc-windows-gnu
           components: rustfmt, clippy
+
+      - name: Windui regressions
+        run: cargo test -p windui --no-default-features --features d2d --lib --target x86_64-pc-windows-msvc -- --nocapture
+
+      - name: Whitespace
+        run: git show --format= --check HEAD
 
       - name: Format
         run: cargo fmt --all -- --check
+
+      - name: Windows GNU cross-check
+        run: cargo check --workspace --target x86_64-pc-windows-gnu
 
       - name: Clippy
         run: cargo clippy --workspace --all-targets --target x86_64-pc-windows-msvc -- -D warnings

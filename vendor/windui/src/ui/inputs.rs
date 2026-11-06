@@ -1494,6 +1494,13 @@ fn word_run(chars: &[char], idx: usize) -> (usize, usize) {
 }
 
 impl Widget for TextInput {
+    fn handles_key_before_app(&self, ev: &KeyEvent) -> bool {
+        ev.pressed
+            && self.selection().is_some()
+            && (matches!(ev.key, Key::Left | Key::Right)
+                || (ev.ctrl && !ev.shift && ev.key == Key::Other(0x43)))
+    }
+
     fn measure(&self, _avail: Size, style: &Style, text: &mut dyn TextEngine) -> Size {
         let lh = text
             .measure("Ay", &crate::text::TextStyle::of(style), None)
@@ -1891,6 +1898,7 @@ impl Widget for TextInput {
                     }
                     let idx = self.pos_to_index(ctx, p.pos.x, p.pos.y);
                     self.cursor = idx;
+                    self.sync_cursor_position();
                     self.anchor = Some(idx);
                     self.dragging = true;
                     self.goal_x.set(None);
@@ -1936,6 +1944,7 @@ impl Widget for TextInput {
                         }
                         // scroll_y 已更新，pos_to_index 内部读最新值，天然指向滚入的行。
                         self.cursor = self.pos_to_index(ctx, p.pos.x, p.pos.y);
+                        self.sync_cursor_position();
                         ctx.mark_dirty();
                         return true;
                     }
@@ -2053,6 +2062,7 @@ impl Widget for TextInput {
                         if !k.shift {
                             if let Some((s, _)) = self.selection() {
                                 self.cursor = s;
+                                self.sync_cursor_position();
                                 self.anchor = None;
                                 ctx.mark_dirty();
                                 return true;
@@ -2071,6 +2081,7 @@ impl Widget for TextInput {
                         if !k.shift {
                             if let Some((_, e)) = self.selection() {
                                 self.cursor = e;
+                                self.sync_cursor_position();
                                 self.anchor = None;
                                 ctx.mark_dirty();
                                 return true;
@@ -2193,7 +2204,8 @@ impl Widget for TextInput {
 mod tests {
     use super::{word_run, wrap_paragraph, TextConfig, TextInput, TextLayout, VisLine};
     use crate::core::{NodeId, Tree};
-    use crate::event::{Key, KeyEvent};
+    use crate::event::{Key, KeyEvent, MouseButton, PointerEvent, PointerKind};
+    use crate::geometry::{Point, Size};
     use crate::signal::{signal, Signal};
 
     fn run(s: &str, idx: usize) -> (usize, usize) {
@@ -2346,6 +2358,294 @@ mod tests {
         let mut canvas = crate::render::SkiaCanvas::with_text(&mut pm, &mut te, 1.0);
         tree.paint(&mut canvas);
         pm
+    }
+
+    fn input_mut(tree: &mut Tree, id: NodeId) -> &mut TextInput {
+        tree.get_mut(id)
+            .and_then(|n| n.widget.as_any_mut())
+            .and_then(|w| w.downcast_mut::<TextInput>())
+            .unwrap()
+    }
+
+    fn layout_and_paint_input(tree: &mut Tree) {
+        tree.layout_root(Size::new(240, 32), &mut crate::text::NullTextEngine);
+        paint_input_tree(tree, 240, 32);
+    }
+
+    fn bound_input(s: &str, cursor: usize) -> (Tree, NodeId, Signal<String>, Signal<usize>) {
+        let text = signal(s.to_string());
+        let caret = signal(cursor);
+        let mut tree = Tree::new();
+        let id = crate::ui::Element::text_input(text, String::new())
+            .cursor_position(caret)
+            .build(&mut tree);
+        tree.root = Some(id);
+        tree.set_focused(Some(id), None);
+        caret.set(cursor);
+        layout_and_paint_input(&mut tree);
+        (tree, id, text, caret)
+    }
+
+    fn input_position(tree: &mut Tree, id: NodeId, index: usize) -> Point {
+        let bounds = tree.abs_bounds(id);
+        let input = input_mut(tree, id);
+        let layout = input.layout.borrow();
+        let line = &layout.lines[0];
+        let text_x = bounds.x + super::TEXT_PAD + input.lead_inset(input.font_size_hint.get());
+        Point::new(
+            text_x + line.x[index - line.start] - input.scroll_x.get(),
+            bounds.y + bounds.h / 2,
+        )
+    }
+
+    fn pointer(kind: PointerKind, pos: Point) -> PointerEvent {
+        PointerEvent::single(kind, pos, MouseButton::Left)
+    }
+
+    fn assert_bound_caret(
+        tree: &mut Tree,
+        id: NodeId,
+        caret: Signal<usize>,
+        cursor: usize,
+        anchor: Option<usize>,
+    ) {
+        let input = input_mut(tree, id);
+        assert_eq!(input.cursor, cursor, "layout must preserve the caret");
+        assert_eq!(caret.get(), cursor, "the signal must mirror the caret");
+        assert_eq!(input.anchor, anchor, "layout must preserve the anchor");
+        let selection = anchor
+            .filter(|&a| a != cursor)
+            .map(|a| (a.min(cursor), a.max(cursor)));
+        assert_eq!(input.selection(), selection);
+    }
+
+    #[test]
+    fn bound_caret_click_survives_layout() {
+        let (mut tree, id, _text, caret) = bound_input("search query", 12);
+        let pos = input_position(&mut tree, id, 3);
+        assert!(tree.abs_bounds(id).contains(pos));
+        let (mut hover, mut capture) = (None, None);
+        tree.dispatch_pointer(pointer(PointerKind::Down, pos), &mut hover, &mut capture);
+        assert_eq!(input_cursor(&mut tree, id), 3, "click must hit the text");
+        layout_and_paint_input(&mut tree);
+        assert_bound_caret(&mut tree, id, caret, 3, Some(3));
+        assert_eq!(capture, Some(id));
+
+        tree.dispatch_pointer(pointer(PointerKind::Up, pos), &mut hover, &mut capture);
+        layout_and_paint_input(&mut tree);
+        assert_bound_caret(&mut tree, id, caret, 3, None);
+        assert_eq!(capture, None, "release must end pointer capture");
+        assert!(!input_mut(&mut tree, id).dragging);
+    }
+
+    fn assert_bound_drag_edits_selection(start: usize, targets: [usize; 3]) {
+        struct TestClip(std::rc::Rc<std::cell::RefCell<String>>);
+        impl crate::core::ClipboardProvider for TestClip {
+            fn get_text(&self) -> Option<String> {
+                Some(self.0.borrow().clone())
+            }
+            fn set_text(&self, text: &str) {
+                *self.0.borrow_mut() = text.to_string();
+            }
+        }
+        let query = "ab\u{43f}\u{440}\u{1f680}cdef";
+        let (mut tree, id, text, caret) = bound_input(query, start);
+        let clip = std::rc::Rc::new(std::cell::RefCell::new(String::new()));
+        tree.clipboard = Some(Box::new(TestClip(clip.clone())));
+        let (mut hover, mut capture) = (None, None);
+        let pos = input_position(&mut tree, id, start);
+        tree.dispatch_pointer(pointer(PointerKind::Down, pos), &mut hover, &mut capture);
+        layout_and_paint_input(&mut tree);
+        assert_bound_caret(&mut tree, id, caret, start, Some(start));
+        assert_eq!(capture, Some(id));
+
+        for target in targets {
+            let pos = input_position(&mut tree, id, target);
+            tree.dispatch_pointer(pointer(PointerKind::Move, pos), &mut hover, &mut capture);
+            layout_and_paint_input(&mut tree);
+            assert_bound_caret(&mut tree, id, caret, target, Some(start));
+            assert_eq!(capture, Some(id), "dragging must retain capture");
+            assert!(input_mut(&mut tree, id).dragging);
+        }
+        let end = targets[2];
+        let pos = input_position(&mut tree, id, end);
+        tree.dispatch_pointer(pointer(PointerKind::Up, pos), &mut hover, &mut capture);
+        layout_and_paint_input(&mut tree);
+        assert_bound_caret(&mut tree, id, caret, end, Some(start));
+        assert_eq!(capture, None, "release must end pointer capture");
+        assert!(!input_mut(&mut tree, id).dragging);
+        assert_eq!(input_mut(&mut tree, id).selection(), Some((2, 5)));
+
+        press(&mut tree, id, Key::Other(0x43), true, false);
+        layout_and_paint_input(&mut tree);
+        assert_eq!(clip.borrow().as_str(), "\u{43f}\u{440}\u{1f680}");
+        assert_eq!(text.get(), query, "copy must not change the query");
+        assert_bound_caret(&mut tree, id, caret, end, Some(start));
+        press(&mut tree, id, Key::Char('X'), false, false);
+        layout_and_paint_input(&mut tree);
+        assert_eq!(
+            text.get(),
+            "abXcdef",
+            "typing must replace only the selection"
+        );
+        assert_bound_caret(&mut tree, id, caret, 3, None);
+    }
+
+    #[test]
+    fn bound_caret_drag_left_preserves_selection_and_edits() {
+        assert_bound_drag_edits_selection(5, [4, 1, 2]);
+    }
+
+    #[test]
+    fn bound_caret_drag_right_preserves_selection_and_edits() {
+        assert_bound_drag_edits_selection(2, [3, 6, 5]);
+    }
+
+    #[test]
+    fn bound_caret_drag_outside_releases_capture() {
+        let query = "search query";
+        for end in [0, query.chars().count()] {
+            let (mut tree, id, _text, caret) = bound_input(query, 3);
+            let bounds = tree.abs_bounds(id);
+            let pos = input_position(&mut tree, id, 3);
+            let outside = Point::new(
+                if end == 0 {
+                    bounds.x - bounds.w
+                } else {
+                    bounds.right() + bounds.w
+                },
+                pos.y,
+            );
+            assert!(!bounds.contains(outside));
+            let (mut hover, mut capture) = (None, None);
+            tree.dispatch_pointer(pointer(PointerKind::Down, pos), &mut hover, &mut capture);
+            layout_and_paint_input(&mut tree);
+            assert_bound_caret(&mut tree, id, caret, 3, Some(3));
+            assert_eq!(capture, Some(id));
+
+            for kind in [PointerKind::Move, PointerKind::Up] {
+                tree.dispatch_pointer(pointer(kind, outside), &mut hover, &mut capture);
+                layout_and_paint_input(&mut tree);
+                assert_bound_caret(&mut tree, id, caret, end, Some(3));
+                let expected_capture = if matches!(kind, PointerKind::Move) {
+                    Some(id)
+                } else {
+                    None
+                };
+                assert_eq!(capture, expected_capture);
+            }
+            assert!(!input_mut(&mut tree, id).dragging);
+            assert_eq!(hover, None, "outside release must clear hover");
+            let inside = input_position(&mut tree, id, 6);
+            for pos in [outside, inside] {
+                tree.dispatch_pointer(pointer(PointerKind::Move, pos), &mut hover, &mut capture);
+                layout_and_paint_input(&mut tree);
+                assert_bound_caret(&mut tree, id, caret, end, Some(3));
+                assert_eq!(capture, None, "hover must not restart capture");
+            }
+            assert_eq!(hover, Some(id), "hover must return to the input");
+        }
+    }
+
+    #[test]
+    fn bound_caret_drag_tracks_horizontal_scroll() {
+        let query = "parent:C:/Users/test/Documents/very/long/path ext:zip file:archive";
+        let len = query.chars().count();
+        let (mut tree, id, _text, caret) = bound_input(query, len);
+        assert!(input_mut(&mut tree, id).scroll_x.get() > 0);
+        let start = len - 6;
+        let pos = input_position(&mut tree, id, start);
+        assert!(tree.abs_bounds(id).contains(pos));
+        let (mut hover, mut capture) = (None, None);
+        tree.dispatch_pointer(pointer(PointerKind::Down, pos), &mut hover, &mut capture);
+        layout_and_paint_input(&mut tree);
+        assert_bound_caret(&mut tree, id, caret, start, Some(start));
+        assert_eq!(capture, Some(id));
+
+        let outside = input_position(&mut tree, id, 0);
+        assert!(!tree.abs_bounds(id).contains(outside));
+        tree.dispatch_pointer(
+            pointer(PointerKind::Move, outside),
+            &mut hover,
+            &mut capture,
+        );
+        layout_and_paint_input(&mut tree);
+        assert_bound_caret(&mut tree, id, caret, 0, Some(start));
+        assert_eq!(input_mut(&mut tree, id).scroll_x.get(), 0);
+        assert_eq!(capture, Some(id));
+
+        let pos = input_position(&mut tree, id, 6);
+        assert!(tree.abs_bounds(id).contains(pos));
+        for kind in [PointerKind::Move, PointerKind::Up] {
+            tree.dispatch_pointer(pointer(kind, pos), &mut hover, &mut capture);
+            layout_and_paint_input(&mut tree);
+            assert_bound_caret(&mut tree, id, caret, 6, Some(start));
+        }
+        assert_eq!(capture, None);
+        assert!(!input_mut(&mut tree, id).dragging);
+    }
+
+    #[test]
+    fn bound_caret_double_click_preserves_word_selection() {
+        let (mut tree, id, _text, caret) = bound_input("one two three", 13);
+        let pos = input_position(&mut tree, id, 5);
+        let mut down = pointer(PointerKind::Down, pos);
+        down.click_count = 2;
+        let (mut hover, mut capture) = (None, None);
+        tree.dispatch_pointer(down, &mut hover, &mut capture);
+        layout_and_paint_input(&mut tree);
+        assert_bound_caret(&mut tree, id, caret, 7, Some(4));
+        assert_eq!(
+            input_mut(&mut tree, id).selected_text().as_deref(),
+            Some("two")
+        );
+        assert_eq!(capture, None, "double-click must not start dragging");
+        assert!(!input_mut(&mut tree, id).dragging);
+
+        tree.dispatch_pointer(pointer(PointerKind::Up, pos), &mut hover, &mut capture);
+        layout_and_paint_input(&mut tree);
+        assert_bound_caret(&mut tree, id, caret, 7, Some(4));
+        let pos = input_position(&mut tree, id, 1);
+        tree.dispatch_pointer(pointer(PointerKind::Move, pos), &mut hover, &mut capture);
+        layout_and_paint_input(&mut tree);
+        assert_bound_caret(&mut tree, id, caret, 7, Some(4));
+        assert_eq!(capture, None);
+    }
+
+    fn assert_bound_selection_collapse(start: usize, extend: Key, collapse: Key, end: usize) {
+        let (mut tree, id, _text, caret) = bound_input("search query", start);
+        let pos = input_position(&mut tree, id, start);
+        let (mut hover, mut capture) = (None, None);
+        for kind in [PointerKind::Down, PointerKind::Up] {
+            tree.dispatch_pointer(pointer(kind, pos), &mut hover, &mut capture);
+            layout_and_paint_input(&mut tree);
+        }
+        assert_bound_caret(&mut tree, id, caret, start, None);
+        assert_eq!(capture, None);
+        // Keyboard selection isolates collapse from the drag synchronization regression.
+        for _ in 0..3 {
+            press(&mut tree, id, extend, false, true);
+            layout_and_paint_input(&mut tree);
+        }
+        assert_bound_caret(&mut tree, id, caret, end, Some(start));
+        press(&mut tree, id, collapse, false, false);
+        assert_eq!(
+            input_cursor(&mut tree, id),
+            start,
+            "collapse must use the selection edge"
+        );
+        layout_and_paint_input(&mut tree);
+        assert_bound_caret(&mut tree, id, caret, start, None);
+    }
+
+    #[test]
+    fn bound_caret_left_collapse_survives_layout() {
+        assert_bound_selection_collapse(2, Key::Right, Key::Left, 5);
+    }
+
+    #[test]
+    fn bound_caret_right_collapse_survives_layout() {
+        assert_bound_selection_collapse(5, Key::Left, Key::Right, 2);
     }
 
     #[test]
