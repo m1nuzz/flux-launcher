@@ -21,13 +21,39 @@ const TAB_DESCRIPTIONS: [&str; 5] = [
 ];
 
 /// A settings group title: semibold, slightly larger than row text, no fill so
-/// the Acrylic backdrop stays untouched. Pair with `Element::divider()` between
-/// groups; keep controls off the header line so the eye parses sections first.
+/// the Acrylic backdrop stays untouched.
 pub(crate) fn settings_section_header(title: &str) -> Element {
     Element::label(title)
         .font_size(15.0)
         .font_weight(600)
-        .fg(Color::WHITE)
+        .fg_role(Role::Text)
+}
+
+/// One settings group: a title above the panel that holds its rows.
+///
+/// On the solid fallback surface the panel is a raised card with a hairline
+/// edge, which is what carries the hierarchy in the reference. With live
+/// Acrylic the panel paints nothing: the system material has to stay the
+/// background of the whole window, so only the spacing is shared.
+pub(crate) fn settings_group(title: &str, rows: Vec<Element>) -> Element {
+    let mut body = Element::col()
+        .width_match()
+        .padding_edges(16, 8, 16, 8)
+        .spacing(4);
+    for row in rows {
+        body = body.child(row);
+    }
+    if super::theme_text::needs_opaque_surface() {
+        body = body
+            .bg(super::theme_text::FALLBACK_PANEL)
+            .corner(10.0)
+            .border(super::theme_text::FALLBACK_EDGE, 1);
+    }
+    Element::col()
+        .width_match()
+        .spacing(8)
+        .child(settings_section_header(title))
+        .child(body)
 }
 
 /// Right gutter for settings tab scroll content.
@@ -171,10 +197,10 @@ pub(crate) fn build_settings_panel(
         .child(Element::list_pill(TAB_NAMES.to_vec(), settings_tab).weight(1.0))
         .child(reset);
 
-    let mut content = Element::col()
+    let content = Element::col()
         .weight(1.0)
         .height_match()
-        .padding_edges(18, 16, 14, 6)
+        .padding_edges(18, 16, 16, 8)
         .spacing(10)
         .child(header)
         .child(tab_general)
@@ -184,23 +210,30 @@ pub(crate) fn build_settings_panel(
         .child(tab_stats)
         .child(footer);
 
-    if super::theme_text::needs_opaque_surface() {
-        // With no system material behind the window, the tab body needs its own
-        // plane or the navigation column and the settings read as one flat field.
-        content = content
-            .bg(super::theme_text::FALLBACK_PANEL)
-            .corner(12.0)
-            .border(super::theme_text::FALLBACK_EDGE, 1);
+    // Settings shares the same continuous Acrylic surface as the launcher: no
+    // dark card here, or the blur disappears behind the old opaque slab. The
+    // solid fallback has no material to edge it, so it draws its own hairline
+    // border and a divider between the navigation column and the rows.
+    let fallback = super::theme_text::needs_opaque_surface();
+    let mut children = vec![sidebar];
+    if fallback {
+        children.push(
+            Element::leaf()
+                .width(1)
+                .height_match()
+                .bg(super::theme_text::FALLBACK_EDGE),
+        );
     }
+    children.push(content);
 
-    // Settings shares the same continuous Acrylic surface as the launcher.
-    // Do not add a dark card here: it hides the blur and creates the old opaque
-    // search-style slab inside the transparent window. The sidebar is separated
-    // from the tab body by its own padding and the divider, not by a fill.
-    Element::row()
+    let mut root = Element::row()
         .fill()
         .spacing(0)
-        .bg(Color::rgba(0, 0, 0, 0))
-        .child(sidebar)
-        .child(content)
+        .bg(super::theme_text::window_background());
+    if fallback {
+        root = root
+            .corner(10.0)
+            .border(super::theme_text::FALLBACK_EDGE, 1);
+    }
+    root.children(children)
 }

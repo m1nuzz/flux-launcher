@@ -8,7 +8,7 @@ use windui::prelude::*;
 use windui::signal::Signal;
 use windui::text::TextEngine;
 
-use super::settings_shell::{settings_scroll_gutter, settings_section_header};
+use super::settings_shell::{settings_group, settings_scroll_gutter};
 use super::settings_ui::SettingsUi;
 use super::ui_constants::CURRENT_VERSION;
 
@@ -119,71 +119,73 @@ pub(crate) fn build_stats_tab(ui: &SettingsUi) -> Element {
                 .child(
                     Element::col()
                         .weight(1.0)
-                        .spacing(12)
-                        .child(settings_section_header("Usage"))
-                        .child(
-                            Element::label_signal(usage)
-                                .font_size(12.0)
-                                .fg(Color::rgba(235, 241, 255, 235)),
-                        )
-                        .child(Element::divider())
-                        .child(settings_section_header("Top opened"))
-                        .child(
-                            Element::label_signal(top)
-                                .font_size(12.0)
-                                .fg(Color::rgba(235, 241, 255, 235)),
-                        )
-                        .child(Element::divider())
-                        .child(Element::setting_row_desc(
-                            "History and counters",
-                            "Forget remembered queries and top counts",
-                            Element::button("Clear history")
-                                .small()
-                                .neutral()
-                                .outline_soft()
-                                .on_click(move |_| {
-                                    clear_confirm.set(true);
-                                }),
+                        .spacing(16)
+                        .child(settings_group(
+                            "Usage",
+                            vec![Element::label_signal(usage).font_size(13.0).width_match()],
                         ))
-                        .child(Element::divider())
-                        .child(Element::setting_row_desc(
-                            "Share card",
-                            "Copy a stats card image plus a short summary",
-                            Element::button("Share stats")
-                                .small()
-                                .neutral()
-                                .outline_soft()
-                                .on_click(move |ctx| {
-                                    let snapshot = settings_for_share
-                                        .read()
-                                        .map(|settings| {
-                                            (
-                                                settings.total_queries_committed,
-                                                settings.launch_counts.clone(),
-                                            )
-                                        })
-                                        .ok();
-                                    let Some((total, launches)) = snapshot else {
-                                        ctx.toast_ok("Could not lock Flux settings");
-                                        return;
-                                    };
-                                    let text = share_stats_text(total);
-                                    let top = top_launches(&launches, MAX_TOP_QUERIES);
-                                    #[cfg(windows)]
-                                    {
-                                        if let Some((width, height, rgba)) =
-                                            render_share_card_rgba(total, CURRENT_VERSION, &top)
-                                        {
-                                            ctx.clipboard_set_text_and_image(
-                                                &text, width, height, &rgba,
-                                            );
-                                            ctx.toast_ok("Stats card copied to clipboard");
-                                            return;
-                                        }
-                                    }
-                                    ctx.clipboard_set(&text);
-                                    ctx.toast_ok("Stats copied as text");
-                                }),
+                        .child(settings_group(
+                            "Top opened",
+                            vec![Element::label_signal(top).font_size(13.0).width_match()],
+                        ))
+                        .child(settings_group(
+                            "Data",
+                            vec![
+                                Element::setting_row_desc(
+                                    "History and counters",
+                                    "Forget remembered queries and top counts",
+                                    Element::button("Clear history")
+                                        .small()
+                                        .neutral()
+                                        .outline_soft()
+                                        .on_click(move |_| {
+                                            clear_confirm.set(true);
+                                        }),
+                                ),
+                                Element::setting_row_desc(
+                                    "Share card",
+                                    "Copy a stats card image plus a short summary",
+                                    Element::button("Share stats")
+                                        .small()
+                                        .neutral()
+                                        .outline_soft()
+                                        .on_click(move |ctx| {
+                                            let snapshot = settings_for_share
+                                                .read()
+                                                .map(|settings| {
+                                                    (
+                                                        settings.total_queries_committed,
+                                                        settings.launch_counts.clone(),
+                                                    )
+                                                })
+                                                .ok();
+                                            let Some((total, launches)) = snapshot else {
+                                                ctx.toast_ok("Could not lock Flux settings");
+                                                return;
+                                            };
+                                            let text = share_stats_text(total);
+                                            let top = top_launches(&launches, MAX_TOP_QUERIES);
+                                            #[cfg(windows)]
+                                            {
+                                                if let Some((width, height, rgba)) =
+                                                    render_share_card_rgba(
+                                                        total,
+                                                        CURRENT_VERSION,
+                                                        &top,
+                                                    )
+                                                {
+                                                    ctx.clipboard_set_text_and_image(
+                                                        &text, width, height, &rgba,
+                                                    );
+                                                    ctx.toast_ok("Stats card copied to clipboard");
+                                                    return;
+                                                }
+                                            }
+                                            ctx.clipboard_set(&text);
+                                            ctx.toast_ok("Stats copied as text");
+                                        }),
+                                ),
+                            ],
                         )),
                 )
                 .child(settings_scroll_gutter()),

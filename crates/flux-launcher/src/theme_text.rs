@@ -469,10 +469,13 @@ pub(crate) fn recall_history_row(
 /// behind it; on a remote, Server or composition-disabled session the same
 /// pixels show a sharp desktop through the text, so the launcher owns its own
 /// background instead.
-pub(crate) const FALLBACK_SURFACE: Color = Color::rgb(0x1B, 0x1D, 0x22);
-pub(crate) const FALLBACK_PANEL: Color = Color::rgb(0x20, 0x23, 0x2A);
-pub(crate) const FALLBACK_EDGE: Color = Color::rgb(0x2A, 0x2E, 0x37);
-pub(crate) const FALLBACK_FIELD: Color = Color::rgb(0x17, 0x19, 0x1E);
+pub(crate) const FALLBACK_SURFACE: Color = Color::rgb(0x1B, 0x1F, 0x27);
+pub(crate) const FALLBACK_PANEL: Color = Color::rgb(0x24, 0x28, 0x32);
+pub(crate) const FALLBACK_EDGE: Color = Color::rgb(0x2A, 0x30, 0x38);
+pub(crate) const FALLBACK_FIELD: Color = Color::rgb(0x16, 0x1A, 0x21);
+pub(crate) const FALLBACK_TEXT: Color = Color::rgb(0xF0, 0xF3, 0xF8);
+pub(crate) const FALLBACK_NAV_SELECTED: Color = Color::rgb(0x26, 0x38, 0x5C);
+pub(crate) const FALLBACK_NAV_TEXT: Color = Color::rgb(0xEA, 0xF0, 0xFA);
 
 /// Whether this session has to paint its own opaque surface.
 pub(crate) fn needs_opaque_surface() -> bool {
@@ -517,13 +520,33 @@ pub(crate) fn launcher_theme() -> Theme {
     // The Search control is transparent, so its foreground must stay readable
     // over both dark and light Acrylic samples. Keep ordinary text neutral and
     // opaque; reserve accent blue for selection/focus feedback only.
-    theme.palette.text = Color::rgba(250, 252, 255, 255);
+    theme.palette.text = if needs_opaque_surface() {
+        FALLBACK_TEXT
+    } else {
+        Color::rgba(250, 252, 255, 255)
+    };
     theme.palette.placeholder = Color::rgba(238, 243, 255, 230);
     // Tertiary row descriptions (setting_row_desc, field hints) must stay
     // readable over bright Acrylic samples. Vendor dark default (0x76808F)
     // sinks into light blur, so use a bright gray instead; hierarchy
-    // against white titles is carried by size.
-    theme.palette.text_subtle = Color::hex(0xBCC4D4);
+    // against white titles is carried by size. On the solid surface there is no
+    // blur to fight, so the descriptions can drop a step and gain hierarchy.
+    theme.palette.text_subtle = if needs_opaque_surface() {
+        Color::hex(0x99A3B1)
+    } else {
+        Color::hex(0xBCC4D4)
+    };
+    // Row labels carry the hierarchy on both surfaces: the reference sets them
+    // semibold at body size, which is also what stops a long description from
+    // reading as the primary text.
+    theme.form.label_size = Some(14.0);
+    theme.form.label_weight = Some(600);
+    if needs_opaque_surface() {
+        // The reference marks the active section with a solid blue pill instead
+        // of a thin accent wash, and keeps its label near white.
+        theme.list.selected_bg = Some(FALLBACK_NAV_SELECTED);
+        theme.list.selected_text = Some(FALLBACK_NAV_TEXT);
+    }
     theme.input.bg = Some(if needs_opaque_surface() {
         FALLBACK_FIELD
     } else {

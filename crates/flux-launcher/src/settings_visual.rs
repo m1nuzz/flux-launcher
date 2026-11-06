@@ -7,7 +7,7 @@ use flux_core::{
 use windui::prelude::*;
 
 use super::color_picker;
-use super::settings_shell::{settings_scroll_gutter, settings_section_header};
+use super::settings_shell::{settings_group, settings_scroll_gutter};
 use super::settings_ui::SettingsUi;
 use super::theme_text::selection_palette;
 use super::ui_constants::VISUAL_SLIDER_WIDTH;
@@ -27,97 +27,104 @@ pub(crate) fn build_visual_tab(ui: &SettingsUi) -> Element {
                 .child(
                     Element::col()
                         .weight(1.0)
-                        .spacing(12)
-                        .child(settings_section_header("Caret"))
-                        .child(Element::setting_row_desc(
-                            "Smooth caret",
-                            "Animate search caret movement",
-                            Element::row()
-                                .spacing(8)
-                                .cross(Align::Center)
-                                .child(Element::switch(ui.smooth_caret))
-                                .child(
-                                    Element::text_input(ui.caret_duration, "95")
-                                        .width(64)
-                                        .enabled_when(move || smooth_caret.get()),
-                                )
-                                .child(Element::label("ms").font_size(11.0)),
+                        .spacing(16)
+                        .child(settings_group(
+                            "Caret",
+                            vec![Element::setting_row_desc(
+                                "Smooth caret",
+                                "Animate search caret movement",
+                                Element::row()
+                                    .spacing(8)
+                                    .cross(Align::Center)
+                                    .child(Element::switch(ui.smooth_caret))
+                                    .child(
+                                        Element::text_input(ui.caret_duration, "95")
+                                            .width(64)
+                                            .enabled_when(move || smooth_caret.get()),
+                                    )
+                                    .child(Element::label("ms").font_size(11.0)),
+                            )],
                         ))
-                        .child(Element::divider())
-                        .child(settings_section_header("Selection color"))
-                        .child(Element::setting_row_desc(
-                            "Use Windows accent",
-                            "Follow the Windows 11 system accent color when available",
-                            Element::switch(ui.use_system_accent),
+                        .child(settings_group(
+                            "Selection color",
+                            vec![
+                                Element::setting_row_desc(
+                                    "Use Windows accent",
+                                    "Follow the Windows 11 system accent color when available",
+                                    Element::switch(ui.use_system_accent),
+                                ),
+                                Element::label("The custom color below is both the safe fallback and the manual choice.")
+                                    .font_size(11.0)
+                                    .fg_role(Role::TextSubtle)
+                                    .max_lines(2)
+                                    .truncate(Truncate::End)
+                                    .width_match(),
+                                Element::col()
+                                    .width_match()
+                                    .spacing(8)
+                                    .visible_when(move || !custom_color_visible.get())
+                                    .child(
+                                        Element::text_input(ui.custom_selection_color, "#4C8BF4")
+                                            .width_match(),
+                                    )
+                                    .child(selection_palette(
+                                        ui.custom_selection_color,
+                                        ui.color_hsv,
+                                        ui.selection_color,
+                                        &ui.theme_handle,
+                                    ))
+                                    .child(color_picker::build_color_picker(
+                                        ui.custom_selection_color,
+                                        ui.color_hsv,
+                                        ui.selection_color,
+                                        &ui.theme_handle,
+                                        Arc::clone(&ui.shared_settings),
+                                    )),
+                            ],
                         ))
-                        .child(
-                            Element::label("The custom color below is both the safe fallback and the manual choice.")
-                                .font_size(11.0)
-                                .fg(Color::rgba(235, 241, 255, 235))
-                                .max_lines(2)
-                                .truncate(Truncate::End),
-                        )
-                        .child(
-                            Element::col()
-                                .width_match()
-                                .spacing(8)
-                                .visible_when(move || !custom_color_visible.get())
-                                .child(
-                                    Element::text_input(ui.custom_selection_color, "#4C8BF4")
-                                        .width_match(),
-                                )
-                                .child(selection_palette(
-                                    ui.custom_selection_color,
-                                    ui.color_hsv,
-                                    ui.selection_color,
-                                    &ui.theme_handle,
-                                ))
-                                .child(color_picker::build_color_picker(
-                                    ui.custom_selection_color,
-                                    ui.color_hsv,
-                                    ui.selection_color,
-                                    &ui.theme_handle,
-                                    Arc::clone(&ui.shared_settings),
-                                )),
-                        )
-                        .child(Element::divider())
-                        .child(settings_section_header("Launcher size"))
-                        .child(Element::setting_row_desc(
-                            "Launcher width",
-                            format!("Safe range: {MIN_LAUNCHER_WIDTH}-{MAX_LAUNCHER_WIDTH} logical px (DIP)"),
-                            dimension_editor(
-                                ui.launcher_width_slider,
-                                ui.launcher_width_input,
-                                ui.launcher_width,
-                                ui.launcher_height,
-                                ui.visual_preview_generation,
-                                ui.launcher_preview_text,
-                                true,
-                            ),
+                        .child(settings_group(
+                            "Launcher size",
+                            vec![
+                                Element::setting_row_desc(
+                                    "Launcher width",
+                                    format!("{MIN_LAUNCHER_WIDTH}-{MAX_LAUNCHER_WIDTH} logical px (DIP)"),
+                                    dimension_editor(
+                                        ui.launcher_width_slider,
+                                        ui.launcher_width_input,
+                                        ui.launcher_width,
+                                        ui.launcher_height,
+                                        ui.visual_preview_generation,
+                                        ui.launcher_preview_text,
+                                        true,
+                                    ),
+                                ),
+                                Element::setting_row_desc(
+                                    "Results height",
+                                    format!("{MIN_LAUNCHER_HEIGHT}-{MAX_LAUNCHER_HEIGHT} logical px (DIP)"),
+                                    dimension_editor(
+                                        ui.launcher_height_slider,
+                                        ui.launcher_height_input,
+                                        ui.launcher_width,
+                                        ui.launcher_height,
+                                        ui.visual_preview_generation,
+                                        ui.launcher_preview_text,
+                                        false,
+                                    ),
+                                ),
+                            ],
                         ))
-                        .child(Element::setting_row_desc(
-                            "Results height",
-                            format!("Safe range: {MIN_LAUNCHER_HEIGHT}-{MAX_LAUNCHER_HEIGHT} logical px (DIP)"),
-                            dimension_editor(
-                                ui.launcher_height_slider,
-                                ui.launcher_height_input,
-                                ui.launcher_width,
-                                ui.launcher_height,
-                                ui.visual_preview_generation,
-                                ui.launcher_preview_text,
-                                false,
-                            ),
-                        ))
-                        .child(Element::divider())
-                        .child(settings_section_header("Live preview"))
-                        .child(Element::label_signal(ui.launcher_preview_text).font_size(12.0))
-                        .child(
-                            Element::label("The native preview uses the exact requested logical client dimensions. Physical pixels scale with the preview monitor DPI; Apply settings saves the values.")
-                                .font_size(11.0)
-                                .fg(Color::rgba(235, 241, 255, 235))
-                                .max_lines(2)
-                                .truncate(Truncate::End),
-                        ),
+                        .child(settings_group(
+                            "Live preview",
+                            vec![
+                                Element::label_signal(ui.launcher_preview_text).font_size(12.0),
+                                Element::label("The native preview uses the exact requested logical client dimensions. Physical pixels scale with the preview monitor DPI; Apply settings saves the values.")
+                                    .font_size(11.0)
+                                    .fg_role(Role::TextSubtle)
+                                    .max_lines(2)
+                                    .truncate(Truncate::End)
+                                    .width_match(),
+                            ],
+                        )),
                 )
                 .child(settings_scroll_gutter()),
         )
