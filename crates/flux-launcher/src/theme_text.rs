@@ -546,6 +546,11 @@ pub(crate) fn launcher_theme() -> Theme {
         // of a thin accent wash, and keeps its label near white.
         theme.list.selected_bg = Some(FALLBACK_NAV_SELECTED);
         theme.list.selected_text = Some(FALLBACK_NAV_TEXT);
+        // Measured off the reference frame: one labelled row there is about 80
+        // logical pixels tall against our 59, because the default padding only
+        // clears the text. Airier rows are what makes a panel read as a list of
+        // choices rather than a dense form.
+        theme.form.row_pad_y = Some(20);
     }
     theme.input.bg = Some(if needs_opaque_surface() {
         FALLBACK_FIELD

@@ -41,7 +41,7 @@ pub(crate) fn settings_section_header(title: &str) -> Element {
 pub(crate) fn settings_group(title: &str, rows: Vec<Element>) -> Element {
     let mut body = Element::col()
         .width_match()
-        .padding_edges(16, 8, 16, 8)
+        .padding_edges(16, 12, 16, 12)
         .spacing(4);
     for row in rows {
         body = body.child(row);
