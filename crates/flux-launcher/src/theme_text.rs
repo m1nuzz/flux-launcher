@@ -517,6 +517,10 @@ pub(crate) fn launcher_theme() -> Theme {
         Color::rgba(48, 49, 51, 205)
     };
     theme.palette.border = Color::rgba(255, 255, 255, 22);
+    // The off state of switches, checkboxes and radios is painted from
+    // `palette.track`. The vendor value is an opaque dark blue-gray, which on a
+    // dark material reads as a black hole rather than as an inactive control.
+    theme.palette.track = Color::rgba(255, 255, 255, 46);
     // The Search control is transparent, so its foreground must stay readable
     // over both dark and light Acrylic samples. Keep ordinary text neutral and
     // opaque; reserve accent blue for selection/focus feedback only.

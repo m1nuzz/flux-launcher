@@ -45,6 +45,17 @@ pub(crate) struct SettingsUi {
     pub(crate) activation_meta: Signal<bool>,
     pub(crate) activation_recording: Signal<bool>,
     pub(crate) activation_handle: HotkeyHandle,
+    /// Game Mode's own shortcut: drafts, the recorder flag and the live handle
+    /// that Apply rebinds.
+    pub(crate) game_mode_key: Signal<String>,
+    pub(crate) game_mode_display: Signal<String>,
+    pub(crate) game_mode_recording: Signal<bool>,
+    pub(crate) game_mode_ctrl: Signal<bool>,
+    pub(crate) game_mode_alt: Signal<bool>,
+    pub(crate) game_mode_shift: Signal<bool>,
+    pub(crate) game_mode_meta: Signal<bool>,
+    pub(crate) game_mode_hotkey_enabled: Signal<bool>,
+    pub(crate) game_mode_handle: HotkeyHandle,
     pub(crate) ignore_fullscreen: Signal<bool>,
     pub(crate) smooth_caret: Signal<bool>,
     pub(crate) switch_to_english_layout: Signal<bool>,

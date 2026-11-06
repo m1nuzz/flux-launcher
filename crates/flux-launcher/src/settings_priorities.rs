@@ -71,46 +71,32 @@ pub(crate) fn build_priority_list(ui: &SettingsUi) -> Element {
                                 .truncate(Truncate::End),
                         ),
                 )
-                .child(
-                    Element::button("↑")
-                        .small()
-                        .neutral()
-                        .outline_soft()
-                        .on_click(move |ctx| {
-                            if move_priority_entry(&settings_for_up, priorities, &id_for_up, -1) {
-                                refresh_merged_results(
-                                    &providers_for_up,
-                                    query_for_up,
-                                    priorities,
-                                    results,
-                                );
-                                ctx.toast_ok("Priority moved up");
-                            }
-                        }),
-                )
-                .child(
-                    Element::button("↓")
-                        .small()
-                        .neutral()
-                        .outline_soft()
-                        .on_click(move |ctx| {
-                            if move_priority_entry(&settings_for_down, priorities, &id_for_down, 1)
-                            {
-                                refresh_merged_results(
-                                    &providers_for_down,
-                                    query_for_down,
-                                    priorities,
-                                    results,
-                                );
-                                ctx.toast_ok("Priority moved down");
-                            }
-                        }),
-                )
+                .child(Element::button("↑").small().neutral().on_click(move |ctx| {
+                    if move_priority_entry(&settings_for_up, priorities, &id_for_up, -1) {
+                        refresh_merged_results(
+                            &providers_for_up,
+                            query_for_up,
+                            priorities,
+                            results,
+                        );
+                        ctx.toast_ok("Priority moved up");
+                    }
+                }))
+                .child(Element::button("↓").small().neutral().on_click(move |ctx| {
+                    if move_priority_entry(&settings_for_down, priorities, &id_for_down, 1) {
+                        refresh_merged_results(
+                            &providers_for_down,
+                            query_for_down,
+                            priorities,
+                            results,
+                        );
+                        ctx.toast_ok("Priority moved down");
+                    }
+                }))
                 .child(
                     Element::button("Remove")
                         .small()
                         .neutral()
-                        .outline_soft()
                         .on_click(move |ctx| {
                             if remove_priority_entry(
                                 &settings_for_remove,

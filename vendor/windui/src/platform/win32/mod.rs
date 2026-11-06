@@ -353,6 +353,9 @@ struct WindowState {
     hotkeys: Option<hotkey::HotkeyState>,
     /// 无标题栏窗口：wnd_proc 据此处理 WM_NCCALCSIZE / WM_NCHITTEST。
     frameless: bool,
+    /// 窗口能否被拖动缩放。固定尺寸的窗口不提供边缘缩放带：那一圈只会
+    /// 抢走客户区边缘的点击（滚动条、贴边控件），却什么都做不了。
+    resizable: bool,
     /// 是否已向系统申请鼠标离开通知（TrackMouseEvent）。离开后系统清此标志需重新申请。
     mouse_tracked: bool,
     /// A pending high surrogate from WM_CHAR/WM_IME_CHAR or an IME result string.
@@ -461,6 +464,9 @@ impl WindowState {
             tray: None,
             hotkeys: None,
             frameless: false,
+            // Most windui windows are fixed dialogs; run_windowed overwrites this
+            // from the window config before the window is shown.
+            resizable: true,
             mouse_tracked: false,
             pending_surrogate: None,
             ime_composing: false,
@@ -944,6 +950,10 @@ unsafe fn run_windowed(
     single: Option<crate::single_instance::SingleInstance>,
 ) {
     let _ = SetProcessDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2);
+    // A fixed-size window has no resize border, so the scrollbar must not give up
+    // the last strip of the client area to it: with the inset enabled the track
+    // sat 8px away from the edge and the rail beside it ignored clicks.
+    crate::core::scrollbar::set_window_resizable(cfg.resizable);
 
     let hmodule = GetModuleHandleW(None).expect("GetModuleHandleW 失败");
     let hinst = HINSTANCE(hmodule.0);
@@ -991,6 +1001,7 @@ unsafe fn run_windowed(
     // 把 WindowState 装箱，指针随 CreateWindow 传入，在 WM_NCCREATE 挂到 HWND。
     let mut state = Box::new(WindowState::new(handler, cfg.bg, backdrop_available));
     state.material_fallback = cfg.backdrop != Backdrop::None && !backdrop_available;
+    state.resizable = cfg.resizable;
     #[cfg(feature = "d2d")]
     {
         state.backdrop = cfg.backdrop;
@@ -2041,10 +2052,13 @@ unsafe fn handle_nchittest(hwnd: HWND, lparam: LPARAM) -> LRESULT {
         return LRESULT(HTCLIENT as isize);
     }
     // 缩放边框宽度（物理像素，按 DPI 放大；逻辑上恒为 RESIZE_BORDER_LOGICAL）。
+    // 固定尺寸的窗口没有缩放带：否则贴边的那一圈会把这些点击从客户区抢走
+    // （滚动条的抓取区首当其冲），而窗口本身又不会改变大小。
     let dpi = GetDpiForWindow(hwnd).max(96);
     let m = ((RESIZE_BORDER_LOGICAL as f32 * dpi as f32 / 96.0) as i32).max(4);
-    let (left, right) = (pt.x < m, pt.x >= w - m);
-    let (top, bottom) = (pt.y < m, pt.y >= h - m);
+    let resize_edges = state_from(hwnd).map(|s| s.resizable).unwrap_or(true);
+    let (left, right) = (resize_edges && pt.x < m, resize_edges && pt.x >= w - m);
+    let (top, bottom) = (resize_edges && pt.y < m, resize_edges && pt.y >= h - m);
     let ht: i32 = if top && left {
         HTTOPLEFT as i32
     } else if top && right {

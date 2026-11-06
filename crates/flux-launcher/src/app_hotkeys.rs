@@ -113,15 +113,30 @@ pub(crate) fn register_activation_hotkey(
 }
 
 pub(crate) fn register_game_mode_hotkey(
-    app: App,
+    app: &mut App,
     shared_settings: Arc<RwLock<Settings>>,
     game_mode: Signal<bool>,
     game_mode_status: Signal<String>,
-) -> App {
+) -> HotkeyHandle {
     let settings_for_game_hotkey = Arc::clone(&shared_settings);
     let game_mode_for_hotkey = game_mode;
     let game_mode_status_for_hotkey = game_mode_status;
-    app.hotkey(hotkeys::game_mode_toggle_hotkey(), move |_| {
+    let (hotkey, enabled) = shared_settings
+        .read()
+        .map(|settings| {
+            (
+                hotkeys::game_mode_hotkey(&settings.game_mode_hotkey),
+                settings.game_mode_hotkey_enabled,
+            )
+        })
+        .unwrap_or_else(|_| {
+            let defaults = Settings::default();
+            (
+                hotkeys::game_mode_hotkey(&defaults.game_mode_hotkey),
+                defaults.game_mode_hotkey_enabled,
+            )
+        });
+    let handle = app.hotkey_handle(hotkey, move |_| {
         let enabled = !game_mode_for_hotkey.get();
         set_game_mode(
             &settings_for_game_hotkey,
@@ -129,5 +144,7 @@ pub(crate) fn register_game_mode_hotkey(
             game_mode_status_for_hotkey,
             enabled,
         );
-    })
+    });
+    handle.set_enabled(enabled);
+    handle
 }

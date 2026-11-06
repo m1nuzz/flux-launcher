@@ -44,8 +44,6 @@ pub(crate) fn build_plugins_tab(ui: &SettingsUi) -> Element {
                                     .width_match(),
                                 Element::button("Install Everything")
                                     .small()
-                                    .neutral()
-                                    .outline_soft()
                                     .visible_when(move || !everything_installed.get())
                                     .on_click(move |ctx| {
                                         match everything::launch_winget_install() {

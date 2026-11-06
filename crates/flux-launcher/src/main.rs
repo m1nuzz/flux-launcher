@@ -173,6 +173,14 @@ fn main() {
     let activation_alt = signal(settings.activation_hotkey.alt);
     let activation_shift = signal(settings.activation_hotkey.shift);
     let activation_meta = signal(settings.activation_hotkey.meta);
+    let game_mode_key = signal(settings.game_mode_hotkey.key.clone());
+    let game_mode_display = signal(hotkeys::display_config(&settings.game_mode_hotkey));
+    let game_mode_recording = signal(false);
+    let game_mode_ctrl = signal(settings.game_mode_hotkey.ctrl);
+    let game_mode_alt = signal(settings.game_mode_hotkey.alt);
+    let game_mode_shift = signal(settings.game_mode_hotkey.shift);
+    let game_mode_meta = signal(settings.game_mode_hotkey.meta);
+    let game_mode_hotkey_enabled = signal(settings.game_mode_hotkey_enabled);
     let ignore_fullscreen = signal(settings.ignore_hotkeys_in_fullscreen);
     let smooth_caret = signal(settings.smooth_caret);
     let switch_to_english_layout = signal(settings.switch_to_english_layout);
@@ -341,15 +349,16 @@ fn main() {
         .child(launcher_content.align(Align::Start));
 
     let settings_at_start = settings_visible.get();
+    let settings_canvas = window_geometry::settings_window_size(initial_monitor_preference);
     let initial_height = if settings_at_start {
-        SETTINGS_WINDOW_HEIGHT
+        settings_canvas.1
     } else if everything_prompt_visible_at_start {
         EVERYTHING_PROMPT_WINDOW_HEIGHT
     } else {
         COMPACT_WINDOW_HEIGHT
     };
     let initial_width = if settings_at_start {
-        SETTINGS_WINDOW_WIDTH
+        settings_canvas.0
     } else if everything_prompt_visible_at_start {
         EVERYTHING_PROMPT_WINDOW_WIDTH
     } else {
@@ -518,8 +527,8 @@ fn main() {
         launcher_height,
     );
 
-    app = app_hotkeys::register_game_mode_hotkey(
-        app,
+    let game_mode_hotkey_handle = app_hotkeys::register_game_mode_hotkey(
+        &mut app,
         Arc::clone(&shared_settings),
         game_mode,
         game_mode_status,
@@ -535,6 +544,14 @@ fn main() {
         activation_shift,
         activation_meta,
         activation_handle.clone(),
+        game_mode_recording,
+        game_mode_display,
+        game_mode_key,
+        game_mode_ctrl,
+        game_mode_alt,
+        game_mode_shift,
+        game_mode_meta,
+        game_mode_hotkey_handle.clone(),
         query,
         query_caret_position,
         results,
@@ -624,6 +641,15 @@ fn main() {
         activation_meta,
         activation_recording,
         activation_handle: activation_handle.clone(),
+        game_mode_key,
+        game_mode_display,
+        game_mode_recording,
+        game_mode_ctrl,
+        game_mode_alt,
+        game_mode_shift,
+        game_mode_meta,
+        game_mode_hotkey_enabled,
+        game_mode_handle: game_mode_hotkey_handle.clone(),
         ignore_fullscreen,
         smooth_caret,
         switch_to_english_layout,

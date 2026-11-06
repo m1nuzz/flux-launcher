@@ -163,35 +163,29 @@ fn dimension_editor(
         .cross(Align::Center)
         .child(Element::slider(slider).width(VISUAL_SLIDER_WIDTH))
         .child(Element::text_input(input, placeholder).width(64))
-        .child(
-            Element::button("Reset")
-                .small()
-                .neutral()
-                .outline_soft()
-                .on_click(move |_| {
-                    let (next_width, next_height) = if is_width {
-                        (default, height.get())
-                    } else {
-                        (width.get(), default)
-                    };
-                    eprintln!("Visual {label} reset clicked: {next_width}x{next_height}");
-                    width.set(next_width);
-                    height.set(next_height);
-                    input.set(if is_width {
-                        next_width.to_string()
-                    } else {
-                        next_height.to_string()
-                    });
-                    slider.set(dimension_slider_fraction(
-                        if is_width { next_width } else { next_height },
-                        min,
-                        max,
-                    ));
-                    preview_text.set(format!(
-                        "Current launcher client area: {next_width} × {next_height} logical px (DIP)"
-                    ));
-                    preview_generation.set(preview_generation.get().saturating_add(1));
-                }),
-        )
+        .child(Element::button("Reset").small().on_click(move |_| {
+            let (next_width, next_height) = if is_width {
+                (default, height.get())
+            } else {
+                (width.get(), default)
+            };
+            eprintln!("Visual {label} reset clicked: {next_width}x{next_height}");
+            width.set(next_width);
+            height.set(next_height);
+            input.set(if is_width {
+                next_width.to_string()
+            } else {
+                next_height.to_string()
+            });
+            slider.set(dimension_slider_fraction(
+                if is_width { next_width } else { next_height },
+                min,
+                max,
+            ));
+            preview_text.set(format!(
+                "Current launcher client area: {next_width} × {next_height} logical px (DIP)"
+            ));
+            preview_generation.set(preview_generation.get().saturating_add(1));
+        }))
         .child(Element::label("DIP").font_size(11.0))
 }

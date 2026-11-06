@@ -287,15 +287,19 @@ pub(crate) fn register_interval(
             everything_plugins_smoke_reported = true;
         }
         if settings_is_visible && !last_settings_visible {
+            let mut canvas = (SETTINGS_WINDOW_WIDTH, SETTINGS_WINDOW_HEIGHT);
             if let Ok(settings) = settings_for_interval_geometry.read() {
+                let (width, height) =
+                    super::window_geometry::settings_window_size(settings.monitor_preference);
+                canvas = (width, height);
                 request_monitor_position(
                     &position_for_interval,
                     settings.monitor_preference,
-                    SETTINGS_WINDOW_WIDTH,
-                    SETTINGS_WINDOW_HEIGHT,
+                    width,
+                    height,
                 );
             }
-            size_for_interval.set(SETTINGS_WINDOW_WIDTH, SETTINGS_WINDOW_HEIGHT);
+            size_for_interval.set(canvas.0, canvas.1);
         }
         if prompt_is_visible != last_everything_prompt_visible {
             last_everything_prompt_visible = prompt_is_visible;
@@ -535,7 +539,12 @@ pub(crate) fn register_interval(
             // without relying on brittle screen-coordinate tray automation.
             settings_visible_for_interval.set(true);
             ctx.show_window();
-            size_for_interval.set(SETTINGS_WINDOW_WIDTH, SETTINGS_WINDOW_HEIGHT);
+            let preference = settings_for_interval_geometry
+                .read()
+                .map(|settings| settings.monitor_preference)
+                .unwrap_or_default();
+            let (width, height) = super::window_geometry::settings_window_size(preference);
+            size_for_interval.set(width, height);
             return;
         }
         let next_query = query_for_interval.get();

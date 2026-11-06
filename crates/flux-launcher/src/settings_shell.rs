@@ -1,7 +1,7 @@
 use windui::prelude::*;
 
 use super::settings_actions::{
-    apply_settings, close_settings, reset_active_tab, tab_is_resettable,
+    apply_settings, close_settings, has_unsaved_changes, reset_active_tab, tab_is_resettable,
 };
 use super::settings_ui::SettingsUi;
 use super::ui_constants::SETTINGS_SIDEBAR_WIDTH;
@@ -35,9 +35,11 @@ pub(crate) fn settings_section_header(title: &str) -> Element {
 /// One settings group: a title above the panel that holds its rows.
 ///
 /// On the solid fallback surface the panel is a raised card with a hairline
-/// edge, which is what carries the hierarchy in the reference. With live
-/// Acrylic the panel paints nothing: the system material has to stay the
-/// background of the whole window, so only the spacing is shared.
+/// edge, which is what carries the hierarchy in the reference. Over live
+/// Acrylic the same step is made of light instead of hue: a restrained white
+/// plate lifts a group off the material without covering it, so the desktop
+/// still reads through every panel and the surface stops looking like one
+/// flat field of blur.
 pub(crate) fn settings_group(title: &str, rows: Vec<Element>) -> Element {
     let mut body = Element::col()
         .width_match()
@@ -46,12 +48,15 @@ pub(crate) fn settings_group(title: &str, rows: Vec<Element>) -> Element {
     for row in rows {
         body = body.child(row);
     }
-    if super::theme_text::needs_opaque_surface() {
-        body = body
-            .bg(super::theme_text::FALLBACK_PANEL)
+    body = if super::theme_text::needs_opaque_surface() {
+        body.bg(super::theme_text::FALLBACK_PANEL)
             .corner(12.0)
-            .border(super::theme_text::FALLBACK_EDGE, 1);
-    }
+            .border(super::theme_text::FALLBACK_EDGE, 1)
+    } else {
+        body.bg(Color::rgba(255, 255, 255, 22))
+            .corner(12.0)
+            .border(Color::rgba(255, 255, 255, 40), 1)
+    };
     Element::col()
         .width_match()
         .spacing(8)
@@ -69,7 +74,9 @@ pub(crate) fn settings_group(title: &str, rows: Vec<Element>) -> Element {
 /// its hit zone, gives breathing room against the panel edge when the tab
 /// does not overflow, and leaves the left edge aligned with the header.
 pub(crate) fn settings_scroll_gutter() -> Element {
-    Element::leaf().size(12, 1)
+    // Wide enough that the panels keep their inset while the track itself moves
+    // out to the window edge: the rail between them is the scrollbar's grab band.
+    Element::leaf().size(14, 1)
 }
 
 pub(crate) fn build_settings_panel(
@@ -112,6 +119,8 @@ pub(crate) fn build_settings_panel(
     // dismisses the window and the hotkey opens the search strip again.
     let header = heading;
 
+    let ui_for_hint = ui.clone();
+    let ui_for_apply_visible = ui.clone();
     let footer = Element::row()
         .width_match()
         .spacing(10)
@@ -120,17 +129,17 @@ pub(crate) fn build_settings_panel(
             Element::label("Changes are written when you press Apply settings.")
                 .font_size(11.0)
                 .fg(Color::rgba(235, 241, 255, 210))
-                .weight(1.0),
+                .weight(1.0)
+                .visible_when(move || has_unsaved_changes(&ui_for_hint)),
         )
         .child(
             Element::button("\u{2713} Apply settings")
+                .visible_when(move || has_unsaved_changes(&ui_for_apply_visible))
                 .on_click(move |ctx| apply_settings(&ui_for_apply, ctx)),
         );
 
     let reset = Element::button("Reset tab defaults")
         .small()
-        .neutral()
-        .outline_soft()
         .width_match()
         .tooltip("Restore this tab's defaults. Nothing is saved until you press Apply settings.")
         .visible_when(move || tab_is_resettable(settings_tab.get()))
@@ -162,24 +171,25 @@ pub(crate) fn build_settings_panel(
         // panels; the darker window fill is what shows between the groups and
         // behind the footer band.
         sidebar = sidebar.bg(super::theme_text::FALLBACK_PANEL);
+    } else {
+        // The other half of the layering: the column sits just below the
+        // material while the group plates rise above it. The step stays small
+        // because a heavy dark plate here reads as a black hole, not as depth.
+        sidebar = sidebar.bg(Color::rgba(0, 0, 0, 22));
     }
 
-    // The reference frame puts the brand and the window controls in a strip
-    // above both columns, so the frameless window stays movable and closable
-    // without a system titlebar. Maximize is deliberately absent: the Settings
-    // canvas has one fixed size, so a maximize control would be a dead button.
+    // The reference frame carries the product name and a close control in a
+    // strip above both columns, so the frameless window stays movable and
+    // dismissible without a system titlebar. There is no logo here: the mark in
+    // the reference is not this app's. Maximize is absent because the Settings
+    // canvas has one fixed size, and minimize because the window is a
+    // tray-resident surface that the hotkey already hides and shows.
     let titlebar = Element::row()
         .width_match()
         .height(40)
         .padding_edges(16, 6, 6, 0)
         .spacing(8)
         .cross(Align::Center)
-        .child(
-            Element::label("\u{e945}")
-                .font_size(15.0)
-                .font_family(ICON_FONT)
-                .fg_role(Role::Accent),
-        )
         .child(
             Element::label("Flux Launcher")
                 .font_size(13.0)
@@ -188,13 +198,6 @@ pub(crate) fn build_settings_panel(
         )
         .child(Element::flex_spacer().window_drag())
         .child(
-            Element::icon_button("\u{e921}")
-                .font_family(ICON_FONT)
-                .font_size(10.0)
-                .tooltip("Minimize Flux Launcher")
-                .on_click(move |ctx| ctx.minimize()),
-        )
-        .child(
             Element::icon_button("\u{e8bb}")
                 .font_family(ICON_FONT)
                 .font_size(12.0)
@@ -202,10 +205,14 @@ pub(crate) fn build_settings_panel(
                 .on_click(move |_| close_settings(&ui_for_close)),
         );
 
+    // No right padding: the scroll container has to reach the window edge so the
+    // scrollbar's grab zone covers the whole right rail instead of leaving a dead
+    // strip there. The visible inset comes from the width the scrollbar reserves
+    // plus the gutter below, which keeps the panels symmetric with the left side.
     let content = Element::col()
         .weight(1.0)
         .height_match()
-        .padding_edges(18, 16, 16, 8)
+        .padding_edges(18, 16, 0, 8)
         .spacing(10)
         .child(header)
         .child(tab_general)

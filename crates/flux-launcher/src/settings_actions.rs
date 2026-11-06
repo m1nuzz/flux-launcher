@@ -10,7 +10,9 @@ use super::hotkeys;
 use super::settings_stats::STATS_TAB_INDEX;
 use super::settings_ui::SettingsUi;
 use super::startup;
-use super::theme_text::{rgb_to_hsv, selection_color_hex, stage_selection_color};
+use super::theme_text::{
+    parse_selection_color, rgb_to_hsv, selection_color_hex, stage_selection_color,
+};
 use super::ui_constants::COMPACT_WINDOW_HEIGHT;
 use super::update_tasks::{
     request_update_check, request_update_install, save_settings, update_check_due,
@@ -61,6 +63,14 @@ pub(crate) fn apply_settings(ui: &SettingsUi, ctx: &mut EventCtx) {
     .unwrap_or(DEFAULT_LAUNCHER_HEIGHT);
     if let Ok(mut settings) = ui.shared_settings.write() {
         settings.activation_hotkey = configuration;
+        settings.game_mode_hotkey = HotkeyConfig {
+            ctrl: ui.game_mode_ctrl.get(),
+            alt: ui.game_mode_alt.get(),
+            shift: ui.game_mode_shift.get(),
+            meta: ui.game_mode_meta.get(),
+            key: ui.game_mode_key.get(),
+        };
+        settings.game_mode_hotkey_enabled = ui.game_mode_hotkey_enabled.get();
         settings.ignore_hotkeys_in_fullscreen = ui.ignore_fullscreen.get();
         settings.game_mode = ui.game_mode.get();
         settings.smooth_caret = ui.smooth_caret.get();
@@ -115,6 +125,13 @@ pub(crate) fn apply_settings(ui: &SettingsUi, ctx: &mut EventCtx) {
         ui.activation_handle
             .set(hotkeys::activation_hotkey(&settings.activation_hotkey));
         ui.activation_handle.set_enabled(true);
+        ui.game_mode_display
+            .set(hotkeys::display_config(&settings.game_mode_hotkey));
+        ui.game_mode_handle
+            .set(hotkeys::game_mode_hotkey(&settings.game_mode_hotkey));
+        ui.game_mode_handle
+            .set_enabled(settings.game_mode_hotkey_enabled);
+        ui.game_mode_recording.set(false);
         ui.game_mode_status.set(game_mode_label(settings.game_mode));
         if settings.auto_enable_everything {
             match everything::start_background_if_installed() {
@@ -187,6 +204,16 @@ pub(crate) fn close_settings(ui: &SettingsUi) {
         ui.activation_meta,
         &ui.activation_handle,
     );
+    hotkeys::end_recording(
+        ui.game_mode_recording,
+        ui.game_mode_display,
+        ui.game_mode_key,
+        ui.game_mode_ctrl,
+        ui.game_mode_alt,
+        ui.game_mode_shift,
+        ui.game_mode_meta,
+        &ui.game_mode_handle,
+    );
     ui.settings_visible.set(false);
     let height = if ui.show_results.get() {
         i32::from(ui.launcher_height.get())
@@ -206,6 +233,83 @@ pub(crate) fn close_settings(ui: &SettingsUi) {
     // The hide belongs to the interval tick: it is where the visual preview
     // child gets dropped, and the tick stops running once the window is hidden.
     ui.settings_hide_request.set(true);
+}
+
+/// Whether the draft signals differ from the stored configuration.
+///
+/// The footer's Apply is the only persist point, so it is shown exactly when
+/// pressing it would write something. A window where nothing was touched has no
+/// primary action at all, which is what the reference does and what keeps the
+/// reader from looking for a save that would do nothing.
+pub(crate) fn has_unsaved_changes(ui: &SettingsUi) -> bool {
+    let Ok(settings) = ui.shared_settings.read() else {
+        return false;
+    };
+    let duration = ui
+        .caret_duration
+        .get()
+        .trim()
+        .parse::<u16>()
+        .unwrap_or(95)
+        .clamp(60, 160);
+    let hotkey = HotkeyConfig {
+        ctrl: ui.activation_ctrl.get(),
+        alt: ui.activation_alt.get(),
+        shift: ui.activation_shift.get(),
+        meta: ui.activation_meta.get(),
+        key: ui.activation_key.get(),
+    };
+    let game_hotkey = HotkeyConfig {
+        ctrl: ui.game_mode_ctrl.get(),
+        alt: ui.game_mode_alt.get(),
+        shift: ui.game_mode_shift.get(),
+        meta: ui.game_mode_meta.get(),
+        key: ui.game_mode_key.get(),
+    };
+    let width = parse_dimension_input(
+        &ui.launcher_width_input.get(),
+        MIN_LAUNCHER_WIDTH,
+        MAX_LAUNCHER_WIDTH,
+    )
+    .unwrap_or(DEFAULT_LAUNCHER_WIDTH);
+    let height = parse_dimension_input(
+        &ui.launcher_height_input.get(),
+        MIN_LAUNCHER_HEIGHT,
+        MAX_LAUNCHER_HEIGHT,
+    )
+    .unwrap_or(DEFAULT_LAUNCHER_HEIGHT);
+    let interval = ui
+        .update_interval_hours
+        .get()
+        .trim()
+        .parse::<u32>()
+        .unwrap_or(24)
+        .clamp(1, 168);
+    let accent = parse_selection_color(&ui.custom_selection_color.get()).unwrap_or(0x4c_8b_f4);
+    settings.activation_hotkey != hotkey
+        || settings.game_mode_hotkey != game_hotkey
+        || settings.game_mode_hotkey_enabled != ui.game_mode_hotkey_enabled.get()
+        || settings.ignore_hotkeys_in_fullscreen != ui.ignore_fullscreen.get()
+        || settings.game_mode != ui.game_mode.get()
+        || settings.smooth_caret != ui.smooth_caret.get()
+        || settings.switch_to_english_layout != ui.switch_to_english_layout.get()
+        || settings.use_system_accent != ui.use_system_accent.get()
+        || settings.custom_selection_color != accent
+        || settings.launcher_width != width
+        || settings.launcher_height != height
+        || settings.clear_query_on_activation != ui.clear_query_on_activation.get()
+        || settings.start_with_windows != ui.start_with_windows.get()
+        || settings.auto_enable_everything != ui.auto_enable_everything.get()
+        || settings.update_checks_enabled != ui.update_checks_enabled.get()
+        || settings.update_interval_hours != interval
+        || settings.auto_install_updates != ui.auto_install_updates.get()
+        || settings.obsidian_enabled != ui.obsidian_enabled.get()
+        || settings.obsidian_alias != ui.obsidian_alias.get()
+        || settings.google_enabled != ui.google_enabled.get()
+        || settings.google_alias != ui.google_alias.get()
+        || settings.monitor_preference != monitor_preference_from_index(ui.monitor_preference.get())
+        || settings.smooth_caret_duration_ms != duration
+        || settings.priority_entries != ui.priorities.get()
 }
 
 /// Hand an available update to the installer without leaving Settings.
@@ -280,6 +384,15 @@ fn reset_general(ui: &SettingsUi, defaults: &Settings) {
     ui.ignore_fullscreen
         .set(defaults.ignore_hotkeys_in_fullscreen);
     ui.game_mode.set(defaults.game_mode);
+    ui.game_mode_ctrl.set(defaults.game_mode_hotkey.ctrl);
+    ui.game_mode_alt.set(defaults.game_mode_hotkey.alt);
+    ui.game_mode_shift.set(defaults.game_mode_hotkey.shift);
+    ui.game_mode_meta.set(defaults.game_mode_hotkey.meta);
+    ui.game_mode_key.set(defaults.game_mode_hotkey.key.clone());
+    ui.game_mode_display
+        .set(hotkeys::display_config(&defaults.game_mode_hotkey));
+    ui.game_mode_hotkey_enabled
+        .set(defaults.game_mode_hotkey_enabled);
     ui.switch_to_english_layout
         .set(defaults.switch_to_english_layout);
     ui.clear_query_on_activation

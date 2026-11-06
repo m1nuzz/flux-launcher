@@ -26,7 +26,7 @@ use super::result_actions::{
 use super::theme_text::{
     history_cursor_step, list_cursor_step, recall_history_row, refresh_inline_completion,
 };
-use super::ui_constants::{ACTION_WINDOW_HEIGHT, SETTINGS_WINDOW_HEIGHT, SETTINGS_WINDOW_WIDTH};
+use super::ui_constants::ACTION_WINDOW_HEIGHT;
 use super::{plugins, request_scroll, request_viewport_reset};
 
 #[allow(clippy::too_many_arguments)]
@@ -40,6 +40,14 @@ pub(crate) fn register_key_handlers(
     activation_shift: Signal<bool>,
     activation_meta: Signal<bool>,
     activation_handle: HotkeyHandle,
+    game_mode_recording: Signal<bool>,
+    game_mode_display: Signal<String>,
+    game_mode_key: Signal<String>,
+    game_mode_ctrl: Signal<bool>,
+    game_mode_alt: Signal<bool>,
+    game_mode_shift: Signal<bool>,
+    game_mode_meta: Signal<bool>,
+    game_mode_handle: HotkeyHandle,
     query: Signal<String>,
     query_caret_position: Signal<usize>,
     results: Signal<Vec<SearchResult>>,
@@ -163,6 +171,59 @@ pub(crate) fn register_key_handlers(
                     activation_display_for_keys.set(hotkeys::display_config(&configuration));
                     activation_recording_for_keys.set(false);
                     activation_handle_for_recorder.set_enabled(true);
+                }
+            }
+            return true;
+        }
+        // Game Mode's shortcut follows the same capture contract as the
+        // activation key, so both recorders behave identically and neither can
+        // stay armed after the dialog is dismissed.
+        if game_mode_recording.get() {
+            if !settings_visible.get() {
+                hotkeys::end_recording(
+                    game_mode_recording,
+                    game_mode_display,
+                    game_mode_key,
+                    game_mode_ctrl,
+                    game_mode_alt,
+                    game_mode_shift,
+                    game_mode_meta,
+                    &game_mode_handle,
+                );
+                return false;
+            }
+            if event.pressed {
+                let recorder_alt = alt_key_is_down();
+                let recorder_meta = hotkeys::meta_key_is_down();
+                if event.key == Key::Escape
+                    && !event.ctrl
+                    && !event.shift
+                    && !recorder_alt
+                    && !recorder_meta
+                {
+                    hotkeys::end_recording(
+                        game_mode_recording,
+                        game_mode_display,
+                        game_mode_key,
+                        game_mode_ctrl,
+                        game_mode_alt,
+                        game_mode_shift,
+                        game_mode_meta,
+                        &game_mode_handle,
+                    );
+                    return true;
+                }
+                if let Some(configuration) =
+                    hotkeys::capture_config(&event, recorder_alt, recorder_meta)
+                {
+                    game_mode_key.set(configuration.key.clone());
+                    game_mode_ctrl.set(configuration.ctrl);
+                    game_mode_alt.set(configuration.alt);
+                    game_mode_shift.set(configuration.shift);
+                    game_mode_meta.set(configuration.meta);
+                    game_mode_display.set(hotkeys::display_config(&configuration));
+                    game_mode_recording.set(false);
+                    game_mode_handle.set_enabled(true);
                 }
             }
             return true;
@@ -718,7 +779,13 @@ pub(crate) fn register_key_handlers(
                         }
                     } else if result.id == "flux-settings" {
                         settings_visible_for_keys.set(true);
-                        size_for_keys.set(SETTINGS_WINDOW_WIDTH, SETTINGS_WINDOW_HEIGHT);
+                        let preference = settings_for_history_for_keys
+                            .read()
+                            .map(|settings| settings.monitor_preference)
+                            .unwrap_or_default();
+                        let (width, height) =
+                            super::window_geometry::settings_window_size(preference);
+                        size_for_keys.set(width, height);
                     } else if result.id == "open-recycle-bin" {
                         record_launch(
                             &settings_for_history_for_keys,

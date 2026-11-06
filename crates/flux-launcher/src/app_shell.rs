@@ -8,10 +8,7 @@ use windui::signal::Signal;
 
 use super::keyboard_layout;
 use super::launch;
-use super::ui_constants::{
-    COMPACT_WINDOW_HEIGHT, CURRENT_VERSION, LAUNCHER_FONT_FAMILY, SETTINGS_WINDOW_HEIGHT,
-    SETTINGS_WINDOW_WIDTH,
-};
+use super::ui_constants::{COMPACT_WINDOW_HEIGHT, CURRENT_VERSION, LAUNCHER_FONT_FAMILY};
 use super::window_geometry::launcher_window_geometry_with_sizes;
 
 pub(crate) fn build_shell_content(
@@ -189,7 +186,12 @@ pub(crate) fn run_launcher(
                 // Apply the Settings client size in this lifecycle callback too, so
                 // the initial frame is the full panel rather than a 72-DIP strip.
                 if settings_visible_for_show.get() {
-                    size_for_show.set(SETTINGS_WINDOW_WIDTH, SETTINGS_WINDOW_HEIGHT);
+                    let preference = settings
+                        .read()
+                        .map(|settings| settings.monitor_preference)
+                        .unwrap_or_default();
+                    let (width, height) = super::window_geometry::settings_window_size(preference);
+                    size_for_show.set(width, height);
                 }
             }
         })

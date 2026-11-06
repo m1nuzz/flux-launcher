@@ -9,6 +9,9 @@ pub(crate) fn build_general_tab(ui: &SettingsUi) -> Element {
     let settings_tab = ui.settings_tab;
     let activation_recording = ui.activation_recording;
     let activation_handle = ui.activation_handle.clone();
+    let game_mode_enabled = ui.game_mode_hotkey_enabled;
+    let game_mode_recording = ui.game_mode_recording;
+    let game_mode_handle = ui.game_mode_handle.clone();
     let clear_history_confirm = ui.clear_history_confirm;
     let update_available = ui.update_available;
     let update_installing = ui.update_installing;
@@ -43,7 +46,6 @@ pub(crate) fn build_general_tab(ui: &SettingsUi) -> Element {
                                         .child(
                                             Element::button("Record key")
                                                 .small()
-                                                .neutral()
                                                 .on_click(move |ctx| {
                                                     activation_recording.set(true);
                                                     activation_handle.set_enabled(false);
@@ -55,26 +57,20 @@ pub(crate) fn build_general_tab(ui: &SettingsUi) -> Element {
                                     .width_match()
                                     .spacing(10)
                                     .cross(Align::Center)
+                                    .child(Element::flex_spacer())
                                     .child(
-                                        Element::col()
-                                            .weight(1.0)
-                                            .spacing(2)
-                                            .child(
-                                                Element::label("Modifiers")
-                                                    .font_size(11.0)
-                                                    .fg_role(Role::TextSubtle),
-                                            )
-                                            .child(
-                                                Element::label("Click Record key, then press one key or a key combination")
-                                                    .font_size(11.0)
-                                                    .fg_role(Role::TextSubtle)
-                                                    .visible_when(move || activation_recording.get()),
-                                            ),
+                                        Element::label("Modifiers:")
+                                            .font_size(11.0)
+                                            .fg_role(Role::TextSubtle),
                                     )
                                     .child(Element::checkbox("Ctrl", ui.activation_ctrl))
                                     .child(Element::checkbox("Alt", ui.activation_alt))
                                     .child(Element::checkbox("Shift", ui.activation_shift))
                                     .child(Element::checkbox("Windows", ui.activation_meta)),
+                                Element::label("Click Record key, then press one key or a key combination")
+                                    .font_size(11.0)
+                                    .fg_role(Role::TextSubtle)
+                                    .visible_when(move || activation_recording.get()),
                                 Element::setting_row_desc(
                                     "Fullscreen protection",
                                     "Ignore activation while another app is fullscreen",
@@ -129,6 +125,53 @@ pub(crate) fn build_general_tab(ui: &SettingsUi) -> Element {
                             ],
                         ))
                         .child(settings_group(
+                            "Game Mode shortcut",
+                            vec![
+                                Element::setting_row_desc(
+                                    "Shortcut enabled",
+                                    "Toggle Game Mode with a global shortcut",
+                                    Element::switch(ui.game_mode_hotkey_enabled),
+                                ),
+                                Element::setting_row_desc(
+                                    "Game Mode key",
+                                    "Press the combination that toggles Game Mode",
+                                    Element::row()
+                                        .spacing(8)
+                                        .cross(Align::Center)
+                                        .child(
+                                            Element::label_signal(ui.game_mode_display)
+                                                .padding_xy(10, 6)
+                                                .bg(Color::rgba(255, 255, 255, 24))
+                                                .corner(8.0),
+                                        )
+                                        .child(
+                                            Element::button("Record key")
+                                                .small()
+                                                .enabled_when(move || game_mode_enabled.get())
+                                                .on_click(move |ctx| {
+                                                    game_mode_recording.set(true);
+                                                    game_mode_handle.set_enabled(false);
+                                                    ctx.toast_ok("Press the desired Game Mode key");
+                                                }),
+                                        ),
+                                ),
+                                Element::row()
+                                    .width_match()
+                                    .spacing(10)
+                                    .cross(Align::Center)
+                                    .child(Element::flex_spacer())
+                                    .child(
+                                        Element::label("Modifiers:")
+                                            .font_size(11.0)
+                                            .fg_role(Role::TextSubtle),
+                                    )
+                                    .child(Element::checkbox("Ctrl", ui.game_mode_ctrl))
+                                    .child(Element::checkbox("Alt", ui.game_mode_alt))
+                                    .child(Element::checkbox("Shift", ui.game_mode_shift))
+                                    .child(Element::checkbox("Windows", ui.game_mode_meta)),
+                            ],
+                        ))
+                        .child(settings_group(
                             "Updates",
                             vec![
                                 Element::setting_row_desc(
@@ -178,8 +221,6 @@ pub(crate) fn build_general_tab(ui: &SettingsUi) -> Element {
                                     .child(
                                         Element::button("Check now")
                                             .small()
-                                            .neutral()
-                                            .outline_soft()
                                             .on_click(move |ctx| {
                                                 check_for_updates_now(&ui_for_check, ctx)
                                             }),
@@ -204,8 +245,6 @@ pub(crate) fn build_general_tab(ui: &SettingsUi) -> Element {
                                 "Ctrl+H recalls committed searches",
                                 Element::button("Clear history")
                                     .small()
-                                    .neutral()
-                                    .outline_soft()
                                     .on_click(move |_| {
                                         clear_history_confirm.set(true);
                                     }),

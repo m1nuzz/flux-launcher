@@ -40,6 +40,30 @@ pub(crate) fn request_monitor_position(
     }
 }
 
+/// Edge margin kept clear around the Settings canvas when it has to shrink.
+const SETTINGS_FIT_MARGIN: i32 = 24;
+
+/// The Settings canvas size for the monitor it will open on.
+///
+/// The canvas is one fixed logical size. On a small screen at a high scale
+/// factor that size can exceed the work area and push the footer under the
+/// taskbar, so it is capped to the work area minus a margin. It is never grown:
+/// on a large monitor the fixed size stands and nothing changes.
+pub(crate) fn settings_window_size(preference: MonitorPreference) -> (i32, i32) {
+    let Some((bounds, dpi)) = monitor::work_area_with_dpi(preference) else {
+        return (SETTINGS_WINDOW_WIDTH, SETTINGS_WINDOW_HEIGHT);
+    };
+    let scale = if dpi == 0 { 1.0 } else { f64::from(dpi) / 96.0 };
+    let available_width =
+        (f64::from(bounds.width()) / scale).round() as i32 - 2 * SETTINGS_FIT_MARGIN;
+    let available_height =
+        (f64::from(bounds.height()) / scale).round() as i32 - 2 * SETTINGS_FIT_MARGIN;
+    (
+        SETTINGS_WINDOW_WIDTH.min(available_width.max(360)),
+        SETTINGS_WINDOW_HEIGHT.min(available_height.max(300)),
+    )
+}
+
 /// Shrink the results window to the rows it actually holds.
 ///
 /// The configured `launcher_height` is a maximum: the result viewport is a fixed
