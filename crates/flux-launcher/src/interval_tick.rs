@@ -63,6 +63,7 @@ pub(crate) fn register_interval(
     google_alias: Signal<String>,
     history_mode: Signal<bool>,
     settings_visible: Signal<bool>,
+    settings_hide_request: Signal<bool>,
     settings_tab: Signal<usize>,
     everything_prompt_visible: Signal<bool>,
     everything_installed: Signal<bool>,
@@ -362,6 +363,13 @@ pub(crate) fn register_interval(
             );
             visual_preview_process.take();
             last_visual_preview_request = None;
+        }
+        if settings_hide_request.get() {
+            // Hide only here: dropping the preview above is what keeps the
+            // child from outliving the window, and the timers die with the
+            // hide, so no later tick would ever clean it up.
+            settings_hide_request.set(false);
+            window_op_for_interval.hide_window();
         }
         last_settings_visible = settings_is_visible;
         let slider_width = dimension_from_slider(

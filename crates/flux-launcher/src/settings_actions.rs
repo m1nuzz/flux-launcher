@@ -203,7 +203,9 @@ pub(crate) fn close_settings(ui: &SettingsUi) {
     }
     ui.window_size
         .set(i32::from(ui.launcher_width.get()), height);
-    ui.window_op.hide_window();
+    // The hide belongs to the interval tick: it is where the visual preview
+    // child gets dropped, and the tick stops running once the window is hidden.
+    ui.settings_hide_request.set(true);
 }
 
 /// Hand an available update to the installer without leaving Settings.

@@ -150,6 +150,10 @@ fn main() {
     let game_mode = signal(settings.game_mode);
     let game_mode_status = signal(game_mode_label(settings.game_mode));
     let settings_visible = signal(std::env::var_os("FLUX_OPEN_SETTINGS").is_some());
+    // The title strip's close control cannot hide the HWND itself: the interval
+    // timers stop with the window, and they own the visual preview child that
+    // has to be dropped first. The click asks for a hide, the tick performs it.
+    let settings_hide_request = signal(false);
     let settings_tab = signal(
         std::env::var("FLUX_SMOKE_SETTINGS_TAB")
             .ok()
@@ -652,7 +656,7 @@ fn main() {
         monitor_preference,
         window_size: window_size.clone(),
         window_position: window_position.clone(),
-        window_op: window_op.clone(),
+        settings_hide_request,
         query,
         results,
         providers: Rc::clone(&provider_results),
@@ -708,6 +712,7 @@ fn main() {
         google_alias,
         history_mode,
         settings_visible,
+        settings_hide_request,
         settings_tab,
         everything_prompt_visible,
         everything_installed,
