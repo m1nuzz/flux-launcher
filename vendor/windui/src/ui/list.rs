@@ -31,6 +31,10 @@ const PILL_INSET_X: f32 = 6.0;
 const PILL_INSET_Y: f32 = 3.0;
 const PILL_RADIUS: f32 = 7.0;
 
+/// 字形图标列宽与字号（逻辑 px）。列宽固定，标签起始竖线才不随字形宽窄漂移。
+const GLYPH_W: i32 = 20;
+const GLYPH_SIZE: f32 = 15.0;
+
 pub struct ListRow {
     label: String,
     icon: Option<ImageContent>,
