@@ -337,6 +337,7 @@ impl App {
                 height,
                 bg: Color::hex(0xF3F3F3),
                 centered: false,
+                external_show_control: false,
                 topmost: false,
                 initial_position: None,
                 resizable: true,
@@ -415,6 +416,12 @@ impl App {
     /// 窗口居中显示。
     pub fn centered(mut self) -> Self {
         self.cfg.centered = true;
+        self
+    }
+    /// The window is shown and hidden by its owner rather than by the user, so
+    /// hiding it at start needs neither a tray icon nor a global hotkey.
+    pub fn external_show_control(mut self) -> Self {
+        self.cfg.external_show_control = true;
         self
     }
     /// Keep the window above other always-on-top windows while it is visible.
@@ -924,7 +931,8 @@ impl App {
         debug_assert!(
             !(self.cfg.start_hidden || self.hide_on_close)
                 || self.cfg.tray.is_some()
-                || !self.cfg.hotkeys.is_empty(),
+                || !self.cfg.hotkeys.is_empty()
+                || self.cfg.external_show_control,
             "start_hidden / hide_on_close 需配合 tray 或 hotkey：否则窗口隐藏后无法被唤起"
         );
         let single = self.single.take();
