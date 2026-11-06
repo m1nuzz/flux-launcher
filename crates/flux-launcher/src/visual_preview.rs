@@ -1,3 +1,4 @@
+use std::cell::Cell;
 use std::io::{self, BufRead, BufReader, Write};
 use std::process::{Child, ChildStderr, ChildStdin, ChildStdout, Command, Stdio};
 use std::sync::mpsc::{self, Receiver, TryRecvError};
@@ -18,6 +19,8 @@ enum PreviewCommand {
         x: i32,
         y: i32,
     },
+    Show,
+    Hide,
     Close,
 }
 
@@ -31,6 +34,8 @@ fn parse_command(line: &str) -> Option<PreviewCommand> {
             x: parts.next()?.parse().ok()?,
             y: parts.next()?.parse().ok()?,
         },
+        "show" => PreviewCommand::Show,
+        "hide" => PreviewCommand::Hide,
         "close" => PreviewCommand::Close,
         _ => return None,
     };
@@ -163,6 +168,18 @@ impl PreviewProcess {
             .map_err(|error| error.to_string())
     }
 
+    pub(crate) fn show(&mut self) -> Result<(), String> {
+        writeln!(self.stdin, "show")
+            .and_then(|_| self.stdin.flush())
+            .map_err(|error| error.to_string())
+    }
+
+    pub(crate) fn hide(&mut self) -> Result<(), String> {
+        writeln!(self.stdin, "hide")
+            .and_then(|_| self.stdin.flush())
+            .map_err(|error| error.to_string())
+    }
+
     pub(crate) fn pid(&self) -> u32 {
         self.pid
     }
@@ -242,14 +259,11 @@ fn preview_content(size_label: Signal<String>) -> Element {
                     "The Settings window stays separate",
                 )),
         )
-        .child(Element::label_signal(size_label).font_size(12.0).fg(Color::rgba(
-            235, 241, 255, 160,
-        )))
         .child(
-            Element::label("The controls use logical client units (DIP); Windows maps them to physical pixels at the preview monitor DPI.")
+            Element::label("Logical client units (DIP); the window is resized, not scaled.")
                 .font_size(10.0)
-                .fg(Color::rgba(235, 241, 255, 135))
-                .max_lines(2)
+                .fg(Color::rgba(235, 241, 255, 150))
+                .max_lines(1)
                 .truncate(Truncate::End),
         )
 }
@@ -327,6 +341,9 @@ pub(crate) fn run(width: i32, height: i32, x: i32, y: i32) {
     let height_for_commands = height_signal;
     let size_label_for_commands = size_label;
 
+    // The window is created hidden; readiness is announced from the first tick
+    // so the parent does not have to wait for a show that may never come.
+    let ready_announced = Cell::new(false);
     let mut app = App::new("Flux Launcher Preview", width, height)
         .position(x, y)
         .activate_on_start(false)
@@ -335,6 +352,11 @@ pub(crate) fn run(width: i32, height: i32, x: i32, y: i32) {
         .resizable(false)
         .renderer(Renderer::Auto)
         .backdrop(Backdrop::Acrylic)
+        .start_hidden()
+        .external_show_control()
+        // It sits beside Settings, which is topmost: a plain window would open
+        // under the same always-on-top apps the launcher now covers.
+        .topmost()
         .bg(Color::rgba(32, 33, 35, 255))
         .content(preview_content(size_label));
     let size_handle: WindowSizeHandle = app.window_size_handle();
@@ -355,6 +377,8 @@ pub(crate) fn run(width: i32, height: i32, x: i32, y: i32) {
             size_handle.set(width, height);
             position_handle.set(x, y);
         }
+        PreviewCommand::Show => ctx.show_window(),
+        PreviewCommand::Hide => ctx.hide_window(),
         PreviewCommand::Close => ctx.request_close(),
     });
 
@@ -374,40 +398,40 @@ pub(crate) fn run(width: i32, height: i32, x: i32, y: i32) {
         .expect("failed to create preview command reader");
 
     let mut last_geometry = None;
-    app = app
-        .on_window_show(|| announce(&format!("READY {}", std::process::id())))
-        .on_interval(PREVIEW_REPORT_INTERVAL, move |_| {
-            let logical_width = width_signal.get();
-            let logical_height = height_signal.get();
-            let geometry = current_window_geometry();
-            let report = geometry.and_then(|(client_width, client_height, dpi)| {
-                let expected_width = expected_client_pixels(logical_width, dpi);
-                let expected_height = expected_client_pixels(logical_height, dpi);
-                (client_width == expected_width && client_height == expected_height).then_some((
+    app = app.on_interval(PREVIEW_REPORT_INTERVAL, move |_| {
+        if !ready_announced.replace(true) {
+            announce(&format!("READY {}", std::process::id()));
+        }
+        let logical_width = width_signal.get();
+        let logical_height = height_signal.get();
+        let geometry = current_window_geometry();
+        let report = geometry.and_then(|(client_width, client_height, dpi)| {
+            let expected_width = expected_client_pixels(logical_width, dpi);
+            let expected_height = expected_client_pixels(logical_height, dpi);
+            (client_width == expected_width && client_height == expected_height).then_some((
+                logical_width,
+                logical_height,
+                client_width,
+                client_height,
+                dpi,
+            ))
+        });
+        if report != last_geometry {
+            if let Some((logical_width, logical_height, client_width, client_height, dpi)) = report
+            {
+                announce(&format!(
+                    "GEOMETRY {} {} {} {} {} {}",
+                    std::process::id(),
                     logical_width,
                     logical_height,
                     client_width,
                     client_height,
-                    dpi,
-                ))
-            });
-            if report != last_geometry {
-                if let Some((logical_width, logical_height, client_width, client_height, dpi)) =
-                    report
-                {
-                    announce(&format!(
-                        "GEOMETRY {} {} {} {} {} {}",
-                        std::process::id(),
-                        logical_width,
-                        logical_height,
-                        client_width,
-                        client_height,
-                        dpi
-                    ));
-                }
-                last_geometry = report;
+                    dpi
+                ));
             }
-        });
+            last_geometry = report;
+        }
+    });
 
     app.run();
 }

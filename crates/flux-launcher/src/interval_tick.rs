@@ -29,6 +29,7 @@ use super::ui_constants::{
 };
 use super::update_tasks::{request_update_check, update_check_due};
 use super::visual_preview;
+
 use super::window_geometry::{
     apply_launcher_size, dimension_from_slider, dimension_slider_fraction, launcher_content_height,
     launcher_window_geometry_with_prompt, parse_dimension_input, request_monitor_position,
@@ -153,6 +154,7 @@ pub(crate) fn register_interval(
     let mut last_fitted_height: i32 = 0;
     let mut visual_preview_process: Option<visual_preview::PreviewProcess> = None;
     let mut last_visual_preview_request: Option<(u16, u16)> = None;
+    let mut visual_preview_shown = false;
     let mut last_visual_preview_generation = visual_preview_generation.get();
     let mut last_visual_control_state: Option<(u16, u16, u32, u32)> = None;
     let mut everything_plugins_smoke_reported = false;
@@ -320,6 +322,45 @@ pub(crate) fn register_interval(
             }
             size_for_interval.set(prompt_width, prompt_height);
         }
+        // Warm the preview child as soon as Settings opens: it is a separate
+        // process, and starting it only when the Visual tab opens is what made
+        // the panel take a beat to appear. Its window is created hidden, so no
+        // other page ever shows a stray preview.
+        if settings_is_visible && visual_preview_process.is_none() {
+            let preview_width = i32::from(current_width);
+            let preview_height = i32::from(current_height);
+            let preference = settings_for_interval_geometry
+                .read()
+                .map(|settings| settings.monitor_preference)
+                .unwrap_or(MonitorPreference::Cursor);
+            let (preview_x, preview_y) = super::window_geometry::visual_preview_position(
+                preference,
+                preview_width,
+                preview_height,
+            );
+            match visual_preview::PreviewProcess::start(
+                preview_width,
+                preview_height,
+                preview_x,
+                preview_y,
+            ) {
+                Ok(preview) => {
+                    visual_preview_process = Some(preview);
+                    last_visual_preview_request = None;
+                }
+                Err(error) => eprintln!("Could not start visual preview: {error}"),
+            }
+        }
+        // Readiness is polled every tick, not only on the Visual tab: the child
+        // reports it from its first frame, and a late poll would time it out.
+        if let Some(preview) = visual_preview_process.as_mut() {
+            if let Err(error) = preview.poll_ready() {
+                eprintln!("Could not ready visual preview: {error}");
+                visual_preview_process.take();
+                last_visual_preview_request = None;
+                visual_preview_shown = false;
+            }
+        }
         if visual_preview_is_visible {
             let preference = settings_for_interval_geometry
                 .read()
@@ -360,13 +401,27 @@ pub(crate) fn register_interval(
                     Err(error) => eprintln!("Could not start visual preview: {error}"),
                 }
             }
-        } else if let Some(preview) = visual_preview_process.as_mut() {
-            eprintln!(
-                "Visual preview closing because Settings/Visual is hidden: pid={}",
-                preview.pid()
-            );
-            visual_preview_process.take();
-            last_visual_preview_request = None;
+            if !visual_preview_shown {
+                if let Some(preview) = visual_preview_process.as_mut() {
+                    let _ = preview.show();
+                }
+                visual_preview_shown = true;
+            }
+        } else if !settings_is_visible {
+            if let Some(preview) = visual_preview_process.as_mut() {
+                eprintln!(
+                    "Visual preview closing because Settings is hidden: pid={}",
+                    preview.pid()
+                );
+                visual_preview_process.take();
+                last_visual_preview_request = None;
+                visual_preview_shown = false;
+            }
+        } else if visual_preview_shown {
+            if let Some(preview) = visual_preview_process.as_mut() {
+                let _ = preview.hide();
+            }
+            visual_preview_shown = false;
         }
         if settings_hide_request.get() {
             // Hide only here: dropping the preview above is what keeps the
