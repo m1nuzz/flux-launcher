@@ -61,7 +61,7 @@ PublisherUrl: https://github.com/m1nuzz
 PublisherSupportUrl: https://github.com/m1nuzz/flux-launcher/issues
 PackageName: Flux Launcher
 PackageUrl: https://github.com/m1nuzz/flux-launcher
-License: MIT
+License: AGPL-3.0-or-later
 LicenseUrl: https://github.com/m1nuzz/flux-launcher/blob/main/LICENSE
 ShortDescription: A lightweight native Windows 11 launcher and file search tool built with Rust and windui.
 Description: Flux Launcher is a keyboard-first Windows 11 launcher with a native Acrylic interface, Everything IPC file search, global hotkeys, built-in Google and Obsidian providers, legacy Flow plugin compatibility, and native Rust community plugins.
