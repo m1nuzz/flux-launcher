@@ -1,14 +1,12 @@
-use std::cell::Cell;
 use std::io::{self, BufRead, BufReader, Write};
 use std::process::{Child, ChildStderr, ChildStdin, ChildStdout, Command, Stdio};
 use std::sync::mpsc::{self, Receiver, TryRecvError};
 use std::thread;
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 use windui::app::{WindowPositionHandle, WindowSizeHandle};
 use windui::prelude::*;
 
-const READY_TIMEOUT: Duration = Duration::from_secs(3);
 const PREVIEW_REPORT_INTERVAL: Duration = Duration::from_millis(40);
 
 #[derive(Debug, PartialEq, Eq)]
@@ -19,8 +17,6 @@ enum PreviewCommand {
         x: i32,
         y: i32,
     },
-    Show,
-    Hide,
     Close,
 }
 
@@ -34,8 +30,6 @@ fn parse_command(line: &str) -> Option<PreviewCommand> {
             x: parts.next()?.parse().ok()?,
             y: parts.next()?.parse().ok()?,
         },
-        "show" => PreviewCommand::Show,
-        "hide" => PreviewCommand::Hide,
         "close" => PreviewCommand::Close,
         _ => return None,
     };
@@ -90,15 +84,16 @@ pub(crate) struct PreviewProcess {
     child: Child,
     stdin: ChildStdin,
     ready_receiver: Receiver<u32>,
-    started_at: Instant,
     pid: u32,
     ready: bool,
+    started: std::time::Instant,
 }
 
 impl PreviewProcess {
     pub(crate) fn start(width: i32, height: i32, x: i32, y: i32) -> Result<Self, String> {
         let executable = std::env::current_exe().map_err(|error| error.to_string())?;
         let mut child = Command::new(&executable)
+            .env("FLUX_PREVIEW_PARENT_PID", std::process::id().to_string())
             .arg("--visual-preview")
             .arg(width.to_string())
             .arg(height.to_string())
@@ -131,9 +126,9 @@ impl PreviewProcess {
             child,
             stdin,
             ready_receiver,
-            started_at: Instant::now(),
             pid,
             ready: false,
+            started: std::time::Instant::now(),
         })
     }
 
@@ -144,18 +139,21 @@ impl PreviewProcess {
         match self.ready_receiver.try_recv() {
             Ok(reported_pid) if reported_pid == self.pid => {
                 self.ready = true;
-                eprintln!("Visual preview process ready: pid={}", self.pid);
+                eprintln!(
+                    "Visual preview process ready: pid={} after {} ms",
+                    self.pid,
+                    self.started.elapsed().as_millis()
+                );
                 Ok(true)
             }
             Ok(reported_pid) => Err(format!(
                 "visual preview reported pid {reported_pid}, expected {}",
                 self.pid
             )),
-            Err(TryRecvError::Empty) if self.started_at.elapsed() < READY_TIMEOUT => Ok(false),
-            Err(TryRecvError::Empty) => Err(format!(
-                "visual preview did not become ready within {} ms",
-                READY_TIMEOUT.as_millis()
-            )),
+            // Readiness is reported when the window is finally shown, which can
+            // be long after start-up: a child that is merely waiting hidden is
+            // not a stalled child. Liveness is checked separately.
+            Err(TryRecvError::Empty) => Ok(false),
             Err(TryRecvError::Disconnected) => Err(String::from(
                 "visual preview readiness channel disconnected",
             )),
@@ -164,18 +162,6 @@ impl PreviewProcess {
 
     pub(crate) fn resize(&mut self, width: i32, height: i32, x: i32, y: i32) -> Result<(), String> {
         writeln!(self.stdin, "resize {width} {height} {x} {y}")
-            .and_then(|_| self.stdin.flush())
-            .map_err(|error| error.to_string())
-    }
-
-    pub(crate) fn show(&mut self) -> Result<(), String> {
-        writeln!(self.stdin, "show")
-            .and_then(|_| self.stdin.flush())
-            .map_err(|error| error.to_string())
-    }
-
-    pub(crate) fn hide(&mut self) -> Result<(), String> {
-        writeln!(self.stdin, "hide")
             .and_then(|_| self.stdin.flush())
             .map_err(|error| error.to_string())
     }
@@ -206,6 +192,31 @@ impl PreviewProcess {
 impl Drop for PreviewProcess {
     fn drop(&mut self) {
         self.stop();
+    }
+}
+
+/// Whether the launcher process that spawned this preview is still running.
+fn parent_process_alive(pid: u32) -> bool {
+    #[cfg(windows)]
+    {
+        use windows::Win32::Foundation::{CloseHandle, WAIT_OBJECT_0};
+        use windows::Win32::System::Threading::{
+            OpenProcess, WaitForSingleObject, PROCESS_SYNCHRONIZE,
+        };
+        // SAFETY: OpenProcess only takes a pid; a null handle means the process
+        // is already gone, and the handle is closed on every path.
+        let handle = unsafe { OpenProcess(PROCESS_SYNCHRONIZE, false, pid) };
+        let Ok(handle) = handle else {
+            return false;
+        };
+        let exited = unsafe { WaitForSingleObject(handle, 0) } == WAIT_OBJECT_0;
+        let _ = unsafe { CloseHandle(handle) };
+        !exited
+    }
+    #[cfg(not(windows))]
+    {
+        let _ = pid;
+        true
     }
 }
 
@@ -341,9 +352,6 @@ pub(crate) fn run(width: i32, height: i32, x: i32, y: i32) {
     let height_for_commands = height_signal;
     let size_label_for_commands = size_label;
 
-    // The window is created hidden; readiness is announced from the first tick
-    // so the parent does not have to wait for a show that may never come.
-    let ready_announced = Cell::new(false);
     let mut app = App::new("Flux Launcher Preview", width, height)
         .position(x, y)
         .activate_on_start(false)
@@ -352,8 +360,6 @@ pub(crate) fn run(width: i32, height: i32, x: i32, y: i32) {
         .resizable(false)
         .renderer(Renderer::Auto)
         .backdrop(Backdrop::Acrylic)
-        .start_hidden()
-        .external_show_control()
         // It sits beside Settings, which is topmost: a plain window would open
         // under the same always-on-top apps the launcher now covers.
         .topmost()
@@ -377,8 +383,6 @@ pub(crate) fn run(width: i32, height: i32, x: i32, y: i32) {
             size_handle.set(width, height);
             position_handle.set(x, y);
         }
-        PreviewCommand::Show => ctx.show_window(),
-        PreviewCommand::Hide => ctx.hide_window(),
         PreviewCommand::Close => ctx.request_close(),
     });
 
@@ -398,40 +402,51 @@ pub(crate) fn run(width: i32, height: i32, x: i32, y: i32) {
         .expect("failed to create preview command reader");
 
     let mut last_geometry = None;
-    app = app.on_interval(PREVIEW_REPORT_INTERVAL, move |_| {
-        if !ready_announced.replace(true) {
-            announce(&format!("READY {}", std::process::id()));
-        }
-        let logical_width = width_signal.get();
-        let logical_height = height_signal.get();
-        let geometry = current_window_geometry();
-        let report = geometry.and_then(|(client_width, client_height, dpi)| {
-            let expected_width = expected_client_pixels(logical_width, dpi);
-            let expected_height = expected_client_pixels(logical_height, dpi);
-            (client_width == expected_width && client_height == expected_height).then_some((
-                logical_width,
-                logical_height,
-                client_width,
-                client_height,
-                dpi,
-            ))
-        });
-        if report != last_geometry {
-            if let Some((logical_width, logical_height, client_width, client_height, dpi)) = report
-            {
-                announce(&format!(
-                    "GEOMETRY {} {} {} {} {} {}",
-                    std::process::id(),
+    let parent_pid = std::env::var("FLUX_PREVIEW_PARENT_PID")
+        .ok()
+        .and_then(|value| value.parse::<u32>().ok());
+    app = app
+        .on_window_show(|| announce(&format!("READY {}", std::process::id())))
+        .on_interval(PREVIEW_REPORT_INTERVAL, move |_ctx| {
+            // The preview is part of the launcher, not an app of its own: if the
+            // launcher is gone, this window must not outlive it.
+            if parent_pid.is_some_and(|pid| !parent_process_alive(pid)) {
+                // The preview is a child of the launcher and has nothing of its
+                // own to save: end the process instead of negotiating a close,
+                // which an interval callback cannot complete.
+                std::process::exit(0);
+            }
+            let logical_width = width_signal.get();
+            let logical_height = height_signal.get();
+            let geometry = current_window_geometry();
+            let report = geometry.and_then(|(client_width, client_height, dpi)| {
+                let expected_width = expected_client_pixels(logical_width, dpi);
+                let expected_height = expected_client_pixels(logical_height, dpi);
+                (client_width == expected_width && client_height == expected_height).then_some((
                     logical_width,
                     logical_height,
                     client_width,
                     client_height,
-                    dpi
-                ));
+                    dpi,
+                ))
+            });
+            if report != last_geometry {
+                if let Some((logical_width, logical_height, client_width, client_height, dpi)) =
+                    report
+                {
+                    announce(&format!(
+                        "GEOMETRY {} {} {} {} {} {}",
+                        std::process::id(),
+                        logical_width,
+                        logical_height,
+                        client_width,
+                        client_height,
+                        dpi
+                    ));
+                }
+                last_geometry = report;
             }
-            last_geometry = report;
-        }
-    });
+        });
 
     app.run();
 }

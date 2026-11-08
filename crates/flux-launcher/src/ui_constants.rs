@@ -11,7 +11,10 @@ pub(crate) const EVERYTHING_PROMPT_WINDOW_WIDTH: i32 = 440;
 pub(crate) const EVERYTHING_PROMPT_WINDOW_HEIGHT: i32 = 242;
 // The empty launcher is a compact search strip; the results state keeps the user-configured height.
 pub(crate) const COMPACT_WINDOW_HEIGHT: i32 = 56;
-pub(crate) const VISUAL_SLIDER_WIDTH: i32 = 200;
+/// Wide enough that the pair slide (the window shifting left as the preview
+/// grows) stays below the track's travel: the thumb then converges under the
+/// cursor instead of running away.
+pub(crate) const VISUAL_SLIDER_WIDTH: i32 = 300;
 // The action group stays narrower than the minimum launcher content width so it
 // can be centered between the same left/right content insets at every size.
 pub(crate) const ACTION_BAR_WIDTH: i32 = 340;

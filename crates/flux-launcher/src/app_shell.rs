@@ -1,3 +1,5 @@
+use std::cell::RefCell;
+use std::rc::Rc;
 use std::sync::{Arc, RwLock};
 
 use flux_core::{Settings, MIN_LAUNCHER_WIDTH};
@@ -48,6 +50,7 @@ pub(crate) fn run_launcher(
     startup_launch: bool,
     single_instance_disabled: bool,
     window_op: WindowOpHandle,
+    visual_preview: Rc<RefCell<Option<super::visual_preview::PreviewProcess>>>,
     content: Element,
     settings_visible: Signal<bool>,
     query: Signal<String>,
@@ -217,6 +220,15 @@ pub(crate) fn run_launcher(
             let settings = Arc::clone(&shared_settings);
             move || {
                 launch::trace_launch_event("window-hide");
+                // The preview dies with the window. Its tick-based owner cannot
+                // do this: hiding the window stops the interval timers first, so
+                // the child would keep floating on the desktop. Stopping it on a
+                // thread keeps the kill/wait out of the platform's hide callback.
+                if let Some(preview) = visual_preview.borrow_mut().take() {
+                    let _ = std::thread::Builder::new()
+                        .name(String::from("flux-preview-stop"))
+                        .spawn(move || drop(preview));
+                }
                 // Losing focus dismisses Settings rather than merely hiding the
                 // window: otherwise the next activation walks the user back into
                 // a panel they already left instead of opening search.

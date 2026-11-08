@@ -710,6 +710,11 @@ fn main() {
         clear_history_dialog,
     );
 
+    // Owned here so the window's hide handler can drop it too: the interval
+    // timers stop with the window, so a tick-only owner would leave the preview
+    // floating after Settings loses focus.
+    let visual_preview_slot: Rc<RefCell<Option<visual_preview::PreviewProcess>>> =
+        Rc::new(RefCell::new(None));
     let app = interval_tick::register_interval(
         app,
         query,
@@ -761,6 +766,7 @@ fn main() {
         native_plugin_worker,
         recycle_bin_confirmation,
         window_op.clone(),
+        Rc::clone(&visual_preview_slot),
     );
     app_shell::run_launcher(
         app,
@@ -768,6 +774,7 @@ fn main() {
         startup_launch,
         single_instance_disabled,
         window_op,
+        visual_preview_slot,
         content,
         settings_visible,
         query,

@@ -114,6 +114,9 @@ type RenderClosure = Box<dyn FnMut(&mut dyn crate::render::RenderTarget, Size)>;
 /// App 级回调：不在任何控件的事件时机上，却同样收 [`EventCtx`]（`on_interval` 等）。
 /// 宿主以根节点为 `self_id` 借出（见 `UiHost::apply_app_effects`）。
 type AppCallback = Box<dyn FnMut(&mut EventCtx)>;
+/// Per-animation-frame callback: runs once per rendered frame and returns
+/// whether it wants another frame.
+pub type FrameCallback = Box<dyn FnMut(&mut EventCtx) -> bool>;
 
 /// 关闭请求拦截器（[`App::on_close_request`]）：返回 true 放行、false 取消。
 /// 与 [`AppCallback`] 分开是因为它多一个返回值——那个 `bool` 被平台同步等待。
@@ -237,6 +240,15 @@ impl WindowPositionHandle {
         *self.queue.borrow_mut() = Some((x, y));
         crate::anim::request_repaint();
     }
+
+    /// Move the window without asking for a content repaint.
+    ///
+    /// A pure move carries the composed surface with the window, so an eased
+    /// slide can run at the display rate instead of paying a full settings
+    /// render on every frame.
+    pub fn set_move_only(&self, x: i32, y: i32) {
+        *self.queue.borrow_mut() = Some((x, y));
+    }
 }
 
 /// A runtime handle for requesting a deferred native window operation.
@@ -295,6 +307,11 @@ pub struct App {
     theme_src: Option<ThemeHandle>,
     pumps: Vec<ChannelPump>,
     intervals: Vec<(Duration, AppCallback)>,
+    /// Runs on every animation frame; its return value keeps the frame loop
+    /// going. Used for motion that is not a widget transition.
+    frame_handler: Option<FrameCallback>,
+    /// True while `frame_handler` wants the display-rate frame loop.
+    frame_active: bool,
     waker_shared: Option<Arc<WakerShared>>,
     single: Option<crate::single_instance::SingleInstance>,
     close_handler: Option<CloseHandler>,
@@ -337,7 +354,6 @@ impl App {
                 height,
                 bg: Color::hex(0xF3F3F3),
                 centered: false,
-                external_show_control: false,
                 topmost: false,
                 initial_position: None,
                 resizable: true,
@@ -365,6 +381,8 @@ impl App {
             theme_src: None,
             pumps: Vec::new(),
             intervals: Vec::new(),
+            frame_handler: None,
+            frame_active: false,
             waker_shared: None,
             single: None,
             close_handler: None,
@@ -416,12 +434,6 @@ impl App {
     /// 窗口居中显示。
     pub fn centered(mut self) -> Self {
         self.cfg.centered = true;
-        self
-    }
-    /// The window is shown and hidden by its owner rather than by the user, so
-    /// hiding it at start needs neither a tray icon nor a global hotkey.
-    pub fn external_show_control(mut self) -> Self {
-        self.cfg.external_show_control = true;
         self
     }
     /// Keep the window above other always-on-top windows while it is visible.
@@ -931,8 +943,7 @@ impl App {
         debug_assert!(
             !(self.cfg.start_hidden || self.hide_on_close)
                 || self.cfg.tray.is_some()
-                || !self.cfg.hotkeys.is_empty()
-                || self.cfg.external_show_control,
+                || !self.cfg.hotkeys.is_empty(),
             "start_hidden / hide_on_close 需配合 tray 或 hotkey：否则窗口隐藏后无法被唤起"
         );
         let single = self.single.take();
@@ -957,6 +968,8 @@ impl App {
                 self.cursor_visibility_ops.clone(),
                 self.pumps,
                 self.intervals,
+                self.frame_handler,
+                self.frame_active,
                 self.close_handler,
                 self.key_handler,
                 self.show_handler,
@@ -993,6 +1006,8 @@ impl App {
             self.cursor_visibility_ops.clone(),
             self.pumps,
             self.intervals,
+            self.frame_handler,
+            self.frame_active,
             self.close_handler,
             self.key_handler,
             self.show_handler,
@@ -1071,6 +1086,19 @@ impl App {
         self.intervals.push((every, Box::new(cb)));
         self
     }
+
+    /// Run `cb` once per animation frame, at the display's rate (the platform
+    /// caps the frame interval at the monitor refresh). Returning `true` asks for
+    /// another frame, which keeps the host in its animating loop; returning
+    /// `false` lets it drop back to a blocking idle.
+    ///
+    /// This is for motion the widget tree does not own - moving the native window
+    /// between slots, for instance - so it can be driven per frame instead of
+    /// from a `WM_TIMER`, which coalesces to the default 15.6 ms tick.
+    pub fn on_frame(mut self, cb: impl FnMut(&mut EventCtx) -> bool + 'static) -> Self {
+        self.frame_handler = Some(Box::new(cb));
+        self
+    }
 }
 
 /// 把底层渲染闭包适配为 AppHandler（不处理输入）。
@@ -1145,6 +1173,10 @@ struct UiHost {
     interval_cbs: Vec<AppCallback>,
     /// 定时器间隔列表（平台据此注册 SetTimer/NSTimer）。
     interval_durs: Vec<std::time::Duration>,
+    /// Frame-rate motion callback (`App::on_frame`).
+    frame_handler: Option<FrameCallback>,
+    /// True while the frame callback wants the display-rate loop.
+    frame_active: bool,
     /// 帧耗时浮层开关（环境变量 WINDUI_FPS 非空时开启）。
     show_fps: bool,
     /// 关闭请求拦截器：返回 true 允许关闭，false 取消。None 时默认允许。
@@ -1277,6 +1309,8 @@ impl UiHost {
         cursor_visibility_ops: Rc<RefCell<Option<bool>>>,
         pumps: Vec<ChannelPump>,
         intervals: Vec<(std::time::Duration, AppCallback)>,
+        frame_handler: Option<FrameCallback>,
+        frame_active: bool,
         close_handler: Option<CloseHandler>,
         key_handler: Option<KeyHandler>,
         show_handler: Option<VisibilityHandler>,
@@ -1325,6 +1359,8 @@ impl UiHost {
             pumps,
             interval_cbs,
             interval_durs,
+            frame_handler,
+            frame_active,
             show_fps: std::env::var("WINDUI_FPS").is_ok_and(|v| v != "0" && !v.is_empty()),
             close_handler,
             key_handler,
@@ -1758,6 +1794,10 @@ impl AppHandler for UiHost {
         self.tree.focus_ring_visible = false;
     }
 
+    fn set_window_origin(&mut self, origin: crate::geometry::Point) {
+        self.tree.window_origin = origin;
+    }
+
     fn on_key(&mut self, ev: crate::event::KeyEvent) -> bool {
         self.sync_clock();
         // 菜单激活时由浮层独占键盘：↑↓ 选项、←→ 进出子菜单、回车/空格执行、
@@ -1815,6 +1855,19 @@ impl AppHandler for UiHost {
         self.window_size_ops.borrow_mut().take()
     }
     fn take_window_position_request(&mut self) -> Option<(i32, i32)> {
+        // The frame callback runs here: this is called once per painted frame and
+        // after every event, and the position it queues is applied right below.
+        // Taking the handler out avoids borrowing it and the tree at once.
+        if let Some(mut cb) = self.frame_handler.take() {
+            if let Some(root) = self.tree.root {
+                let mut keep = false;
+                let _ = self.tree.run_detached(root, |ctx| {
+                    keep = cb(ctx);
+                });
+                self.frame_active = keep;
+            }
+            self.frame_handler = Some(cb);
+        }
         self.window_position_ops.borrow_mut().take()
     }
     fn on_close_request(&mut self) -> bool {
@@ -1864,7 +1917,7 @@ impl AppHandler for UiHost {
     }
 
     fn wants_animation(&self) -> bool {
-        crate::anim::animation_requested()
+        crate::anim::animation_requested() || self.frame_active
     }
 
     fn intervals(&self) -> Vec<std::time::Duration> {

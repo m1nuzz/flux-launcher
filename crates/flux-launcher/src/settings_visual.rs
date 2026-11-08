@@ -85,7 +85,7 @@ pub(crate) fn build_visual_tab(ui: &SettingsUi) -> Element {
                         .child(settings_group(
                             "Launcher size",
                             vec![
-                                Element::setting_row_desc(
+                                dimension_row(
                                     "Launcher width",
                                     format!("{MIN_LAUNCHER_WIDTH}-{MAX_LAUNCHER_WIDTH} logical px (DIP)"),
                                     dimension_editor(
@@ -98,7 +98,7 @@ pub(crate) fn build_visual_tab(ui: &SettingsUi) -> Element {
                                         true,
                                     ),
                                 ),
-                                Element::setting_row_desc(
+                                dimension_row(
                                     "Results height",
                                     format!("{MIN_LAUNCHER_HEIGHT}-{MAX_LAUNCHER_HEIGHT} logical px (DIP)"),
                                     dimension_editor(
@@ -128,6 +128,26 @@ pub(crate) fn build_visual_tab(ui: &SettingsUi) -> Element {
                 )
                 .child(settings_scroll_gutter()),
         )
+}
+
+/// One size row with its label above the controls, so the wide track fits
+/// without squeezing the title into a narrow column.
+fn dimension_row(label: &str, description: String, editor: Element) -> Element {
+    Element::col()
+        .width_match()
+        .spacing(6)
+        .child(
+            Element::label(label.to_string())
+                .font_size(14.0)
+                .font_weight(600),
+        )
+        .child(
+            Element::label(description)
+                .font_size(12.0)
+                .fg_role(Role::TextSubtle)
+                .width_match(),
+        )
+        .child(editor)
 }
 
 /// One size row: slider, numeric field, per-row reset and the DIP unit, in the

@@ -93,26 +93,17 @@ pub(crate) fn build_priority_list(ui: &SettingsUi) -> Element {
                         ctx.toast_ok("Priority moved down");
                     }
                 }))
-                .child(
-                    Element::button("Remove")
-                        .small()
-                        .neutral()
-                        .on_click(move |ctx| {
-                            if remove_priority_entry(
-                                &settings_for_remove,
-                                priorities,
-                                &id_for_remove,
-                            ) {
-                                refresh_merged_results(
-                                    &providers_for_remove,
-                                    query_for_remove,
-                                    priorities,
-                                    results,
-                                );
-                                ctx.toast_ok("Priority removed");
-                            }
-                        }),
-                )
+                .child(Element::button("Remove").small().on_click(move |ctx| {
+                    if remove_priority_entry(&settings_for_remove, priorities, &id_for_remove) {
+                        refresh_merged_results(
+                            &providers_for_remove,
+                            query_for_remove,
+                            priorities,
+                            results,
+                        );
+                        ctx.toast_ok("Priority removed");
+                    }
+                }))
         },
     )
 }
