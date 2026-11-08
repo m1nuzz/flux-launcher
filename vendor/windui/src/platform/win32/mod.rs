@@ -925,6 +925,22 @@ const CLASS_NAME: PCWSTR = w!("WindUiWindowClass");
 
 /// 跨线程唤醒消息（WM_APP+2；WM_APP+1 已用于托盘）。
 const WM_APP_WAKE: u32 = WM_APP + 2;
+
+/// Wake the main window's message loop after a sent message (single-instance
+/// WM_COPYDATA) ran a UI-thread callback that queued a window op. The OS
+/// dispatches sent messages inline, so the loop's own dispatch path - and its
+/// window-op drain - never sees them.
+pub(crate) unsafe fn wake_main_window(main_hwnd: isize) {
+    if main_hwnd == 0 {
+        return;
+    }
+    let _ = PostMessageW(
+        Some(HWND(main_hwnd as *mut std::ffi::c_void)),
+        WM_APP_WAKE,
+        WPARAM(0),
+        LPARAM(0),
+    );
+}
 /// Deferred foreground check for hide-on-deactivate. Deferring one message tick
 /// lets SetWindowPos restore the launcher after a transient DWM activation change.
 const WM_APP_DEACTIVATION_CHECK: u32 = WM_APP + 3;

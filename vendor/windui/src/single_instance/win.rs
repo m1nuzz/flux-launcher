@@ -209,6 +209,13 @@ unsafe extern "system" fn si_wnd_proc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPAR
                             *guard = Some(ctx);
                         }
                         drop(guard);
+                        // WM_COPYDATA is a sent message: the OS runs this
+                        // wndproc inline, so the main loop never dispatches it
+                        // and would wait in GetMessage while a hidden window
+                        // cannot paint the queued window-op away. Post a wake
+                        // so the loop drains the op (the uninstaller checks
+                        // the process handle and must see it exit).
+                        crate::platform::win32::wake_main_window(main_hwnd);
                         if !is_shutdown {
                             activate(main_hwnd);
                         }
