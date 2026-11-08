@@ -179,14 +179,14 @@ jobs:
           $body = @"
           ## Description
 
-          Automated stable release submission for `m1nuzz.FluxLauncher` version `$env:VERSION`.
+          Automated stable release submission for m1nuzz.FluxLauncher version $env:VERSION.
 
           - Stable release: $env:RELEASE_URL
-          - Installer: `FluxLauncher-Setup.exe` (Inno Setup, x64)
-          - Installer SHA256: `$env:INSTALLER_SHA256`
-          - Manifest validation: `winget validate --manifest`
+          - Installer: FluxLauncher-Setup.exe (Inno Setup, x64)
+          - Installer SHA256: $env:INSTALLER_SHA256
+          - Manifest validation: winget validate --manifest
 
-          The release is published with `prerelease: false`. Beta releases are intentionally ignored by this workflow.
+          The release is published with prerelease: false. Beta releases are intentionally ignored by this workflow.
           "@
           $prUrl = gh pr create `
             --repo microsoft/winget-pkgs `
