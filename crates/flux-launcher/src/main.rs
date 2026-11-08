@@ -161,6 +161,10 @@ fn main() {
             .filter(|tab| *tab < 5)
             .unwrap_or(0),
     );
+    // Bumped on every native show. The interval timers stop while the window is
+    // hidden, so on re-show the tick cannot see the hide and would treat the
+    // window as already positioned; this generation is how it notices.
+    let settings_show_generation = signal(0u64);
     let (stats_usage_text, stats_top_text) =
         settings_stats::stats_texts(&settings.launch_counts, settings.total_queries_committed);
     let stats_usage = signal(stats_usage_text);
@@ -632,6 +636,8 @@ fn main() {
         game_mode_status,
         settings_visible,
         settings_tab,
+        width_ease: Rc::new(std::cell::Cell::new(None)),
+        height_ease: Rc::new(std::cell::Cell::new(None)),
         show_results,
         activation_display,
         activation_key,
@@ -666,7 +672,6 @@ fn main() {
         launcher_width_slider,
         launcher_height_slider,
         launcher_preview_text,
-        visual_preview_generation,
         clear_query_on_activation,
         start_with_windows,
         auto_enable_everything,
@@ -710,6 +715,11 @@ fn main() {
         clear_history_dialog,
     );
 
+    // Owned here so the window's hide handler can drop it too: the interval
+    // timers stop with the window, so a tick-only owner would leave the preview
+    // floating after Settings loses focus.
+    let visual_preview_slot: Rc<RefCell<Option<visual_preview::PreviewProcess>>> =
+        Rc::new(RefCell::new(None));
     let app = interval_tick::register_interval(
         app,
         query,
@@ -740,6 +750,9 @@ fn main() {
         settings_visible,
         settings_hide_request,
         settings_tab,
+        settings_show_generation,
+        Rc::clone(&settings_ui.width_ease),
+        Rc::clone(&settings_ui.height_ease),
         everything_prompt_visible,
         everything_installed,
         everything_status,
@@ -761,6 +774,7 @@ fn main() {
         native_plugin_worker,
         recycle_bin_confirmation,
         window_op.clone(),
+        Rc::clone(&visual_preview_slot),
     );
     app_shell::run_launcher(
         app,
@@ -768,8 +782,10 @@ fn main() {
         startup_launch,
         single_instance_disabled,
         window_op,
+        visual_preview_slot,
         content,
         settings_visible,
+        settings_show_generation,
         query,
         query_caret_position,
         results,

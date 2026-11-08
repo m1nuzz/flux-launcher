@@ -35,6 +35,64 @@ use super::window_geometry::{
     launcher_window_geometry_with_prompt, parse_dimension_input, request_monitor_position,
 };
 
+/// Ease-in-out glide between the centred slot and the Visual pair slot. 400 ms
+/// and a symmetric curve, matching the motion used in the design mock.
+const SETTINGS_SLIDE_MS: u64 = 400;
+
+/// Duration of an eased size reset (Reset tab defaults / the row Reset).
+const SETTINGS_EASE_MS: f32 = 400.0;
+
+/// Last applied pair frame: `(settings_x, settings_y, preview_x, preview_y,
+/// width, height)`.
+type PairFrame = (i32, i32, i32, i32, u16, u16);
+
+/// A running glide of the Settings window, optionally carrying the preview
+/// window along with it.
+struct SettingsSlide {
+    from_x: i32,
+    to_x: i32,
+    y: i32,
+    ride: Option<PreviewRide>,
+    started_ms: u64,
+}
+
+/// The preview window rides the Settings glide: it appears beside the panel's
+/// current right edge and travels with it, settling the last few pixels into the
+/// final gap. This keeps the two windows on one motion instead of two clocks.
+struct PreviewRide {
+    to_x: i32,
+    y: i32,
+    width: i32,
+    height: i32,
+    joined_ms: Option<u64>,
+}
+
+/// How far right of the final slot the preview settles from, and over what time.
+const PREVIEW_SETTLE_PX: i32 = 32;
+const PREVIEW_SETTLE_MS: f32 = 160.0;
+/// The preview process is up after roughly this long; the window is created at
+/// the ride position for this instant so it does not jump when it appears.
+const PREVIEW_READY_ESTIMATE_MS: f32 = 171.0;
+
+impl SettingsSlide {
+    fn x_at(&self, now_ms: u64) -> i32 {
+        let elapsed = now_ms.saturating_sub(self.started_ms);
+        let t = (elapsed as f32 / SETTINGS_SLIDE_MS as f32).clamp(0.0, 1.0);
+        let eased = ease_in_out_cubic(t);
+        self.from_x + ((self.to_x - self.from_x) as f32 * eased).round() as i32
+    }
+}
+
+/// Symmetric ease-in-out cubic (accelerate, then decelerate).
+fn ease_in_out_cubic(t: f32) -> f32 {
+    if t < 0.5 {
+        4.0 * t * t * t
+    } else {
+        let f = -2.0 * t + 2.0;
+        1.0 - (f * f * f) / 2.0
+    }
+}
+
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn register_interval(
     app: App,
@@ -66,6 +124,9 @@ pub(crate) fn register_interval(
     settings_visible: Signal<bool>,
     settings_hide_request: Signal<bool>,
     settings_tab: Signal<usize>,
+    settings_show_generation: Signal<u64>,
+    width_ease: Rc<Cell<Option<(f32, f32, std::time::Instant)>>>,
+    height_ease: Rc<Cell<Option<(f32, f32, std::time::Instant)>>>,
     everything_prompt_visible: Signal<bool>,
     everything_installed: Signal<bool>,
     everything_status: Signal<String>,
@@ -87,6 +148,7 @@ pub(crate) fn register_interval(
     native_plugin_worker: NativePluginWorker,
     recycle_bin_confirmation: Signal<bool>,
     window_op: WindowOpHandle,
+    visual_preview_slot: Rc<RefCell<Option<visual_preview::PreviewProcess>>>,
 ) -> App {
     let query_for_interval = query;
     let results_for_interval = results;
@@ -132,6 +194,27 @@ pub(crate) fn register_interval(
     let mut last_launcher_width = launcher_width.get();
     let mut last_launcher_height = launcher_height.get();
     let mut last_settings_visible = settings_visible.get();
+    let mut last_settings_tab = settings_tab.get();
+    let mut last_show_generation = settings_show_generation.get();
+    let mut settings_positioned = false;
+    // Glide of the Settings window between the centred slot (ordinary tabs) and
+    // the left pair slot (Visual): (from_x, to_x, y, started_ms). The vertical
+    // position is captured at the start and replayed every frame: the window
+    // origin is only published for positions the app itself requested, so reading
+    // it mid-glide can be stale and would drop the window to y = 0.
+    let settings_slide: Rc<RefCell<Option<SettingsSlide>>> = Rc::new(RefCell::new(None));
+    let slide_clock = std::time::Instant::now();
+    let settings_slide_for_slide = Rc::clone(&settings_slide);
+    let position_for_slide = window_position.clone();
+    // Display-rate pair follow: the monitor geometry is cached in the tick so the
+    // frame callback can recompute the pair from the slider without touching the
+    // monitor every frame.
+    let pair_monitor: Rc<Cell<Option<(super::monitor::MonitorBounds, u32)>>> =
+        Rc::new(Cell::new(None));
+    let pair_monitor_for_frame = Rc::clone(&pair_monitor);
+    let last_pair_frame: Rc<Cell<Option<PairFrame>>> = Rc::new(Cell::new(None));
+    let last_pair_frame_for_frame = Rc::clone(&last_pair_frame);
+    let mut last_pair_monitor_pref: Option<MonitorPreference> = None;
     let mut last_everything_prompt_visible = everything_prompt_visible.get();
     // The search clock, and the reason it is not `EventCtx::now_ms`: that reads the
     // shared animation clock, which the host refreshes before a frame, a pointer
@@ -152,9 +235,9 @@ pub(crate) fn register_interval(
     let mut everything_sent_sequence: u64 = 0;
     let mut path_probe_sent_sequence: u64 = 0;
     let mut last_fitted_height: i32 = 0;
-    let mut visual_preview_process: Option<visual_preview::PreviewProcess> = None;
+    let visual_preview_process = visual_preview_slot;
+    let visual_preview_for_frame = Rc::clone(&visual_preview_process);
     let mut last_visual_preview_request: Option<(u16, u16)> = None;
-    let mut visual_preview_shown = false;
     let mut last_visual_preview_generation = visual_preview_generation.get();
     let mut last_visual_control_state: Option<(u16, u16, u32, u32)> = None;
     let mut everything_plugins_smoke_reported = false;
@@ -266,10 +349,25 @@ pub(crate) fn register_interval(
         let current_width = width_for_interval.get();
         let current_height = height_for_interval.get();
         let settings_is_visible = settings_visible_for_interval.get();
+        // The intervals stop while the window is hidden, so a hide never reaches
+        // this tick. The show generation is how a fresh show is detected.
+        let show_changed = settings_show_generation.get() != last_show_generation;
+        last_show_generation = settings_show_generation.get();
         let prompt_is_visible = everything_prompt_visible_for_interval.get();
         let visual_tab_is_visible = settings_tab_for_interval.get() == 1;
         let plugins_tab_is_visible = settings_tab_for_interval.get() == 3;
         let visual_preview_is_visible = settings_is_visible && visual_tab_is_visible;
+        // Refresh the cached monitor geometry only when the preference changes;
+        // the frame callback then recomputes the pair at display rate for free.
+        if let Ok(settings) = settings_for_interval_geometry.read() {
+            let preference = settings.monitor_preference;
+            if last_pair_monitor_pref != Some(preference) {
+                if let Some((bounds, dpi)) = super::monitor::work_area_with_dpi(preference) {
+                    pair_monitor.set(Some((bounds, dpi)));
+                }
+                last_pair_monitor_pref = Some(preference);
+            }
+        }
         if everything_plugins_smoke_for_interval
             && settings_is_visible
             && plugins_tab_is_visible
@@ -288,7 +386,7 @@ pub(crate) fn register_interval(
             );
             everything_plugins_smoke_reported = true;
         }
-        if settings_is_visible && !last_settings_visible {
+        if settings_is_visible && (!last_settings_visible || show_changed) {
             let mut canvas = (SETTINGS_WINDOW_WIDTH, SETTINGS_WINDOW_HEIGHT);
             if let Ok(settings) = settings_for_interval_geometry.read() {
                 let (width, height) =
@@ -302,6 +400,64 @@ pub(crate) fn register_interval(
                 );
             }
             size_for_interval.set(canvas.0, canvas.1);
+        }
+        // Ordinary tabs keep the window centred; the Visual tab lives in the
+        // left pair slot beside the preview. The glide starts immediately; the
+        // preview joins it as a rider once its process is up, so the two windows
+        // travel on one motion instead of two independent clocks.
+        if settings_is_visible {
+            let current_tab = settings_tab_for_interval.get();
+            let just_shown = !last_settings_visible || !settings_positioned || show_changed;
+            if just_shown || current_tab != last_settings_tab {
+                if let Ok(settings) = settings_for_interval_geometry.read() {
+                    let preference = settings.monitor_preference;
+                    let (centered_x, centered_y) =
+                        super::window_geometry::settings_centered_position(preference)
+                            .unwrap_or((ctx.window_origin().x, ctx.window_origin().y));
+                    let from_x = if just_shown {
+                        centered_x
+                    } else {
+                        ctx.window_origin().x
+                    };
+                    let (to_x, to_y, ride) = if current_tab == 1 {
+                        let ((sx, sy), (px, py), _) =
+                            super::window_geometry::visual_preview_pair(
+                                preference,
+                                i32::from(current_width),
+                                i32::from(current_height),
+                            );
+                        (
+                            sx,
+                            sy,
+                            Some(PreviewRide {
+                                to_x: px,
+                                y: py,
+                                width: i32::from(current_width),
+                                height: i32::from(current_height),
+                                joined_ms: None,
+                            }),
+                        )
+                    } else {
+                        (centered_x, centered_y, None)
+                    };
+                    *settings_slide.borrow_mut() = Some(SettingsSlide {
+                        from_x,
+                        to_x,
+                        y: to_y,
+                        ride,
+                        started_ms: slide_clock.elapsed().as_millis() as u64,
+                    });
+                    // Kick the display-rate frame loop; the frame callback
+                    // keeps it running until the slide lands.
+                    windui::anim::request_repaint();
+                }
+                last_settings_tab = current_tab;
+            }
+            settings_positioned = true;
+        } else {
+            last_settings_tab = settings_tab_for_interval.get();
+            settings_positioned = false;
+            *settings_slide.borrow_mut() = None;
         }
         if prompt_is_visible != last_everything_prompt_visible {
             last_everything_prompt_visible = prompt_is_visible;
@@ -322,106 +478,76 @@ pub(crate) fn register_interval(
             }
             size_for_interval.set(prompt_width, prompt_height);
         }
-        // Warm the preview child as soon as Settings opens: it is a separate
-        // process, and starting it only when the Visual tab opens is what made
-        // the panel take a beat to appear. Its window is created hidden, so no
-        // other page ever shows a stray preview.
-        if settings_is_visible && visual_preview_process.is_none() {
-            let preview_width = i32::from(current_width);
-            let preview_height = i32::from(current_height);
-            let preference = settings_for_interval_geometry
-                .read()
-                .map(|settings| settings.monitor_preference)
-                .unwrap_or(MonitorPreference::Cursor);
-            let (preview_x, preview_y) = super::window_geometry::visual_preview_position(
-                preference,
-                preview_width,
-                preview_height,
-            );
-            match visual_preview::PreviewProcess::start(
-                preview_width,
-                preview_height,
-                preview_x,
-                preview_y,
-            ) {
-                Ok(preview) => {
-                    visual_preview_process = Some(preview);
-                    last_visual_preview_request = None;
-                }
-                Err(error) => eprintln!("Could not start visual preview: {error}"),
-            }
-        }
-        // Readiness is polled every tick, not only on the Visual tab: the child
-        // reports it from its first frame, and a late poll would time it out.
-        if let Some(preview) = visual_preview_process.as_mut() {
-            if let Err(error) = preview.poll_ready() {
-                eprintln!("Could not ready visual preview: {error}");
-                visual_preview_process.take();
-                last_visual_preview_request = None;
-                visual_preview_shown = false;
-            }
-        }
         if visual_preview_is_visible {
             let preference = settings_for_interval_geometry
                 .read()
                 .map(|settings| settings.monitor_preference)
                 .unwrap_or(MonitorPreference::Cursor);
-            let child_exited = visual_preview_process
-                .as_mut()
-                .is_some_and(|preview| !preview.is_alive());
+            // One borrow per statement: closing the preview from inside an active
+            // borrow panics the RefCell, and a panic inside a window callback
+            // aborts the whole process.
+            let child_exited = {
+                let mut slot = visual_preview_process.borrow_mut();
+                slot.as_mut().is_some_and(|preview| !preview.is_alive())
+            };
             if child_exited {
-                visual_preview_process.take();
+                visual_preview_process.borrow_mut().take();
                 last_visual_preview_request = None;
             }
-            if let Some(preview) = visual_preview_process.as_mut() {
-                match preview.poll_ready() {
-                    Ok(_) => {}
-                    Err(error) => {
-                        eprintln!("Could not ready visual preview: {error}");
-                        visual_preview_process.take();
-                        last_visual_preview_request = None;
-                    }
-                }
+            let ready_error = {
+                let mut slot = visual_preview_process.borrow_mut();
+                slot.as_mut().and_then(|preview| preview.poll_ready().err())
+            };
+            if let Some(error) = ready_error {
+                eprintln!("Could not ready visual preview: {error}");
+                visual_preview_process.borrow_mut().take();
+                last_visual_preview_request = None;
             }
-            if visual_preview_process.is_none() {
+            // Spawn the preview as soon as the Visual tab opens. When the panel is
+            // already gliding, open the window where the ride will have it by the
+            // time the process is up, so it does not jump when it appears.
+            if visual_preview_process.borrow().is_none() {
                 let preview_width = i32::from(current_width);
                 let preview_height = i32::from(current_height);
-                let (preview_x, preview_y) =
-                    super::window_geometry::visual_preview_position(preference, preview_width, preview_height);
+                let (_, (preview_x, preview_y), _) = super::window_geometry::visual_preview_pair(
+                    preference,
+                    preview_width,
+                    preview_height,
+                );
+                let (start_x, start_y) = {
+                    let slide = settings_slide.borrow();
+                    match slide.as_ref().and_then(|slide| {
+                        slide.ride.as_ref().map(|ride| (slide, ride))
+                    }) {
+                        Some((slide, _ride)) => {
+                            let estimate = slide.started_ms + PREVIEW_READY_ESTIMATE_MS as u64;
+                            let sx = slide.x_at(estimate);
+                            (sx + (preview_x - slide.to_x) + PREVIEW_SETTLE_PX, preview_y)
+                        }
+                        None => (preview_x, preview_y),
+                    }
+                };
                 match visual_preview::PreviewProcess::start(
                     preview_width,
                     preview_height,
-                    preview_x,
-                    preview_y,
+                    start_x,
+                    start_y,
                 ) {
                     Ok(preview) => {
-                        visual_preview_process = Some(preview);
+                        *visual_preview_process.borrow_mut() = Some(preview);
                         last_visual_preview_request = None;
                     }
                     Err(error) => eprintln!("Could not start visual preview: {error}"),
                 }
             }
-            if !visual_preview_shown {
-                if let Some(preview) = visual_preview_process.as_mut() {
-                    let _ = preview.show();
-                }
-                visual_preview_shown = true;
-            }
-        } else if !settings_is_visible {
-            if let Some(preview) = visual_preview_process.as_mut() {
-                eprintln!(
-                    "Visual preview closing because Settings is hidden: pid={}",
-                    preview.pid()
-                );
-                visual_preview_process.take();
-                last_visual_preview_request = None;
-                visual_preview_shown = false;
-            }
-        } else if visual_preview_shown {
-            if let Some(preview) = visual_preview_process.as_mut() {
-                let _ = preview.hide();
-            }
-            visual_preview_shown = false;
+        } else if let Some(preview) = visual_preview_process.borrow_mut().take() {
+            // The preview belongs to the Visual tab only: leaving it takes the
+            // window away instead of leaving it floating over other pages.
+            eprintln!(
+                "Visual preview closing because Settings/Visual is hidden: pid={}",
+                preview.pid()
+            );
+            last_visual_preview_request = None;
         }
         if settings_hide_request.get() {
             // Hide only here: dropping the preview above is what keeps the
@@ -529,17 +655,26 @@ pub(crate) fn register_interval(
             let requested = (width_for_interval.get(), height_for_interval.get());
             let must_dispatch = last_visual_preview_request != Some(requested)
                 || last_visual_preview_generation != preview_generation;
-            if must_dispatch {
+            // While the slot glide runs, the frame callback owns BOTH windows:
+            // the panel and the riding preview must not be pushed by a second
+            // clock. The dispatch resumes when the glide lands.
+            if must_dispatch && settings_slide.borrow().is_none() {
                 let preference = settings_for_interval_geometry
                     .read()
                     .map(|settings| settings.monitor_preference)
                     .unwrap_or(MonitorPreference::Cursor);
-                let (preview_x, preview_y) = super::window_geometry::visual_preview_position(
-                    preference,
-                    i32::from(requested.0),
-                    i32::from(requested.1),
-                );
-                let dispatch_result = if let Some(preview) = visual_preview_process.as_mut() {
+                // The window slides live with the preview; the pair slide is
+                // shorter than the slider's travel, so the client-space value
+                // converges with the thumb under the cursor instead of running.
+                let ((settings_x, settings_y), (preview_x, preview_y), _shifted) =
+                    super::window_geometry::visual_preview_pair(
+                        preference,
+                        i32::from(requested.0),
+                        i32::from(requested.1),
+                    );
+                position_for_interval.set_move_only(settings_x, settings_y);
+                let dispatch_result = if let Some(preview) = visual_preview_process.borrow_mut().as_mut()
+                {
                     match preview.poll_ready() {
                         Ok(true) => Some(preview.resize(
                             i32::from(requested.0),
@@ -564,7 +699,7 @@ pub(crate) fn register_interval(
                     }
                     Some(Err(error)) => {
                         eprintln!("Could not update visual preview: {error}");
-                        visual_preview_process.take();
+                        visual_preview_process.borrow_mut().take();
                         last_visual_preview_request = None;
                     }
                     None => {}
@@ -880,6 +1015,96 @@ pub(crate) fn register_interval(
             // Applications stay immediate so the top row answers within a
             // single tick; slow providers follow through the debounced path.
             application_worker.request(sequence, next_query.clone());
+        }
+    })
+    .on_frame(move |_ctx| {
+        // A size reset eases the slider signal; the follow below then moves the
+        // pair on the same curve, so the thumb and the windows travel together.
+        let mut easing = false;
+        for (ease, slider) in [
+            (width_ease.as_ref(), width_slider_for_interval),
+            (height_ease.as_ref(), height_slider_for_interval),
+        ] {
+            if let Some((from, to, started)) = ease.get() {
+                let elapsed = started.elapsed().as_secs_f32() * 1000.0;
+                let t = (elapsed / SETTINGS_EASE_MS).clamp(0.0, 1.0);
+                let fraction = from + (to - from) * ease_in_out_cubic(t);
+                slider.set(fraction);
+                if t >= 1.0 {
+                    ease.set(None);
+                } else {
+                    easing = true;
+                }
+            }
+        }
+        let mut guard = settings_slide_for_slide.borrow_mut();
+        if let Some(slide) = guard.as_mut() {
+            let now = slide_clock.elapsed().as_millis() as u64;
+            let elapsed = now.saturating_sub(slide.started_ms);
+            let t = (elapsed as f32 / SETTINGS_SLIDE_MS as f32).clamp(0.0, 1.0);
+            let eased = ease_in_out_cubic(t);
+            let x = slide.from_x + ((slide.to_x - slide.from_x) as f32 * eased).round() as i32;
+            position_for_slide.set_move_only(x, slide.y);
+            // The preview rides the panel: it appears beside the panel's CURRENT
+            // right edge and travels with it, settling the last few pixels once it
+            // has joined. One motion, not two clocks.
+            if let Some(ride) = slide.ride.as_mut() {
+                let ready = {
+                    let mut slot = visual_preview_for_frame.borrow_mut();
+                    slot.as_mut()
+                        .is_some_and(|preview| preview.poll_ready().unwrap_or(false))
+                };
+                if ready {
+                    let joined = *ride.joined_ms.get_or_insert(now);
+                    let settle_t = ((now.saturating_sub(joined)) as f32 / PREVIEW_SETTLE_MS)
+                        .clamp(0.0, 1.0);
+                    let offset = (PREVIEW_SETTLE_PX as f32 * (1.0 - ease_in_out_cubic(settle_t)))
+                        .round() as i32;
+                    let px = x + (ride.to_x - slide.to_x) + offset;
+                    if let Some(preview) = visual_preview_for_frame.borrow_mut().as_mut() {
+                        let _ = preview.resize(ride.width, ride.height, px, ride.y);
+                    }
+                }
+            }
+            if t >= 1.0 {
+                *guard = None;
+                easing
+            } else {
+                true
+            }
+        } else {
+            // No glide: follow the width slider at the paint rate, so dragging on
+            // a high-refresh display is not limited to the 16 ms search tick.
+            if settings_visible_for_interval.get() && settings_tab_for_interval.get() == 1 {
+                if let Some((bounds, dpi)) = pair_monitor_for_frame.get() {
+                    let width = dimension_from_slider(
+                        width_slider_for_interval.get(),
+                        MIN_LAUNCHER_WIDTH,
+                        MAX_LAUNCHER_WIDTH,
+                    );
+                    let height = dimension_from_slider(
+                        height_slider_for_interval.get(),
+                        MIN_LAUNCHER_HEIGHT,
+                        MAX_LAUNCHER_HEIGHT,
+                    );
+                    let ((sx, sy), (px, py), _) =
+                        super::window_geometry::visual_preview_pair_in_bounds(
+                            bounds,
+                            dpi,
+                            i32::from(width),
+                            i32::from(height),
+                        );
+                    let frame = (sx, sy, px, py, width, height);
+                    if last_pair_frame_for_frame.get() != Some(frame) {
+                        last_pair_frame_for_frame.set(Some(frame));
+                        position_for_slide.set_move_only(sx, sy);
+                        if let Some(preview) = visual_preview_for_frame.borrow_mut().as_mut() {
+                            let _ = preview.resize(i32::from(width), i32::from(height), px, py);
+                        }
+                    }
+                }
+            }
+            easing
         }
     })
 }

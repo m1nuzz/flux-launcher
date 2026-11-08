@@ -401,6 +401,9 @@ struct Slot {
 
 /// 节点树 + arena。
 pub struct Tree {
+    /// Window origin in screen coordinates, kept by the platform on every move.
+    /// Widgets that must stay anchored under a moving window read this.
+    pub window_origin: Point,
     slots: Vec<Slot>,
     free: Vec<u32>,
     pub root: Option<NodeId>,
@@ -447,12 +450,24 @@ impl Tree {
             reactive_nodes: Vec::new(),
             pending_toasts: Vec::new(),
             arrange_origin: Point::new(0, 0),
+            window_origin: Point::new(0, 0),
         }
     }
 
     /// 取走 on_update 相位累积的 toast 请求（宿主在 layout 后调用上屏），并清空暂存。
     pub fn take_pending_toasts(&mut self) -> Vec<ToastRequest> {
         std::mem::take(&mut self.pending_toasts)
+    }
+
+    /// 设置节点的绘制/命中偏移（见 [`Node::offset`]）：视觉位移但布局不变。
+    pub fn set_node_offset(&mut self, id: NodeId, off: Point) -> bool {
+        match self.get_mut(id) {
+            Some(n) if n.offset != off => {
+                n.offset = off;
+                true
+            }
+            _ => false,
+        }
     }
 
     // ---- arena ----
@@ -1407,6 +1422,11 @@ impl EventCtx<'_> {
         self.out.dialog = Some(DialogRequest::Custom(Box::new(f)));
     }
     /// 本节点绝对矩形（判断指针是否仍在控件内）。
+    /// Current window origin in screen coordinates.
+    pub fn window_origin(&self) -> Point {
+        self.tree.window_origin
+    }
+
     pub fn bounds(&self) -> Rect {
         self.tree.abs_bounds(self.self_id)
     }
@@ -1418,13 +1438,7 @@ impl EventCtx<'_> {
     /// 设置节点的**绘制/命中偏移**（见 [`Node::offset`]）：视觉位移但布局不变。
     /// 返回值是否真的发生了变化——调用方据此决定要不要打脏，避免每帧无谓失效。
     pub fn set_node_offset(&mut self, id: NodeId, off: Point) -> bool {
-        match self.tree.get_mut(id) {
-            Some(n) if n.offset != off => {
-                n.offset = off;
-                true
-            }
-            _ => false,
-        }
+        self.tree.set_node_offset(id, off)
     }
     /// 设置节点的**同级绘制顺序提升**（见 [`Node::raised`]）：拖拽浮起的行用。
     pub fn set_node_raised(&mut self, id: NodeId, raised: bool) {

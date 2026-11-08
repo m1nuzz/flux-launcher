@@ -542,15 +542,24 @@ impl Slider {
 
     fn set_from_pos(&self, ctx: &mut EventCtx, x: i32) {
         let b = ctx.bounds();
-        let r = KNOB_R;
-        let usable = (b.w - 2 * r).max(1);
-        let v = ((x - b.x - r) as f32 / usable as f32).clamp(0.0, 1.0);
+        let track_w = if self.show_value {
+            (b.w - VALUE_LABEL_W).max(1)
+        } else {
+            b.w
+        };
+        let usable = (track_w - 2 * KNOB_EDGE).max(1);
+        let v = ((x - b.x - KNOB_EDGE) as f32 / usable as f32).clamp(0.0, 1.0);
         self.value.set(v);
         ctx.mark_dirty();
     }
 }
 
 const KNOB_R: i32 = 9;
+/// The knob grows while held, so the control being dragged reads as a separate
+/// object instead of a dot carried along by the window.
+const KNOB_R_DRAGGED: i32 = 13;
+/// Track inset for the widest knob, so the held thumb never leaves the widget.
+const KNOB_EDGE: i32 = KNOB_R_DRAGGED;
 
 impl Widget for Slider {
     fn measure(&self, _avail: Size, style: &Style, _text: &mut dyn TextEngine) -> Size {
@@ -585,9 +594,9 @@ impl Widget for Slider {
             bounds.w
         };
         let cy = bounds.y as f32 + bounds.h as f32 / 2.0;
-        let r = KNOB_R as f32;
-        let x0 = bounds.x as f32 + r;
-        let x1 = bounds.x as f32 + track_w as f32 - r;
+        let edge = KNOB_EDGE as f32;
+        let x0 = bounds.x as f32 + edge;
+        let x1 = bounds.x as f32 + track_w as f32 - edge;
         let knob_x = x0 + (x1 - x0) * v;
 
         // 轨道
@@ -608,9 +617,22 @@ impl Widget for Slider {
             2.0,
             &Paint::fill(accent),
         );
-        // 旋钮
-        canvas.fill_circle(knob_x, cy, r, &Paint::fill(tg.knob(pal)));
-        canvas.fill_circle(knob_x, cy, r - 2.0, &Paint::fill(accent));
+        // 旋钮：按住时放大并加一圈柔光，让它明显脱离窗口。
+        let (outer, inner) = if self.dragging {
+            (KNOB_R_DRAGGED as f32, 10.0)
+        } else {
+            (KNOB_R as f32, 7.0)
+        };
+        if self.dragging {
+            canvas.fill_circle(
+                knob_x,
+                cy,
+                outer + 3.0,
+                &Paint::fill(accent.scale_alpha(0.24)),
+            );
+        }
+        canvas.fill_circle(knob_x, cy, outer, &Paint::fill(tg.knob(pal)));
+        canvas.fill_circle(knob_x, cy, inner, &Paint::fill(accent));
 
         // 值标签
         if self.show_value {
@@ -644,6 +666,7 @@ impl Widget for Slider {
                 PointerKind::Up => {
                     self.dragging = false;
                     ctx.release_capture();
+                    ctx.mark_dirty();
                     true
                 }
                 _ => false,

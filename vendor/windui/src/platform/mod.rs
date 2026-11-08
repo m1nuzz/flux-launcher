@@ -282,9 +282,6 @@ pub struct WindowConfig {
     pub bg: Color,
     /// 窗口居中显示。
     pub centered: bool,
-    /// 窗口的显隐由外部控制（父进程、兄弟窗口），因此允许隐藏启动而不给
-    /// 托盘或全局热键：调用方自己会把它 show 出来。
-    pub external_show_control: bool,
     /// 窗口在可见期间位于最上层。启动器需要盖住别的 always-on-top 窗口
     /// （IDE、播放器）：普通窗口无论怎么激活都做不到这一点。
     pub topmost: bool,
@@ -340,7 +337,6 @@ impl Default for WindowConfig {
             height: 600,
             bg: Color::hex(0xF3F3F3),
             centered: false,
-            external_show_control: false,
             topmost: false,
             initial_position: None,
             resizable: true,
@@ -448,6 +444,9 @@ pub trait AppHandler {
     fn on_key(&mut self, _ev: KeyEvent) -> bool {
         false
     }
+    /// The native window moved; its new screen origin. Widgets that anchor to
+    /// the screen (a slider being dragged while the window slides) need it.
+    fn set_window_origin(&mut self, _origin: Point) {}
     /// Called right after the show path's synthetic Tab hands focus to the
     /// window. That move is not user keyboard navigation, so the focus ring it
     /// would otherwise arm must not appear until the user really presses Tab.

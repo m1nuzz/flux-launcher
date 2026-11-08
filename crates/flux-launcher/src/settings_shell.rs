@@ -140,6 +140,7 @@ pub(crate) fn build_settings_panel(
 
     let reset = Element::button("Reset tab defaults")
         .small()
+        .neutral()
         .width_match()
         .tooltip("Restore this tab's defaults. Nothing is saved until you press Apply settings.")
         .visible_when(move || tab_is_resettable(settings_tab.get()))

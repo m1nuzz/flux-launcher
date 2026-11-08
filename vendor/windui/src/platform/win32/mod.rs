@@ -2128,7 +2128,6 @@ unsafe fn apply_window_op(hwnd: HWND) {
     // consume that second-stage request before returning to the message loop.
     let cursor_visibility_after_op =
         state_from(hwnd).and_then(|state| state.handler.take_cursor_visibility_request());
-    let repositioned = position_request.is_some();
     run_window_position_request(hwnd, position_request);
     let resized = size_request.is_some();
     run_window_size_request(hwnd, size_request);
@@ -2138,7 +2137,9 @@ unsafe fn apply_window_op(hwnd: HWND) {
     // A resize after a visible show invalidates the old swap-chain frame. Queue
     // one more paint after SetWindowPos so transparent D2D content is presented
     // at the new size instead of appearing only after the next query edit.
-    if (resized || repositioned) && IsWindowVisible(hwnd).as_bool() {
+    // A pure move does NOT: the composed surface travels with the window, and
+    // invalidating here turned every eased frame into a full settings render.
+    if resized && IsWindowVisible(hwnd).as_bool() {
         let _ = InvalidateRect(Some(hwnd), None, false);
     }
     // 运行期热键操作与窗口操作同点消费（HotkeyHandle 排队 → 此处落地）。
@@ -2220,6 +2221,16 @@ unsafe fn run_window_position_request(hwnd: HWND, request: Option<(i32, i32)>) {
         0,
         SWP_NOZORDER | SWP_NOACTIVATE | SWP_NOSIZE,
     );
+    // Address the new screen origin to the widgets: a slider dragged while the
+    // window slides has to stay anchored to the pointer, not to the client rect.
+    let mut rect = RECT::default();
+    if GetWindowRect(hwnd, &mut rect).is_ok() {
+        if let Some(state) = state_from(hwnd) {
+            state
+                .handler
+                .set_window_origin(crate::geometry::Point::new(rect.left, rect.top));
+        }
+    }
 }
 /// 消费运行期热键操作队列（改绑/启停），落地到 `HotkeyState`.
 /// 先经 handler 取队列（借 handler 字段），再对 hotkeys 字段执行——同一

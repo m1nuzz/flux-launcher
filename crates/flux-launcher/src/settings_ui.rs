@@ -36,6 +36,11 @@ pub(crate) struct SettingsUi {
     pub(crate) game_mode_status: Signal<String>,
     pub(crate) settings_visible: Signal<bool>,
     pub(crate) settings_tab: Signal<usize>,
+    /// Eased size resets: `(from_fraction, to_fraction, started)`. The frame
+    /// callback drives the slider signal so the thumb and the window pair both
+    /// travel on the same ease.
+    pub(crate) width_ease: Rc<Cell<Option<(f32, f32, std::time::Instant)>>>,
+    pub(crate) height_ease: Rc<Cell<Option<(f32, f32, std::time::Instant)>>>,
     pub(crate) show_results: Signal<bool>,
     pub(crate) activation_display: Signal<String>,
     pub(crate) activation_key: Signal<String>,
@@ -72,7 +77,6 @@ pub(crate) struct SettingsUi {
     pub(crate) launcher_width_slider: Signal<f32>,
     pub(crate) launcher_height_slider: Signal<f32>,
     pub(crate) launcher_preview_text: Signal<String>,
-    pub(crate) visual_preview_generation: Signal<u64>,
     pub(crate) clear_query_on_activation: Signal<bool>,
     pub(crate) start_with_windows: Signal<bool>,
     pub(crate) auto_enable_everything: Signal<bool>,
