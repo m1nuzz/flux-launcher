@@ -144,10 +144,13 @@ jobs:
           git fetch origin master
           git ls-remote --exit-code --heads origin $branch *> $null
           if ($LASTEXITCODE -eq 0) {
-            git fetch origin "refs/heads/$branch:refs/remotes/origin/$branch"
+            git fetch origin "refs/heads/${branch}:refs/remotes/origin/${branch}"
+            if ($LASTEXITCODE -ne 0) { throw "Unable to fetch existing WinGet branch $branch." }
             git switch -C $branch "origin/$branch"
+            if ($LASTEXITCODE -ne 0) { throw "Unable to switch to WinGet branch $branch." }
           } else {
             git switch -c $branch upstream/master
+            if ($LASTEXITCODE -ne 0) { throw "Unable to create WinGet branch $branch." }
           }
 
           $manifestDirectory = "manifests/m/m1nuzz/FluxLauncher/$env:VERSION"
