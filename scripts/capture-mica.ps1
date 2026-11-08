@@ -2298,7 +2298,36 @@ try {
     $enterLastChange = Get-Date
     $enterReady = $false
     $enterProbeLines = @()
+    # A CI helper window can take the foreground after the query setup. Flux
+    # then deactivates and hides by design, and an arrow-key probe against the
+    # hidden HWND routes nothing. Reopen through the real bind and rebuild the
+    # query on the focused input before waiting or selecting again.
+    $restoreEnterQuery = {
+        if (![FluxWallpaper]::IsWindowVisible($launcherHandle)) {
+            [FluxWallpaper]::SendMessage($launcherHandle, $wmHotkey, [UIntPtr]::Zero, [IntPtr]::Zero) | Out-Null
+            Start-Sleep -Milliseconds 800
+        }
+        [FluxWallpaper]::SetForegroundWindow($launcherHandle) | Out-Null
+        $wmChar = 0x0102
+        foreach ($character in $navigationProbeQuery.ToCharArray()) {
+            [FluxWallpaper]::SendMessage(
+                $launcherHandle,
+                $wmChar,
+                [UIntPtr]::new([int][char]$character),
+                [IntPtr]::Zero
+            ) | Out-Null
+            Start-Sleep -Milliseconds 35
+        }
+        Start-Sleep -Seconds 2
+    }
     while ((Get-Date) -lt $enterBudget) {
+        if (![FluxWallpaper]::IsWindowVisible($launcherHandle)) {
+            & $restoreEnterQuery
+            $enterAppSeen = $false
+            $enterLastCount = -1
+            $enterLastChange = Get-Date
+            continue
+        }
         $enterProbeLines = if (Test-Path $iconProbePath) {
             @(Get-Content $iconProbePath)
         } else {
@@ -2339,12 +2368,21 @@ try {
     # "Zq7LaunchProbe", but the row id is "application:target:<resolved cmd.exe>|args:/c exit"),
     # so we match on the distinctive launch arguments, not the display name.
     for ($enterAttempt = 1; $enterAttempt -le 3 -and !$enterLaunchVerified; $enterAttempt++) {
+    if (![FluxWallpaper]::IsWindowVisible($launcherHandle)) {
+        & $restoreEnterQuery
+    } elseif ([FluxWallpaper]::GetForegroundWindow() -ne $launcherHandle) {
+        [FluxWallpaper]::SetForegroundWindow($launcherHandle) | Out-Null
+    }
     $enterSelection = Select-FluxResultRow -Handle $launcherHandle -TracePath $paintTracePath -ExpectedPattern 'args:/c exit'
     if ($null -eq $enterSelection -or $enterSelection.Id -notmatch 'args:/c exit') {
         $lastSelectionText = if ($null -ne $enterSelection) {
             "index=$($enterSelection.Index) id='$($enterSelection.Id)'"
         } else {
             "<no selection event in $paintTracePath>"
+        }
+        if ($enterAttempt -lt 3) {
+            Write-Host "Enter launch selection attempt $enterAttempt missed the app row ($lastSelectionText); restoring the query."
+            continue
         }
         throw ("Enter launch smoke never selected the app row; last selection: $lastSelectionText. " +
             "The list must hold the Zq7LaunchProbe application fixture (resolved launch id ends in 'args:/c exit').")
