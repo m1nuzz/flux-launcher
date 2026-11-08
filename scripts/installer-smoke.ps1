@@ -189,8 +189,16 @@ function Invoke-SilentUninstall {
     if ($null -ne $LiveProcess) {
         $LiveProcess.Refresh()
         if (-not $LiveProcess.HasExited) {
-            if (-not $LiveProcess.WaitForExit(5000)) {
-                throw "Flux Launcher process was still running after uninstaller returned"
+            # Inno returns from the close-apps handshake before the app always
+            # finishes tearing down on a loaded runner; poll instead of failing
+            # the release on a fixed 5-second window.
+            $uninstallExitDeadline = (Get-Date).AddSeconds(20)
+            while (-not $LiveProcess.HasExited -and (Get-Date) -lt $uninstallExitDeadline) {
+                Start-Sleep -Milliseconds 250
+                $LiveProcess.Refresh()
+            }
+            if (-not $LiveProcess.HasExited) {
+                throw "Flux Launcher process was still running 20s after the uninstaller returned"
             }
         }
         Write-Host "Uninstall shutdown order passed: Flux Launcher exited before file deletion checks."

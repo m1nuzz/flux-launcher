@@ -3020,62 +3020,84 @@ try {
                 throw "Visual Settings smoke could not identify the width slider from native preview geometry telemetry."
             }
 
-            $heightDirectY = $settingsRect.Top + [int][Math]::Round(449 * $settingsScale)
-            $heightDirectPointClass = [FluxWallpaper]::WindowClassAtPoint($sliderLeft, $heightDirectY)
-            Write-Host "Visual results-height direct probe: left=$sliderLeft right=$sliderRight y=$heightDirectY windowClass=$heightDirectPointClass"
-            [FluxWallpaper]::SetCursorPos($sliderRight, $heightDirectY) | Out-Null
-            [FluxWallpaper]::mouse_event(0x0002, 0, 0, 0, [UIntPtr]::Zero)
-            for ($step = 0; $step -le 10; $step++) {
-                $fraction = 1.0 - ($step / 10.0)
-                $x = $sliderLeft + [int](($sliderRight - $sliderLeft) * $fraction)
-                [FluxWallpaper]::SetCursorPos($x, $heightDirectY) | Out-Null
-                Start-Sleep -Milliseconds 45
+            # The width drag created an unsaved draft, so the Apply footer
+            # appeared and shortened the scroll viewport. The results-height row
+            # can now sit below the visible area: scroll once more, then
+            # re-locate the width row so the height search and every later
+            # probe use the coordinates the layout actually has.
+            [FluxWallpaper]::SetCursorPos(($settingsRect.Left + 360), ($settingsRect.Top + 260)) | Out-Null
+            [FluxWallpaper]::mouse_event(0x0800, 0, 0, 4294967176, [UIntPtr]::Zero) | Out-Null
+            Start-Sleep -Milliseconds 600
+            [FluxWallpaper]::SetForegroundWindow($settingsHwnd) | Out-Null
+            Start-Sleep -Milliseconds 150
+            Save-Screenshot "settings-visual-footer-scrolled.png"
+            $widthStateBeforeRefind = if (Test-Path $settingsStderrPath) {
+                Get-Content $settingsStderrPath -Raw
+            } else {
+                ""
             }
-            [FluxWallpaper]::mouse_event(0x0004, 0, 0, 0, [UIntPtr]::Zero)
-            Start-Sleep -Milliseconds 400
-            $heightDirectLog = Get-Content $settingsStderrPath -Raw
-            $heightDirectGeometry = [regex]::Matches(
-                $heightDirectLog,
-                "VisualPreviewChild: GEOMETRY $visualPreviewProcessId (\d+) (\d+) (\d+) (\d+) (\d+)"
-            )
-            $heightDirectChanged = $false
-            foreach ($match in $heightDirectGeometry) {
-                if ([int]$match.Groups[2].Value -ne $initialLogicalHeight) {
-                    $heightDirectChanged = $true
-                    break
+            $widthStateCountBefore = ([regex]::Matches(
+                $widthStateBeforeRefind,
+                "Visual control state: width="
+            )).Count
+            $widthSliderY = 0
+            $refindY = $directSliderY - [int](96 * $settingsScale)
+            $refindBottom = $directSliderY + [int](24 * $settingsScale)
+            while ($refindY -le $refindBottom -and $widthSliderY -eq 0) {
+                [FluxWallpaper]::SetCursorPos($sliderLeft, $refindY) | Out-Null
+                [FluxWallpaper]::mouse_event(0x0002, 0, 0, 0, [UIntPtr]::Zero)
+                for ($step = 0; $step -le 4; $step++) {
+                    $x = $sliderLeft + [int](($sliderRight - $sliderLeft) * $step / 4.0)
+                    [FluxWallpaper]::SetCursorPos($x, $refindY) | Out-Null
+                    Start-Sleep -Milliseconds 45
                 }
+                [FluxWallpaper]::mouse_event(0x0004, 0, 0, 0, [UIntPtr]::Zero)
+                Start-Sleep -Milliseconds 250
+                $refindLog = if (Test-Path $settingsStderrPath) {
+                    Get-Content $settingsStderrPath -Raw
+                } else {
+                    ""
+                }
+                $refindWidthStates = [regex]::Matches($refindLog, "Visual control state: width=")
+                if ($refindWidthStates.Count -gt $widthStateCountBefore) {
+                    $widthSliderY = $refindY
+                }
+                $refindY += [int](8 * $settingsScale)
             }
-            $heightSliderY = if ($heightDirectChanged) { $heightDirectY } else { 0 }
-            if (!$heightDirectChanged) {
-                # The height row always sits below the width row, so search the
-                # remaining content height instead of assuming a fixed offset.
-                $heightStep = [int](14 * $settingsScale)
-                $candidateY = $widthSliderY + [int](24 * $settingsScale)
-                $heightSweepBottom = $settingsRect.Bottom - [int](20 * $settingsScale)
-                while ($candidateY -le $heightSweepBottom -and $heightSliderY -eq 0) {
-                    [FluxWallpaper]::SetCursorPos($sliderLeft, $candidateY) | Out-Null
-                    [FluxWallpaper]::mouse_event(0x0002, 0, 0, 0, [UIntPtr]::Zero)
-                    for ($step = 0; $step -le 6; $step++) {
-                        $fraction = 1.0 - ($step / 6.0)
-                        $x = $sliderLeft + [int](($sliderRight - $sliderLeft) * $fraction)
-                        [FluxWallpaper]::SetCursorPos($x, $candidateY) | Out-Null
-                        Start-Sleep -Milliseconds 40
-                    }
-                    [FluxWallpaper]::mouse_event(0x0004, 0, 0, 0, [UIntPtr]::Zero)
-                    Start-Sleep -Milliseconds 250
-                    $afterCandidateLog = Get-Content $settingsStderrPath -Raw
-                    $candidateGeometry = [regex]::Matches(
-                        $afterCandidateLog,
-                        "VisualPreviewChild: GEOMETRY $visualPreviewProcessId (\d+) (\d+) (\d+) (\d+) (\d+)"
-                    )
-                    foreach ($match in $candidateGeometry) {
-                        if ([int]$match.Groups[2].Value -ne $initialLogicalHeight) {
-                            $heightSliderY = $candidateY
-                            break
-                        }
-                    }
-                    $candidateY += $heightStep
+            if ($widthSliderY -eq 0) {
+                throw "Visual Settings smoke could not re-locate the width slider after the Apply footer appeared."
+            }
+            Write-Host "Visual width slider re-located at y=$widthSliderY after the footer scroll"
+
+            # The height row always sits below the width row, so search the
+            # remaining content height instead of assuming a fixed offset.
+            $heightSliderY = 0
+            $heightStep = [int](14 * $settingsScale)
+            $candidateY = $widthSliderY + [int](24 * $settingsScale)
+            $heightSweepBottom = $settingsRect.Bottom - [int](20 * $settingsScale)
+            while ($candidateY -le $heightSweepBottom -and $heightSliderY -eq 0) {
+                [FluxWallpaper]::SetCursorPos($sliderLeft, $candidateY) | Out-Null
+                [FluxWallpaper]::mouse_event(0x0002, 0, 0, 0, [UIntPtr]::Zero)
+                for ($step = 0; $step -le 6; $step++) {
+                    $fraction = 1.0 - ($step / 6.0)
+                    $x = $sliderLeft + [int](($sliderRight - $sliderLeft) * $fraction)
+                    [FluxWallpaper]::SetCursorPos($x, $candidateY) | Out-Null
+                    Start-Sleep -Milliseconds 40
                 }
+                [FluxWallpaper]::mouse_event(0x0004, 0, 0, 0, [UIntPtr]::Zero)
+                Start-Sleep -Milliseconds 250
+                $afterCandidateLog = Get-Content $settingsStderrPath -Raw
+                $candidateGeometry = [regex]::Matches(
+                    $afterCandidateLog,
+                    "VisualPreviewChild: GEOMETRY $visualPreviewProcessId (\d+) (\d+) (\d+) (\d+) (\d+)"
+                )
+                foreach ($match in $candidateGeometry) {
+                    if ([int]$match.Groups[2].Value -ne $initialLogicalHeight) {
+                        $heightSliderY = $candidateY
+                        break
+                    }
+                }
+                $candidateY += $heightStep
             }
             if ($heightSliderY -eq 0) {
                 throw "Visual Settings smoke could not identify the results-height slider from native preview geometry telemetry."
@@ -3190,7 +3212,7 @@ try {
             # The button is found by sweeping its row from the right edge inward, so
             # the smoke does not depend on where the layout puts the control cluster.
             $resetTargets = @(
-                @{ Y = $widthSliderY; Marker = "Visual width reset clicked: 420x" },
+                @{ Y = $widthSliderY; Marker = "Visual width reset clicked: 420" },
                 @{ Y = $heightSliderY; Marker = "Visual height reset clicked: " }
             )
             foreach ($resetTarget in $resetTargets) {
@@ -3219,6 +3241,51 @@ try {
                 throw "Visual Settings reset smoke failed: the native preview did not report logical 420 width and 382 height after Reset callbacks."
             }
 
+            # Reset returns every Visual draft to its stored value, which hides
+            # the conditional Apply footer. Drag the width track once more to
+            # create a real draft, then read the value the app dispatched and
+            # use it for the Apply, persistence and reopen checks.
+            [FluxWallpaper]::SetForegroundWindow($settingsHwnd) | Out-Null
+            Start-Sleep -Milliseconds 150
+            $applyDraftWidth = 0
+            for ($draftAttempt = 1; $draftAttempt -le 3 -and $applyDraftWidth -eq 0; $draftAttempt++) {
+                $draftStartFraction = 0.08 * $draftAttempt
+                $draftEndFraction = [Math]::Min(1.0, $draftStartFraction + 0.16)
+                $draftStartX = $sliderLeft + [int](($sliderRight - $sliderLeft) * $draftStartFraction)
+                $draftEndX = $sliderLeft + [int](($sliderRight - $sliderLeft) * $draftEndFraction)
+                [FluxWallpaper]::SetCursorPos($draftStartX, $widthSliderY) | Out-Null
+                [FluxWallpaper]::mouse_event(0x0002, 0, 0, 0, [UIntPtr]::Zero)
+                for ($step = 0; $step -le 6; $step++) {
+                    $x = $draftStartX + [int](($draftEndX - $draftStartX) * $step / 6.0)
+                    [FluxWallpaper]::SetCursorPos($x, $widthSliderY) | Out-Null
+                    Start-Sleep -Milliseconds 45
+                }
+                [FluxWallpaper]::mouse_event(0x0004, 0, 0, 0, [UIntPtr]::Zero)
+                Start-Sleep -Milliseconds 400
+                $draftLog = if (Test-Path $settingsStderrPath) {
+                    Get-Content $settingsStderrPath -Raw
+                } else {
+                    ""
+                }
+                $draftStates = [regex]::Matches(
+                    $draftLog,
+                    "Visual control state: width=(\d+) height=(\d+)"
+                )
+                if ($draftStates.Count -gt 0) {
+                    $lastDraftState = $draftStates[$draftStates.Count - 1]
+                    $draftWidth = [int]$lastDraftState.Groups[1].Value
+                    $draftHeight = [int]$lastDraftState.Groups[2].Value
+                    if ($draftWidth -ne $initialLogicalWidth -and $draftHeight -eq $initialLogicalHeight) {
+                        $applyDraftWidth = $draftWidth
+                    }
+                }
+            }
+            if ($applyDraftWidth -eq 0) {
+                throw "Visual Apply smoke could not create a width draft after Reset."
+            }
+            Write-Host "Visual Apply draft width: $applyDraftWidth"
+            Save-Screenshot "settings-visual-apply-draft.png"
+
             # Apply settings is the single persist point and lives in the fixed
             # footer, outside the scrolled content. Sweep that band from the right
             # edge inward and stop at the click that produces the callback marker,
@@ -3227,7 +3294,7 @@ try {
             $shell.AppActivate($settingsProcess.Id) | Out-Null
             Start-Sleep -Milliseconds 300
             Save-Screenshot "settings-visual-apply.png"
-            $applyMarker = "Settings apply dispatched: 420x382"
+            $applyMarker = "Settings apply dispatched: ${applyDraftWidth}x382"
             $applyBaseline = ([regex]::Matches(
                 (Get-Content $settingsStderrPath -Raw),
                 [regex]::Escape($applyMarker)
@@ -3269,7 +3336,7 @@ try {
                 throw "Visual Apply smoke could not find the persisted settings file at $settingsPath."
             }
             $persistedSettings = Get-Content $settingsPath -Raw | ConvertFrom-Json
-            if ($persistedSettings.launcher_width -ne 420 -or $persistedSettings.launcher_height -ne 382) {
+            if ($persistedSettings.launcher_width -ne $applyDraftWidth -or $persistedSettings.launcher_height -ne 382) {
                 throw "Visual Apply smoke persisted unexpected dimensions: $($persistedSettings.launcher_width)x$($persistedSettings.launcher_height)."
             }
             $visualPreviewPersistenceProbe = $true
@@ -3345,9 +3412,9 @@ try {
                 else { Start-Sleep -Milliseconds 100 }
             }
             if ($null -eq $reopenGeometryMatch -or
-                [int]$reopenGeometryMatch.Groups[1].Value -ne 420 -or
+                [int]$reopenGeometryMatch.Groups[1].Value -ne $applyDraftWidth -or
                 [int]$reopenGeometryMatch.Groups[2].Value -ne 382) {
-                throw "Visual persistence smoke reopened dimensions do not equal 420x382 logical client units."
+                throw "Visual persistence smoke reopened dimensions do not equal ${applyDraftWidth}x382 logical client units."
             }
 
             $reopenDpi = [FluxWallpaper]::GetDpiForWindow($reopenedSettingsHwnd)
