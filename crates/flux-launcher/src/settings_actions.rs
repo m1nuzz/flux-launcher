@@ -418,26 +418,27 @@ fn reset_visual(ui: &SettingsUi, defaults: &Settings) {
         ((defaults.custom_selection_color >> 8) & 0xff) as u8,
         (defaults.custom_selection_color & 0xff) as u8,
     ));
-    ui.launcher_width.set(defaults.launcher_width);
-    ui.launcher_height.set(defaults.launcher_height);
-    ui.launcher_width_input
-        .set(defaults.launcher_width.to_string());
-    ui.launcher_height_input
-        .set(defaults.launcher_height.to_string());
-    ui.launcher_width_slider.set(dimension_slider_fraction(
-        defaults.launcher_width,
-        MIN_LAUNCHER_WIDTH,
-        MAX_LAUNCHER_WIDTH,
-    ));
-    ui.launcher_height_slider.set(dimension_slider_fraction(
-        defaults.launcher_height,
-        MIN_LAUNCHER_HEIGHT,
-        MAX_LAUNCHER_HEIGHT,
-    ));
-    ui.launcher_preview_text.set(format!(
-        "Current launcher client area: {} × {} logical px (DIP)",
-        defaults.launcher_width, defaults.launcher_height
-    ));
+    // Let the frame callback ease the sliders instead of snapping: the thumb and
+    // the Settings/preview pair both travel on the same ease-in-out curve.
+    let now = std::time::Instant::now();
+    ui.width_ease.set(Some((
+        ui.launcher_width_slider.get(),
+        dimension_slider_fraction(
+            defaults.launcher_width,
+            MIN_LAUNCHER_WIDTH,
+            MAX_LAUNCHER_WIDTH,
+        ),
+        now,
+    )));
+    ui.height_ease.set(Some((
+        ui.launcher_height_slider.get(),
+        dimension_slider_fraction(
+            defaults.launcher_height,
+            MIN_LAUNCHER_HEIGHT,
+            MAX_LAUNCHER_HEIGHT,
+        ),
+        now,
+    )));
 }
 
 fn reset_plugins(ui: &SettingsUi, defaults: &Settings) {

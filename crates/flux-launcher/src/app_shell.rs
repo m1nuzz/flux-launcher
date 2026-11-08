@@ -53,6 +53,7 @@ pub(crate) fn run_launcher(
     visual_preview: Rc<RefCell<Option<super::visual_preview::PreviewProcess>>>,
     content: Element,
     settings_visible: Signal<bool>,
+    settings_show_generation: Signal<u64>,
     query: Signal<String>,
     query_caret_position: Signal<usize>,
     results: Signal<Vec<flux_core::SearchResult>>,
@@ -177,8 +178,12 @@ pub(crate) fn run_launcher(
             let settings_visible_for_show = settings_visible;
             let size_for_show = window_size.clone();
             let theme_for_show = theme.clone();
+            let show_generation = settings_show_generation;
             move || {
                 cursor_visibility_for_show.show();
+                // The interval timers stop while hidden, so the tick cannot see a
+                // hide; this generation tells it the next show is a fresh one.
+                show_generation.set(show_generation.get().wrapping_add(1));
                 if let Ok(settings) = settings.read() {
                     // Runs after .theme(), so the handle keeps the effective
                     // accent instead of being reset to the theme default.

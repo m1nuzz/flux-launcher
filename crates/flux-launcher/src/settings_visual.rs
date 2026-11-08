@@ -1,3 +1,4 @@
+use std::rc::Rc;
 use std::sync::Arc;
 
 use flux_core::{
@@ -91,10 +92,7 @@ pub(crate) fn build_visual_tab(ui: &SettingsUi) -> Element {
                                     dimension_editor(
                                         ui.launcher_width_slider,
                                         ui.launcher_width_input,
-                                        ui.launcher_width,
-                                        ui.launcher_height,
-                                        ui.visual_preview_generation,
-                                        ui.launcher_preview_text,
+                                        Rc::clone(&ui.width_ease),
                                         true,
                                     ),
                                 ),
@@ -104,10 +102,7 @@ pub(crate) fn build_visual_tab(ui: &SettingsUi) -> Element {
                                     dimension_editor(
                                         ui.launcher_height_slider,
                                         ui.launcher_height_input,
-                                        ui.launcher_width,
-                                        ui.launcher_height,
-                                        ui.visual_preview_generation,
-                                        ui.launcher_preview_text,
+                                        Rc::clone(&ui.height_ease),
                                         false,
                                     ),
                                 ),
@@ -155,10 +150,7 @@ fn dimension_row(label: &str, description: String, editor: Element) -> Element {
 fn dimension_editor(
     slider: Signal<f32>,
     input: Signal<String>,
-    width: Signal<u16>,
-    height: Signal<u16>,
-    preview_generation: Signal<u64>,
-    preview_text: Signal<String>,
+    ease: Rc<std::cell::Cell<Option<(f32, f32, std::time::Instant)>>>,
     is_width: bool,
 ) -> Element {
     let (default, min, max, placeholder) = if is_width {
@@ -184,28 +176,14 @@ fn dimension_editor(
         .child(Element::slider(slider).width(VISUAL_SLIDER_WIDTH))
         .child(Element::text_input(input, placeholder).width(64))
         .child(Element::button("Reset").small().on_click(move |_| {
-            let (next_width, next_height) = if is_width {
-                (default, height.get())
-            } else {
-                (width.get(), default)
-            };
-            eprintln!("Visual {label} reset clicked: {next_width}x{next_height}");
-            width.set(next_width);
-            height.set(next_height);
-            input.set(if is_width {
-                next_width.to_string()
-            } else {
-                next_height.to_string()
-            });
-            slider.set(dimension_slider_fraction(
-                if is_width { next_width } else { next_height },
-                min,
-                max,
-            ));
-            preview_text.set(format!(
-                "Current launcher client area: {next_width} × {next_height} logical px (DIP)"
-            ));
-            preview_generation.set(preview_generation.get().saturating_add(1));
+            // Ease the slider to the default instead of snapping: the thumb and
+            // the Settings/preview pair travel on one curve.
+            eprintln!("Visual {label} reset clicked: {default}");
+            ease.set(Some((
+                slider.get(),
+                dimension_slider_fraction(default, min, max),
+                std::time::Instant::now(),
+            )));
         }))
         .child(Element::label("DIP").font_size(11.0))
 }

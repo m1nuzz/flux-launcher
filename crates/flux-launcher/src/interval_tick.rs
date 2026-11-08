@@ -39,6 +39,9 @@ use super::window_geometry::{
 /// and a symmetric curve, matching the motion used in the design mock.
 const SETTINGS_SLIDE_MS: u64 = 400;
 
+/// Duration of an eased size reset (Reset tab defaults / the row Reset).
+const SETTINGS_EASE_MS: f32 = 400.0;
+
 /// Last applied pair frame: `(settings_x, settings_y, preview_x, preview_y,
 /// width, height)`.
 type PairFrame = (i32, i32, i32, i32, u16, u16);
@@ -121,6 +124,9 @@ pub(crate) fn register_interval(
     settings_visible: Signal<bool>,
     settings_hide_request: Signal<bool>,
     settings_tab: Signal<usize>,
+    settings_show_generation: Signal<u64>,
+    width_ease: Rc<Cell<Option<(f32, f32, std::time::Instant)>>>,
+    height_ease: Rc<Cell<Option<(f32, f32, std::time::Instant)>>>,
     everything_prompt_visible: Signal<bool>,
     everything_installed: Signal<bool>,
     everything_status: Signal<String>,
@@ -189,6 +195,7 @@ pub(crate) fn register_interval(
     let mut last_launcher_height = launcher_height.get();
     let mut last_settings_visible = settings_visible.get();
     let mut last_settings_tab = settings_tab.get();
+    let mut last_show_generation = settings_show_generation.get();
     let mut settings_positioned = false;
     // Glide of the Settings window between the centred slot (ordinary tabs) and
     // the left pair slot (Visual): (from_x, to_x, y, started_ms). The vertical
@@ -342,6 +349,10 @@ pub(crate) fn register_interval(
         let current_width = width_for_interval.get();
         let current_height = height_for_interval.get();
         let settings_is_visible = settings_visible_for_interval.get();
+        // The intervals stop while the window is hidden, so a hide never reaches
+        // this tick. The show generation is how a fresh show is detected.
+        let show_changed = settings_show_generation.get() != last_show_generation;
+        last_show_generation = settings_show_generation.get();
         let prompt_is_visible = everything_prompt_visible_for_interval.get();
         let visual_tab_is_visible = settings_tab_for_interval.get() == 1;
         let plugins_tab_is_visible = settings_tab_for_interval.get() == 3;
@@ -375,7 +386,7 @@ pub(crate) fn register_interval(
             );
             everything_plugins_smoke_reported = true;
         }
-        if settings_is_visible && !last_settings_visible {
+        if settings_is_visible && (!last_settings_visible || show_changed) {
             let mut canvas = (SETTINGS_WINDOW_WIDTH, SETTINGS_WINDOW_HEIGHT);
             if let Ok(settings) = settings_for_interval_geometry.read() {
                 let (width, height) =
@@ -396,7 +407,7 @@ pub(crate) fn register_interval(
         // travel on one motion instead of two independent clocks.
         if settings_is_visible {
             let current_tab = settings_tab_for_interval.get();
-            let just_shown = !last_settings_visible || !settings_positioned;
+            let just_shown = !last_settings_visible || !settings_positioned || show_changed;
             if just_shown || current_tab != last_settings_tab {
                 if let Ok(settings) = settings_for_interval_geometry.read() {
                     let preference = settings.monitor_preference;
@@ -1007,6 +1018,25 @@ pub(crate) fn register_interval(
         }
     })
     .on_frame(move |_ctx| {
+        // A size reset eases the slider signal; the follow below then moves the
+        // pair on the same curve, so the thumb and the windows travel together.
+        let mut easing = false;
+        for (ease, slider) in [
+            (width_ease.as_ref(), width_slider_for_interval),
+            (height_ease.as_ref(), height_slider_for_interval),
+        ] {
+            if let Some((from, to, started)) = ease.get() {
+                let elapsed = started.elapsed().as_secs_f32() * 1000.0;
+                let t = (elapsed / SETTINGS_EASE_MS).clamp(0.0, 1.0);
+                let fraction = from + (to - from) * ease_in_out_cubic(t);
+                slider.set(fraction);
+                if t >= 1.0 {
+                    ease.set(None);
+                } else {
+                    easing = true;
+                }
+            }
+        }
         let mut guard = settings_slide_for_slide.borrow_mut();
         if let Some(slide) = guard.as_mut() {
             let now = slide_clock.elapsed().as_millis() as u64;
@@ -1038,7 +1068,7 @@ pub(crate) fn register_interval(
             }
             if t >= 1.0 {
                 *guard = None;
-                false
+                easing
             } else {
                 true
             }
@@ -1074,7 +1104,7 @@ pub(crate) fn register_interval(
                     }
                 }
             }
-            false
+            easing
         }
     })
 }
