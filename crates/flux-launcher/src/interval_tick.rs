@@ -39,6 +39,10 @@ use super::window_geometry::{
 /// and a symmetric curve, matching the motion used in the design mock.
 const SETTINGS_SLIDE_MS: u64 = 400;
 
+/// Last applied pair frame: `(settings_x, settings_y, preview_x, preview_y,
+/// width, height)`.
+type PairFrame = (i32, i32, i32, i32, u16, u16);
+
 /// A running glide of the Settings window, optionally carrying the preview
 /// window along with it.
 struct SettingsSlide {
@@ -195,6 +199,15 @@ pub(crate) fn register_interval(
     let slide_clock = std::time::Instant::now();
     let settings_slide_for_slide = Rc::clone(&settings_slide);
     let position_for_slide = window_position.clone();
+    // Display-rate pair follow: the monitor geometry is cached in the tick so the
+    // frame callback can recompute the pair from the slider without touching the
+    // monitor every frame.
+    let pair_monitor: Rc<Cell<Option<(super::monitor::MonitorBounds, u32)>>> =
+        Rc::new(Cell::new(None));
+    let pair_monitor_for_frame = Rc::clone(&pair_monitor);
+    let last_pair_frame: Rc<Cell<Option<PairFrame>>> = Rc::new(Cell::new(None));
+    let last_pair_frame_for_frame = Rc::clone(&last_pair_frame);
+    let mut last_pair_monitor_pref: Option<MonitorPreference> = None;
     let mut last_everything_prompt_visible = everything_prompt_visible.get();
     // The search clock, and the reason it is not `EventCtx::now_ms`: that reads the
     // shared animation clock, which the host refreshes before a frame, a pointer
@@ -333,6 +346,17 @@ pub(crate) fn register_interval(
         let visual_tab_is_visible = settings_tab_for_interval.get() == 1;
         let plugins_tab_is_visible = settings_tab_for_interval.get() == 3;
         let visual_preview_is_visible = settings_is_visible && visual_tab_is_visible;
+        // Refresh the cached monitor geometry only when the preference changes;
+        // the frame callback then recomputes the pair at display rate for free.
+        if let Ok(settings) = settings_for_interval_geometry.read() {
+            let preference = settings.monitor_preference;
+            if last_pair_monitor_pref != Some(preference) {
+                if let Some((bounds, dpi)) = super::monitor::work_area_with_dpi(preference) {
+                    pair_monitor.set(Some((bounds, dpi)));
+                }
+                last_pair_monitor_pref = Some(preference);
+            }
+        }
         if everything_plugins_smoke_for_interval
             && settings_is_visible
             && plugins_tab_is_visible
@@ -637,7 +661,7 @@ pub(crate) fn register_interval(
                         i32::from(requested.0),
                         i32::from(requested.1),
                     );
-                position_for_interval.set(settings_x, settings_y);
+                position_for_interval.set_move_only(settings_x, settings_y);
                 let dispatch_result = if let Some(preview) = visual_preview_process.borrow_mut().as_mut()
                 {
                     match preview.poll_ready() {
@@ -984,41 +1008,73 @@ pub(crate) fn register_interval(
     })
     .on_frame(move |_ctx| {
         let mut guard = settings_slide_for_slide.borrow_mut();
-        let Some(slide) = guard.as_mut() else {
-            return false;
-        };
-        let now = slide_clock.elapsed().as_millis() as u64;
-        let elapsed = now.saturating_sub(slide.started_ms);
-        let t = (elapsed as f32 / SETTINGS_SLIDE_MS as f32).clamp(0.0, 1.0);
-        let eased = ease_in_out_cubic(t);
-        let x = slide.from_x + ((slide.to_x - slide.from_x) as f32 * eased).round() as i32;
-        position_for_slide.set_move_only(x, slide.y);
-        // The preview rides the panel: it appears beside the panel's CURRENT
-        // right edge and travels with it, settling the last few pixels once it
-        // has joined. One motion, not two clocks.
-        if let Some(ride) = slide.ride.as_mut() {
-            let ready = {
-                let mut slot = visual_preview_for_frame.borrow_mut();
-                slot.as_mut()
-                    .is_some_and(|preview| preview.poll_ready().unwrap_or(false))
-            };
-            if ready {
-                let joined = *ride.joined_ms.get_or_insert(now);
-                let settle_t =
-                    ((now.saturating_sub(joined)) as f32 / PREVIEW_SETTLE_MS).clamp(0.0, 1.0);
-                let offset = (PREVIEW_SETTLE_PX as f32 * (1.0 - ease_in_out_cubic(settle_t)))
-                    .round() as i32;
-                let px = x + (ride.to_x - slide.to_x) + offset;
-                if let Some(preview) = visual_preview_for_frame.borrow_mut().as_mut() {
-                    let _ = preview.resize(ride.width, ride.height, px, ride.y);
+        if let Some(slide) = guard.as_mut() {
+            let now = slide_clock.elapsed().as_millis() as u64;
+            let elapsed = now.saturating_sub(slide.started_ms);
+            let t = (elapsed as f32 / SETTINGS_SLIDE_MS as f32).clamp(0.0, 1.0);
+            let eased = ease_in_out_cubic(t);
+            let x = slide.from_x + ((slide.to_x - slide.from_x) as f32 * eased).round() as i32;
+            position_for_slide.set_move_only(x, slide.y);
+            // The preview rides the panel: it appears beside the panel's CURRENT
+            // right edge and travels with it, settling the last few pixels once it
+            // has joined. One motion, not two clocks.
+            if let Some(ride) = slide.ride.as_mut() {
+                let ready = {
+                    let mut slot = visual_preview_for_frame.borrow_mut();
+                    slot.as_mut()
+                        .is_some_and(|preview| preview.poll_ready().unwrap_or(false))
+                };
+                if ready {
+                    let joined = *ride.joined_ms.get_or_insert(now);
+                    let settle_t = ((now.saturating_sub(joined)) as f32 / PREVIEW_SETTLE_MS)
+                        .clamp(0.0, 1.0);
+                    let offset = (PREVIEW_SETTLE_PX as f32 * (1.0 - ease_in_out_cubic(settle_t)))
+                        .round() as i32;
+                    let px = x + (ride.to_x - slide.to_x) + offset;
+                    if let Some(preview) = visual_preview_for_frame.borrow_mut().as_mut() {
+                        let _ = preview.resize(ride.width, ride.height, px, ride.y);
+                    }
                 }
             }
-        }
-        if t >= 1.0 {
-            *guard = None;
-            false
+            if t >= 1.0 {
+                *guard = None;
+                false
+            } else {
+                true
+            }
         } else {
-            true
+            // No glide: follow the width slider at the paint rate, so dragging on
+            // a high-refresh display is not limited to the 16 ms search tick.
+            if settings_visible_for_interval.get() && settings_tab_for_interval.get() == 1 {
+                if let Some((bounds, dpi)) = pair_monitor_for_frame.get() {
+                    let width = dimension_from_slider(
+                        width_slider_for_interval.get(),
+                        MIN_LAUNCHER_WIDTH,
+                        MAX_LAUNCHER_WIDTH,
+                    );
+                    let height = dimension_from_slider(
+                        height_slider_for_interval.get(),
+                        MIN_LAUNCHER_HEIGHT,
+                        MAX_LAUNCHER_HEIGHT,
+                    );
+                    let ((sx, sy), (px, py), _) =
+                        super::window_geometry::visual_preview_pair_in_bounds(
+                            bounds,
+                            dpi,
+                            i32::from(width),
+                            i32::from(height),
+                        );
+                    let frame = (sx, sy, px, py, width, height);
+                    if last_pair_frame_for_frame.get() != Some(frame) {
+                        last_pair_frame_for_frame.set(Some(frame));
+                        position_for_slide.set_move_only(sx, sy);
+                        if let Some(preview) = visual_preview_for_frame.borrow_mut().as_mut() {
+                            let _ = preview.resize(i32::from(width), i32::from(height), px, py);
+                        }
+                    }
+                }
+            }
+            false
         }
     })
 }
