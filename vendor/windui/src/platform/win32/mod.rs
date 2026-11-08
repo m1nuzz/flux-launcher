@@ -1462,6 +1462,10 @@ unsafe fn run_message_loop(hwnd: HWND) {
                 }
                 let _ = TranslateMessage(&msg);
                 DispatchMessageW(&msg);
+                // A UI-thread callback (single-instance handoff, tray, channel)
+                // can queue a window op while the window is hidden and no frame
+                // will be painted. Drain it here so the op still lands.
+                apply_window_op(hwnd);
             }
             let now = std::time::Instant::now();
             let sched_ready = matches!(sched_due, Some(due) if due <= now);
@@ -1483,6 +1487,10 @@ unsafe fn run_message_loop(hwnd: HWND) {
             }
             let _ = TranslateMessage(&msg);
             DispatchMessageW(&msg);
+            // The uninstaller's --shutdown handoff reaches the single-instance
+            // callback on this thread while the tray window is hidden, so no
+            // WM_PAINT follows to consume the queued Quit. Drain it here too.
+            apply_window_op(hwnd);
             last_frame = std::time::Instant::now(); // 进入动画时从此刻起算首帧
         }
     }
