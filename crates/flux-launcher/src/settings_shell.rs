@@ -79,6 +79,36 @@ pub(crate) fn settings_scroll_gutter() -> Element {
     Element::leaf().size(14, 1)
 }
 
+#[cfg(all(test, windows))]
+mod locale_layout_tests {
+    use super::TAB_NAMES;
+    use crate::ui_constants::{LAUNCHER_FONT_FAMILY, SETTINGS_SIDEBAR_WIDTH};
+    use windui::text::{DWriteEngine, TextEngine, TextStyle};
+
+    #[test]
+    fn translated_navigation_labels_fit_a_single_native_text_line() {
+        // Sidebar padding is 14 + 12 DIP. ListRow's pill starts at 18 DIP,
+        // followed by its 20-DIP glyph, 8-DIP gap, and 12-DIP trailing pad.
+        let available = SETTINGS_SIDEBAR_WIDTH - 14 - 12 - 18 - 20 - 8 - 12;
+        let mut engine = DWriteEngine::new();
+        let style = TextStyle {
+            family: Some(LAUNCHER_FONT_FAMILY),
+            ..TextStyle::new(14.0)
+        };
+        for language in flux_core::Locale::ALL {
+            for key in TAB_NAMES {
+                let label = crate::i18n::translate(language, key);
+                let width = engine.measure(label, &style, None).w;
+                assert!(
+                    width <= available,
+                    "{} navigation label {label:?} needs {width} DIP, available {available}",
+                    language.code()
+                );
+            }
+        }
+    }
+}
+
 pub(crate) fn build_settings_panel(
     ui: &SettingsUi,
     tab_general: Element,
