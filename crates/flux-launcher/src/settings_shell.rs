@@ -135,7 +135,7 @@ pub(crate) fn build_settings_panel(
             .visible_when(move || has_unsaved_changes(&ui_for_hint)),
         )
         .child(
-            Element::button("\u{2713} Apply settings")
+            Element::button(crate::i18n::tr("\u{2713} Apply settings"))
                 .visible_when(move || has_unsaved_changes(&ui_for_apply_visible))
                 .on_click(move |ctx| apply_settings(&ui_for_apply, ctx)),
         );
