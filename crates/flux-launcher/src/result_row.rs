@@ -170,6 +170,7 @@ pub(crate) fn result_row(
         .reactive()
         .width_match()
         .height(RESULT_ROW_HEIGHT)
+        .cross(Align::Center)
         .padding_xy(12, 3)
         .spacing(10)
         .corner(10.0)
