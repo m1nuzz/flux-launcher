@@ -6,7 +6,7 @@ use windui::app::WindowSizeHandle;
 use windui::core::{ClickFn, EventCtx, Widget};
 use windui::event::{Event, MouseButton, PointerKind};
 use windui::prelude::*;
-use windui::render::{Canvas, Paint};
+use windui::render::{Canvas, Gradient, Paint};
 
 use super::result_actions::ActionItem;
 use super::ui_constants::{ACTION_WINDOW_HEIGHT, RESULT_ROWS_VISIBLE};
@@ -233,18 +233,86 @@ impl Widget for ResultRowAnchor {
         _style: &windui::style::Style,
     ) {
         let selected = self.selected_id.get() == self.result_id;
-        let color = if selected {
-            self.selection_color.get()
-        } else {
-            Color::rgba(255, 255, 255, 18)
-        };
+        if selected {
+            let color = self.selection_color.get();
+            let x = bounds.x as f32;
+            let y = bounds.y as f32 + 2.0;
+            let w = bounds.w as f32;
+            let h = bounds.h as f32 - 4.0;
+            canvas.fill_round_rect(
+                x,
+                y,
+                w,
+                h,
+                10.0,
+                &Paint::gradient(Gradient::linear(
+                    (x, y),
+                    (x + w, y),
+                    vec![
+                        (0.0, color.scale_alpha(0.70)),
+                        (1.0, color.scale_alpha(1.20)),
+                    ],
+                )),
+            );
+            canvas.stroke_round_rect(
+                x,
+                y,
+                w,
+                h,
+                10.0,
+                1.0,
+                &Paint::fill(Color::rgba(255, 255, 255, 42)),
+            );
+        }
+    }
+}
+
+/// The ↵ affordance of the selected result row, drawn as a small keycap so it
+/// reads as an action hint rather than a stray glyph. Unselected rows keep the
+/// slot empty and paint nothing.
+pub(crate) struct ResultTrailingKey {
+    pub(crate) text: Signal<String>,
+}
+
+impl Widget for ResultTrailingKey {
+    fn paint(
+        &self,
+        bounds: windui::geometry::Rect,
+        _content: windui::geometry::Rect,
+        _focused: bool,
+        _enabled: bool,
+        canvas: &mut dyn Canvas,
+        style: &windui::style::Style,
+    ) {
+        let text = self.text.get();
+        if text.is_empty() {
+            return;
+        }
+        let (x, y) = (bounds.x as f32, bounds.y as f32);
+        let (w, h) = (bounds.w as f32, bounds.h as f32);
         canvas.fill_round_rect(
-            bounds.x as f32,
-            bounds.y as f32,
-            bounds.w as f32,
-            bounds.h as f32,
-            10.0,
-            &Paint::fill(color),
+            x,
+            y,
+            w,
+            h,
+            6.0,
+            &Paint::fill(Color::rgba(255, 255, 255, 18)),
+        );
+        canvas.stroke_round_rect(
+            x,
+            y,
+            w,
+            h,
+            6.0,
+            1.0,
+            &Paint::fill(Color::rgba(255, 255, 255, 40)),
+        );
+        canvas.draw_text(
+            &text,
+            bounds,
+            Color::rgba(238, 246, 255, 230),
+            Align::Center,
+            &windui::text::TextStyle::of(style),
         );
     }
 }

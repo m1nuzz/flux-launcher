@@ -15,7 +15,7 @@ use super::applications::resolve_bare_executable_path;
 use super::launcher_icons::bundled_icon_rgba;
 use super::plugins::{execute_async, PluginAction};
 use super::result_actions::{actions_for_result, arm_recycle_confirmation, ActionItem};
-use super::result_widgets::{ResultIconView, ResultRowAnchor};
+use super::result_widgets::{ResultIconView, ResultRowAnchor, ResultTrailingKey};
 use super::ui_constants::{
     LAUNCHER_FONT_FAMILY, RESULT_ROW_HEIGHT, SETTINGS_WINDOW_HEIGHT, SETTINGS_WINDOW_WIDTH,
 };
@@ -120,7 +120,7 @@ pub(crate) fn result_row(
         .reactive()
         .width(32)
         .height(32)
-        .corner(7.0);
+        .corner(8.0);
     let selected = selected_id.get() == id;
     // A recalled query restores the row it last launched. When that row sits below
     // the first page the recalled list starts at, the row has to bring itself into
@@ -186,19 +186,23 @@ pub(crate) fn result_row(
                 .child(
                     Element::label(subtitle)
                         .font_family(LAUNCHER_FONT_FAMILY)
-                        .font_size(12.0)
-                        .fg(Color::rgba(248, 251, 255, 255))
+                        .font_size(11.0)
+                        .fg(Color::rgba(184, 196, 212, 155))
                         .max_lines(1)
                         .truncate(Truncate::End)
                         .width_match(),
                 ),
         )
         .child(
-            Element::label_signal(trailing_signal)
-                .font_size(17.0)
-                .fg(Color::rgba(238, 246, 255, 230))
-                .width(22)
-                .align(Align::Center),
+            Element::leaf()
+                .widget(ResultTrailingKey {
+                    text: trailing_signal,
+                })
+                .reactive()
+                .width(24)
+                .height(20)
+                .font_family(LAUNCHER_FONT_FAMILY)
+                .font_size(12.0),
         )
         .on_click(move |ctx| {
             if history_mode.get() {

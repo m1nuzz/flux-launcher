@@ -28,14 +28,15 @@ pub(crate) fn build_action_bar(show_results: Signal<bool>, action_mode: Signal<b
                 Element::label(key)
                     .font_size(9.0)
                     .fg(Color::rgba(235, 243, 255, 235))
-                    .bg(Color::rgba(255, 255, 255, 24))
+                    .bg(Color::rgba(255, 255, 255, 14))
+                    .border(Color::rgba(255, 255, 255, 42), 1)
                     .corner(5.0)
                     .padding_xy(4, 2),
             )
             .child(
                 Element::label(label)
                     .font_size(10.0)
-                    .fg(Color::rgba(222, 233, 248, 220)),
+                    .fg(Color::rgba(206, 217, 232, 200)),
             )
     };
     // Use a bounded frame plus an explicitly centered content row instead of
