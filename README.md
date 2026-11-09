@@ -208,3 +208,11 @@ Versions released before this license change remain under the license they were 
 [4]: https://github.com/banesullivan/README "README writing guidance"
 [5]: https://www.voidtools.com/support/everything/ipc/ "Everything IPC documentation"
 [6]: https://learn.microsoft.com/en-us/windows/apps/design/style/acrylic "Windows Acrylic material"
+
+<a href="https://www.star-history.com/?repos=m1nuzz%2Fflux-launcher&type=date&legend=top-left">
+ <picture>
+   <source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/chart?repos=m1nuzz/flux-launcher&type=date&theme=dark&legend=top-left" />
+   <source media="(prefers-color-scheme: light)" srcset="https://api.star-history.com/chart?repos=m1nuzz/flux-launcher&type=date&legend=top-left" />
+   <img alt="Star History Chart" src="https://api.star-history.com/chart?repos=m1nuzz/flux-launcher&type=date&legend=top-left" />
+ </picture>
+</a>
