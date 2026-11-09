@@ -15,7 +15,8 @@ use super::theme_text::{
 };
 use super::ui_constants::COMPACT_WINDOW_HEIGHT;
 use super::update_tasks::{
-    request_update_check, request_update_install, save_settings_async, update_check_due,
+    request_update_check, request_update_install, save_settings, save_settings_async,
+    update_check_due,
 };
 use super::updater;
 use super::window_geometry::{
@@ -189,7 +190,7 @@ pub(crate) fn apply_settings(ui: &SettingsUi, ctx: &mut EventCtx) {
             .shared_settings
             .read()
             .ok()
-            .is_some_and(|settings| settings.save().is_ok());
+            .is_some_and(|settings| save_settings(&settings));
         if !saved {
             ctx.toast_ok(crate::i18n::tr("Could not save settings"));
             return;
