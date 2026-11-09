@@ -8,7 +8,7 @@ The launcher is a tray-resident application. It must use the real Windows DWM Ac
 
 ## Repository language and ownership
 
-All Flux-owned source comments, documentation, release notes, and user-facing application strings must be written in English. Do not add Chinese symbols or Chinese comments to Flux-owned code. Conversation with the project owner may use Russian.
+Flux-owned source comments, documentation, release notes, and translation keys must be written in English. Translated interface strings and native language names belong in `crates/flux-launcher/locales/*.json`; these locale resources may contain the languages they represent. Keep non-English literals out of application logic and comments. Tests may use Unicode escapes when asserting translated values. Paths, identifiers, protocol commands, and registry names are locale-independent and must never be translated. Conversation with the project owner may use Russian.
 
 Use concise English commit messages. Do not commit Manus-internal scratch notes, generated planning files, temporary screenshots, or unrelated artifacts. User-facing documentation may be committed when it is part of the requested product change.
 

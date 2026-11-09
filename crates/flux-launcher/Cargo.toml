@@ -26,6 +26,7 @@ ureq = { version = "2.12", default-features = false, features = ["tls"] }
 everything-ipc = "0.1.4"
 windows = { version = "0.62", features = [
     "Win32_Foundation",
+    "Win32_Globalization",
     "Win32_Graphics_Dwm",
     "Win32_Graphics_Gdi",
     "Win32_UI_Shell",
@@ -42,3 +43,6 @@ windows = { version = "0.62", features = [
     "Win32_System_Threading",
     "Win32_UI_Shell_PropertiesSystem",
 ] }
+
+[dev-dependencies]
+syn = { version = "2", features = ["full", "visit"] }

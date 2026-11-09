@@ -17,6 +17,7 @@ use super::updater;
 /// cannot borrow the panel builder's parameter.
 #[derive(Clone)]
 pub(crate) struct SettingsUi {
+    pub(crate) visual_preview: Rc<RefCell<Option<super::visual_preview::PreviewProcess>>>,
     pub(crate) language: Signal<usize>,
     pub(crate) shared_settings: Arc<RwLock<Settings>>,
     pub(crate) query_history: Rc<RefCell<Vec<String>>>,

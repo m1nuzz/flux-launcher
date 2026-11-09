@@ -103,9 +103,10 @@ impl ApplicationWorker {
                         continue;
                     };
                     let results = catalog.search(&request.query);
-                    let status = crate::i18n::format(
-                        "{count} application result(s)",
-                        &[("count", results.len().to_string())],
+                    let status = crate::i18n::count(
+                        "{count} application result",
+                        "{count} application results",
+                        results.len(),
                     );
                     let _ = output.send(ApplicationResponse {
                         sequence: request.sequence,

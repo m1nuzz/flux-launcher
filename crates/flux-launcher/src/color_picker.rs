@@ -435,7 +435,7 @@ pub(crate) fn build_color_picker(
         .width_match()
         .spacing(8)
         .child(
-            Element::label("Custom color picker")
+            Element::label(crate::i18n::tr("Custom color picker"))
                 .font_size(13.0)
                 .fg(Color::WHITE),
         )

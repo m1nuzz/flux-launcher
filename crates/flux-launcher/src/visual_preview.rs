@@ -343,10 +343,10 @@ fn current_window_geometry() -> Option<(i32, i32, u32)> {
 }
 
 pub(crate) fn run(width: i32, height: i32, x: i32, y: i32) {
-    let language = flux_core::Settings::load_from(&flux_core::Settings::config_path())
-        .unwrap_or_default()
-        .language;
-    crate::i18n::init(language);
+    let mut settings =
+        flux_core::Settings::load_from(&flux_core::Settings::config_path()).unwrap_or_default();
+    crate::system_locale::resolve(&mut settings);
+    crate::i18n::init(settings.language);
     let width = width.clamp(1, i32::from(u16::MAX));
     let height = height.clamp(1, i32::from(u16::MAX));
     let width_signal = signal(width as u16);

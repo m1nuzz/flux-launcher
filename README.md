@@ -74,21 +74,32 @@ Flux stores user settings in `%APPDATA%\FluxLauncher\settings.json`. The default
 ### Interface language
 
 Choose **Settings > General > Language** to use English, Simplified Chinese,
-Traditional Chinese, Japanese, or Russian. Press **Apply settings** to save and
+Traditional Chinese, Japanese, Russian, or **System default**. Press **Apply settings** to save and
 restart Flux with the selected language. Settings, tray actions, built-in result
 captions, and common status messages are translated. Application names, file
 paths, third-party plugin content, and operating-system error details retain
 their original text. Native community plugins receive the selected locale code.
 
-Existing settings files continue to load in English. Unknown language codes also
-fall back to English without discarding other preferences. The language is stored
-as a BCP 47 code in the `language` field of `settings.json`.
+On first run, System default follows the Windows preferred UI language list with
+base-language, Chinese script/region matching, and English fallback. The selected
+BCP 47 code is stored in `language`; `language_explicit` distinguishes an explicit
+choice (including English) from System default. Existing saved language choices
+are migrated as explicit choices. Unknown saved codes fall back to English
+without discarding other preferences.
 
 Translations are embedded from
-`crates/flux-launcher/locales/translations.json`. Each English key maps to
-Simplified Chinese, Traditional Chinese, Japanese, and Russian in that order.
+`crates/flux-launcher/locales/translations.json`. Each English key maps to named
+`zh-CN`, `zh-TW`, `ja-JP`, and `ru-RU` objects. Native language names live in
+`crates/flux-launcher/locales/languages.json`.
 Preserve named placeholders such as `{version}` when editing translations.
-Catalog tests check all translations and placeholders before release.
+Tests check translations, named placeholders, language-specific samples, and
+every literal translation call in the Rust syntax tree (including settings rows
+inside `vec!` macros). Filesystem and process arguments must never be translated.
+English result counts use singular/plural forms; translated count labels remain
+grammatical for 1, 2, 5, and 21. The Windows UI release workflow captures every
+settings tab, the language dropdown, tray labels, and application-triggered
+language restarts for all five languages. Screenshots still require visual
+review, especially for long Russian labels and CJK fallback fonts.
 
 | Input | Result |
 | --- | --- |

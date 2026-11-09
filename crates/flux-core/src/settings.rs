@@ -120,6 +120,8 @@ pub struct Settings {
     #[serde(default)]
     pub language: crate::Locale,
     #[serde(default)]
+    pub language_explicit: bool,
+    #[serde(default)]
     pub activation_hotkey: HotkeyConfig,
     #[serde(default = "enabled_by_default")]
     pub ignore_hotkeys_in_fullscreen: bool,
@@ -193,6 +195,7 @@ impl Default for Settings {
     fn default() -> Self {
         Self {
             language: crate::Locale::default(),
+            language_explicit: false,
             activation_hotkey: HotkeyConfig::default(),
             ignore_hotkeys_in_fullscreen: true,
             game_mode: false,

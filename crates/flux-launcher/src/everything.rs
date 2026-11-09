@@ -378,9 +378,10 @@ fn query_everything(
     EverythingResponse {
         sequence: request.sequence,
         query: request.query,
-        status: crate::i18n::format(
-            "{count} Everything result(s)",
-            &[("count", results.len().to_string())],
+        status: crate::i18n::count(
+            "{count} Everything result",
+            "{count} Everything results",
+            results.len(),
         ),
         results,
         available: true,

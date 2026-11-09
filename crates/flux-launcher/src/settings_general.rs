@@ -28,12 +28,15 @@ pub(crate) fn build_general_tab(ui: &SettingsUi) -> Element {
                     Element::col()
                         .weight(1.0)
                         .spacing(16)
-                        .child(Element::setting_row(
-                            crate::i18n::tr("Language"),
-                            Element::dropdown(
-                                flux_core::Locale::ALL.iter().map(|language| language.native_name()).collect(),
-                                ui.language,
-                            ).width(200),
+                        .child(settings_group(
+                            crate::i18n::tr("Interface"),
+                            vec![Element::setting_row(
+                                crate::i18n::tr("Language"),
+                                Element::dropdown(
+                                    std::iter::once(crate::i18n::tr("System default")).chain(flux_core::Locale::ALL.iter().map(|language| crate::i18n::native_name(*language))).collect(),
+                                    ui.language,
+                                ).width(200),
+                            )],
                         ))
                         .child(settings_group(
                             crate::i18n::tr("Activation"),

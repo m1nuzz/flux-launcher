@@ -315,9 +315,10 @@ fn parse_native_response(
         });
     }
     let status = if payload.errors.is_empty() {
-        crate::i18n::format(
-            "{count} native plugin result(s)",
-            &[("count", results.len().to_string())],
+        crate::i18n::count(
+            "{count} native plugin result",
+            "{count} native plugin results",
+            results.len(),
         )
     } else {
         payload.errors.join("; ")

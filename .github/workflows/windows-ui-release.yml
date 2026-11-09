@@ -54,6 +54,10 @@ jobs:
           Copy-Item ./tests/fixtures/flow-native-plugin/plugin.json (Join-Path $pluginRoot "plugin.json") -Force
           Copy-Item ./target/x86_64-pc-windows-msvc/release/flow-plugin-fixture.exe (Join-Path $pluginRoot "fixture-plugin.exe") -Force
 
+      - name: Smoke language selection and capture all localized settings
+        shell: pwsh
+        run: ./scripts/i18n-smoke.ps1 -Executable ./target/x86_64-pc-windows-msvc/release/flux-launcher.exe -OutputDirectory ./artifacts/windows-ui-release/i18n -AllowDesktopAutomation
+
       - name: Smoke self-spawned native plugin host over Named Pipe
         shell: pwsh
         run: |

@@ -173,7 +173,9 @@ pub(crate) fn stage_selection_color(
     push_selection_appearance(theme, selection_color, effective_selection_rgb(flag, &text));
     custom_selection_color.set(selection_color_hex(rgb));
     if !valid {
-        ctx.toast_ok("Invalid hex color, restored default #4C8BF4");
+        ctx.toast_ok(crate::i18n::tr(
+            "Invalid hex color, restored default #4C8BF4",
+        ));
     }
     true
 }

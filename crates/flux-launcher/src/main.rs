@@ -51,6 +51,7 @@ mod settings_visual;
 mod shell_icon_cache;
 mod shell_icon_extract;
 mod startup;
+mod system_locale;
 mod theme_text;
 mod tray_menu;
 mod ui_constants;
@@ -110,7 +111,8 @@ fn main() {
         } => (startup, single_instance_disabled),
     };
 
-    let (settings, settings_load) = Settings::load_or_default_from(&Settings::config_path());
+    let (mut settings, settings_load) = Settings::load_or_default_from(&Settings::config_path());
+    system_locale::resolve(&mut settings);
     i18n::init(settings.language);
     match settings_load {
         SettingsLoadOutcome::Loaded => {}
@@ -631,8 +633,18 @@ fn main() {
     // Settings shares the same continuous Acrylic surface as the launcher.
     // Do not add a dark card here: it hides the blur and creates the old opaque
     // search-style slab inside the transparent window.
+    // Owned here so the window's hide handler can drop it too: the interval
+    // timers stop with the window, so a tick-only owner would leave the preview
+    // floating after Settings loses focus.
+    let visual_preview_slot: Rc<RefCell<Option<visual_preview::PreviewProcess>>> =
+        Rc::new(RefCell::new(None));
     let settings_ui = settings_ui::SettingsUi {
-        language: signal(settings.language.index()),
+        visual_preview: Rc::clone(&visual_preview_slot),
+        language: signal(if settings.language_explicit {
+            settings.language.index() + 1
+        } else {
+            0
+        }),
         shared_settings: Arc::clone(&shared_settings),
         query_history: Rc::clone(&query_history),
         stats_usage,
@@ -731,11 +743,6 @@ fn main() {
         clear_history_dialog,
     );
 
-    // Owned here so the window's hide handler can drop it too: the interval
-    // timers stop with the window, so a tick-only owner would leave the preview
-    // floating after Settings loses focus.
-    let visual_preview_slot: Rc<RefCell<Option<visual_preview::PreviewProcess>>> =
-        Rc::new(RefCell::new(None));
     let app = interval_tick::register_interval(
         app,
         query,

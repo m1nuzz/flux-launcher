@@ -17,6 +17,33 @@ pub enum Locale {
 }
 
 impl Locale {
+    /// Match supported BCP 47 variants without confusing scripts or regions.
+    pub fn matching(tag: &str) -> Option<Self> {
+        let normalized = tag
+            .split(['.', '@'])
+            .next()?
+            .replace('_', "-")
+            .to_ascii_lowercase();
+        let parts: Vec<_> = normalized.split('-').collect();
+        match *parts.first()? {
+            "en" => Some(Self::English),
+            "ja" => Some(Self::Japanese),
+            "ru" => Some(Self::Russian),
+            "zh" if parts.contains(&"hant") => Some(Self::TraditionalChinese),
+            "zh" if parts.contains(&"hans") => Some(Self::SimplifiedChinese),
+            "zh" if parts.iter().any(|part| matches!(*part, "tw" | "hk" | "mo")) => {
+                Some(Self::TraditionalChinese)
+            }
+            "zh" => Some(Self::SimplifiedChinese),
+            _ => None,
+        }
+    }
+
+    pub fn preferred<'a>(tags: impl IntoIterator<Item = &'a str>) -> Self {
+        tags.into_iter()
+            .find_map(Self::matching)
+            .unwrap_or_default()
+    }
     pub const ALL: [Self; 5] = [
         Self::English,
         Self::SimplifiedChinese,
@@ -45,22 +72,28 @@ impl Locale {
             Self::Russian => "ru-RU",
         }
     }
-
-    pub fn native_name(self) -> &'static str {
-        match self {
-            Self::English => "English",
-            Self::SimplifiedChinese => "简体中文",
-            Self::TraditionalChinese => "繁體中文",
-            Self::Japanese => "日本語",
-            Self::Russian => "Русский",
-        }
-    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::Settings;
+
+    #[test]
+    fn language_tags_match_base_language_scripts_and_regions() {
+        for (tag, expected) in [
+            ("en-GB", Locale::English),
+            ("zh-Hans-TW", Locale::SimplifiedChinese),
+            ("zh-Hant", Locale::TraditionalChinese),
+            ("zh-HK", Locale::TraditionalChinese),
+            ("ja_JP.UTF-8", Locale::Japanese),
+            ("ru-KZ", Locale::Russian),
+        ] {
+            assert_eq!(Locale::matching(tag), Some(expected));
+        }
+        assert_eq!(Locale::preferred(["de-DE", "ja-JP"]), Locale::Japanese);
+        assert_eq!(Locale::preferred(["de-DE", "fr-FR"]), Locale::English);
+    }
 
     #[test]
     fn old_and_future_settings_preserve_other_preferences() {

@@ -64,7 +64,12 @@ pub(crate) fn apply_settings(ui: &SettingsUi, ctx: &mut EventCtx) {
     let mut check_due = false;
     if let Ok(mut settings) = ui.shared_settings.write() {
         let auto_enable_previous = settings.auto_enable_everything;
-        settings.language = flux_core::Locale::from_index(ui.language.get());
+        settings.language_explicit = ui.language.get() != 0;
+        settings.language = if settings.language_explicit {
+            flux_core::Locale::from_index(ui.language.get() - 1)
+        } else {
+            crate::system_locale::detect()
+        };
         settings.activation_hotkey = configuration;
         settings.game_mode_hotkey = HotkeyConfig {
             ctrl: ui.game_mode_ctrl.get(),
@@ -174,7 +179,11 @@ pub(crate) fn apply_settings(ui: &SettingsUi, ctx: &mut EventCtx) {
     // Persist off the UI thread and leave the window exactly where it is: Apply
     // used to write the file, sync the registry and shrink back to the search
     // strip on the click, which read as a freeze and threw away the page.
-    if flux_core::Locale::from_index(ui.language.get()) != crate::i18n::current() {
+    if ui
+        .shared_settings
+        .read()
+        .is_ok_and(|settings| settings.language != crate::i18n::current())
+    {
         // A language change restarts all static native surfaces together, including the tray.
         let saved = ui
             .shared_settings
@@ -185,7 +194,17 @@ pub(crate) fn apply_settings(ui: &SettingsUi, ctx: &mut EventCtx) {
             ctx.toast_ok(crate::i18n::tr("Could not save settings"));
             return;
         }
-        if crate::relaunch::spawn().is_err() {
+        let prepared = match crate::relaunch::prepare() {
+            Ok(prepared) => prepared,
+            Err(error) => {
+                eprintln!("Could not prepare language restart: {error}");
+                ctx.toast_ok(crate::i18n::tr("Could not restart Flux"));
+                return;
+            }
+        };
+        // Reap the native preview before committing the parent-exit handoff.
+        drop(ui.visual_preview.borrow_mut().take());
+        if prepared.commit().is_err() {
             ctx.toast_ok(crate::i18n::tr("Could not restart Flux"));
             return;
         }
@@ -309,7 +328,9 @@ pub(crate) fn has_unsaved_changes(ui: &SettingsUi) -> bool {
         .unwrap_or(24)
         .clamp(1, 168);
     let accent = parse_selection_color(&ui.custom_selection_color.get()).unwrap_or(0x4c_8b_f4);
-    settings.language != flux_core::Locale::from_index(ui.language.get())
+    settings.language_explicit != (ui.language.get() != 0)
+        || (ui.language.get() != 0
+            && settings.language != flux_core::Locale::from_index(ui.language.get() - 1))
         || settings.activation_hotkey != hotkey
         || settings.game_mode_hotkey != game_hotkey
         || settings.game_mode_hotkey_enabled != ui.game_mode_hotkey_enabled.get()
@@ -401,7 +422,7 @@ pub(crate) fn tab_is_resettable(tab: usize) -> bool {
 }
 
 fn reset_general(ui: &SettingsUi, defaults: &Settings) {
-    ui.language.set(defaults.language.index());
+    ui.language.set(0);
     ui.activation_ctrl.set(defaults.activation_hotkey.ctrl);
     ui.activation_alt.set(defaults.activation_hotkey.alt);
     ui.activation_shift.set(defaults.activation_hotkey.shift);
