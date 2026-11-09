@@ -109,6 +109,7 @@ mod tests {
     fn round_trip_preserves_preferences() {
         let path = temporary_path("settings-round-trip");
         let expected = Settings {
+            language: crate::Locale::Japanese,
             activation_hotkey: HotkeyConfig {
                 ctrl: true,
                 alt: false,

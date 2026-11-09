@@ -86,8 +86,18 @@ pub(crate) fn result_row(
     let result_for_actions = result.clone();
     let id = result.id;
     let target = result.target;
-    let title = result.title;
-    let subtitle = result.subtitle;
+    let local_caption =
+        result.source == flux_core::ResultSource::BuiltIn && !id.starts_with("history:");
+    let title = if local_caption {
+        crate::i18n::text(&result.title)
+    } else {
+        result.title
+    };
+    let subtitle = if result.source == flux_core::ResultSource::BuiltIn {
+        crate::i18n::text(&result.subtitle)
+    } else {
+        result.subtitle
+    };
     let icon_target = target.as_deref().map(icon_target_for_path);
     let (glyph, glyph_font) = match id.as_str() {
         "empty-recycle-bin" => (String::from("\u{ea99}"), "Segoe Fluent Icons"),

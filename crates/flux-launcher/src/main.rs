@@ -1,5 +1,7 @@
 #![cfg_attr(windows, windows_subsystem = "windows")]
 mod accent;
+mod i18n;
+mod relaunch;
 
 mod activation_clear;
 mod app_hotkeys;
@@ -97,6 +99,9 @@ pub(crate) use theme_text::*;
 pub(crate) use update_tasks::*;
 
 fn main() {
+    if !relaunch::wait_for_parent() {
+        return;
+    }
     let (startup_launch, single_instance_disabled) = match cli::handle_cli_modes() {
         cli::StartupAction::Exit => return,
         cli::StartupAction::Launch {
@@ -106,6 +111,7 @@ fn main() {
     };
 
     let (settings, settings_load) = Settings::load_or_default_from(&Settings::config_path());
+    i18n::init(settings.language);
     match settings_load {
         SettingsLoadOutcome::Loaded => {}
         SettingsLoadOutcome::MovedAside(backup) => eprintln!(
@@ -141,8 +147,10 @@ fn main() {
     let clear_history_confirm = signal(false);
     let action_items = signal(Vec::<ActionItem>::new());
     let action_window_slot = Rc::new(RefCell::new(None::<WindowSizeHandle>));
-    let status = signal(String::from("Ready"));
-    let update_status = signal(String::from("Stable updates are checked automatically"));
+    let status = signal(String::from(crate::i18n::tr("Ready")));
+    let update_status = signal(String::from(crate::i18n::tr(
+        "Stable updates are checked automatically",
+    )));
     let update_available = signal(None::<updater::StableUpdate>);
     let update_install_progress = signal(None::<(String, updater::DownloadProgress)>);
     let update_installing = signal(false);
@@ -207,9 +215,12 @@ fn main() {
         MIN_LAUNCHER_HEIGHT,
         MAX_LAUNCHER_HEIGHT,
     ));
-    let launcher_preview_text = signal(format!(
-        "Current launcher client area: {} × {} logical px (DIP)",
-        settings.launcher_width, settings.launcher_height
+    let launcher_preview_text = signal(crate::i18n::format(
+        "Current launcher client area: {width} × {height} logical px (DIP)",
+        &[
+            ("width", settings.launcher_width.to_string()),
+            ("height", settings.launcher_height.to_string()),
+        ],
     ));
     let visual_preview_generation = signal(0_u64);
     let clear_query_on_activation = signal(settings.clear_query_on_activation);
@@ -246,9 +257,13 @@ fn main() {
     );
     let everything_prompt_visible = signal(everything_prompt_visible_at_start);
     let everything_status = signal(if everything_installed.get() {
-        String::from("Everything is already installed; Flux will enable IPC automatically")
+        String::from(crate::i18n::tr(
+            "Everything is already installed; Flux will enable IPC automatically",
+        ))
     } else {
-        String::from("Everything is not installed. Install it with winget to enable file search.")
+        String::from(crate::i18n::tr(
+            "Everything is not installed. Install it with winget to enable file search.",
+        ))
     });
     let selection_color = signal(selection_color_for_settings(&settings));
     let caret_duration = signal(settings.smooth_caret_duration_ms.to_string());
@@ -617,6 +632,7 @@ fn main() {
     // Do not add a dark card here: it hides the blur and creates the old opaque
     // search-style slab inside the transparent window.
     let settings_ui = settings_ui::SettingsUi {
+        language: signal(settings.language.index()),
         shared_settings: Arc::clone(&shared_settings),
         query_history: Rc::clone(&query_history),
         stats_usage,

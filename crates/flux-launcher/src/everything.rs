@@ -315,7 +315,7 @@ fn query_everything(
             sequence: request.sequence,
             query: request.query,
             results: Vec::new(),
-            status: String::from("Everything is not available"),
+            status: String::from(crate::i18n::tr("Everything is not available")),
             available: false,
         };
     };
@@ -339,7 +339,10 @@ fn query_everything(
                 sequence: request.sequence,
                 query: request.query,
                 results: Vec::new(),
-                status: format!("Everything query failed to send: {error}"),
+                status: crate::i18n::format(
+                    "Everything query failed to send: {error}",
+                    &[("error", error.to_string())],
+                ),
                 available: false,
             };
         }
@@ -352,7 +355,7 @@ fn query_everything(
                 sequence: request.sequence,
                 query: request.query,
                 results: Vec::new(),
-                status: String::from("Everything query timed out"),
+                status: String::from(crate::i18n::tr("Everything query timed out")),
                 available: false,
             };
         }
@@ -375,7 +378,10 @@ fn query_everything(
     EverythingResponse {
         sequence: request.sequence,
         query: request.query,
-        status: format!("{} Everything result(s)", results.len()),
+        status: crate::i18n::format(
+            "{count} Everything result(s)",
+            &[("count", results.len().to_string())],
+        ),
         results,
         available: true,
     }

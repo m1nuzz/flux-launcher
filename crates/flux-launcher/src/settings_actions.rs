@@ -64,6 +64,7 @@ pub(crate) fn apply_settings(ui: &SettingsUi, ctx: &mut EventCtx) {
     let mut check_due = false;
     if let Ok(mut settings) = ui.shared_settings.write() {
         let auto_enable_previous = settings.auto_enable_everything;
+        settings.language = flux_core::Locale::from_index(ui.language.get());
         settings.activation_hotkey = configuration;
         settings.game_mode_hotkey = HotkeyConfig {
             ctrl: ui.game_mode_ctrl.get(),
@@ -120,9 +121,12 @@ pub(crate) fn apply_settings(ui: &SettingsUi, ctx: &mut EventCtx) {
             MIN_LAUNCHER_HEIGHT,
             MAX_LAUNCHER_HEIGHT,
         ));
-        ui.launcher_preview_text.set(format!(
-            "Current launcher client area: {} × {} logical px (DIP)",
-            settings.launcher_width, settings.launcher_height
+        ui.launcher_preview_text.set(crate::i18n::format(
+            "Current launcher client area: {width} × {height} logical px (DIP)",
+            &[
+                ("width", settings.launcher_width.to_string()),
+                ("height", settings.launcher_height.to_string()),
+            ],
         ));
         ui.activation_handle
             .set(hotkeys::activation_hotkey(&settings.activation_hotkey));
@@ -143,22 +147,22 @@ pub(crate) fn apply_settings(ui: &SettingsUi, ctx: &mut EventCtx) {
                 match everything::start_background_if_installed() {
                     Ok(InstallationState::Installed(_)) => {
                         ui.everything_installed.set(true);
-                        ui.everything_status.set(String::from(
+                        ui.everything_status.set(String::from(crate::i18n::tr(
                             "Everything is already installed; Flux will enable IPC automatically",
-                        ));
+                        )));
                     }
                     Ok(InstallationState::Missing) => {
                         ui.everything_installed.set(false);
                         ui.everything_status.set(String::from(
-                            "Everything is not installed. Install it with winget to enable file search.",
+                            crate::i18n::tr("Everything is not installed. Install it with winget to enable file search."),
                         ));
                     }
                     Err(error) => ui.everything_status.set(error),
                 }
             } else {
-                ui.everything_status.set(String::from(
+                ui.everything_status.set(String::from(crate::i18n::tr(
                     "Everything auto-enable is disabled in Flux settings",
-                ));
+                )));
             }
         }
         eprintln!(
@@ -170,6 +174,24 @@ pub(crate) fn apply_settings(ui: &SettingsUi, ctx: &mut EventCtx) {
     // Persist off the UI thread and leave the window exactly where it is: Apply
     // used to write the file, sync the registry and shrink back to the search
     // strip on the click, which read as a freeze and threw away the page.
+    if flux_core::Locale::from_index(ui.language.get()) != crate::i18n::current() {
+        // A language change restarts all static native surfaces together, including the tray.
+        let saved = ui
+            .shared_settings
+            .read()
+            .ok()
+            .is_some_and(|settings| settings.save().is_ok());
+        if !saved {
+            ctx.toast_ok(crate::i18n::tr("Could not save settings"));
+            return;
+        }
+        if crate::relaunch::spawn().is_err() {
+            ctx.toast_ok(crate::i18n::tr("Could not restart Flux"));
+            return;
+        }
+        ctx.quit();
+        return;
+    }
     save_settings_async(&ui.shared_settings);
     let start_with_windows = ui.start_with_windows.get();
     let _ = std::thread::Builder::new()
@@ -180,11 +202,12 @@ pub(crate) fn apply_settings(ui: &SettingsUi, ctx: &mut EventCtx) {
             }
         });
     if check_due {
-        ui.update_status
-            .set(String::from("Checking stable GitHub releases..."));
+        ui.update_status.set(String::from(crate::i18n::tr(
+            "Checking stable GitHub releases...",
+        )));
         request_update_check(ui.update_sender.clone(), &ui.update_check_in_flight);
     }
-    ctx.toast_ok("Settings applied");
+    ctx.toast_ok(crate::i18n::tr("Settings applied"));
 }
 
 /// Close the Settings window without quitting: the process stays resident in
@@ -286,7 +309,8 @@ pub(crate) fn has_unsaved_changes(ui: &SettingsUi) -> bool {
         .unwrap_or(24)
         .clamp(1, 168);
     let accent = parse_selection_color(&ui.custom_selection_color.get()).unwrap_or(0x4c_8b_f4);
-    settings.activation_hotkey != hotkey
+    settings.language != flux_core::Locale::from_index(ui.language.get())
+        || settings.activation_hotkey != hotkey
         || settings.game_mode_hotkey != game_hotkey
         || settings.game_mode_hotkey_enabled != ui.game_mode_hotkey_enabled.get()
         || settings.ignore_hotkeys_in_fullscreen != ui.ignore_fullscreen.get()
@@ -322,9 +346,9 @@ pub(crate) fn install_update(ui: &SettingsUi, ctx: &mut EventCtx) {
     };
     ui.update_installing.set(true);
     ui.update_install_progress.set(None);
-    ui.update_status.set(format!(
-        "Preparing stable {} for download...",
-        update.version
+    ui.update_status.set(crate::i18n::format(
+        "Preparing stable {version} for download...",
+        &[("version", update.version.to_string())],
     ));
     if !request_update_install(
         update,
@@ -333,17 +357,19 @@ pub(crate) fn install_update(ui: &SettingsUi, ctx: &mut EventCtx) {
         updater::RelaunchMode::Visible,
     ) {
         ui.update_installing.set(false);
-        ui.update_status
-            .set(String::from("An update is already being installed"));
-        ctx.toast_ok("An update is already being installed");
+        ui.update_status.set(String::from(crate::i18n::tr(
+            "An update is already being installed",
+        )));
+        ctx.toast_ok(crate::i18n::tr("An update is already being installed"));
     }
 }
 
 pub(crate) fn check_for_updates_now(ui: &SettingsUi, ctx: &mut EventCtx) {
-    ui.update_status
-        .set(String::from("Checking stable GitHub releases..."));
+    ui.update_status.set(String::from(crate::i18n::tr(
+        "Checking stable GitHub releases...",
+    )));
     request_update_check(ui.update_sender.clone(), &ui.update_check_in_flight);
-    ctx.toast_ok("Checking stable updates");
+    ctx.toast_ok(crate::i18n::tr("Checking stable updates"));
 }
 
 /// Restore the defaults of the visible tab into the draft signals only.
@@ -363,7 +389,9 @@ pub(crate) fn reset_active_tab(ui: &SettingsUi, ctx: &mut EventCtx) {
         _ => {}
     }
     eprintln!("Settings tab reset: {tab}");
-    ctx.toast_ok("Defaults restored for this tab. Press Apply settings to save.");
+    ctx.toast_ok(crate::i18n::tr(
+        "Defaults restored for this tab. Press Apply settings to save.",
+    ));
 }
 
 /// The Stats tab holds counters rather than settings, so it has nothing to
@@ -373,6 +401,7 @@ pub(crate) fn tab_is_resettable(tab: usize) -> bool {
 }
 
 fn reset_general(ui: &SettingsUi, defaults: &Settings) {
+    ui.language.set(defaults.language.index());
     ui.activation_ctrl.set(defaults.activation_hotkey.ctrl);
     ui.activation_alt.set(defaults.activation_hotkey.alt);
     ui.activation_shift.set(defaults.activation_hotkey.shift);

@@ -165,7 +165,7 @@ pub(crate) fn stage_selection_color(
     let text = custom_selection_color.get();
     let (rgb, _) = resolve_selection_color(flag, &text);
     let Ok(mut settings) = shared_settings.write() else {
-        ctx.toast_ok("Could not lock Flux settings");
+        ctx.toast_ok(crate::i18n::tr("Could not lock Flux settings"));
         return false;
     };
     settings.use_system_accent = flag;

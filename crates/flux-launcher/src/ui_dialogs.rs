@@ -24,7 +24,7 @@ pub(crate) fn build_everything_install_prompt(
     let settings_for_everything_prompt_install = Arc::clone(&shared_settings);
     Element::dialog_glass_panel(
         everything_prompt_visible,
-        "Install Everything",
+        crate::i18n::tr("Install Everything"),
         400,
         move |_| {
             everything_prompt_for_close.set(false);
@@ -37,13 +37,13 @@ pub(crate) fn build_everything_install_prompt(
             .spacing(10)
             .child(
                 Element::label(
-                    "Everything is not installed. Install it now for fast indexed file and folder search?",
+                    crate::i18n::tr("Everything is not installed. Install it now for fast indexed file and folder search?"),
                 )
                 .font_size(13.0)
                 .fg(Color::rgba(245, 248, 255, 245)),
             )
             .child(
-                Element::label("Flux will run the official winget command: winget install -e --id voidtools.Everything")
+                Element::label(crate::i18n::tr("Flux will run the official winget command: winget install -e --id voidtools.Everything"))
                     .font_size(11.0)
                     .fg(Color::rgba(235, 241, 255, 180))
                     .max_lines(2)
@@ -54,7 +54,7 @@ pub(crate) fn build_everything_install_prompt(
             .spacing(8)
             .child(Element::flex_spacer())
             .child(
-                Element::button("Not now")
+                Element::button(crate::i18n::tr("Not now"))
                     .neutral()
                     .outline_soft()
                     .on_click(move |_| {
@@ -66,7 +66,7 @@ pub(crate) fn build_everything_install_prompt(
                     }),
             )
             .child(
-                Element::button("Install Everything").on_click(move |ctx| {
+                Element::button(crate::i18n::tr("Install Everything")).on_click(move |ctx| {
                     everything_prompt_for_install.set(false);
                     if let Ok(mut settings) = settings_for_everything_prompt_install.write() {
                         settings.everything_install_prompt_seen = true;
@@ -75,9 +75,9 @@ pub(crate) fn build_everything_install_prompt(
                     match everything::launch_winget_install() {
                         Ok(()) => {
                             everything_status_for_prompt.set(String::from(
-                                "Everything installation started with winget.",
+                                crate::i18n::tr("Everything installation started with winget."),
                             ));
-                            ctx.toast_ok("Everything installation started");
+                            ctx.toast_ok(crate::i18n::tr("Everything installation started"));
                         }
                         Err(error) => {
                             everything_status_for_prompt.set(error.clone());
@@ -104,15 +104,15 @@ pub(crate) fn build_clear_history_confirm(visible: Signal<bool>, ui: &SettingsUi
     let top_for_clear = ui.stats_top;
     Element::dialog_glass_panel(
         visible,
-        "Clear history",
+        crate::i18n::tr("Clear history"),
         400,
         move |_| {
             visible_for_close.set(false);
         },
         Element::col().spacing(10).child(
-            Element::label(
+            Element::label(crate::i18n::tr(
                 "Forget all remembered queries and top-opened counts? This cannot be undone.",
-            )
+            ))
             .font_size(13.0)
             .fg(Color::rgba(245, 248, 255, 245)),
         ),
@@ -121,31 +121,33 @@ pub(crate) fn build_clear_history_confirm(visible: Signal<bool>, ui: &SettingsUi
             .spacing(8)
             .child(Element::flex_spacer())
             .child(
-                Element::button("Cancel")
+                Element::button(crate::i18n::tr("Cancel"))
                     .neutral()
                     .outline_soft()
                     .on_click(move |_| {
                         visible_for_cancel.set(false);
                     }),
             )
-            .child(Element::button("Clear history").on_click(move |ctx| {
-                visible_for_clear.set(false);
-                let cleared = clear_history_state(
-                    &settings_for_clear,
-                    &history_for_clear,
-                    history_cursor_for_clear,
-                    usage_for_clear,
-                    top_for_clear,
-                );
-                if !cleared {
-                    ctx.toast_ok("Could not clear history");
-                    return;
-                }
-                if let Ok(settings) = settings_for_clear.read() {
-                    let _ = save_settings(&settings);
-                }
-                ctx.toast_ok("Query history cleared");
-            }))
+            .child(
+                Element::button(crate::i18n::tr("Clear history")).on_click(move |ctx| {
+                    visible_for_clear.set(false);
+                    let cleared = clear_history_state(
+                        &settings_for_clear,
+                        &history_for_clear,
+                        history_cursor_for_clear,
+                        usage_for_clear,
+                        top_for_clear,
+                    );
+                    if !cleared {
+                        ctx.toast_ok(crate::i18n::tr("Could not clear history"));
+                        return;
+                    }
+                    if let Ok(settings) = settings_for_clear.read() {
+                        let _ = save_settings(&settings);
+                    }
+                    ctx.toast_ok(crate::i18n::tr("Query history cleared"));
+                }),
+            )
             .padding_edges(0, 0, 0, 12),
     )
 }

@@ -247,10 +247,10 @@ fn preview_content(size_label: Signal<String>) -> Element {
                 .cross(Align::Center)
                 .corner(8.0)
                 .bg(Color::rgba(255, 255, 255, 24))
-                .child(Element::label("Search").font_size(15.0).fg(Color::rgba(255, 255, 255, 220))),
+                .child(Element::label(crate::i18n::tr("Search")).font_size(15.0).fg(Color::rgba(255, 255, 255, 220))),
         )
         .child(
-            Element::label("This is the actual launcher preview window. Its client area is resized directly, not scaled into a mock card.")
+            Element::label(crate::i18n::tr("This is the actual launcher preview window. Its client area is resized directly, not scaled into a mock card."))
                 .font_size(11.0)
                 .fg(Color::rgba(235, 241, 255, 170))
                 .max_lines(2)
@@ -260,18 +260,18 @@ fn preview_content(size_label: Signal<String>) -> Element {
             Element::col()
                 .width_match()
                 .spacing(6)
-                .child(preview_result("Preview result", "Native windui surface"))
+                .child(preview_result(crate::i18n::tr("Preview result"), crate::i18n::tr("Native windui surface")))
                 .child(preview_result(
-                    "Width and height are exact",
-                    "Measured from this window client area",
+                    crate::i18n::tr("Width and height are exact"),
+                    crate::i18n::tr("Measured from this window client area"),
                 ))
                 .child(preview_result(
-                    "Acrylic/Mica remains active",
-                    "The Settings window stays separate",
+                    crate::i18n::tr("Acrylic/Mica remains active"),
+                    crate::i18n::tr("The Settings window stays separate"),
                 )),
         )
         .child(
-            Element::label("Logical client units (DIP); the window is resized, not scaled.")
+            Element::label(crate::i18n::tr("Logical client units (DIP); the window is resized, not scaled."))
                 .font_size(10.0)
                 .fg(Color::rgba(235, 241, 255, 150))
                 .max_lines(1)
@@ -343,6 +343,10 @@ fn current_window_geometry() -> Option<(i32, i32, u32)> {
 }
 
 pub(crate) fn run(width: i32, height: i32, x: i32, y: i32) {
+    let language = flux_core::Settings::load_from(&flux_core::Settings::config_path())
+        .unwrap_or_default()
+        .language;
+    crate::i18n::init(language);
     let width = width.clamp(1, i32::from(u16::MAX));
     let height = height.clamp(1, i32::from(u16::MAX));
     let width_signal = signal(width as u16);

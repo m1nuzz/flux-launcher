@@ -101,14 +101,14 @@ pub(crate) fn build_settings_panel(
     for index in 0..TAB_NAMES.len() {
         heading = heading
             .child(
-                Element::label(TAB_NAMES[index])
+                Element::label(crate::i18n::tr(TAB_NAMES[index]))
                     .font_size(24.0)
                     .font_weight(600)
                     .fg(Color::WHITE)
                     .visible_when(move || settings_tab.get() == index),
             )
             .child(
-                Element::label(TAB_DESCRIPTIONS[index])
+                Element::label(crate::i18n::tr(TAB_DESCRIPTIONS[index]))
                     .font_size(12.0)
                     .fg(Color::rgba(235, 241, 255, 235))
                     .visible_when(move || settings_tab.get() == index),
@@ -126,11 +126,13 @@ pub(crate) fn build_settings_panel(
         .spacing(10)
         .cross(Align::Center)
         .child(
-            Element::label("Changes are written when you press Apply settings.")
-                .font_size(11.0)
-                .fg(Color::rgba(235, 241, 255, 210))
-                .weight(1.0)
-                .visible_when(move || has_unsaved_changes(&ui_for_hint)),
+            Element::label(crate::i18n::tr(
+                "Changes are written when you press Apply settings.",
+            ))
+            .font_size(11.0)
+            .fg(Color::rgba(235, 241, 255, 210))
+            .weight(1.0)
+            .visible_when(move || has_unsaved_changes(&ui_for_hint)),
         )
         .child(
             Element::button("\u{2713} Apply settings")
@@ -138,11 +140,13 @@ pub(crate) fn build_settings_panel(
                 .on_click(move |ctx| apply_settings(&ui_for_apply, ctx)),
         );
 
-    let reset = Element::button("Reset tab defaults")
+    let reset = Element::button(crate::i18n::tr("Reset tab defaults"))
         .small()
         .neutral()
         .width_match()
-        .tooltip("Restore this tab's defaults. Nothing is saved until you press Apply settings.")
+        .tooltip(crate::i18n::tr(
+            "Restore this tab's defaults. Nothing is saved until you press Apply settings.",
+        ))
         .visible_when(move || tab_is_resettable(settings_tab.get()))
         .on_click(move |ctx| reset_active_tab(&ui_for_reset, ctx));
 
@@ -158,7 +162,7 @@ pub(crate) fn build_settings_panel(
                 TAB_NAMES
                     .iter()
                     .zip(TAB_GLYPHS)
-                    .map(|(name, glyph)| ((*name).to_string(), glyph.to_string()))
+                    .map(|(name, glyph)| (crate::i18n::tr(name).to_string(), glyph.to_string()))
                     .collect(),
                 settings_tab,
                 ICON_FONT,
@@ -202,7 +206,7 @@ pub(crate) fn build_settings_panel(
             Element::icon_button("\u{e8bb}")
                 .font_family(ICON_FONT)
                 .font_size(12.0)
-                .tooltip("Hide Flux Launcher")
+                .tooltip(crate::i18n::tr("Hide Flux Launcher"))
                 .on_click(move |_| close_settings(&ui_for_close)),
         );
 

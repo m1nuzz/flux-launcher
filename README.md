@@ -71,6 +71,25 @@ Flux stores user settings in `%APPDATA%\FluxLauncher\settings.json`. The default
 
 ## Usage
 
+### Interface language
+
+Choose **Settings > General > Language** to use English, Simplified Chinese,
+Traditional Chinese, Japanese, or Russian. Press **Apply settings** to save and
+restart Flux with the selected language. Settings, tray actions, built-in result
+captions, and common status messages are translated. Application names, file
+paths, third-party plugin content, and operating-system error details retain
+their original text. Native community plugins receive the selected locale code.
+
+Existing settings files continue to load in English. Unknown language codes also
+fall back to English without discarding other preferences. The language is stored
+as a BCP 47 code in the `language` field of `settings.json`.
+
+Translations are embedded from
+`crates/flux-launcher/locales/translations.json`. Each English key maps to
+Simplified Chinese, Traditional Chinese, Japanese, and Russian in that order.
+Preserve named placeholders such as `{version}` when editing translations.
+Catalog tests check all translations and placeholders before release.
+
 | Input | Result |
 | --- | --- |
 | `Alt+Space` | Show or hide the launcher |

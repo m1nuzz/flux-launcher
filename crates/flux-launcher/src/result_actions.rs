@@ -53,10 +53,10 @@ pub(crate) struct ActionItem {
 
 fn plugin_action_label(action: &PluginAction) -> &'static str {
     match action {
-        PluginAction::Flow(_) => "Run plugin action",
-        PluginAction::OpenUrl(_) => "Open web result",
-        PluginAction::OpenPath(_) => "Open path",
-        PluginAction::CopyText(_) => "Copy text",
+        PluginAction::Flow(_) => crate::i18n::tr("Run plugin action"),
+        PluginAction::OpenUrl(_) => crate::i18n::tr("Open web result"),
+        PluginAction::OpenPath(_) => crate::i18n::tr("Open path"),
+        PluginAction::CopyText(_) => crate::i18n::tr("Copy text"),
     }
 }
 
@@ -71,12 +71,12 @@ pub(crate) fn actions_for_result(
     if result.id.starts_with("system:") {
         actions.push(ActionItem {
             id: format!("{}:open", result.id),
-            label: String::from("Open"),
+            label: String::from(crate::i18n::tr("Open")),
             kind: ActionKind::Open,
         });
         actions.push(ActionItem {
             id: format!("{}:copy-name", result.id),
-            label: String::from("Copy name"),
+            label: String::from(crate::i18n::tr("Copy name")),
             kind: ActionKind::CopyName,
         });
         return actions;
@@ -85,33 +85,33 @@ pub(crate) fn actions_for_result(
         if matches!(result.kind, ResultKind::Application) {
             actions.push(ActionItem {
                 id: format!("{}:set-priority", result.id),
-                label: String::from("Set as priority (move to top)"),
+                label: String::from(crate::i18n::tr("Set as priority (move to top)")),
                 kind: ActionKind::SetPriority,
             });
         }
         actions.push(ActionItem {
             id: format!("{}:open", result.id),
-            label: String::from("Open"),
+            label: String::from(crate::i18n::tr("Open")),
             kind: ActionKind::Open,
         });
         actions.push(ActionItem {
             id: format!("{}:run-as-admin", result.id),
-            label: String::from("Run as admin"),
+            label: String::from(crate::i18n::tr("Run as admin")),
             kind: ActionKind::RunAsAdmin,
         });
         actions.push(ActionItem {
             id: format!("{}:open-location", result.id),
-            label: String::from("Open file location"),
+            label: String::from(crate::i18n::tr("Open file location")),
             kind: ActionKind::OpenLocation,
         });
         actions.push(ActionItem {
             id: format!("{}:copy-file", result.id),
-            label: String::from("Copy file"),
+            label: String::from(crate::i18n::tr("Copy file")),
             kind: ActionKind::CopyFile,
         });
         actions.push(ActionItem {
             id: format!("{}:copy-folder-path", result.id),
-            label: String::from("Copy folder path"),
+            label: String::from(crate::i18n::tr("Copy folder path")),
             kind: ActionKind::CopyFolderPath,
         });
     }
@@ -125,7 +125,7 @@ pub(crate) fn actions_for_result(
     if !matches!(result.kind, ResultKind::Application) {
         actions.push(ActionItem {
             id: format!("{}:copy-name", result.id),
-            label: String::from("Copy name"),
+            label: String::from(crate::i18n::tr("Copy name")),
             kind: ActionKind::CopyName,
         });
     }

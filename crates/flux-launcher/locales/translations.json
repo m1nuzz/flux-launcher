@@ -1,0 +1,1520 @@
+{
+  "Language": [
+    "语言",
+    "語言",
+    "言語",
+    "Язык"
+  ],
+  "General": [
+    "常规",
+    "一般",
+    "一般",
+    "Общие"
+  ],
+  "Visual": [
+    "外观",
+    "外觀",
+    "外観",
+    "Внешний вид"
+  ],
+  "Priorities": [
+    "优先级",
+    "優先順序",
+    "優先順位",
+    "Приоритеты"
+  ],
+  "Plugins": [
+    "插件",
+    "外掛",
+    "プラグイン",
+    "Плагины"
+  ],
+  "Stats": [
+    "统计",
+    "統計",
+    "統計",
+    "Статистика"
+  ],
+  "Activation": [
+    "唤起",
+    "喚起",
+    "起動",
+    "Активация"
+  ],
+  "Activation key": [
+    "唤起快捷键",
+    "喚起快速鍵",
+    "起動キー",
+    "Клавиша активации"
+  ],
+  "Press the key combination that opens the launcher": [
+    "按下用于唤起启动器的组合键",
+    "按下喚起啟動器的組合鍵",
+    "ランチャーを開くキーを押す",
+    "Нажмите сочетание для открытия панели"
+  ],
+  "Record key": [
+    "录制按键",
+    "錄製按鍵",
+    "キーを記録",
+    "Записать клавишу"
+  ],
+  "Press the desired activation key": [
+    "请按下唤起快捷键",
+    "請按下喚起快速鍵",
+    "起動キーを押してください",
+    "Нажмите клавишу активации"
+  ],
+  "Modifiers:": [
+    "修饰键：",
+    "修飾鍵：",
+    "修飾キー：",
+    "Модификаторы:"
+  ],
+  "Click Record key, then press one key or a key combination": [
+    "点击录制按键后按下快捷键",
+    "按錄製按鍵後按下快速鍵",
+    "記録を開始してキーを押す",
+    "Начните запись и нажмите сочетание клавиш"
+  ],
+  "Fullscreen protection": [
+    "全屏保护",
+    "全螢幕保護",
+    "全画面保護",
+    "Защита полноэкранного режима"
+  ],
+  "Ignore activation while another app is fullscreen": [
+    "其他应用全屏时禁用唤起",
+    "其他應用程式全螢幕時停用喚起",
+    "他のアプリが全画面のときは無効",
+    "Не открывать поверх полноэкранных приложений"
+  ],
+  "Behavior": [
+    "行为",
+    "行為",
+    "動作",
+    "Поведение"
+  ],
+  "Game Mode": [
+    "游戏模式",
+    "遊戲模式",
+    "ゲームモード",
+    "Игровой режим"
+  ],
+  "Suppress the launcher until manually disabled": [
+    "手动关闭游戏模式前禁止唤起",
+    "手動關閉遊戲模式前禁止喚起",
+    "手動で解除するまで起動を抑制",
+    "Блокировать панель до ручного отключения"
+  ],
+  "Keyboard layout": [
+    "输入法",
+    "輸入法",
+    "入力言語",
+    "Раскладка клавиатуры"
+  ],
+  "Start typing in English and restore the previous layout on hide": [
+    "打开时切换英语，隐藏时恢复原输入法",
+    "開啟時切換英語，隱藏時還原原輸入法",
+    "表示時に英語へ切り替え、非表示時に元に戻す",
+    "При открытии включать английскую раскладку, при скрытии возвращать прежнюю"
+  ],
+  "Query on activation": [
+    "唤起时的搜索词",
+    "喚起時的搜尋詞",
+    "起動時の検索語",
+    "Запрос при открытии"
+  ],
+  "Clear the previous query when opened with the global hotkey": [
+    "使用全局快捷键打开时清空搜索词",
+    "使用全域快速鍵開啟時清空搜尋詞",
+    "ホットキーで開くと前の検索語を消去",
+    "Очищать запрос при открытии горячей клавишей"
+  ],
+  "Windows startup": [
+    "开机启动",
+    "開機啟動",
+    "Windows 起動時",
+    "Запуск с Windows"
+  ],
+  "Start Flux automatically with Windows": [
+    "登录 Windows 时自动启动 Flux",
+    "登入 Windows 時自動啟動 Flux",
+    "Windows と同時に Flux を起動",
+    "Запускать Flux при входе в Windows"
+  ],
+  "Open launcher on": [
+    "显示位置",
+    "顯示位置",
+    "表示する画面",
+    "Экран для панели"
+  ],
+  "The launcher window appears on the chosen display": [
+    "在所选显示器上显示启动器",
+    "在所選螢幕上顯示啟動器",
+    "選択した画面にランチャーを表示",
+    "Открывать панель на выбранном мониторе"
+  ],
+  "Primary display": [
+    "主显示器",
+    "主螢幕",
+    "メイン画面",
+    "Основной монитор"
+  ],
+  "Display with the mouse cursor": [
+    "鼠标所在显示器",
+    "滑鼠所在螢幕",
+    "マウスポインターのある画面",
+    "Монитор с указателем мыши"
+  ],
+  "Display with the focused window": [
+    "当前窗口所在显示器",
+    "目前視窗所在螢幕",
+    "操作中のウィンドウがある画面",
+    "Монитор активного окна"
+  ],
+  "Game Mode shortcut": [
+    "游戏模式快捷键",
+    "遊戲模式快速鍵",
+    "ゲームモードのショートカット",
+    "Сочетание игрового режима"
+  ],
+  "Shortcut enabled": [
+    "启用快捷键",
+    "啟用快速鍵",
+    "ショートカットを有効化",
+    "Включить сочетание"
+  ],
+  "Toggle Game Mode with a global shortcut": [
+    "使用全局快捷键切换游戏模式",
+    "使用全域快速鍵切換遊戲模式",
+    "ホットキーでゲームモードを切り替える",
+    "Переключать игровой режим горячей клавишей"
+  ],
+  "Game Mode key": [
+    "游戏模式按键",
+    "遊戲模式按鍵",
+    "ゲームモードのキー",
+    "Клавиша игрового режима"
+  ],
+  "Press the combination that toggles Game Mode": [
+    "按下切换游戏模式的组合键",
+    "按下切換遊戲模式的組合鍵",
+    "切り替えに使うキーを押す",
+    "Нажмите сочетание для игрового режима"
+  ],
+  "Press the desired Game Mode key": [
+    "请按下游戏模式快捷键",
+    "請按下遊戲模式快速鍵",
+    "ゲームモードのキーを押してください",
+    "Нажмите клавишу игрового режима"
+  ],
+  "Updates": [
+    "更新",
+    "更新",
+    "更新",
+    "Обновления"
+  ],
+  "Check for updates": [
+    "检查更新",
+    "檢查更新",
+    "更新を確認",
+    "Проверять обновления"
+  ],
+  "Check stable GitHub releases automatically": [
+    "自动检查 GitHub 稳定版",
+    "自動檢查 GitHub 穩定版",
+    "GitHub の安定版を自動確認",
+    "Автоматически проверять стабильные выпуски GitHub"
+  ],
+  "Check interval": [
+    "检查间隔",
+    "檢查間隔",
+    "確認間隔",
+    "Интервал проверки"
+  ],
+  "How often Flux looks for a stable release": [
+    "稳定版更新检查频率",
+    "穩定版更新檢查頻率",
+    "安定版の確認頻度",
+    "Частота проверки стабильных выпусков"
+  ],
+  "hours": [
+    "小时",
+    "小時",
+    "時間",
+    "ч"
+  ],
+  "Automatic install": [
+    "自动安装",
+    "自動安裝",
+    "自動インストール",
+    "Автоустановка"
+  ],
+  "Install stable updates automatically": [
+    "自动安装稳定版更新",
+    "自動安裝穩定版更新",
+    "安定版の更新を自動インストール",
+    "Автоматически устанавливать стабильные обновления"
+  ],
+  "Current version: {version}": [
+    "当前版本：{version}",
+    "目前版本：{version}",
+    "現在のバージョン：{version}",
+    "Текущая версия: {version}"
+  ],
+  "Check now": [
+    "立即检查",
+    "立即檢查",
+    "今すぐ確認",
+    "Проверить"
+  ],
+  "Install now": [
+    "立即安装",
+    "立即安裝",
+    "今すぐインストール",
+    "Установить"
+  ],
+  "History": [
+    "历史",
+    "歷史",
+    "履歴",
+    "История"
+  ],
+  "Query history": [
+    "搜索历史",
+    "搜尋歷史",
+    "検索履歴",
+    "История запросов"
+  ],
+  "Ctrl+H recalls committed searches": [
+    "Ctrl+H 查看搜索历史",
+    "Ctrl+H 檢視搜尋歷史",
+    "Ctrl+H で検索履歴を表示",
+    "Ctrl+H открывает историю запросов"
+  ],
+  "Clear history": [
+    "清空历史",
+    "清除歷史",
+    "履歴を消去",
+    "Очистить историю"
+  ],
+  "Startup, activation and update behavior.": [
+    "启动、唤起与更新",
+    "啟動、喚起與更新",
+    "起動と更新",
+    "Запуск, активация и обновления"
+  ],
+  "Caret, selection color and launcher size.": [
+    "光标、选择颜色与窗口尺寸",
+    "游標、選取顏色與視窗尺寸",
+    "カーソル、選択色、ウィンドウサイズ",
+    "Курсор, цвет выделения и размер панели"
+  ],
+  "Applications that always rank first.": [
+    "优先显示的应用",
+    "優先顯示的應用程式",
+    "優先表示するアプリ",
+    "Приложения в начале списка"
+  ],
+  "File, note and web search providers.": [
+    "文件、笔记与网络搜索",
+    "檔案、筆記與網路搜尋",
+    "ファイル、ノート、ウェブ検索",
+    "Поиск файлов, заметок и в интернете"
+  ],
+  "What you searched and opened.": [
+    "搜索与打开记录",
+    "搜尋與開啟記錄",
+    "検索と起動の記録",
+    "История поиска и запусков"
+  ],
+  "Changes are written when you press Apply settings.": [
+    "应用设置后保存更改",
+    "套用設定後儲存變更",
+    "設定を適用すると保存されます",
+    "Изменения сохраняются при применении настроек"
+  ],
+  "✓ Apply settings": [
+    "应用设置",
+    "套用設定",
+    "設定を適用",
+    "Применить"
+  ],
+  "Reset tab defaults": [
+    "恢复本页默认设置",
+    "還原本頁預設值",
+    "このタブを初期化",
+    "Сбросить вкладку"
+  ],
+  "Restore this tab's defaults. Nothing is saved until you press Apply settings.": [
+    "恢复本页默认值，应用设置后保存",
+    "還原本頁預設值，套用設定後儲存",
+    "このタブを初期化し、適用時に保存",
+    "Сбросить вкладку; для сохранения примените настройки"
+  ],
+  "Hide Flux Launcher": [
+    "隐藏 Flux Launcher",
+    "隱藏 Flux Launcher",
+    "Flux Launcher を隠す",
+    "Скрыть Flux Launcher"
+  ],
+  "Caret": [
+    "光标",
+    "游標",
+    "カーソル",
+    "Курсор"
+  ],
+  "Smooth caret": [
+    "平滑光标",
+    "平滑游標",
+    "滑らかなカーソル",
+    "Плавный курсор"
+  ],
+  "Animate search caret movement": [
+    "启用搜索光标动画",
+    "啟用搜尋游標動畫",
+    "検索カーソルの移動をアニメーション表示",
+    "Анимация перемещения курсора поиска"
+  ],
+  "Selection color": [
+    "选择颜色",
+    "選取顏色",
+    "選択色",
+    "Цвет выделения"
+  ],
+  "Use Windows accent": [
+    "使用 Windows 强调色",
+    "使用 Windows 輔色",
+    "Windows のアクセントカラー",
+    "Использовать цвет Windows"
+  ],
+  "Follow the Windows 11 system accent color when available": [
+    "跟随 Windows 11 系统强调色",
+    "跟隨 Windows 11 系統輔色",
+    "Windows 11 のアクセントカラーに合わせる",
+    "Использовать системный цвет Windows 11"
+  ],
+  "The custom color below is both the safe fallback and the manual choice.": [
+    "自定义颜色",
+    "自訂顏色",
+    "カスタムカラー",
+    "Свой цвет"
+  ],
+  "Launcher size": [
+    "窗口尺寸",
+    "視窗尺寸",
+    "ウィンドウサイズ",
+    "Размер панели"
+  ],
+  "Launcher width": [
+    "窗口宽度",
+    "視窗寬度",
+    "ウィンドウの幅",
+    "Ширина панели"
+  ],
+  "Results height": [
+    "结果区高度",
+    "結果區高度",
+    "結果一覧の高さ",
+    "Высота результатов"
+  ],
+  "Live preview": [
+    "实时预览",
+    "即時預覽",
+    "ライブプレビュー",
+    "Предпросмотр"
+  ],
+  "The native preview uses the exact requested logical client dimensions. Physical pixels scale with the preview monitor DPI; Apply settings saves the values.": [
+    "按设定尺寸预览",
+    "依設定尺寸預覽",
+    "設定したサイズでプレビュー",
+    "Предпросмотр заданного размера"
+  ],
+  "Reset": [
+    "重置",
+    "重設",
+    "リセット",
+    "Сбросить"
+  ],
+  "Auto-enable Everything": [
+    "自动启用 Everything",
+    "自動啟用 Everything",
+    "Everything を自動有効化",
+    "Автовключение Everything"
+  ],
+  "Use Everything for file results while it is installed": [
+    "使用已安装的 Everything 搜索文件",
+    "使用已安裝的 Everything 搜尋檔案",
+    "Everything でファイルを検索",
+    "Искать файлы через установленный Everything"
+  ],
+  "Everything is already installed": [
+    "Everything 已安装",
+    "Everything 已安裝",
+    "Everything はインストール済み",
+    "Everything установлен"
+  ],
+  "Everything is not installed": [
+    "Everything 未安装",
+    "Everything 未安裝",
+    "Everything は未インストール",
+    "Everything не установлен"
+  ],
+  "Install Everything": [
+    "安装 Everything",
+    "安裝 Everything",
+    "Everything をインストール",
+    "Установить Everything"
+  ],
+  "winget install started. Restart Flux after Everything is installed.": [
+    "已启动 winget，安装 Everything 后重启 Flux",
+    "已啟動 winget，安裝 Everything 後重新啟動 Flux",
+    "winget を開始しました。完了後に Flux を再起動してください",
+    "Запущен winget. После установки Everything перезапустите Flux"
+  ],
+  "winget install started": [
+    "已启动 winget 安装",
+    "已啟動 winget 安裝",
+    "winget のインストールを開始",
+    "Установка через winget запущена"
+  ],
+  "Obsidian vault search": [
+    "Obsidian 笔记库搜索",
+    "Obsidian 筆記庫搜尋",
+    "Obsidian 保管庫検索",
+    "Поиск в хранилище Obsidian"
+  ],
+  "Search notes and vault files by keyword": [
+    "按关键词搜索笔记与文件",
+    "依關鍵字搜尋筆記與檔案",
+    "キーワードでノートとファイルを検索",
+    "Поиск заметок и файлов по ключевым словам"
+  ],
+  "Action keyword": [
+    "触发词",
+    "觸發詞",
+    "キーワード",
+    "Ключевое слово"
+  ],
+  "Prefix typed before the vault query": [
+    "笔记搜索前缀",
+    "筆記搜尋前綴",
+    "保管庫検索の接頭辞",
+    "Префикс поиска в хранилище"
+  ],
+  "For example: ob meeting. Use `ob create project` to create a new note.": [
+    "例如：ob 会议；ob create 项目 新建笔记",
+    "例如：ob 會議；ob create 專案 新增筆記",
+    "例：ob 会議。ob create プロジェクト でノートを作成",
+    "Пример: ob встреча. ob create проект создаёт заметку"
+  ],
+  "Google Search": [
+    "Google 搜索",
+    "Google 搜尋",
+    "Google 検索",
+    "Поиск Google"
+  ],
+  "Google web search": [
+    "Google 网页搜索",
+    "Google 網頁搜尋",
+    "Google ウェブ検索",
+    "Веб-поиск Google"
+  ],
+  "Open a browser search from the launcher": [
+    "通过启动器打开网页搜索",
+    "透過啟動器開啟網頁搜尋",
+    "ランチャーからウェブ検索",
+    "Открывать веб-поиск из панели"
+  ],
+  "Prefix typed before the web query": [
+    "网页搜索前缀",
+    "網頁搜尋前綴",
+    "ウェブ検索の接頭辞",
+    "Префикс веб-поиска"
+  ],
+  "For example: g space exploration. The result opens in your default browser.": [
+    "例如：g 太空探索",
+    "例如：g 太空探索",
+    "例：g 宇宙探査",
+    "Пример: g освоение космоса"
+  ],
+  "Native plugins": [
+    "原生插件",
+    "原生外掛",
+    "ネイティブプラグイン",
+    "Нативные плагины"
+  ],
+  "Built-in providers run inside Flux. Community Rust DLL plugins run in one isolated shared worker spawned from this same flux-launcher.exe.": [
+    "内置搜索源与社区插件",
+    "內建搜尋來源與社群外掛",
+    "内蔵プロバイダーとコミュニティプラグイン",
+    "Встроенные источники и плагины сообщества"
+  ],
+  "Native Flow plugins: %APPDATA%\\FluxLauncher\\Plugins or FLUX_PLUGIN_DIR": [
+    "Flow 插件：%APPDATA%\\FluxLauncher\\Plugins 或 FLUX_PLUGIN_DIR",
+    "Flow 外掛：%APPDATA%\\FluxLauncher\\Plugins 或 FLUX_PLUGIN_DIR",
+    "Flow プラグイン：%APPDATA%\\FluxLauncher\\Plugins または FLUX_PLUGIN_DIR",
+    "Плагины Flow: %APPDATA%\\FluxLauncher\\Plugins или FLUX_PLUGIN_DIR"
+  ],
+  "Community plugin folder: {path}": [
+    "社区插件目录：{path}",
+    "社群外掛目錄：{path}",
+    "コミュニティプラグイン：{path}",
+    "Папка плагинов сообщества: {path}"
+  ],
+  "Usage": [
+    "使用情况",
+    "使用情況",
+    "使用状況",
+    "Использование"
+  ],
+  "Top opened": [
+    "常用项目",
+    "常用項目",
+    "よく開く項目",
+    "Частые запуски"
+  ],
+  "Data": [
+    "数据",
+    "資料",
+    "データ",
+    "Данные"
+  ],
+  "History and counters": [
+    "历史与计数",
+    "歷史與計數",
+    "履歴とカウンター",
+    "История и счётчики"
+  ],
+  "Forget remembered queries and top counts": [
+    "清除搜索记录与使用次数",
+    "清除搜尋記錄與使用次數",
+    "検索履歴と起動回数を消去",
+    "Удалить запросы и счётчики запусков"
+  ],
+  "Share card": [
+    "分享卡片",
+    "分享卡片",
+    "共有カード",
+    "Карточка статистики"
+  ],
+  "Copy a stats card image plus a short summary": [
+    "复制统计卡片与摘要",
+    "複製統計卡片與摘要",
+    "統計カードと概要をコピー",
+    "Скопировать карточку и краткую сводку"
+  ],
+  "Share stats": [
+    "分享统计",
+    "分享統計",
+    "統計を共有",
+    "Поделиться"
+  ],
+  "Could not lock Flux settings": [
+    "无法访问 Flux 设置",
+    "無法存取 Flux 設定",
+    "Flux の設定にアクセスできません",
+    "Не удалось получить доступ к настройкам Flux"
+  ],
+  "Stats card copied to clipboard": [
+    "统计卡片已复制",
+    "統計卡片已複製",
+    "統計カードをコピーしました",
+    "Карточка скопирована"
+  ],
+  "Stats copied as text": [
+    "统计文本已复制",
+    "統計文字已複製",
+    "統計をテキストでコピーしました",
+    "Статистика скопирована как текст"
+  ],
+  "No committed searches yet. Run a search to see stats here.": [
+    "暂无搜索记录",
+    "尚無搜尋記錄",
+    "検索履歴はありません",
+    "История поиска пуста"
+  ],
+  "Queries run: {total}": [
+    "搜索次数：{total}",
+    "搜尋次數：{total}",
+    "検索回数：{total}",
+    "Выполнено запросов: {total}"
+  ],
+  "No data yet.": [
+    "暂无数据",
+    "尚無資料",
+    "データはありません",
+    "Нет данных"
+  ],
+  "TOTAL SEARCHES": [
+    "总搜索次数",
+    "總搜尋次數",
+    "総検索回数",
+    "ВСЕГО ЗАПРОСОВ"
+  ],
+  "Remove": [
+    "移除",
+    "移除",
+    "削除",
+    "Удалить"
+  ],
+  "Priority moved up": [
+    "优先级已上移",
+    "優先順序已上移",
+    "優先順位を上げました",
+    "Приоритет повышен"
+  ],
+  "Priority moved down": [
+    "优先级已下移",
+    "優先順序已下移",
+    "優先順位を下げました",
+    "Приоритет понижен"
+  ],
+  "Priority removed": [
+    "已移除优先项",
+    "已移除優先項目",
+    "優先項目を削除しました",
+    "Приоритет удалён"
+  ],
+  "No explicit priorities yet. Select an application, press Right, then choose Set as priority.": [
+    "暂无优先项",
+    "尚無優先項目",
+    "優先項目はありません",
+    "Приоритеты не заданы"
+  ],
+  "Ranked applications": [
+    "优先应用",
+    "優先應用程式",
+    "優先アプリ",
+    "Приоритетные приложения"
+  ],
+  "Everything is not installed. Install it now for fast indexed file and folder search?": [
+    "是否安装 Everything 以启用文件搜索？",
+    "是否安裝 Everything 以啟用檔案搜尋？",
+    "ファイル検索用の Everything をインストールしますか？",
+    "Установить Everything для поиска файлов?"
+  ],
+  "Flux will run the official winget command: winget install -e --id voidtools.Everything": [
+    "winget install -e --id voidtools.Everything",
+    "winget install -e --id voidtools.Everything",
+    "winget install -e --id voidtools.Everything",
+    "winget install -e --id voidtools.Everything"
+  ],
+  "Not now": [
+    "暂不安装",
+    "暫不安裝",
+    "後で",
+    "Не сейчас"
+  ],
+  "Everything installation started with winget.": [
+    "已通过 winget 开始安装 Everything",
+    "已透過 winget 開始安裝 Everything",
+    "winget で Everything のインストールを開始しました",
+    "Начата установка Everything через winget"
+  ],
+  "Everything installation started": [
+    "Everything 安装已开始",
+    "Everything 安裝已開始",
+    "Everything のインストールを開始",
+    "Установка Everything начата"
+  ],
+  "Forget all remembered queries and top-opened counts? This cannot be undone.": [
+    "清空搜索历史与使用次数？此操作无法撤销。",
+    "清除搜尋歷史與使用次數？此操作無法復原。",
+    "検索履歴と起動回数を消去しますか？元に戻せません。",
+    "Удалить историю запросов и счётчики запусков? Это необратимо."
+  ],
+  "Cancel": [
+    "取消",
+    "取消",
+    "キャンセル",
+    "Отмена"
+  ],
+  "Could not clear history": [
+    "无法清空历史",
+    "無法清除歷史",
+    "履歴を消去できませんでした",
+    "Не удалось очистить историю"
+  ],
+  "Query history cleared": [
+    "搜索历史已清空",
+    "搜尋歷史已清除",
+    "検索履歴を消去しました",
+    "История запросов очищена"
+  ],
+  "Search": [
+    "搜索",
+    "搜尋",
+    "検索",
+    "Поиск"
+  ],
+  "Open": [
+    "打开",
+    "開啟",
+    "開く",
+    "Открыть"
+  ],
+  "Admin": [
+    "管理员",
+    "管理員",
+    "管理者",
+    "Администратор"
+  ],
+  "Location": [
+    "位置",
+    "位置",
+    "場所",
+    "Расположение"
+  ],
+  "Run plugin action": [
+    "执行插件操作",
+    "執行外掛動作",
+    "プラグインの操作を実行",
+    "Выполнить действие плагина"
+  ],
+  "Open web result": [
+    "打开网页结果",
+    "開啟網頁結果",
+    "ウェブの結果を開く",
+    "Открыть веб-результат"
+  ],
+  "Open path": [
+    "打开路径",
+    "開啟路徑",
+    "パスを開く",
+    "Открыть путь"
+  ],
+  "Copy text": [
+    "复制文本",
+    "複製文字",
+    "テキストをコピー",
+    "Копировать текст"
+  ],
+  "Copy name": [
+    "复制名称",
+    "複製名稱",
+    "名前をコピー",
+    "Копировать имя"
+  ],
+  "Set as priority (move to top)": [
+    "设为优先项",
+    "設為優先項目",
+    "優先項目に設定",
+    "Сделать приоритетным"
+  ],
+  "Run as admin": [
+    "以管理员身份运行",
+    "以系統管理員身分執行",
+    "管理者として実行",
+    "Запуск от администратора"
+  ],
+  "Open file location": [
+    "打开文件位置",
+    "開啟檔案位置",
+    "ファイルの場所を開く",
+    "Открыть расположение файла"
+  ],
+  "Copy file": [
+    "复制文件",
+    "複製檔案",
+    "ファイルをコピー",
+    "Копировать файл"
+  ],
+  "Copy folder path": [
+    "复制文件夹路径",
+    "複製資料夾路徑",
+    "フォルダーのパスをコピー",
+    "Копировать путь к папке"
+  ],
+  "Show launcher": [
+    "显示启动器",
+    "顯示啟動器",
+    "ランチャーを表示",
+    "Показать панель"
+  ],
+  "Settings": [
+    "设置",
+    "設定",
+    "設定",
+    "Настройки"
+  ],
+  "Exit": [
+    "退出",
+    "結束",
+    "終了",
+    "Выход"
+  ],
+  "Game Mode: On": [
+    "游戏模式：开",
+    "遊戲模式：開",
+    "ゲームモード：オン",
+    "Игровой режим: вкл."
+  ],
+  "Game Mode: Off": [
+    "游戏模式：关",
+    "遊戲模式：關",
+    "ゲームモード：オフ",
+    "Игровой режим: выкл."
+  ],
+  "Ready": [
+    "就绪",
+    "就緒",
+    "準備完了",
+    "Готово"
+  ],
+  "Stable updates are checked automatically": [
+    "已启用稳定版自动检查",
+    "已啟用穩定版自動檢查",
+    "安定版を自動で確認します",
+    "Включена автопроверка стабильных обновлений"
+  ],
+  "Settings applied": [
+    "设置已应用",
+    "設定已套用",
+    "設定を適用しました",
+    "Настройки применены"
+  ],
+  "Could not save settings": [
+    "无法保存设置",
+    "無法儲存設定",
+    "設定を保存できませんでした",
+    "Не удалось сохранить настройки"
+  ],
+  "Could not restart Flux": [
+    "无法重启 Flux",
+    "無法重新啟動 Flux",
+    "Flux を再起動できませんでした",
+    "Не удалось перезапустить Flux"
+  ],
+  "Checking stable GitHub releases...": [
+    "正在检查稳定版…",
+    "正在檢查穩定版…",
+    "安定版を確認中…",
+    "Проверка стабильных выпусков…"
+  ],
+  "Checking stable updates": [
+    "正在检查稳定版更新",
+    "正在檢查穩定版更新",
+    "安定版の更新を確認中",
+    "Проверка стабильных обновлений"
+  ],
+  "An update is already being installed": [
+    "正在安装更新",
+    "正在安裝更新",
+    "更新をインストール中です",
+    "Обновление уже устанавливается"
+  ],
+  "Defaults restored for this tab. Press Apply settings to save.": [
+    "已恢复本页默认设置",
+    "已還原本頁預設值",
+    "このタブを初期化しました",
+    "Настройки вкладки сброшены"
+  ],
+  "Everything is already installed; Flux will enable IPC automatically": [
+    "Everything 已安装，已启用自动连接",
+    "Everything 已安裝，已啟用自動連線",
+    "Everything を検出しました。自動接続します",
+    "Everything установлен; IPC включается автоматически"
+  ],
+  "Everything is not installed. Install it with winget to enable file search.": [
+    "未安装 Everything",
+    "未安裝 Everything",
+    "Everything は未インストールです",
+    "Everything не установлен"
+  ],
+  "Everything auto-enable is disabled in Flux settings": [
+    "已关闭 Everything 自动启用",
+    "已關閉 Everything 自動啟用",
+    "Everything の自動有効化はオフです",
+    "Автовключение Everything отключено"
+  ],
+  "Preparing stable {version} for download...": [
+    "正在准备下载 {version}…",
+    "正在準備下載 {version}…",
+    "{version} のダウンロードを準備中…",
+    "Подготовка загрузки {version}…"
+  ],
+  "Recycle Bin emptied": [
+    "回收站已清空",
+    "資源回收筒已清空",
+    "ごみ箱を空にしました",
+    "Корзина очищена"
+  ],
+  "Searching applications, Everything and native Flow plugins...": [
+    "正在搜索…",
+    "正在搜尋…",
+    "検索中…",
+    "Поиск…"
+  ],
+  "Search Google: {search}": [
+    "Google 搜索：{search}",
+    "Google 搜尋：{search}",
+    "Google 検索：{search}",
+    "Поиск Google: {search}"
+  ],
+  "Open the Google search in the default browser": [
+    "在默认浏览器搜索",
+    "在預設瀏覽器搜尋",
+    "既定のブラウザーで検索",
+    "Поиск в браузере по умолчанию"
+  ],
+  "Current launcher client area: {width} × {height} logical px (DIP)": [
+    "当前尺寸：{width} × {height} DIP",
+    "目前尺寸：{width} × {height} DIP",
+    "現在のサイズ：{width} × {height} DIP",
+    "Текущий размер: {width} × {height} DIP"
+  ],
+  "My Flux Launcher stats: {total} queries run. https://github.com/m1nuzz/flux-launcher": [
+    "我的 Flux 统计：{total} 次搜索。https://github.com/m1nuzz/flux-launcher",
+    "我的 Flux 統計：{total} 次搜尋。https://github.com/m1nuzz/flux-launcher",
+    "Flux の統計：検索 {total} 回。https://github.com/m1nuzz/flux-launcher",
+    "Моя статистика Flux: {total} запросов. https://github.com/m1nuzz/flux-launcher"
+  ],
+  "Everything IPC is available": [
+    "Everything 已连接",
+    "Everything 已連線",
+    "Everything に接続済み",
+    "Everything подключён"
+  ],
+  "Everything is installed but its local IPC is unavailable": [
+    "Everything 已安装，连接不可用",
+    "Everything 已安裝，連線無法使用",
+    "Everything はインストール済みですが接続できません",
+    "Everything установлен, но IPC недоступен"
+  ],
+  "Installing stable {version}; Flux Launcher is restarting": [
+    "正在安装 {version}，Flux 即将重启",
+    "正在安裝 {version}，Flux 即將重新啟動",
+    "{version} をインストール中。Flux を再起動します",
+    "Установка {version}; Flux перезапускается"
+  ],
+  "Installing stable {version}": [
+    "正在安装 {version}",
+    "正在安裝 {version}",
+    "{version} をインストール中",
+    "Установка {version}"
+  ],
+  "Stable {version} update failed: {error}": [
+    "{version} 更新失败：{error}",
+    "{version} 更新失敗：{error}",
+    "{version} の更新に失敗：{error}",
+    "Ошибка обновления {version}: {error}"
+  ],
+  "Update install failed: {error}": [
+    "更新安装失败：{error}",
+    "更新安裝失敗：{error}",
+    "更新のインストールに失敗：{error}",
+    "Ошибка установки обновления: {error}"
+  ],
+  "Stable {version} is available": [
+    "发现稳定版 {version}",
+    "發現穩定版 {version}",
+    "安定版 {version} を利用できます",
+    "Доступна стабильная версия {version}"
+  ],
+  "Preparing stable {version} for installation...": [
+    "正在准备安装 {version}…",
+    "正在準備安裝 {version}…",
+    "{version} のインストールを準備中…",
+    "Подготовка установки {version}…"
+  ],
+  "Flux {version} is up to date": [
+    "Flux {version} 已是最新版本",
+    "Flux {version} 已是最新版本",
+    "Flux {version} は最新です",
+    "Установлена последняя версия Flux {version}"
+  ],
+  "Stable update check failed: {error}": [
+    "检查更新失败：{error}",
+    "檢查更新失敗：{error}",
+    "更新の確認に失敗：{error}",
+    "Ошибка проверки обновлений: {error}"
+  ],
+  "Create note: {note_name}": [
+    "新建笔记：{note_name}",
+    "新增筆記：{note_name}",
+    "ノートを作成：{note_name}",
+    "Создать заметку: {note_name}"
+  ],
+  "Downloading stable {version}: {percent}% — {received} / {total} ({remaining} remaining)": [
+    "正在下载 {version}：{percent}% — {received} / {total}（剩余 {remaining}）",
+    "正在下載 {version}：{percent}% — {received} / {total}（剩餘 {remaining}）",
+    "{version} をダウンロード中：{percent}% — {received} / {total}（残り {remaining}）",
+    "Загрузка {version}: {percent}% — {received} / {total} (осталось {remaining})"
+  ],
+  "Downloading stable {version}: {received} received": [
+    "正在下载 {version}：已接收 {received}",
+    "正在下載 {version}：已接收 {received}",
+    "{version} をダウンロード中：{received} 受信済み",
+    "Загрузка {version}: получено {received}"
+  ],
+  "Previous search": [
+    "历史搜索",
+    "歷史搜尋",
+    "過去の検索",
+    "Предыдущий запрос"
+  ],
+  "Flux Settings": [
+    "Flux 设置",
+    "Flux 設定",
+    "Flux の設定",
+    "Настройки Flux"
+  ],
+  "Configure Flux Launcher": [
+    "设置 Flux Launcher",
+    "設定 Flux Launcher",
+    "Flux Launcher を設定",
+    "Настроить Flux Launcher"
+  ],
+  "Toggle Game Mode": [
+    "切换游戏模式",
+    "切換遊戲模式",
+    "ゲームモードを切り替え",
+    "Переключить игровой режим"
+  ],
+  "Suppress launcher activation": [
+    "暂停唤起启动器",
+    "暫停喚起啟動器",
+    "ランチャーの起動を抑制",
+    "Блокировать открытие панели"
+  ],
+  "Empty Recycle Bin": [
+    "清空回收站",
+    "清空資源回收筒",
+    "ごみ箱を空にする",
+    "Очистить корзину"
+  ],
+  "Empty recycle bin": [
+    "清空回收站",
+    "清空資源回收筒",
+    "ごみ箱を空にする",
+    "Очистить корзину"
+  ],
+  "Open Recycle Bin": [
+    "打开回收站",
+    "開啟資源回收筒",
+    "ごみ箱を開く",
+    "Открыть корзину"
+  ],
+  "Open recycle bin": [
+    "打开回收站",
+    "開啟資源回收筒",
+    "ごみ箱を開く",
+    "Открыть корзину"
+  ],
+  "Plugin directory": [
+    "插件目录",
+    "外掛目錄",
+    "プラグインフォルダー",
+    "Папка плагинов"
+  ],
+  "Manage native Flow plugins": [
+    "管理 Flow 原生插件",
+    "管理 Flow 原生外掛",
+    "Flow プラグインを管理",
+    "Управление нативными плагинами Flow"
+  ],
+  "About Flux Launcher": [
+    "关于 Flux Launcher",
+    "關於 Flux Launcher",
+    "Flux Launcher について",
+    "О Flux Launcher"
+  ],
+  "Version and diagnostics": [
+    "版本与诊断",
+    "版本與診斷",
+    "バージョンと診断",
+    "Версия и диагностика"
+  ],
+  "Command Prompt": [
+    "命令提示符",
+    "命令提示字元",
+    "コマンドプロンプト",
+    "Командная строка"
+  ],
+  "Windows command line": [
+    "Windows 命令行",
+    "Windows 命令列",
+    "Windows コマンドライン",
+    "Командная строка Windows"
+  ],
+  "Windows Settings": [
+    "Windows 设置",
+    "Windows 設定",
+    "Windows の設定",
+    "Параметры Windows"
+  ],
+  "Display": [
+    "显示",
+    "顯示",
+    "ディスプレイ",
+    "Дисплей"
+  ],
+  "Sound": [
+    "声音",
+    "音效",
+    "サウンド",
+    "Звук"
+  ],
+  "Bluetooth": [
+    "蓝牙",
+    "藍牙",
+    "Bluetooth",
+    "Bluetooth"
+  ],
+  "Proxy": [
+    "代理",
+    "Proxy",
+    "プロキシ",
+    "Прокси"
+  ],
+  "Installed apps": [
+    "已安装的应用",
+    "已安裝的應用程式",
+    "インストールされているアプリ",
+    "Установленные приложения"
+  ],
+  "Default apps": [
+    "默认应用",
+    "預設應用程式",
+    "既定のアプリ",
+    "Приложения по умолчанию"
+  ],
+  "Startup apps": [
+    "启动应用",
+    "啟動應用程式",
+    "スタートアップアプリ",
+    "Автозагрузка"
+  ],
+  "Personalization": [
+    "个性化",
+    "個人化",
+    "個人用設定",
+    "Персонализация"
+  ],
+  "Background": [
+    "背景",
+    "背景",
+    "背景",
+    "Фон"
+  ],
+  "Themes": [
+    "主题",
+    "佈景主題",
+    "テーマ",
+    "Темы"
+  ],
+  "Colors": [
+    "颜色",
+    "色彩",
+    "色",
+    "Цвета"
+  ],
+  "Privacy": [
+    "隐私",
+    "隱私權",
+    "プライバシー",
+    "Конфиденциальность"
+  ],
+  "Storage": [
+    "存储",
+    "儲存空間",
+    "ストレージ",
+    "Память"
+  ],
+  "Accounts": [
+    "账户",
+    "帳戶",
+    "アカウント",
+    "Учётные записи"
+  ],
+  "Date & time": [
+    "日期和时间",
+    "日期和時間",
+    "日付と時刻",
+    "Дата и время"
+  ],
+  "Language & region": [
+    "语言和区域",
+    "語言與地區",
+    "言語と地域",
+    "Язык и регион"
+  ],
+  "Notifications": [
+    "通知",
+    "通知",
+    "通知",
+    "Уведомления"
+  ],
+  "Accessibility": [
+    "辅助功能",
+    "協助工具",
+    "アクセシビリティ",
+    "Специальные возможности"
+  ],
+  "Recovery": [
+    "恢复",
+    "復原",
+    "回復",
+    "Восстановление"
+  ],
+  "Clipboard": [
+    "剪贴板",
+    "剪貼簿",
+    "クリップボード",
+    "Буфер обмена"
+  ],
+  "Control Panel": [
+    "控制面板",
+    "控制台",
+    "コントロールパネル",
+    "Панель управления"
+  ],
+  "Windows Control Panel": [
+    "Windows 控制面板",
+    "Windows 控制台",
+    "Windows コントロールパネル",
+    "Панель управления Windows"
+  ],
+  "Device Manager": [
+    "设备管理器",
+    "裝置管理員",
+    "デバイスマネージャー",
+    "Диспетчер устройств"
+  ],
+  "Task Manager": [
+    "任务管理器",
+    "工作管理員",
+    "タスクマネージャー",
+    "Диспетчер задач"
+  ],
+  "Services": [
+    "服务",
+    "服務",
+    "サービス",
+    "Службы"
+  ],
+  "Event Viewer": [
+    "事件查看器",
+    "事件檢視器",
+    "イベントビューアー",
+    "Просмотр событий"
+  ],
+  "Disk Management": [
+    "磁盘管理",
+    "磁碟管理",
+    "ディスクの管理",
+    "Управление дисками"
+  ],
+  "System Information": [
+    "系统信息",
+    "系統資訊",
+    "システム情報",
+    "Сведения о системе"
+  ],
+  "Resource Monitor": [
+    "资源监视器",
+    "資源監視器",
+    "リソースモニター",
+    "Монитор ресурсов"
+  ],
+  "Windows administrative tools": [
+    "Windows 管理工具",
+    "Windows 管理工具",
+    "Windows 管理ツール",
+    "Средства администрирования Windows"
+  ],
+  "Downloads": [
+    "下载",
+    "下載",
+    "ダウンロード",
+    "Загрузки"
+  ],
+  "Documents": [
+    "文档",
+    "文件",
+    "ドキュメント",
+    "Документы"
+  ],
+  "Desktop": [
+    "桌面",
+    "桌面",
+    "デスクトップ",
+    "Рабочий стол"
+  ],
+  "Open special folder": [
+    "打开系统文件夹",
+    "開啟系統資料夾",
+    "システムフォルダーを開く",
+    "Открыть системную папку"
+  ],
+  "File Explorer": [
+    "文件资源管理器",
+    "檔案總管",
+    "エクスプローラー",
+    "Проводник"
+  ],
+  "Open Windows Explorer": [
+    "打开文件资源管理器",
+    "開啟檔案總管",
+    "エクスプローラーを開く",
+    "Открыть Проводник"
+  ],
+  "Windows Settings • System": [
+    "Windows 设置 · 系统",
+    "Windows 設定 · 系統",
+    "Windows の設定 · システム",
+    "Параметры Windows · Система"
+  ],
+  "Windows Settings • Bluetooth & devices": [
+    "Windows 设置 · 蓝牙和设备",
+    "Windows 設定 · 藍牙與裝置",
+    "Windows の設定 · Bluetooth とデバイス",
+    "Параметры Windows · Bluetooth и устройства"
+  ],
+  "Windows Settings • Network & internet": [
+    "Windows 设置 · 网络和 Internet",
+    "Windows 設定 · 網路和網際網路",
+    "Windows の設定 · ネットワークとインターネット",
+    "Параметры Windows · Сеть и Интернет"
+  ],
+  "Windows Settings • Apps": [
+    "Windows 设置 · 应用",
+    "Windows 設定 · 應用程式",
+    "Windows の設定 · アプリ",
+    "Параметры Windows · Приложения"
+  ],
+  "Windows Settings • Personalization": [
+    "Windows 设置 · 个性化",
+    "Windows 設定 · 個人化",
+    "Windows の設定 · 個人用設定",
+    "Параметры Windows · Персонализация"
+  ],
+  "Windows Settings • Windows Update": [
+    "Windows 设置 · Windows 更新",
+    "Windows 設定 · Windows Update",
+    "Windows の設定 · Windows Update",
+    "Параметры Windows · Центр обновления Windows"
+  ],
+  "Windows Settings • Privacy & security": [
+    "Windows 设置 · 隐私和安全性",
+    "Windows 設定 · 隱私權與安全性",
+    "Windows の設定 · プライバシーとセキュリティ",
+    "Параметры Windows · Конфиденциальность и безопасность"
+  ],
+  "Windows Settings • Accounts": [
+    "Windows 设置 · 账户",
+    "Windows 設定 · 帳戶",
+    "Windows の設定 · アカウント",
+    "Параметры Windows · Учётные записи"
+  ],
+  "Windows Settings • Time & language": [
+    "Windows 设置 · 时间和语言",
+    "Windows 設定 · 時間與語言",
+    "Windows の設定 · 時刻と言語",
+    "Параметры Windows · Время и язык"
+  ],
+  "Windows Settings • Accessibility": [
+    "Windows 设置 · 辅助功能",
+    "Windows 設定 · 協助工具",
+    "Windows の設定 · アクセシビリティ",
+    "Параметры Windows · Специальные возможности"
+  ],
+  "{count} application result(s)": [
+    "应用结果：{count}",
+    "應用程式結果：{count}",
+    "アプリの検索結果：{count}",
+    "Найдено приложений: {count}"
+  ],
+  "{count} Everything result(s)": [
+    "文件结果：{count}",
+    "檔案結果：{count}",
+    "ファイルの検索結果：{count}",
+    "Результатов Everything: {count}"
+  ],
+  "{count} native plugin result(s)": [
+    "插件结果：{count}",
+    "外掛結果：{count}",
+    "プラグインの検索結果：{count}",
+    "Результатов плагинов: {count}"
+  ],
+  "Everything is not available": [
+    "Everything 不可用",
+    "Everything 無法使用",
+    "Everything を利用できません",
+    "Everything недоступен"
+  ],
+  "Everything query timed out": [
+    "Everything 搜索超时",
+    "Everything 搜尋逾時",
+    "Everything の検索がタイムアウトしました",
+    "Время ожидания Everything истекло"
+  ],
+  "Everything query failed to send: {error}": [
+    "Everything 请求发送失败：{error}",
+    "Everything 請求傳送失敗：{error}",
+    "Everything の検索要求を送信できません：{error}",
+    "Не удалось отправить запрос Everything: {error}"
+  ],
+  "No native Flow plugins installed": [
+    "未安装 Flow 原生插件",
+    "未安裝 Flow 原生外掛",
+    "Flow プラグインは未インストールです",
+    "Нативные плагины Flow не установлены"
+  ],
+  "No native Rust plugin host installed": [
+    "未安装 Rust 原生插件",
+    "未安裝 Rust 原生外掛",
+    "Rust プラグインは未インストールです",
+    "Нативные плагины Rust не установлены"
+  ],
+  "This is the actual launcher preview window. Its client area is resized directly, not scaled into a mock card.": [
+    "窗口预览",
+    "視窗預覽",
+    "ウィンドウのプレビュー",
+    "Предпросмотр окна"
+  ],
+  "Preview result": [
+    "预览结果",
+    "預覽結果",
+    "プレビュー結果",
+    "Пример результата"
+  ],
+  "Native windui surface": [
+    "原生界面",
+    "原生介面",
+    "ネイティブ UI",
+    "Нативный интерфейс"
+  ],
+  "Width and height are exact": [
+    "窗口尺寸",
+    "視窗尺寸",
+    "ウィンドウサイズ",
+    "Размер окна"
+  ],
+  "Measured from this window client area": [
+    "客户区尺寸",
+    "用戶端區域尺寸",
+    "クライアント領域のサイズ",
+    "Размер клиентской области"
+  ],
+  "Acrylic/Mica remains active": [
+    "系统背景材质",
+    "系統背景材質",
+    "システム背景マテリアル",
+    "Системный материал фона"
+  ],
+  "The Settings window stays separate": [
+    "独立设置窗口",
+    "獨立設定視窗",
+    "独立した設定ウィンドウ",
+    "Отдельное окно настроек"
+  ],
+  "Logical client units (DIP); the window is resized, not scaled.": [
+    "逻辑像素（DIP）",
+    "邏輯像素（DIP）",
+    "論理ピクセル（DIP）",
+    "Логические пиксели (DIP)"
+  ]
+}

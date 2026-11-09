@@ -189,7 +189,7 @@ fn query_plugins(plugins: &[PluginDescriptor], request: PluginRequest) -> Plugin
             sequence: request.sequence,
             query: request.query,
             results,
-            status: String::from("No native Flow plugins installed"),
+            status: String::from(crate::i18n::tr("No native Flow plugins installed")),
             available: false,
             actions,
         };
@@ -340,7 +340,11 @@ fn discover_plugins() -> Vec<PluginDescriptor> {
 fn plugin_roots() -> Vec<PathBuf> {
     let mut roots = Vec::new();
     if let Some(app_data) = std::env::var_os("APPDATA") {
-        roots.push(PathBuf::from(app_data).join("FluxLauncher").join("Plugins"));
+        roots.push(
+            PathBuf::from(app_data)
+                .join("FluxLauncher")
+                .join(crate::i18n::tr("Plugins")),
+        );
     }
     if let Some(extra) = std::env::var_os("FLUX_PLUGIN_DIR") {
         roots.push(PathBuf::from(extra));

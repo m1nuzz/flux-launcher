@@ -10,7 +10,7 @@ pub(crate) fn build_search_box(
     smooth_caret: bool,
     smooth_caret_duration_ms: u16,
 ) -> Element {
-    Element::text_input(query, "Search")
+    Element::text_input(query, crate::i18n::tr("Search"))
         .cursor_position(query_caret_position)
         .leading_icon('⌕')
         .transparent_surface()

@@ -44,9 +44,9 @@ pub(crate) fn build_action_bar(show_results: Signal<bool>, action_mode: Signal<b
     let action_bar_content = Element::row()
         .height(22)
         .spacing(8)
-        .child(action_hint("↵", "Open"))
-        .child(action_hint("Ctrl + R", "Admin"))
-        .child(action_hint("Alt + Enter", "Location"));
+        .child(action_hint("↵", crate::i18n::tr("Open")))
+        .child(action_hint("Ctrl + R", crate::i18n::tr("Admin")))
+        .child(action_hint("Alt + Enter", crate::i18n::tr("Location")));
     Element::stack()
         .width(ACTION_BAR_WIDTH)
         .height(ACTION_BAR_HEIGHT)

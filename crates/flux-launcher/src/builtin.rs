@@ -61,8 +61,13 @@ impl BuiltinProvider for GoogleProvider {
         vec![BuiltinResult {
             result: SearchResult {
                 id: String::from("builtin:google-search"),
-                title: format!("Search Google: {search}"),
-                subtitle: String::from("Open the Google search in the default browser"),
+                title: crate::i18n::format(
+                    "Search Google: {search}",
+                    &[("search", search.to_string())],
+                ),
+                subtitle: String::from(crate::i18n::tr(
+                    "Open the Google search in the default browser",
+                )),
                 kind: ResultKind::Placeholder,
                 source: ResultSource::Plugin,
                 target: None,

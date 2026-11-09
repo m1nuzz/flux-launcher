@@ -30,10 +30,10 @@ pub(crate) fn build_visual_tab(ui: &SettingsUi) -> Element {
                         .weight(1.0)
                         .spacing(16)
                         .child(settings_group(
-                            "Caret",
+                            crate::i18n::tr("Caret"),
                             vec![Element::setting_row_desc(
-                                "Smooth caret",
-                                "Animate search caret movement",
+                                crate::i18n::tr("Smooth caret"),
+                                crate::i18n::tr("Animate search caret movement"),
                                 Element::row()
                                     .spacing(8)
                                     .cross(Align::Center)
@@ -47,14 +47,14 @@ pub(crate) fn build_visual_tab(ui: &SettingsUi) -> Element {
                             )],
                         ))
                         .child(settings_group(
-                            "Selection color",
+                            crate::i18n::tr("Selection color"),
                             vec![
                                 Element::setting_row_desc(
-                                    "Use Windows accent",
-                                    "Follow the Windows 11 system accent color when available",
+                                    crate::i18n::tr("Use Windows accent"),
+                                    crate::i18n::tr("Follow the Windows 11 system accent color when available"),
                                     Element::switch(ui.use_system_accent),
                                 ),
-                                Element::label("The custom color below is both the safe fallback and the manual choice.")
+                                Element::label(crate::i18n::tr("The custom color below is both the safe fallback and the manual choice."))
                                     .font_size(11.0)
                                     .fg_role(Role::TextSubtle)
                                     .max_lines(2)
@@ -84,10 +84,10 @@ pub(crate) fn build_visual_tab(ui: &SettingsUi) -> Element {
                             ],
                         ))
                         .child(settings_group(
-                            "Launcher size",
+                            crate::i18n::tr("Launcher size"),
                             vec![
                                 dimension_row(
-                                    "Launcher width",
+                                    crate::i18n::tr("Launcher width"),
                                     format!("{MIN_LAUNCHER_WIDTH}-{MAX_LAUNCHER_WIDTH} logical px (DIP)"),
                                     dimension_editor(
                                         ui.launcher_width_slider,
@@ -97,7 +97,7 @@ pub(crate) fn build_visual_tab(ui: &SettingsUi) -> Element {
                                     ),
                                 ),
                                 dimension_row(
-                                    "Results height",
+                                    crate::i18n::tr("Results height"),
                                     format!("{MIN_LAUNCHER_HEIGHT}-{MAX_LAUNCHER_HEIGHT} logical px (DIP)"),
                                     dimension_editor(
                                         ui.launcher_height_slider,
@@ -109,10 +109,10 @@ pub(crate) fn build_visual_tab(ui: &SettingsUi) -> Element {
                             ],
                         ))
                         .child(settings_group(
-                            "Live preview",
+                            crate::i18n::tr("Live preview"),
                             vec![
                                 Element::label_signal(ui.launcher_preview_text).font_size(12.0),
-                                Element::label("The native preview uses the exact requested logical client dimensions. Physical pixels scale with the preview monitor DPI; Apply settings saves the values.")
+                                Element::label(crate::i18n::tr("The native preview uses the exact requested logical client dimensions. Physical pixels scale with the preview monitor DPI; Apply settings saves the values."))
                                     .font_size(11.0)
                                     .fg_role(Role::TextSubtle)
                                     .max_lines(2)
@@ -175,15 +175,19 @@ fn dimension_editor(
         .cross(Align::Center)
         .child(Element::slider(slider).width(VISUAL_SLIDER_WIDTH))
         .child(Element::text_input(input, placeholder).width(64))
-        .child(Element::button("Reset").small().on_click(move |_| {
-            // Ease the slider to the default instead of snapping: the thumb and
-            // the Settings/preview pair travel on one curve.
-            eprintln!("Visual {label} reset clicked: {default}");
-            ease.set(Some((
-                slider.get(),
-                dimension_slider_fraction(default, min, max),
-                std::time::Instant::now(),
-            )));
-        }))
+        .child(
+            Element::button(crate::i18n::tr("Reset"))
+                .small()
+                .on_click(move |_| {
+                    // Ease the slider to the default instead of snapping: the thumb and
+                    // the Settings/preview pair travel on one curve.
+                    eprintln!("Visual {label} reset clicked: {default}");
+                    ease.set(Some((
+                        slider.get(),
+                        dimension_slider_fraction(default, min, max),
+                        std::time::Instant::now(),
+                    )));
+                }),
+        )
         .child(Element::label("DIP").font_size(11.0))
 }

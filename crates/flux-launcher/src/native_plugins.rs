@@ -87,7 +87,9 @@ impl NativePluginWorker {
                             sequence: request.sequence,
                             query: request.query,
                             results: Vec::new(),
-                            status: String::from("No native Rust plugin host installed"),
+                            status: String::from(crate::i18n::tr(
+                                "No native Rust plugin host installed",
+                            )),
                             available: false,
                             actions: HashMap::new(),
                         },
@@ -204,7 +206,7 @@ impl NativePluginHost {
             "params": {
                 "query": query,
                 "action_keyword": "",
-                "locale": "en-US"
+                "locale": crate::i18n::current().code()
             }
         });
         let line = serde_json::to_string(&request).map_err(|error| error.to_string())?;
@@ -313,7 +315,10 @@ fn parse_native_response(
         });
     }
     let status = if payload.errors.is_empty() {
-        format!("{} native plugin result(s)", results.len())
+        crate::i18n::format(
+            "{count} native plugin result(s)",
+            &[("count", results.len().to_string())],
+        )
     } else {
         payload.errors.join("; ")
     };

@@ -315,10 +315,10 @@ pub(crate) fn register_interval(
                         recycle_confirm_child = None;
                         if status.success() {
                             super::paint_trace::note("recycle-confirm-emptied", "");
-                            status_for_interval.set(String::from("Recycle Bin emptied"));
+                            status_for_interval.set(String::from(crate::i18n::tr("Recycle Bin emptied")));
                         } else {
                             super::paint_trace::note("recycle-confirm-declined", "");
-                            status_for_interval.set(String::from("Ready"));
+                            status_for_interval.set(String::from(crate::i18n::tr("Ready")));
                         }
                         // Smoke re-arm: a re-show after the prompt is what arms the
                         // confirmation again in real use. Re-arming here, up to the
@@ -621,9 +621,9 @@ pub(crate) fn register_interval(
                 MIN_LAUNCHER_HEIGHT,
                 MAX_LAUNCHER_HEIGHT,
             ));
-            preview_text_for_interval.set(format!(
-                "Current launcher client area: {} × {} logical px (DIP)",
-                next_width, next_height
+            preview_text_for_interval.set(crate::i18n::format(
+                "Current launcher client area: {width} × {height} logical px (DIP)",
+                &[("width", next_width.to_string()), ("height", next_height.to_string())],
             ));
             if !(settings_visible_for_interval.get() && settings_tab_for_interval.get() == 1) {
                 apply_launcher_size(
@@ -1007,10 +1007,10 @@ pub(crate) fn register_interval(
         request_scroll(scroll_request_for_interval);
         if !has_query {
             inline_completion_for_interval.set(String::new());
-            status_for_interval.set(String::from("Ready"));
+            status_for_interval.set(String::from(crate::i18n::tr("Ready")));
         } else {
             status_for_interval.set(String::from(
-                "Searching applications, Everything and native Flow plugins...",
+                crate::i18n::tr("Searching applications, Everything and native Flow plugins..."),
             ));
             // Applications stay immediate so the top row answers within a
             // single tick; slow providers follow through the debounced path.
