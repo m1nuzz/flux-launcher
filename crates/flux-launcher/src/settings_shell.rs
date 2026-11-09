@@ -87,8 +87,9 @@ mod locale_layout_tests {
 
     #[test]
     fn translated_navigation_labels_fit_a_single_native_text_line() {
-        // Sidebar padding is 14 + 12 DIP. ListRow's pill starts at 18 DIP,
-        // followed by its 20-DIP glyph, 8-DIP gap, and 12-DIP trailing pad.
+        // Sidebar padding is 14 + 12 DIP. Reserve 18 DIP for ListRow's
+        // 16-DIP pill inset plus a 2-DIP margin, then its 20-DIP glyph,
+        // 8-DIP gap, and 12-DIP trailing pad.
         let available = SETTINGS_SIDEBAR_WIDTH - 14 - 12 - 18 - 20 - 8 - 12;
         let mut engine = DWriteEngine::new();
         let style = TextStyle {
