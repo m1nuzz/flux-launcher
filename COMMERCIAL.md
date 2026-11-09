@@ -1,22 +1,24 @@
 # Commercial licensing
 
-Flux Launcher is released under the [GNU Affero General Public License, version 3 or later](LICENSE) (AGPL-3.0-or-later). The AGPL is a strong copyleft license: if you modify Flux Launcher and distribute it, or make it available to users over a network, you must release the corresponding source code of your version under the AGPL.
+Flux Launcher is source-available under the [PolyForm Noncommercial License 1.0.0](LICENSE). The license permits personal and other noncommercial use, including research, education, and use by charitable, public research, public safety or health, environmental protection and government organizations, as defined in the license. It is not an OSI-approved open-source license.
 
 ## When a commercial license is required
 
-A commercial license is available for parties that want to:
+A paid commercial license is required for any commercial use of Flux Launcher, including:
 
-- embed Flux Launcher, in whole or in part, in a proprietary product;
-- ship a white-label, OEM, or branded build without releasing their changes under the AGPL;
-- offer Flux Launcher or a derivative as a hosted or managed service without publishing the corresponding source;
-- use Flux Launcher in any other way that cannot satisfy the AGPL's source-disclosure obligations.
+- use by or for a business, including internal business use;
+- embedding Flux Launcher, in whole or in part, in a commercial or proprietary product;
+- shipping a white-label, OEM, or branded build;
+- selling or otherwise distributing Flux Launcher for a fee;
+- offering Flux Launcher or a derivative as a hosted or managed service;
+- any other use that is not a permitted noncommercial purpose under the PolyForm Noncommercial License.
 
-Running Flux Launcher as an end user, including inside a company, does not require a commercial license. The AGPL's obligations apply to distribution and network use, not to running the program.
+If you are unsure whether your use is noncommercial, ask before using Flux Launcher commercially.
 
 ## What the commercial license provides
 
-- the right to use, modify, and distribute Flux Launcher in closed-source products;
-- relief from the AGPL's source-disclosure requirements for your modifications;
+- the right to use, modify, and distribute Flux Launcher for commercial purposes;
+- the right to integrate it into closed-source products;
 - written terms for support, updates, and redistribution.
 
 ## Contact
@@ -25,4 +27,8 @@ Commercial licensing is arranged individually. Open an issue at <https://github.
 
 ## Contributions
 
-Contributions are accepted under the project's [CLA](CLA.md), which keeps the project able to offer both the AGPL and commercial licenses.
+Contributions are accepted under the project's [CLA](CLA.md), which keeps the project able to offer both the noncommercial and commercial licenses.
+
+## Earlier releases
+
+Versions released before this licensing change remain available under the license they were published with.

@@ -4,13 +4,13 @@ This Contributors License Agreement ("CLA") is entered into between the Contribu
 
 ## Background
 
-Flux Launcher is released under the GNU Affero General Public License, version 3 or later ("AGPL-3.0-or-later"). The Maintainer also offers commercial licenses to parties who cannot or do not want to comply with the AGPL.
+Flux Launcher is released under the PolyForm Noncommercial License 1.0.0. The Maintainer also offers paid commercial licenses to parties that want to use Flux Launcher commercially.
 
 ## Agreement
 
 ### Contributor Grant of License
 
-By submitting code, documentation, or any other materials (collectively, "Contributions") to the Flux Launcher project, the Contributor grants the Maintainer a perpetual, worldwide, non-exclusive, royalty-free, irrevocable, sublicensable license to use, modify, distribute, and otherwise exploit the Contributions, including any intellectual property rights therein, and to license the Contributions under the AGPL and under separate commercial licenses.
+By submitting code, documentation, or any other materials (collectively, "Contributions") to the Flux Launcher project, the Contributor grants the Maintainer a perpetual, worldwide, non-exclusive, royalty-free, irrevocable, sublicensable license to use, modify, distribute, and otherwise exploit the Contributions, including any intellectual property rights therein, and to license the Contributions under the PolyForm Noncommercial License 1.0.0 and under separate commercial licenses.
 
 ### Representation of Ownership and Right to Contribute
 
