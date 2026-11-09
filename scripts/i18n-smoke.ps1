@@ -125,7 +125,18 @@ try {
             [FluxLocaleSmoke]::Key(0x0D)
             Start-Sleep -Milliseconds 300
             Save-Capture $handle "$language-before-apply.png"
-            [FluxLocaleSmoke]::Click($handle,($client.Right-[int](90*$scale)),($client.Bottom-[int](24*$scale)))
+            # Change tabs with the unsaved language draft, then verify that the
+            # separately owned native preview is reaped before the handoff.
+            [FluxLocaleSmoke]::Click($handle,[int](80*$scale),[int](106*$scale))
+            $previewDeadline=[DateTime]::UtcNow.AddSeconds(5)
+            do {
+                Start-Sleep -Milliseconds 150
+                $previews=@(Get-CimInstance Win32_Process -Filter "ParentProcessId = $($app.Id)" | Where-Object { $_.CommandLine -match '--visual-preview' })
+            } while ($previews.Count -eq 0 -and [DateTime]::UtcNow -lt $previewDeadline)
+            if ($previews.Count -ne 1) { throw 'Visual tab did not create exactly one native preview.' }
+            Save-Capture $handle "$language-preview-before-apply.png" -FullScreen
+            # Click inside the common right edge: translated captions change width.
+            [FluxLocaleSmoke]::Click($handle,($client.Right-[int](30*$scale)),($client.Bottom-[int](24*$scale)))
             $deadline=[DateTime]::UtcNow.AddSeconds(15)
             do {
                 Start-Sleep -Milliseconds 150
@@ -133,6 +144,9 @@ try {
                 $saved=Get-Content -LiteralPath $configPath -Raw | ConvertFrom-Json
             } while ((-not $app.HasExited -or $saved.language -ne $languages[$targetIndex]) -and [DateTime]::UtcNow -lt $deadline)
             if (-not $app.HasExited -or $saved.language -ne $languages[$targetIndex] -or -not $saved.language_explicit) { throw "Language apply/restart failed: $language -> $($languages[$targetIndex])" }
+            foreach ($preview in $previews) {
+                if (Get-Process -Id $preview.ProcessId -ErrorAction SilentlyContinue) { throw 'Old preview survived the language handoff.' }
+            }
             $replacement=@(Get-Process flux-launcher -ErrorAction SilentlyContinue | Where-Object { $_.Path -eq $binary -and $_.Id -ne $app.Id })
             if ($replacement.Count -ne 1) { throw 'Language handoff did not leave exactly one replacement.' }
             $handle=Get-FixtureWindow $replacement[0]

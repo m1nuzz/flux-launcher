@@ -154,6 +154,7 @@ mod tests {
             "\u{42f}\u{437}\u{44b}\u{43a}"
         );
         for language in Locale::ALL {
+            assert!(LANGUAGE_NAMES.contains_key(language.code()));
             assert!(!native_name(language).is_empty());
         }
         assert_eq!(

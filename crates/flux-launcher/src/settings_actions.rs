@@ -328,7 +328,8 @@ pub(crate) fn has_unsaved_changes(ui: &SettingsUi) -> bool {
         .unwrap_or(24)
         .clamp(1, 168);
     let accent = parse_selection_color(&ui.custom_selection_color.get()).unwrap_or(0x4c_8b_f4);
-    settings.language_explicit != (ui.language.get() != 0)
+    settings.language != crate::i18n::current()
+        || settings.language_explicit != (ui.language.get() != 0)
         || (ui.language.get() != 0
             && settings.language != flux_core::Locale::from_index(ui.language.get() - 1))
         || settings.activation_hotkey != hotkey
