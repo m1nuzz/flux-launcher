@@ -239,6 +239,10 @@ impl Widget for ResultRowAnchor {
             let y = bounds.y as f32 + 2.0;
             let w = bounds.w as f32;
             let h = bounds.h as f32 - 4.0;
+            // The selected surface has to stay visible under the trailing key:
+            // a full-row fade made the key look detached from the selection.
+            let base = Color::rgba(color.r / 5, color.g / 5, color.b / 4, 200);
+            canvas.fill_round_rect(x, y, w, h, 10.0, &Paint::fill(base));
             canvas.fill_round_rect(
                 x,
                 y,
@@ -247,10 +251,10 @@ impl Widget for ResultRowAnchor {
                 10.0,
                 &Paint::gradient(Gradient::linear(
                     (x, y),
-                    (x + w, y),
+                    (x + w * 0.72, y),
                     vec![
                         (0.0, color.scale_alpha(1.45)),
-                        (1.0, color.scale_alpha(0.12)),
+                        (1.0, Color::rgba(color.r, color.g, color.b, 0)),
                     ],
                 )),
             );
