@@ -249,20 +249,12 @@ impl Widget for ResultRowAnchor {
                     (x, y),
                     (x + w, y),
                     vec![
-                        (0.0, color.scale_alpha(0.70)),
-                        (1.0, color.scale_alpha(1.20)),
+                        (0.0, color.scale_alpha(1.45)),
+                        (1.0, color.scale_alpha(0.12)),
                     ],
                 )),
             );
-            canvas.stroke_round_rect(
-                x,
-                y,
-                w,
-                h,
-                10.0,
-                1.0,
-                &Paint::fill(Color::rgba(255, 255, 255, 42)),
-            );
+            canvas.stroke_round_rect(x, y, w, h, 10.0, 1.0, &Paint::fill(color.scale_alpha(1.35)));
         }
     }
 }

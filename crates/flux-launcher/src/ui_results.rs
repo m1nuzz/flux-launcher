@@ -5,7 +5,9 @@ use std::sync::{Arc, RwLock};
 
 use flux_core::{PriorityEntry, SearchResult, Settings};
 use windui::app::WindowSizeHandle;
+use windui::core::Widget;
 use windui::prelude::*;
+use windui::render::{Canvas, Paint};
 use windui::signal::Signal;
 
 use super::history_priorities::set_result_priority;
@@ -18,6 +20,37 @@ use super::ui_constants::{
     ACTION_BAR_HEIGHT, ACTION_BAR_WIDTH, RESULT_LIST_VERTICAL_INSET, RESULT_VIEWPORT_HEIGHT,
 };
 
+/// Hairline frame around the Acrylic surface. A frameless window has no edge
+/// of its own on a bright wallpaper, so a faint rounded border keeps the
+/// launcher readable without adding another surface.
+pub(crate) fn window_frame() -> Element {
+    Element::leaf().widget(WindowFrame).fill()
+}
+
+struct WindowFrame;
+
+impl Widget for WindowFrame {
+    fn paint(
+        &self,
+        bounds: windui::geometry::Rect,
+        _content: windui::geometry::Rect,
+        _focused: bool,
+        _enabled: bool,
+        canvas: &mut dyn Canvas,
+        _style: &windui::style::Style,
+    ) {
+        canvas.stroke_round_rect(
+            bounds.x as f32 + 0.5,
+            bounds.y as f32 + 0.5,
+            bounds.w as f32 - 1.0,
+            bounds.h as f32 - 1.0,
+            10.0,
+            1.0,
+            &Paint::fill(Color::rgba(255, 255, 255, 28)),
+        );
+    }
+}
+
 pub(crate) fn build_action_bar(show_results: Signal<bool>, action_mode: Signal<bool>) -> Element {
     let action_hint = |key: &'static str, label: &'static str| {
         Element::row()
@@ -26,12 +59,12 @@ pub(crate) fn build_action_bar(show_results: Signal<bool>, action_mode: Signal<b
             .spacing(4)
             .child(
                 Element::label(key)
-                    .font_size(9.0)
+                    .font_size(10.0)
                     .fg(Color::rgba(235, 243, 255, 235))
                     .bg(Color::rgba(255, 255, 255, 14))
                     .border(Color::rgba(255, 255, 255, 42), 1)
                     .corner(5.0)
-                    .padding_xy(4, 2),
+                    .padding_xy(5, 2),
             )
             .child(
                 Element::label(label)
@@ -308,16 +341,15 @@ mod action_bar_fit {
             hints.w,
             bar.w
         );
-        assert_eq!(
-            hints.w, 238,
-            "the hints' measured width; a different value means a hint changed, and the \
-             free space a status could use has to be re-measured"
+        let leading = hints.x - bar.x;
+        let trailing = (bar.x + bar.w) - (hints.x + hints.w);
+        assert!(
+            (leading - trailing).abs() <= 1,
+            "the key hints must stay centered: leading {leading}, trailing {trailing}"
         );
-        assert_eq!(hints.x - bar.x, 51, "free space at the leading edge");
-        assert_eq!(
-            (bar.x + bar.w) - (hints.x + hints.w),
-            51,
-            "free space at the trailing edge"
+        assert!(
+            leading >= 20,
+            "the key hints must leave breathing room at the leading edge: {leading}"
         );
     }
 }

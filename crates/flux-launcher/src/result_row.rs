@@ -84,10 +84,15 @@ pub(crate) fn result_row(
     window_size_slot: Rc<RefCell<Option<WindowSizeHandle>>>,
 ) -> Element {
     let result_for_actions = result.clone();
+    let is_application = matches!(result.kind, flux_core::ResultKind::Application);
     let id = result.id;
     let target = result.target;
     let title = result.title;
-    let subtitle = result.subtitle;
+    let subtitle = if is_application {
+        String::from("Application")
+    } else {
+        result.subtitle
+    };
     let icon_target = target.as_deref().map(icon_target_for_path);
     let (glyph, glyph_font) = match id.as_str() {
         "empty-recycle-bin" => (String::from("\u{ea99}"), "Segoe Fluent Icons"),
@@ -180,13 +185,13 @@ pub(crate) fn result_row(
                         .selection_requires_ctrl(true)
                         .copy_menu(false)
                         .font_family(LAUNCHER_FONT_FAMILY)
-                        .font_size(14.0)
+                        .font_size(13.0)
                         .width_match(),
                 )
                 .child(
                     Element::label(subtitle)
                         .font_family(LAUNCHER_FONT_FAMILY)
-                        .font_size(11.0)
+                        .font_size(10.0)
                         .fg(Color::rgba(184, 196, 212, 155))
                         .max_lines(1)
                         .truncate(Truncate::End)
