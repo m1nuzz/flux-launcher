@@ -350,8 +350,8 @@ fn main() {
     let launcher_surface = Element::stack()
         .fill()
         .bg(Color::rgba(0, 0, 0, 0))
-        .child(launcher_content.align(Align::Start))
-        .child(ui_results::window_frame());
+        .child(ui_results::window_frame())
+        .child(launcher_content.align(Align::Start));
 
     let settings_at_start = settings_visible.get();
     let settings_canvas = window_geometry::settings_window_size(initial_monitor_preference);
