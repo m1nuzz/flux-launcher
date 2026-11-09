@@ -2,12 +2,28 @@ use std::collections::{HashMap, HashSet};
 use std::path::Path;
 
 use syn::visit::{self, Visit};
-use syn::{Expr, ExprCall, ExprLit, ExprMethodCall, ItemConst, ItemFn, ItemMod, Lit, Meta};
+use syn::{
+    Expr, ExprCall, ExprLit, ExprMethodCall, ExprStruct, ItemConst, ItemFn, ItemMod, Lit, Local,
+    Meta,
+};
 
 #[derive(Default)]
 struct Calls {
     keys: HashSet<String>,
     translated_protocol_arguments: Vec<String>,
+    untranslated_status_formats: Vec<String>,
+}
+
+#[derive(Default)]
+struct StatusFormats(Vec<String>);
+
+impl<'ast> Visit<'ast> for StatusFormats {
+    fn visit_macro(&mut self, invocation: &'ast syn::Macro) {
+        if invocation.path.is_ident("format") {
+            self.0.push(invocation.tokens.to_string());
+        }
+        visit::visit_macro(self, invocation);
+    }
 }
 
 fn literal(expression: &Expr) -> Option<String> {
@@ -25,6 +41,28 @@ fn translation_call(call: &ExprCall) -> bool {
 }
 
 impl<'ast> Visit<'ast> for Calls {
+    fn visit_expr_struct(&mut self, expression: &'ast ExprStruct) {
+        for field in &expression.fields {
+            if matches!(&field.member, syn::Member::Named(name) if name == "status") {
+                let mut formats = StatusFormats::default();
+                formats.visit_expr(&field.expr);
+                self.untranslated_status_formats.extend(formats.0);
+            }
+        }
+        visit::visit_expr_struct(self, expression);
+    }
+
+    fn visit_local(&mut self, local: &'ast Local) {
+        if matches!(&local.pat, syn::Pat::Ident(name) if name.ident == "status") {
+            if let Some(initializer) = &local.init {
+                let mut formats = StatusFormats::default();
+                formats.visit_expr(&initializer.expr);
+                self.untranslated_status_formats.extend(formats.0);
+            }
+        }
+        visit::visit_local(self, local);
+    }
+
     fn visit_macro(&mut self, invocation: &'ast syn::Macro) {
         // syn deliberately treats macro bodies as opaque. Settings rows live
         // inside vec![...], so parse its expression list instead of skipping it.
@@ -145,6 +183,11 @@ fn every_translation_call_and_dynamic_settings_caption_has_a_catalog_entry() {
         calls.keys.len() > 150,
         "coverage must inspect the application, not just a fixture"
     );
+    assert!(
+        calls.untranslated_status_formats.is_empty(),
+        "provider status formats must use the catalog: {:?}",
+        calls.untranslated_status_formats
+    );
 }
 
 #[test]
@@ -154,4 +197,17 @@ fn scanner_detects_escaped_missing_keys_and_translated_paths() {
     calls.visit_file(&syn::parse_file(source).unwrap());
     assert!(calls.keys.contains("\u{2713} Typo"));
     assert_eq!(calls.translated_protocol_arguments, ["join"]);
+}
+
+#[test]
+fn scanner_detects_raw_status_formats_and_accepts_localized_formats() {
+    let source = r#"fn build() {
+        let status = if failed { format!("{count} plugins did not respond") } else { i18n::tr("Ready").into() };
+        Response { status: format!("Host restarted: {error}") };
+        Response { status: i18n::format("Unable to start winget: {error}", &[("error", error.to_string())]) };
+    }"#;
+    let mut calls = Calls::default();
+    calls.visit_file(&syn::parse_file(source).unwrap());
+    assert_eq!(calls.untranslated_status_formats.len(), 2);
+    assert!(calls.keys.contains("Unable to start winget: {error}"));
 }

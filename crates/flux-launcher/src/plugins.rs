@@ -227,7 +227,11 @@ fn query_plugins(plugins: &[PluginDescriptor], request: PluginRequest) -> Plugin
     }
 
     let status = if results.is_empty() && failures > 0 {
-        format!("{failures} native Flow plugin(s) did not respond")
+        crate::i18n::count(
+            "{count} native Flow plugin did not respond",
+            "{count} native Flow plugins did not respond",
+            failures,
+        )
     } else {
         crate::i18n::count(
             "{count} Flow plugin result",

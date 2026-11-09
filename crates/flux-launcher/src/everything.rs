@@ -185,8 +185,9 @@ pub fn start_background_if_installed() -> Result<InstallationState, String> {
         // earlier attempt is dead by definition here, so no sticky flag —
         // a dead child must not block the next retry forever.
         if let Err(error) = Command::new(path).args(startup_args()).spawn() {
-            return Err(format!(
-                "Unable to start Everything in the background: {error}"
+            return Err(crate::i18n::format(
+                "Unable to start Everything in the background: {error}",
+                &[("error", error.to_string())],
             ));
         }
     }
@@ -200,11 +201,18 @@ pub fn launch_winget_install() -> Result<(), String> {
             .args(winget_install_args())
             .spawn()
             .map(|_| ())
-            .map_err(|error| format!("Unable to start winget: {error}"))
+            .map_err(|error| {
+                crate::i18n::format(
+                    "Unable to start winget: {error}",
+                    &[("error", error.to_string())],
+                )
+            })
     }
     #[cfg(not(windows))]
     {
-        Err(String::from("winget is only available on Windows"))
+        Err(String::from(crate::i18n::tr(
+            "winget is only available on Windows",
+        )))
     }
 }
 

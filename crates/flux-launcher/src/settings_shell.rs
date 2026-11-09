@@ -15,6 +15,14 @@ const TAB_NAMES: [&str; 5] = ["General", "Visual", "Priorities", "Plugins", "Sta
 /// ships with Windows 11 and is already used for the Recycle Bin rows.
 const TAB_GLYPHS: [&str; 5] = ["\u{e713}", "\u{e790}", "\u{e8cb}", "\u{ea86}", "\u{e9d2}"];
 const ICON_FONT: &str = "Segoe Fluent Icons";
+
+fn navigation_font_size(language: flux_core::Locale) -> f32 {
+    if language == flux_core::Locale::Russian {
+        13.0
+    } else {
+        14.0
+    }
+}
 const TAB_DESCRIPTIONS: [&str; 5] = [
     "Startup, activation and update behavior.",
     "Caret, selection color and launcher size.",
@@ -81,7 +89,7 @@ pub(crate) fn settings_scroll_gutter() -> Element {
 
 #[cfg(all(test, windows))]
 mod locale_layout_tests {
-    use super::TAB_NAMES;
+    use super::{navigation_font_size, TAB_NAMES};
     use crate::ui_constants::{LAUNCHER_FONT_FAMILY, SETTINGS_SIDEBAR_WIDTH};
     use windui::text::{DWriteEngine, TextEngine, TextStyle};
 
@@ -92,11 +100,11 @@ mod locale_layout_tests {
         // 8-DIP gap, and 12-DIP trailing pad.
         let available = SETTINGS_SIDEBAR_WIDTH - 14 - 12 - 18 - 20 - 8 - 12;
         let mut engine = DWriteEngine::new();
-        let style = TextStyle {
-            family: Some(LAUNCHER_FONT_FAMILY),
-            ..TextStyle::new(14.0)
-        };
         for language in flux_core::Locale::ALL {
+            let style = TextStyle {
+                family: Some(LAUNCHER_FONT_FAMILY),
+                ..TextStyle::new(navigation_font_size(language))
+            };
             for key in TAB_NAMES {
                 let label = crate::i18n::translate(language, key);
                 let width = engine.measure(label, &style, None).w;
@@ -189,16 +197,26 @@ pub(crate) fn build_settings_panel(
         .padding_edges(14, 12, 12, 14)
         .spacing(14)
         .child(
-            Element::list_pill_glyphs(
-                TAB_NAMES
-                    .iter()
-                    .zip(TAB_GLYPHS)
-                    .map(|(name, glyph)| (crate::i18n::tr(name).to_string(), glyph.to_string()))
-                    .collect(),
-                settings_tab,
-                ICON_FONT,
-            )
-            .weight(1.0),
+            Element::scroll()
+                .fill()
+                .children(TAB_NAMES.iter().zip(TAB_GLYPHS).enumerate().map(
+                    |(index, (name, glyph))| {
+                        Element::leaf()
+                            .widget(
+                                windui::ui::list::ListRow::new(
+                                    crate::i18n::tr(name).to_string(),
+                                    settings_tab,
+                                    index,
+                                )
+                                .glyph(glyph, ICON_FONT)
+                                .pill(),
+                            )
+                            .width_match()
+                            .height(windui::ui::list::ROW_H)
+                            .font_size(navigation_font_size(crate::i18n::current()))
+                    },
+                ))
+                .weight(1.0),
         )
         .child(reset);
 

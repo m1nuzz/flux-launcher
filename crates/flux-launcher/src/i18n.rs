@@ -205,4 +205,45 @@ mod tests {
             );
         });
     }
+
+    #[test]
+    fn provider_failures_are_localized_and_preserve_diagnostics() {
+        for language in Locale::ALL {
+            with_locale(language, || {
+                for value in [1, 2, 5, 21] {
+                    let status = count(
+                        "{count} native Flow plugin did not respond",
+                        "{count} native Flow plugins did not respond",
+                        value,
+                    );
+                    assert!(status.contains(&value.to_string()));
+                    assert!(!status.contains("(s)"));
+                    assert!(!status.contains('{'));
+                    if language == Locale::English {
+                        assert_eq!(status.contains("plugins"), value != 1);
+                    }
+                }
+                for template in [
+                    "Native plugin host restarted (attempt {attempt}): {error}",
+                    "Unable to start winget: {error}",
+                    "Unable to start Everything in the background: {error}",
+                ] {
+                    let status = format(
+                        template,
+                        &[
+                            ("attempt", "2".to_owned()),
+                            ("error", "diagnostic {attempt}".to_owned()),
+                        ],
+                    );
+                    assert!(status.ends_with("diagnostic {attempt}"));
+                    if template.contains("{attempt}") {
+                        assert!(status.contains('2'));
+                    }
+                    if language != Locale::English {
+                        assert_ne!(translate(language, template), template);
+                    }
+                }
+            });
+        }
+    }
 }

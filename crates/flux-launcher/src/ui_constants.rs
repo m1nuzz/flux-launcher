@@ -3,8 +3,7 @@ use std::time::Duration;
 pub(crate) const CURRENT_VERSION: &str = env!("CARGO_PKG_VERSION");
 pub(crate) const SINGLE_INSTANCE_ID: &str = "m1nuzz.flux-launcher";
 pub(crate) const SETTINGS_WINDOW_WIDTH: i32 = 752;
-/// Leave enough label width beside each glyph for translated navigation names.
-pub(crate) const SETTINGS_SIDEBAR_WIDTH: i32 = 200;
+pub(crate) const SETTINGS_SIDEBAR_WIDTH: i32 = 168;
 pub(crate) const EVERYTHING_PROMPT_WINDOW_WIDTH: i32 = 440;
 pub(crate) const EVERYTHING_PROMPT_WINDOW_HEIGHT: i32 = 242;
 // The empty launcher is a compact search strip; the results state keeps the user-configured height.

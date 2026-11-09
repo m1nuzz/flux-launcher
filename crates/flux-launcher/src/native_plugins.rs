@@ -75,9 +75,12 @@ impl NativePluginWorker {
                                 sequence: request.sequence,
                                 query: request.query,
                                 results: Vec::new(),
-                                status: format!(
-                                    "Native plugin host restarted (attempt {}): {error}",
-                                    restart_count
+                                status: crate::i18n::format(
+                                    "Native plugin host restarted (attempt {attempt}): {error}",
+                                    &[
+                                        ("attempt", restart_count.to_string()),
+                                        ("error", error.to_string()),
+                                    ],
                                 ),
                                 available: false,
                                 actions: HashMap::new(),

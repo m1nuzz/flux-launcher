@@ -1,4 +1,40 @@
 {
+  "{count} native Flow plugin did not respond": {
+    "zh-CN": "未响应的原生 Flow 插件：{count}",
+    "zh-TW": "未回應的原生 Flow 外掛：{count}",
+    "ja-JP": "応答しないネイティブ Flow プラグイン：{count}",
+    "ru-RU": "Нативные плагины Flow без ответа: {count}"
+  },
+  "{count} native Flow plugins did not respond": {
+    "zh-CN": "未响应的原生 Flow 插件：{count}",
+    "zh-TW": "未回應的原生 Flow 外掛：{count}",
+    "ja-JP": "応答しないネイティブ Flow プラグイン：{count}",
+    "ru-RU": "Нативные плагины Flow без ответа: {count}"
+  },
+  "Native plugin host restarted (attempt {attempt}): {error}": {
+    "zh-CN": "原生插件宿主已重启（第 {attempt} 次）：{error}",
+    "zh-TW": "原生外掛宿主已重新啟動（第 {attempt} 次）：{error}",
+    "ja-JP": "ネイティブプラグインホストを再起動しました（{attempt} 回目）：{error}",
+    "ru-RU": "Хост нативных плагинов перезапущен (попытка {attempt}): {error}"
+  },
+  "Unable to start winget: {error}": {
+    "zh-CN": "无法启动 winget：{error}",
+    "zh-TW": "無法啟動 winget：{error}",
+    "ja-JP": "winget を起動できません：{error}",
+    "ru-RU": "Не удалось запустить winget: {error}"
+  },
+  "Unable to start Everything in the background: {error}": {
+    "zh-CN": "无法在后台启动 Everything：{error}",
+    "zh-TW": "無法在背景啟動 Everything：{error}",
+    "ja-JP": "Everything をバックグラウンドで起動できません：{error}",
+    "ru-RU": "Не удалось запустить Everything в фоновом режиме: {error}"
+  },
+  "winget is only available on Windows": {
+    "zh-CN": "winget 仅支持 Windows",
+    "zh-TW": "winget 僅支援 Windows",
+    "ja-JP": "winget は Windows でのみ利用できます",
+    "ru-RU": "winget доступен только в Windows"
+  },
   "Language": {
     "zh-CN": "语言",
     "zh-TW": "語言",
