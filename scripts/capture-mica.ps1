@@ -754,6 +754,13 @@ if ($ActionBarSmoke) {
 } else {
     Remove-Item Env:FLUX_SMOKE_ACTION_BAR -ErrorAction SilentlyContinue
 }
+if ($DeactivationClickSmoke) {
+    # Widen the resize grace so the fast-click regression can land well inside it
+    # on a busy runner. Production keeps its 250 ms grace.
+    $env:WINDUI_SMOKE_DEACTIVATION_GRACE_MS = "600"
+} else {
+    Remove-Item Env:WINDUI_SMOKE_DEACTIVATION_GRACE_MS -ErrorAction SilentlyContinue
+}
 $process = Start-Process -FilePath $Executable -PassThru -RedirectStandardOutput $stdoutPath -RedirectStandardError $stderrPath
 try {
     Start-Sleep -Seconds 3
@@ -930,6 +937,8 @@ try {
     $focusToggleVisibleAfterReopen = $false
     $focusToggleForegroundAfterReopen = $false
     $deactivationClickProbe = $false
+    $fastDeactivationHidden = $false
+    $fastDeactivationToggleHidden = $false
     $deactivationHiddenAfterClick = $false
     $deactivationForegroundAfterClick = $false
     $deactivationCpuDelta = 0.0
@@ -1360,7 +1369,24 @@ try {
             }
         }
         if ($IdlePerformanceSmoke) {
-            Start-Sleep -Milliseconds 1200
+            # Startup/icon/background work can still be finishing when the
+            # deactivation probes end. Wait for a quiet hidden second before
+            # applying the strict 3 s budget; a real busy hidden loop never
+            # quiets, while a warm process settles to ~0.
+            $quietDeadline = (Get-Date).AddSeconds(20)
+            $deactivationCpuQuiet = $false
+            while ((Get-Date) -lt $quietDeadline) {
+                $quietBefore = Get-CpuTimeMilliseconds $process
+                Start-Sleep -Seconds 1
+                $quietAfter = Get-CpuTimeMilliseconds $process
+                if (($quietAfter - $quietBefore) -le 20) {
+                    $deactivationCpuQuiet = $true
+                    break
+                }
+            }
+            if (!$deactivationCpuQuiet) {
+                throw "Hidden process did not become idle before the click-hidden CPU budget."
+            }
             $deactivationCpuBefore = Get-CpuTimeMilliseconds $process
             Start-Sleep -Seconds 3
             $deactivationIdleMemory = Get-MemorySnapshot $process
@@ -1371,6 +1397,84 @@ try {
                 throw "Click-hidden idle CPU budget exceeded: ${deactivationCpuDelta} ms over 3 seconds."
             }
         }
+        # Regression: a real outside click inside the resize grace used to be
+        # dropped, leaving a visible-but-inactive launcher. Re-show, click within
+        # the grace, and require the deferred re-check to hide it.
+        $fastShowStart = [DateTime]::UtcNow
+        [FluxWallpaper]::keybd_event(0x12, 0, 0, [UIntPtr]::Zero)
+        [FluxWallpaper]::keybd_event(0x20, 0, 0, [UIntPtr]::Zero)
+        [FluxWallpaper]::keybd_event(0x20, 0, 2, [UIntPtr]::Zero)
+        [FluxWallpaper]::keybd_event(0x12, 0, 2, [UIntPtr]::Zero)
+        $fastShowDeadline = [DateTime]::UtcNow.AddSeconds(2)
+        $fastVisible = $false
+        $fastForeground = $false
+        while ([DateTime]::UtcNow -lt $fastShowDeadline) {
+            if ([FluxWallpaper]::IsWindowVisible($launcherHandle)) {
+                $fastVisible = $true
+                $fastForeground = [FluxWallpaper]::GetForegroundWindow() -eq $launcherHandle
+                if ($fastForeground) { break }
+            }
+            Start-Sleep -Milliseconds 10
+        }
+        $fastElapsed = ([DateTime]::UtcNow - $fastShowStart).TotalMilliseconds
+        if (!$fastVisible -or !$fastForeground) {
+            throw "Fast deactivation smoke could not show and focus the launcher."
+        }
+        if ($fastElapsed -gt 500) {
+            throw "Fast deactivation smoke could not click inside the resize grace: ${fastElapsed}ms."
+        }
+        [FluxWallpaper]::SetCursorPos($clickX, $clickY) | Out-Null
+        [FluxWallpaper]::mouse_event(0x0002, 0, 0, 0, [UIntPtr]::Zero)
+        [FluxWallpaper]::mouse_event(0x0004, 0, 0, 0, [UIntPtr]::Zero)
+        $fastHidden = $false
+        for ($sample = 0; $sample -lt 20; $sample++) {
+            Start-Sleep -Milliseconds 100
+            if (![FluxWallpaper]::IsWindowVisible($launcherHandle)) {
+                $fastHidden = $true
+                break
+            }
+        }
+        Write-Host "Fast deactivation click: elapsed_ms=$([int]$fastElapsed) hidden=$fastHidden"
+        if (!$fastHidden) {
+            throw "Fast outside click inside the resize grace did not hide the launcher."
+        }
+        $fastDeactivationHidden = $fastHidden
+        # Regression: after that transient state the first bind must hide the
+        # visible launcher, not re-activate it and require a second press.
+        $fastToggleStart = [DateTime]::UtcNow
+        [FluxWallpaper]::keybd_event(0x12, 0, 0, [UIntPtr]::Zero)
+        [FluxWallpaper]::keybd_event(0x20, 0, 0, [UIntPtr]::Zero)
+        [FluxWallpaper]::keybd_event(0x20, 0, 2, [UIntPtr]::Zero)
+        [FluxWallpaper]::keybd_event(0x12, 0, 2, [UIntPtr]::Zero)
+        $fastToggleDeadline = [DateTime]::UtcNow.AddSeconds(2)
+        $fastToggleForeground = $false
+        while ([DateTime]::UtcNow -lt $fastToggleDeadline) {
+            if ([FluxWallpaper]::IsWindowVisible($launcherHandle)) {
+                $fastToggleForeground = [FluxWallpaper]::GetForegroundWindow() -eq $launcherHandle
+                if ($fastToggleForeground) { break }
+            }
+            Start-Sleep -Milliseconds 10
+        }
+        if (!$fastToggleForeground) {
+            throw "Fast toggle smoke could not show and focus the launcher."
+        }
+        if (([DateTime]::UtcNow - $fastToggleStart).TotalMilliseconds -gt 500) {
+            throw "Fast toggle smoke could not click inside the resize grace."
+        }
+        [FluxWallpaper]::SetCursorPos($clickX, $clickY) | Out-Null
+        [FluxWallpaper]::mouse_event(0x0002, 0, 0, 0, [UIntPtr]::Zero)
+        [FluxWallpaper]::mouse_event(0x0004, 0, 0, 0, [UIntPtr]::Zero)
+        [FluxWallpaper]::keybd_event(0x12, 0, 0, [UIntPtr]::Zero)
+        [FluxWallpaper]::keybd_event(0x20, 0, 0, [UIntPtr]::Zero)
+        [FluxWallpaper]::keybd_event(0x20, 0, 2, [UIntPtr]::Zero)
+        [FluxWallpaper]::keybd_event(0x12, 0, 2, [UIntPtr]::Zero)
+        Start-Sleep -Milliseconds 350
+        $fastToggleHidden = ![FluxWallpaper]::IsWindowVisible($launcherHandle)
+        Write-Host "First bind after fast click: hidden=$fastToggleHidden"
+        if (!$fastToggleHidden) {
+            throw "First bind after a fast outside click did not hide the visible launcher."
+        }
+        $fastDeactivationToggleHidden = $fastToggleHidden
         # Restore through the real global Alt+Space sequence, proving that the hidden
         # process remains resident and the user can immediately reopen the launcher.
         [FluxWallpaper]::keybd_event(0x12, 0, 0, [UIntPtr]::Zero)
@@ -2745,6 +2849,7 @@ try {
     } else {
         Remove-Item Env:FLUX_SMOKE_SETTINGS_TAB -ErrorAction SilentlyContinue
         Remove-Item Env:FLUX_SMOKE_VISUAL_SETTINGS -ErrorAction SilentlyContinue
+        Remove-Item Env:WINDUI_SMOKE_DEACTIVATION_GRACE_MS -ErrorAction SilentlyContinue
         Remove-Item Env:FLUX_DISABLE_SINGLE_INSTANCE -ErrorAction SilentlyContinue
     }
     $settingsStdoutPath = Join-Path $OutputDirectory "settings.stdout.log"
@@ -3497,6 +3602,7 @@ try {
         Remove-Item Env:FLUX_SMOKE_TRAY_SETTINGS -ErrorAction SilentlyContinue
         Remove-Item Env:FLUX_SMOKE_SETTINGS_TAB -ErrorAction SilentlyContinue
         Remove-Item Env:FLUX_SMOKE_VISUAL_SETTINGS -ErrorAction SilentlyContinue
+        Remove-Item Env:WINDUI_SMOKE_DEACTIVATION_GRACE_MS -ErrorAction SilentlyContinue
         Remove-Item Env:FLUX_DISABLE_SINGLE_INSTANCE -ErrorAction SilentlyContinue
     }
 
@@ -3574,6 +3680,8 @@ try {
         QueryResponsivenessSamples = @($queryResponsivenessSamples)
         FocusToggleProbe = (!$FocusToggleSmoke) -or $focusToggleProbe
         DeactivationClickProbe = (!$DeactivationClickSmoke) -or $deactivationClickProbe
+        FastDeactivationClickProbe = (!$DeactivationClickSmoke) -or $fastDeactivationHidden
+        FastDeactivationToggleProbe = (!$DeactivationClickSmoke) -or $fastDeactivationToggleHidden
         FolderLaunchProbe = (!$FolderLaunchSmoke) -or $folderLaunchProbe
         FocusToggleVisibleAfterReopen = $focusToggleVisibleAfterReopen
         FocusToggleForegroundAfterReopen = $focusToggleForegroundAfterReopen
