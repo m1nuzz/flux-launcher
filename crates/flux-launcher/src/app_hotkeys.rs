@@ -10,7 +10,6 @@ use windui::signal::Signal;
 use super::fullscreen;
 use super::history_priorities::set_game_mode;
 use super::hotkeys;
-use super::input_keys::{launcher_is_foreground, should_show_launcher};
 use super::window_geometry::{launcher_window_geometry_with_sizes, request_monitor_position};
 use flux_core::should_suppress_activation;
 
@@ -103,11 +102,10 @@ pub(crate) fn register_activation_hotkey(
                 height,
             );
             cursor_visibility_for_activation.show();
-            if should_show_launcher(launcher_is_foreground()) {
-                ctx.show_window();
-            } else {
-                ctx.hide_window();
-            }
+            // Toggle the real window state, not the foreground state: a visible
+            // window whose focus was lost must hide on the first press instead
+            // of being re-activated and requiring a second press.
+            ctx.toggle_window();
         }
     })
 }
