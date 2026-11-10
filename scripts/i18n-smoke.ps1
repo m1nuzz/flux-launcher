@@ -100,7 +100,12 @@ function Save-Capture([IntPtr]$Handle,[string]$Name,[switch]$FullScreen) {
     } finally { $graphics.Dispose(); $bitmap.Dispose() }
 }
 $evidence=@()
-$languages=@('en-US','zh-CN','zh-TW','ja-JP','ru-RU')
+$languages=@(
+    'en-US','zh-CN','zh-TW','ja-JP','ru-RU',
+    'ko','uk-UA','de','fr','es','es-419','it','pt-BR','pt-PT','pl',
+    'tr','nl','cs','da','sk','sr','vi','ar','he','nb'
+)
+if (($languages | Select-Object -Unique).Count -ne 25) { throw 'Expected 25 unique language catalogs.' }
 try {
     $env:APPDATA=$profile; $env:FLUX_OPEN_SETTINGS='1'; $env:FLUX_DISABLE_SINGLE_INSTANCE='1'; $env:FLUX_DISABLE_UPDATE_CHECKS='1'
     for ($localeIndex=0; $localeIndex -lt $languages.Count; $localeIndex++) {
@@ -159,7 +164,8 @@ try {
         }
     }
     $evidence | ConvertTo-Json | Set-Content -LiteralPath (Join-Path $output 'language-handoffs.json') -Encoding utf8
-    Write-Output 'PASS: all five languages, settings tabs, dropdowns, trays, and language handoffs.'
+    if ($evidence.Count -ne $languages.Count) { throw 'Language handoff evidence is incomplete.' }
+    Write-Output "PASS: all $($languages.Count) languages, settings tabs, dropdowns, trays, and language handoffs."
 } finally {
     Stop-Fixture
     foreach ($name in $environmentNames) { [Environment]::SetEnvironmentVariable($name,$savedEnvironment[$name],'Process') }

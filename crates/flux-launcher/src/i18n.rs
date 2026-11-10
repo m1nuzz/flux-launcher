@@ -29,6 +29,8 @@ pub(crate) fn native_name(language: Locale) -> &'static str {
 
 pub(crate) fn init(language: Locale) {
     LANGUAGE.store(language.index(), Ordering::Relaxed);
+    #[cfg(windows)]
+    windui::text::set_ui_locale(language.code());
 }
 
 pub(crate) fn current() -> Locale {
@@ -123,7 +125,13 @@ mod tests {
             keys.sort_unstable();
             keys
         }
+        assert_eq!(LANGUAGE_NAMES.len(), Locale::ALL.len());
         for (key, translations) in CATALOG.iter() {
+            assert_eq!(
+                translations.len(),
+                Locale::ALL.len() - 1,
+                "locale set: {key}"
+            );
             for locale in Locale::ALL
                 .into_iter()
                 .filter(|locale| *locale != Locale::English)
@@ -153,6 +161,35 @@ mod tests {
             translate(Locale::Russian, "Language"),
             "\u{42f}\u{437}\u{44b}\u{43a}"
         );
+        for (language, expected) in [
+            (Locale::Korean, "\u{c5b8}\u{c5b4}"),
+            (Locale::Ukrainian, "\u{41c}\u{43e}\u{432}\u{430}"),
+            (Locale::German, "Sprache"),
+            (Locale::French, "Langue"),
+            (Locale::Spanish, "Idioma"),
+            (Locale::LatinAmericanSpanish, "Idioma"),
+            (Locale::Italian, "Lingua"),
+            (Locale::BrazilianPortuguese, "Idioma"),
+            (Locale::EuropeanPortuguese, "Idioma"),
+            (Locale::Polish, "J\u{119}zyk"),
+            (Locale::Turkish, "Dil"),
+            (Locale::Dutch, "Taal"),
+            (Locale::Czech, "Jazyk"),
+            (Locale::Danish, "Sprog"),
+            (Locale::Slovak, "Jazyk"),
+            (Locale::Serbian, "\u{408}\u{435}\u{437}\u{438}\u{43a}"),
+            (Locale::Vietnamese, "Ng\u{f4}n ng\u{1eef}"),
+            (Locale::Arabic, "\u{627}\u{644}\u{644}\u{63a}\u{629}"),
+            (Locale::Hebrew, "\u{5e9}\u{5e4}\u{5d4}"),
+            (Locale::NorwegianBokmal, "Spr\u{e5}k"),
+        ] {
+            assert_eq!(
+                translate(language, "Language"),
+                expected,
+                "{}",
+                language.code()
+            );
+        }
         for language in Locale::ALL {
             assert!(LANGUAGE_NAMES.contains_key(language.code()));
             assert!(!native_name(language).is_empty());

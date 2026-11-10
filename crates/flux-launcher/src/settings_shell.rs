@@ -17,13 +17,17 @@ const TAB_GLYPHS: [&str; 5] = ["\u{e713}", "\u{e790}", "\u{e8cb}", "\u{ea86}", "
 const ICON_FONT: &str = "Segoe Fluent Icons";
 
 fn navigation_text_style(language: flux_core::Locale) -> windui::text::TextStyle<'static> {
-    if language == flux_core::Locale::Russian {
-        windui::text::TextStyle {
-            family: Some(super::ui_constants::LAUNCHER_FONT_FAMILY),
-            ..windui::text::TextStyle::new(13.0)
-        }
+    let size = if matches!(
+        language,
+        flux_core::Locale::Russian | flux_core::Locale::Ukrainian | flux_core::Locale::Serbian
+    ) {
+        13.0
     } else {
-        windui::text::TextStyle::new(14.0)
+        14.0
+    };
+    windui::text::TextStyle {
+        family: Some(super::ui_constants::LAUNCHER_FONT_FAMILY),
+        ..windui::text::TextStyle::new(size)
     }
 }
 const TAB_DESCRIPTIONS: [&str; 5] = [
@@ -98,12 +102,20 @@ mod locale_layout_tests {
 
     #[test]
     fn translated_navigation_labels_fit_a_single_native_text_line() {
+        struct RestoreLocale(String);
+        impl Drop for RestoreLocale {
+            fn drop(&mut self) {
+                windui::text::set_ui_locale(&self.0);
+            }
+        }
+        let _restore = RestoreLocale(windui::text::ui_locale());
         // Sidebar padding is 14 + 12 DIP. Reserve 18 DIP for ListRow's
         // 16-DIP pill inset plus a 2-DIP margin, then its 20-DIP glyph,
         // 8-DIP gap, and 12-DIP trailing pad.
         let available = SETTINGS_SIDEBAR_WIDTH - 14 - 12 - 18 - 20 - 8 - 12;
         let mut engine = DWriteEngine::new();
         for language in flux_core::Locale::ALL {
+            windui::text::set_ui_locale(language.code());
             let style = navigation_text_style(language);
             for key in TAB_NAMES {
                 let label = crate::i18n::translate(language, key);

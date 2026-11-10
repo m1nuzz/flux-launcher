@@ -73,15 +73,20 @@ Flux stores user settings in `%APPDATA%\FluxLauncher\settings.json`. The default
 
 ### Interface language
 
-Choose **Settings > General > Language** to use English, Simplified Chinese,
-Traditional Chinese, Japanese, Russian, or **System default**. Press **Apply settings** to save and
+Choose **Settings > General > Language** to select one of 25 languages or
+**System default**. Available languages are English, Simplified Chinese,
+Traditional Chinese, Japanese, Russian, Korean, Ukrainian, German, French,
+Spanish, Latin American Spanish, Italian, Brazilian Portuguese, European
+Portuguese, Polish, Turkish, Dutch, Czech, Danish, Slovak, Serbian (Cyrillic),
+Vietnamese, Arabic, Hebrew, and Norwegian Bokmål. Press **Apply settings** to save and
 restart Flux with the selected language. Settings, tray actions, built-in result
 captions, and common status messages are translated. Application names, file
 paths, third-party plugin content, and operating-system error details retain
 their original text. Native community plugins receive the selected locale code.
 
 On first run, System default follows the Windows preferred UI language list with
-base-language, Chinese script/region matching, and English fallback. The selected
+base-language, Chinese script/region matching, regional Spanish/Portuguese
+matching, and English fallback. The selected
 BCP 47 code is stored in `language`; `language_explicit` distinguishes an explicit
 choice (including English) from System default. Existing saved language choices
 are migrated as explicit choices. Unknown saved codes fall back to English
@@ -89,8 +94,15 @@ without discarding other preferences.
 
 Translations are embedded from
 `crates/flux-launcher/locales/translations.json`. Each English key maps to named
-`zh-CN`, `zh-TW`, `ja-JP`, and `ru-RU` objects. Native language names live in
+locale-code objects. Native language names live in
 `crates/flux-launcher/locales/languages.json`.
+`nb-NO` uses the `nb` catalog; `sr-Cyrl-RS` uses the Cyrillic `sr` catalog.
+An explicitly requested Serbian Latin script is not mapped to Cyrillic; system
+language detection continues to the next supported preference. Arabic and Hebrew
+use native RTL shaping; full layout mirroring remains a follow-up.
+Windows text rendering uses `Segoe UI` for consistent client/Server font resolution.
+Both native rendering paths use the selected UI locale, and glyph-run tests verify
+that Cyrillic semibold labels resolve to a face with weight 600 or higher.
 Preserve named placeholders such as `{version}` when editing translations.
 Tests check translations, named placeholders, language-specific samples, and
 every literal translation call in the Rust syntax tree (including settings rows
@@ -98,7 +110,7 @@ inside `vec!` macros). Filesystem and process arguments must never be translated
 English result counts use singular/plural forms; translated count labels remain
 grammatical for 1, 2, 5, and 21. The Windows UI release workflow captures every
 settings tab, the language dropdown, tray labels, and application-triggered
-language restarts for all five languages. Screenshots still require visual
+language restarts for all 25 languages. Screenshots still require visual
 review, especially for long Russian labels and CJK fallback fonts.
 
 | Input | Result |

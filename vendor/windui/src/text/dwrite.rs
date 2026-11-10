@@ -38,6 +38,9 @@ use super::{LineMetrics, TextEngine, TextStyle};
 use crate::geometry::{Color, Rect, Size};
 use crate::spec::Align;
 
+#[cfg(test)]
+mod locale_tests;
+
 /// 把 &str 转为以 NUL 结尾的 UTF-16。
 fn wide_nul(s: &str) -> Vec<u16> {
     s.encode_utf16().chain(std::iter::once(0)).collect()
@@ -47,7 +50,81 @@ fn wide(s: &str) -> Vec<u16> {
     s.encode_utf16().collect()
 }
 
-const DEFAULT_FAMILY: &str = "Microsoft YaHei UI"; // 中文友好的默认字体
+pub(crate) const DEFAULT_FAMILY: &str = "Segoe UI";
+
+thread_local! {
+    static UI_LOCALE: std::cell::RefCell<String> = std::cell::RefCell::new(system_locale());
+}
+
+fn system_locale() -> String {
+    let mut name = [0_u16; 85];
+    // SAFETY: the API receives the full writable UTF-16 buffer capacity.
+    let length = unsafe { windows::Win32::Globalization::GetUserDefaultLocaleName(&mut name) };
+    if length > 1 {
+        String::from_utf16_lossy(&name[..length as usize - 1])
+    } else {
+        "en-US".to_owned()
+    }
+}
+
+/// Set the active BCP 47 interface locale on the calling UI thread.
+///
+/// Call before creating an application or rendering a new locale. Both native
+/// renderers use this locale for shaping; existing engine caches refresh lazily.
+/// Until set, the Windows user locale is used. This does not mirror widget layout.
+pub fn set_ui_locale(locale: &str) {
+    UI_LOCALE.with(|current| {
+        *current.borrow_mut() = if locale.is_empty() {
+            system_locale()
+        } else {
+            locale.to_owned()
+        };
+    });
+}
+
+pub(crate) fn current_ui_locale() -> String {
+    UI_LOCALE.with(|current| current.borrow().clone())
+}
+
+/// Return the active shaping locale on the calling UI thread.
+pub fn ui_locale() -> String {
+    current_ui_locale()
+}
+
+pub(crate) fn is_rtl_locale(locale: &str) -> bool {
+    let language = locale.split('-').next().unwrap_or_default();
+    ["ar", "he", "fa", "ur"]
+        .iter()
+        .any(|rtl| language.eq_ignore_ascii_case(rtl))
+}
+
+pub(crate) fn configure_reading_direction(format: &IDWriteTextFormat, locale: &str) {
+    if is_rtl_locale(locale) {
+        // SAFETY: a horizontal RTL reading direction remains orthogonal to the
+        // default top-to-bottom paragraph flow.
+        unsafe {
+            let _ = format.SetReadingDirection(
+                windows::Win32::Graphics::DirectWrite::DWRITE_READING_DIRECTION_RIGHT_TO_LEFT,
+            );
+        }
+    }
+}
+
+pub(crate) fn physical_text_alignment(
+    align: Align,
+    rtl: bool,
+) -> windows::Win32::Graphics::DirectWrite::DWRITE_TEXT_ALIGNMENT {
+    use windows::Win32::Graphics::DirectWrite::{
+        DWRITE_TEXT_ALIGNMENT_CENTER, DWRITE_TEXT_ALIGNMENT_LEADING, DWRITE_TEXT_ALIGNMENT_TRAILING,
+    };
+    match (align, rtl) {
+        (Align::Center, _) => DWRITE_TEXT_ALIGNMENT_CENTER,
+        (Align::End, false) | (Align::Start | Align::Stretch, true) => {
+            DWRITE_TEXT_ALIGNMENT_TRAILING
+        }
+        _ => DWRITE_TEXT_ALIGNMENT_LEADING,
+    }
+}
 
 /// 扫描 UTF-16 序列，返回私用区（PUA）字符的连续段 `[(起始下标, 码元长度)]`。
 /// 下标/长度均以 **UTF-16 码元** 计，可直接用作 `DWRITE_TEXT_RANGE`。
@@ -249,11 +326,53 @@ fn composite_glyph_over_translucent(
     .unwrap_or(dst)
 }
 
+pub(crate) fn create_text_format(
+    factory: &IDWriteFactory,
+    ts: &TextStyle,
+    psize: f32,
+    locale: &str,
+) -> Option<IDWriteTextFormat> {
+    let dw_weight = if ts.weight == crate::text::WEIGHT_NORMAL {
+        DWRITE_FONT_WEIGHT_NORMAL
+    } else {
+        DWRITE_FONT_WEIGHT(ts.weight as i32)
+    };
+    let fam_w = wide_nul(ts.family.unwrap_or(DEFAULT_FAMILY));
+    let locale_w = wide_nul(locale);
+    let format = unsafe {
+        factory
+            .CreateTextFormat(
+                PCWSTR(fam_w.as_ptr()),
+                None,
+                dw_weight,
+                DWRITE_FONT_STYLE_NORMAL,
+                DWRITE_FONT_STRETCH_NORMAL,
+                psize,
+                PCWSTR(locale_w.as_ptr()),
+            )
+            .ok()?
+    };
+    configure_reading_direction(&format, locale);
+    // 行高：UNIFORM 方法强制每行占固定高度，不再随字形起伏。
+    //
+    // 基线取行高的 0.8——DirectWrite 要求显式给出基线位置，而它没有「按比例
+    // 自动分配」的模式。0.8 是西文与 CJK 都能接受的经验值：低于此值行内文字
+    // 贴上沿，高于则贴下沿。
+    if let Some(mult) = ts.line_height {
+        let line = psize * mult;
+        unsafe {
+            let _ = format.SetLineSpacing(DWRITE_LINE_SPACING_METHOD_UNIFORM, line, line * 0.8);
+        }
+    }
+    Some(format)
+}
+
 /// DirectWrite 文字引擎。
 ///
 /// 约束：内部 COM 对象（`IDWrite*`）非 `Send`/`Sync`，必须在创建它的
 /// UI（STA）线程上使用，不可跨线程共享。
 pub struct DWriteEngine {
+    locale: String,
     factory: IDWriteFactory,
     gdi_interop: IDWriteGdiInterop,
     renderer: IDWriteTextRenderer,
@@ -296,6 +415,7 @@ impl DWriteEngine {
             }
             .into();
             Self {
+                locale: current_ui_locale(),
                 factory,
                 gdi_interop,
                 renderer,
@@ -347,6 +467,7 @@ impl DWriteEngine {
 
     /// 构造（并缓存）文字格式。`psize` 是**物理**字号，与 measure/draw 同源。
     fn format(&mut self, ts: &TextStyle, psize: f32) -> Option<IDWriteTextFormat> {
+        self.sync_locale();
         let fam = ts.family.unwrap_or(DEFAULT_FAMILY).to_string();
         let weight = ts.weight;
         // 行距进缓存键：同字族同字号但行距不同，是两套格式。漏掉它会让先构造的那套
@@ -356,39 +477,19 @@ impl DWriteEngine {
         if let Some(f) = self.formats.get(&key) {
             return Some(f.clone());
         }
-        let dw_weight = if weight == crate::text::WEIGHT_NORMAL {
-            DWRITE_FONT_WEIGHT_NORMAL
-        } else {
-            DWRITE_FONT_WEIGHT(weight as i32)
-        };
-        let fam_w = wide_nul(&fam);
-        let locale = wide_nul("zh-cn");
-        let format = unsafe {
-            self.factory
-                .CreateTextFormat(
-                    PCWSTR(fam_w.as_ptr()),
-                    None,
-                    dw_weight,
-                    DWRITE_FONT_STYLE_NORMAL,
-                    DWRITE_FONT_STRETCH_NORMAL,
-                    psize,
-                    PCWSTR(locale.as_ptr()),
-                )
-                .ok()?
-        };
-        // 行高：UNIFORM 方法强制每行占固定高度，不再随字形起伏。
-        //
-        // 基线取行高的 0.8——DirectWrite 要求显式给出基线位置，而它没有「按比例
-        // 自动分配」的模式。0.8 是西文与 CJK 都能接受的经验值：低于此值行内文字
-        // 贴上沿，高于则贴下沿。
-        if let Some(mult) = ts.line_height {
-            let line = psize * mult;
-            unsafe {
-                let _ = format.SetLineSpacing(DWRITE_LINE_SPACING_METHOD_UNIFORM, line, line * 0.8);
-            }
-        }
+        let format = create_text_format(&self.factory, ts, psize, &self.locale)?;
         self.formats.insert(key, format.clone());
         Some(format)
+    }
+
+    fn sync_locale(&mut self) {
+        let locale = current_ui_locale();
+        if self.locale != locale {
+            self.locale = locale;
+            self.formats.clear();
+            self.measure_cache.clear();
+            self.metrics_cache.clear();
+        }
     }
 
     fn layout(
@@ -408,6 +509,14 @@ impl DWriteEngine {
         // 私用区改字体必须在这里做——measure 与 draw 共用本函数，两处若不同源，
         // 布局会按主字体的方框宽度排、绘制却出图标字形，宽度对不上。
         self.apply_private_use(&layout, &text_w);
+        // The software renderer positions a tight bitmap itself. Keep the
+        // shaped run at the physical left edge, including RTL paragraphs.
+        unsafe {
+            let _ = layout.SetTextAlignment(physical_text_alignment(
+                Align::Start,
+                is_rtl_locale(&self.locale),
+            ));
+        }
         Some(layout)
     }
 
@@ -452,6 +561,7 @@ impl TextEngine for DWriteEngine {
     }
 
     fn measure(&mut self, text: &str, ts: &TextStyle, max_width: Option<f32>) -> Size {
+        self.sync_locale();
         let size = ts.size;
         if text.is_empty() {
             // 空串也要占一行的高度，否则空标签会把周围布局吸扁。
@@ -497,6 +607,7 @@ impl TextEngine for DWriteEngine {
     }
 
     fn line_metrics(&mut self, text: &str, ts: &TextStyle) -> LineMetrics {
+        self.sync_locale();
         // 近似回退：空文本 / 排版失败时按行高 0.8 处取基线（与 UNIFORM 行距约定一致）。
         let approx = || {
             let h = ts.line_height_px().unwrap_or(ts.size);
