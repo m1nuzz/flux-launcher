@@ -21,7 +21,7 @@
 
 <p align="center">
   <a href="https://github.com/m1nuzz/flux-launcher/releases/latest/download/FluxLauncher-Setup.exe">Download</a>
-  · <a href="#features">Features</a>
+  · <a href="#why-flux-launcher">Features</a>
   · <a href="#usage">Usage</a>
   · <a href="#performance">Performance</a>
   · <a href="#plugins-and-providers">Plugins</a>
