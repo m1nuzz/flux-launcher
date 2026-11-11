@@ -24,7 +24,7 @@
   · <a href="#features">Features</a>
   · <a href="#usage">Usage</a>
   · <a href="#performance">Performance</a>
-  · <a href="#plugins">Plugins</a>
+  · <a href="#plugins-and-providers">Plugins</a>
   · <a href="#build-from-source">Build</a>
 </p>
 
