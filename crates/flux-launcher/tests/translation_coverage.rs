@@ -13,11 +13,12 @@ struct Calls {
     translated_protocol_arguments: Vec<String>,
     untranslated_status_formats: Vec<String>,
     raw_ui_strings: Vec<String>,
+    bindings: HashMap<String, Expr>,
 }
 
 fn invariant_ui_text(value: &str) -> bool {
-    // Product names, key names, units, command aliases, color values, and canonical application metadata are
-    // intentionally invariant. The latter is localized at the result-row boundary.
+    // Only products, key names, units, command aliases, color values, and
+    // user-data templates are invariant. Application metadata is not exempt.
     !value.chars().any(char::is_alphabetic)
         || matches!(
             value,
@@ -45,9 +46,6 @@ fn invariant_ui_text(value: &str) -> bool {
                 | "HSV"
                 | "HEX"
                 | "Hex"
-                | "Application • Start Menu"
-                | "Application • App Paths"
-                | "Application • {source}"
                 | "Obsidian • {}"
                 | "Obsidian • {} • {}"
                 | "Flux Launcher v{version} • github.com/m1nuzz/flux-launcher"
@@ -58,10 +56,23 @@ fn invariant_ui_text(value: &str) -> bool {
         )
 }
 
-#[derive(Default)]
-struct RawUiText(Vec<String>);
+struct RawUiText<'a> {
+    values: Vec<String>,
+    bindings: &'a HashMap<String, Expr>,
+    visiting: HashSet<String>,
+}
 
-impl<'ast> Visit<'ast> for RawUiText {
+impl<'a> RawUiText<'a> {
+    fn new(bindings: &'a HashMap<String, Expr>) -> Self {
+        Self {
+            values: Vec::new(),
+            bindings,
+            visiting: HashSet::new(),
+        }
+    }
+}
+
+impl<'ast> Visit<'ast> for RawUiText<'ast> {
     fn visit_expr_call(&mut self, call: &'ast ExprCall) {
         if !translation_call(call) {
             visit::visit_expr_call(self, call);
@@ -72,7 +83,7 @@ impl<'ast> Visit<'ast> for RawUiText {
         if let Lit::Str(value) = &expression.lit {
             let value = value.value();
             if !invariant_ui_text(&value) {
-                self.0.push(value);
+                self.values.push(value);
             }
         }
     }
@@ -84,11 +95,95 @@ impl<'ast> Visit<'ast> for RawUiText {
             if let Ok(arguments) = parser.parse2(invocation.tokens.clone()) {
                 if let Some(value) = arguments.first().and_then(literal) {
                     if !invariant_ui_text(&value) {
-                        self.0.push(value);
+                        self.values.push(value);
                     }
                 }
             }
         }
+    }
+
+    fn visit_expr_path(&mut self, expression: &'ast syn::ExprPath) {
+        if let Some(name) = expression.path.get_ident().map(ToString::to_string) {
+            let bindings = self.bindings;
+            if let Some(value) = bindings.get(&name) {
+                if self.visiting.insert(name.clone()) {
+                    self.visit_expr(value);
+                    self.visiting.remove(&name);
+                }
+            }
+        }
+    }
+
+    fn visit_expr_if(&mut self, expression: &'ast syn::ExprIf) {
+        if let Some(syn::Stmt::Expr(value, _)) = expression.then_branch.stmts.last() {
+            self.visit_expr(value);
+        }
+        if let Some((_, value)) = &expression.else_branch {
+            self.visit_expr(value);
+        }
+    }
+
+    fn visit_expr_match(&mut self, expression: &'ast syn::ExprMatch) {
+        for arm in &expression.arms {
+            self.visit_expr(&arm.body);
+        }
+    }
+}
+
+// Collect returned captions, not match patterns or conditions (which may be IDs).
+fn translation_keys(
+    expression: &Expr,
+    bindings: &HashMap<String, Expr>,
+    visiting: &mut HashSet<String>,
+) -> Vec<String> {
+    if let Some(value) = literal(expression) {
+        return vec![value];
+    }
+    match expression {
+        Expr::Match(value) => value
+            .arms
+            .iter()
+            .flat_map(|arm| translation_keys(&arm.body, bindings, visiting))
+            .collect(),
+        Expr::If(value) => {
+            let mut keys = value
+                .then_branch
+                .stmts
+                .last()
+                .and_then(|statement| match statement {
+                    syn::Stmt::Expr(value, _) => Some(translation_keys(value, bindings, visiting)),
+                    _ => None,
+                })
+                .unwrap_or_default();
+            if let Some((_, other)) = &value.else_branch {
+                keys.extend(translation_keys(other, bindings, visiting));
+            }
+            keys
+        }
+        Expr::Block(value) => value
+            .block
+            .stmts
+            .last()
+            .and_then(|statement| match statement {
+                syn::Stmt::Expr(value, _) => Some(translation_keys(value, bindings, visiting)),
+                _ => None,
+            })
+            .unwrap_or_default(),
+        Expr::Paren(value) => translation_keys(&value.expr, bindings, visiting),
+        Expr::Path(value) => {
+            if let Some(name) = value.path.get_ident().map(ToString::to_string) {
+                if visiting.insert(name.clone()) {
+                    let keys = bindings
+                        .get(&name)
+                        .map(|value| translation_keys(value, bindings, visiting))
+                        .unwrap_or_default();
+                    visiting.remove(&name);
+                    return keys;
+                }
+            }
+            Vec::new()
+        }
+        _ => Vec::new(),
     }
 }
 
@@ -122,9 +217,9 @@ impl<'ast> Visit<'ast> for Calls {
     fn visit_expr_struct(&mut self, expression: &'ast ExprStruct) {
         for field in &expression.fields {
             if matches!(&field.member, syn::Member::Named(name) if name == "subtitle") {
-                let mut raw = RawUiText::default();
+                let mut raw = RawUiText::new(&self.bindings);
                 raw.visit_expr(&field.expr);
-                self.raw_ui_strings.extend(raw.0);
+                self.raw_ui_strings.extend(raw.values);
             }
             if matches!(&field.member, syn::Member::Named(name) if name == "status") {
                 let mut formats = StatusFormats::default();
@@ -136,6 +231,14 @@ impl<'ast> Visit<'ast> for Calls {
     }
 
     fn visit_local(&mut self, local: &'ast Local) {
+        let pattern = match &local.pat {
+            syn::Pat::Type(value) => &*value.pat,
+            value => value,
+        };
+        if let (syn::Pat::Ident(name), Some(initializer)) = (pattern, &local.init) {
+            self.bindings
+                .insert(name.ident.to_string(), (*initializer.expr).clone());
+        }
         if matches!(&local.pat, syn::Pat::Ident(name) if name.ident == "status") {
             if let Some(initializer) = &local.init {
                 let mut formats = StatusFormats::default();
@@ -172,7 +275,9 @@ impl<'ast> Visit<'ast> for Calls {
             .iter()
             .any(|attribute| attribute.path().is_ident("test"))
         {
+            let previous = std::mem::take(&mut self.bindings);
             visit::visit_item_fn(self, item);
+            self.bindings = previous;
         }
     }
 
@@ -185,21 +290,27 @@ impl<'ast> Visit<'ast> for Calls {
                 .map(|segment| segment.ident.to_string())
                 .unwrap_or_default();
             let element = path.path.segments.iter().any(|segment| {
-                matches!(segment.ident.to_string().as_str(), "Element" | "MenuItem")
+                matches!(
+                    segment.ident.to_string().as_str(),
+                    "Element" | "MenuItem" | "TrayMenuItem"
+                )
             });
             let (skip, count) = match name.as_str() {
                 "settings_group" | "settings_section_header" => (0, 1),
                 "setting_row_desc" if element => (0, 2),
                 "text_input" if element => (1, 1),
-                "label" | "button" | "checkbox" | "nav_row" | "setting_row" | "new" if element => {
+                "label" | "label_signal" | "rich_signal" | "button" | "checkbox" | "nav_row"
+                | "setting_row" | "new" | "item" | "check"
+                    if element =>
+                {
                     (0, 1)
                 }
                 _ => (0, 0),
             };
             for argument in call.args.iter().skip(skip).take(count) {
-                let mut raw = RawUiText::default();
+                let mut raw = RawUiText::new(&self.bindings);
                 raw.visit_expr(argument);
-                self.raw_ui_strings.extend(raw.0);
+                self.raw_ui_strings.extend(raw.values);
             }
         }
         if translation_call(call) {
@@ -215,8 +326,13 @@ impl<'ast> Visit<'ast> for Calls {
                 }
                 _ => 1,
             };
-            self.keys
-                .extend(call.args.iter().take(count).filter_map(literal));
+            for argument in call.args.iter().take(count) {
+                self.keys.extend(translation_keys(
+                    argument,
+                    &self.bindings,
+                    &mut HashSet::new(),
+                ));
+            }
         }
         visit::visit_expr_call(self, call);
     }
@@ -239,9 +355,9 @@ impl<'ast> Visit<'ast> for Calls {
             "tooltip" | "title" | "subtitle" | "placeholder" | "hint" | "description"
         ) {
             if let Some(argument) = call.args.first() {
-                let mut raw = RawUiText::default();
+                let mut raw = RawUiText::new(&self.bindings);
                 raw.visit_expr(argument);
-                self.raw_ui_strings.extend(raw.0);
+                self.raw_ui_strings.extend(raw.values);
             }
         }
         if matches!(
@@ -342,6 +458,7 @@ fn scanner_rejects_raw_tooltips_labels_and_subtitle_formats() {
     let source = r#"fn build() {
         Element::label("Untranslated label").tooltip("Untranslated tooltip");
         Result { subtitle: format!("Untranslated {name}") };
+        Result { subtitle: format!("Application • {source}") };
         Element::label(i18n::tr("Translated")).tooltip(i18n::text("Also translated"));
         Element::label("Flux Launcher");
         Element::setting_row_desc(i18n::tr("Safe caption"), "Untranslated setting description", control);
@@ -352,6 +469,7 @@ fn scanner_rejects_raw_tooltips_labels_and_subtitle_formats() {
     assert_eq!(
         calls.raw_ui_strings,
         [
+            "Application • {source}",
             "Untranslated label",
             "Untranslated setting description",
             "Untranslated tooltip",
@@ -359,4 +477,51 @@ fn scanner_rejects_raw_tooltips_labels_and_subtitle_formats() {
         ]
     );
     assert!(calls.keys.contains("Translated"));
+}
+
+#[test]
+fn scanner_checks_tray_labels_and_bound_signal_initial_text() {
+    let source = r#"fn build() {
+        TrayMenuItem::item("Raw tray item", |_| {});
+        TrayMenuItem::check("Raw tray check", enabled, |_| {});
+        let text = signal(String::from("Raw signal"));
+        let forwarded = text;
+        Element::label_signal(forwarded);
+        let rich = signal(RichDoc::plain("Raw rich document"));
+        Element::rich_signal(rich);
+        let safe = signal(i18n::tr("Translated signal"));
+        Element::label_signal(safe);
+    }"#;
+    let mut calls = Calls::default();
+    calls.visit_file(&syn::parse_file(source).unwrap());
+    calls.raw_ui_strings.sort();
+    assert_eq!(
+        calls.raw_ui_strings,
+        [
+            "Raw rich document",
+            "Raw signal",
+            "Raw tray check",
+            "Raw tray item"
+        ]
+    );
+}
+
+#[test]
+fn scanner_collects_returned_dynamic_translation_keys_without_patterns() {
+    let source = r#"fn build() {
+        Element::label(i18n::tr(match code { "protocol-id" => "Known caption", _ => { "Missing match caption" } }));
+        let caption = if failed { "Missing conditional caption" } else { "Known caption" };
+        Element::label(i18n::tr(caption));
+    }"#;
+    let mut calls = Calls::default();
+    calls.visit_file(&syn::parse_file(source).unwrap());
+    let known = HashSet::from(["Known caption".to_owned()]);
+    let mut missing: Vec<_> = calls.keys.difference(&known).map(String::as_str).collect();
+    missing.sort();
+    assert_eq!(
+        missing,
+        ["Missing conditional caption", "Missing match caption"]
+    );
+    assert!(!calls.keys.contains("protocol-id"));
+    assert!(calls.raw_ui_strings.is_empty());
 }

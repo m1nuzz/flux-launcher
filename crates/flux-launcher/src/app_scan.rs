@@ -5,6 +5,11 @@ use flux_core::{ResultKind, ResultSource, SearchResult};
 use super::app_identity::canonical_application_id;
 use super::applications::{normalize, MAX_CATALOG_ENTRIES, MAX_SCAN_DEPTH};
 
+// The producer supports exactly these origins. Keep canonical metadata stable;
+// result_row localizes their captions at the display boundary.
+pub(crate) const APPLICATION_SUBTITLES: [&str; 2] =
+    ["Application • Start Menu", "Application • App Paths"];
+
 #[cfg(windows)]
 pub(crate) fn resolve_shell_link_target(path: &str) -> Option<(String, String)> {
     use windows::core::{Interface, GUID, PCWSTR};
@@ -180,7 +185,7 @@ pub(crate) fn collect_files(root: &Path, depth: usize, candidates: &mut Vec<Sear
         if !file_type.is_file() || !is_application_file(&path) {
             continue;
         }
-        let Some(result) = application_result(path, "Start Menu") else {
+        let Some(result) = start_menu_application_result(path) else {
             continue;
         };
         candidates.push(result);
@@ -195,7 +200,7 @@ fn is_application_file(path: &Path) -> bool {
 }
 
 #[cfg(windows)]
-fn application_result(path: PathBuf, source: &str) -> Option<SearchResult> {
+fn start_menu_application_result(path: PathBuf) -> Option<SearchResult> {
     let title = path.file_stem()?.to_string_lossy().trim().to_owned();
     if title.is_empty() {
         return None;
@@ -206,7 +211,7 @@ fn application_result(path: PathBuf, source: &str) -> Option<SearchResult> {
     Some(SearchResult {
         id,
         title,
-        subtitle: format!("Application • {source}"),
+        subtitle: APPLICATION_SUBTITLES[0].to_owned(),
         kind: ResultKind::Application,
         source: ResultSource::ApplicationCatalog,
         target: Some(target),
@@ -258,7 +263,7 @@ pub(crate) fn collect_app_paths(candidates: &mut Vec<SearchResult>) {
                     id: canonical_application_id(&target)
                         .unwrap_or_else(|| format!("application:source:{}", normalize(&target))),
                     title,
-                    subtitle: String::from("Application • App Paths"),
+                    subtitle: APPLICATION_SUBTITLES[1].to_owned(),
                     kind: ResultKind::Application,
                     source: ResultSource::ApplicationCatalog,
                     target: Some(target),

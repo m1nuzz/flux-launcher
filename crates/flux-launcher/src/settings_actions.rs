@@ -213,6 +213,11 @@ pub(crate) fn apply_settings(ui: &SettingsUi, ctx: &mut EventCtx) {
                 drop(ui.visual_preview.borrow_mut().take());
                 prepared.commit()
             },
+            |enabled| {
+                if let Err(error) = startup::set_enabled(enabled) {
+                    eprintln!("Could not synchronize Windows startup setting: {error}");
+                }
+            },
         );
         drop(settings);
         if let Err(error) = result {
@@ -259,6 +264,7 @@ fn persist_language_change(
     explicit: bool,
     mut save: impl FnMut(&Settings) -> bool,
     commit: impl FnOnce() -> std::io::Result<()>,
+    sync_startup: impl FnOnce(bool),
 ) -> Result<(), LanguageChangeError> {
     let previous = (settings.language, settings.language_explicit);
     settings.language = language;
@@ -267,6 +273,9 @@ fn persist_language_change(
         (settings.language, settings.language_explicit) = previous;
         return Err(LanguageChangeError::Save);
     }
+    // Other settings remain applied if only the language commit fails. Match
+    // the registry to the successfully saved startup choice before that commit.
+    sync_startup(settings.start_with_windows);
     if let Err(error) = commit() {
         eprintln!("Language restart commit failed: {error}");
         (settings.language, settings.language_explicit) = previous;
@@ -569,6 +578,7 @@ mod language_transaction_tests {
                 committed.set(true);
                 Ok(())
             },
+            |_| panic!("startup must not change when saving fails"),
         );
         assert_eq!(result, Err(LanguageChangeError::Save));
         assert_eq!(settings.language, flux_core::Locale::English);
@@ -585,9 +595,12 @@ mod language_transaction_tests {
         let mut settings = Settings {
             language: flux_core::Locale::French,
             language_explicit: false,
+            start_with_windows: false,
             ..Settings::default()
         };
         settings.save_to(&path).unwrap();
+        let registry_startup = Cell::new(false);
+        settings.start_with_windows = true;
         let result = persist_language_change(
             &mut settings,
             flux_core::Locale::Japanese,
@@ -597,16 +610,21 @@ mod language_transaction_tests {
                 let staged = Settings::load_from(&path).unwrap();
                 assert_eq!(staged.language, flux_core::Locale::Japanese);
                 assert!(staged.language_explicit);
+                assert!(staged.start_with_windows);
+                assert!(registry_startup.get());
                 Err(std::io::Error::new(
                     std::io::ErrorKind::BrokenPipe,
                     "replacement exited",
                 ))
             },
+            |enabled| registry_startup.set(enabled),
         );
         assert_eq!(result, Err(LanguageChangeError::Commit));
         let restored = Settings::load_from(&path).unwrap();
         assert_eq!(restored.language, flux_core::Locale::French);
         assert!(!restored.language_explicit);
+        assert!(restored.start_with_windows);
+        assert_eq!(registry_startup.get(), restored.start_with_windows);
         assert_eq!(settings.language, restored.language);
         assert_eq!(settings.language_explicit, restored.language_explicit);
         std::fs::remove_file(path).unwrap();
@@ -628,7 +646,8 @@ mod language_transaction_tests {
                     assert_eq!(saved.language, flux_core::Locale::Japanese);
                     assert!(saved.language_explicit);
                     Ok(())
-                }
+                },
+                |_| {},
             ),
             Ok(())
         );

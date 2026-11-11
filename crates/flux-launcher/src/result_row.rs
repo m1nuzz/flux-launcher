@@ -57,11 +57,9 @@ pub(crate) fn icon_target_for_path(target: &str) -> String {
     resolve_bare_executable_path(target).unwrap_or_else(|| target.to_owned())
 }
 
-// These are canonical provider metadata, translated only at the display boundary.
-pub(crate) const APPLICATION_SUBTITLES: [&str; 2] =
-    ["Application • Start Menu", "Application • App Paths"];
+pub(crate) use super::app_scan::APPLICATION_SUBTITLES;
 
-fn localized_subtitle(result: &SearchResult) -> String {
+pub(crate) fn localized_subtitle(result: &SearchResult) -> String {
     if result.source == flux_core::ResultSource::BuiltIn
         || (result.source == flux_core::ResultSource::ApplicationCatalog
             && result.kind == flux_core::ResultKind::Application
@@ -322,6 +320,24 @@ mod tests {
             });
         }
         assert_eq!(fallback_glyph("file:example", &ResultKind::File).0, "▣");
+    }
+
+    #[test]
+    fn unknown_application_origins_remain_unmodified() {
+        for language in flux_core::Locale::ALL {
+            crate::i18n::with_locale(language, || {
+                let result = SearchResult {
+                    id: "application:unknown".to_owned(),
+                    title: "Third Source App".to_owned(),
+                    subtitle: "Application • Third-party origin".to_owned(),
+                    kind: ResultKind::Application,
+                    source: ResultSource::ApplicationCatalog,
+                    target: None,
+                };
+                assert_eq!(localized_subtitle(&result), result.subtitle);
+                assert_eq!(fallback_glyph(&result.id, &result.kind).0, "◉");
+            });
+        }
     }
 
     #[test]

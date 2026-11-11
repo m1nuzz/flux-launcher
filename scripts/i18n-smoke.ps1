@@ -80,9 +80,15 @@ function Assert-LocaleProbe([string]$LogPath,[string]$Language,[uint32]$Expected
     if ($probes.Count -eq 0) { throw "Missing translated UI probe for process $ExpectedProcessId" }
     $probe=$probes[-1]
     $expectedCaption=if ($Language -eq 'en-US') { 'Language' } else { $catalog['Language'][$Language] }
-    $expectedSubtitle=if ($Language -eq 'en-US') { 'Application • Start Menu' } else { $catalog['Application • Start Menu'][$Language] }
-    if ($probe.language -ne $Language -or $probe.caption -cne $expectedCaption -or $probe.application_subtitle -cne $expectedSubtitle) {
+    if ($probe.language -ne $Language -or $probe.caption -cne $expectedCaption) {
         throw "UI translation mismatch for ${Language}: $($probe | ConvertTo-Json -Compress)"
+    }
+    foreach ($origin in @('Start Menu','App Paths')) {
+        $key="Application • $origin"
+        $expected=if ($Language -eq 'en-US') { $key } else { $catalog[$key][$Language] }
+        if ($probe.application_subtitles.$origin -cne $expected) {
+            throw "Application subtitle translation mismatch for $Language / $origin"
+        }
     }
     if ($probe.open_settings_leaked -ne $false) { throw 'One-shot Settings request leaked into the resident process.' }
     return $probe
@@ -188,7 +194,7 @@ try {
             Start-Sleep -Milliseconds 300
             Save-Capture $handle "$language-tray.png" -FullScreen
             [FluxLocaleSmoke]::Key(0x1B)
-            $evidence += [pscustomobject]@{language=$language;changedTo=$saved.language;restarted=$true;caption=$translated.caption;applicationSubtitle=$translated.application_subtitle;oneShotConsumed=(-not $translated.open_settings_leaked)}
+            $evidence += [pscustomobject]@{language=$language;changedTo=$saved.language;restarted=$true;caption=$translated.caption;applicationSubtitles=$translated.application_subtitles;oneShotConsumed=(-not $translated.open_settings_leaked)}
         }
     }
     $evidence | ConvertTo-Json | Set-Content -LiteralPath (Join-Path $output 'language-handoffs.json') -Encoding utf8
