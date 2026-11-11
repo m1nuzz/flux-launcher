@@ -93,6 +93,69 @@ fn ease_in_out_cubic(t: f32) -> f32 {
     }
 }
 
+/// Frame-level ownership of the Settings pair slot.
+///
+/// The pointer event that changes the tab runs the frame callback before the
+/// tick starts the glide, so the first frame that sees the new tab has no slide
+/// to ride. Following the width slider directly on that frame moved the window
+/// to the pair slot in one step and left the glide nothing to travel - the
+/// first Visual visit after a launch snapped, while later visits looked smooth
+/// because the cached pair frame matched. A tab or show change disarms the
+/// follow until a glide lands; the tick disarms again whenever it starts one,
+/// so a hover frame racing ahead of the tick cannot slip in either.
+#[derive(Clone)]
+struct PairFollow {
+    ready: Rc<Cell<bool>>,
+    /// A slot change was seen and the tick has not started its glide yet.
+    awaiting_glide: Rc<Cell<bool>>,
+    visible: Rc<Cell<bool>>,
+    tab: Rc<Cell<usize>>,
+    show_generation: Rc<Cell<u64>>,
+}
+
+impl PairFollow {
+    fn new(visible: bool, tab: usize, show_generation: u64) -> Self {
+        Self {
+            // Not ready until a glide has landed: a process that starts on the
+            // Visual tab must glide from the centred slot, not appear there.
+            ready: Rc::new(Cell::new(false)),
+            awaiting_glide: Rc::new(Cell::new(false)),
+            visible: Rc::new(Cell::new(visible)),
+            tab: Rc::new(Cell::new(tab)),
+            show_generation: Rc::new(Cell::new(show_generation)),
+        }
+    }
+
+    /// Feed one frame's slot state and disarm on any change.
+    fn observe(&self, visible: bool, tab: usize, show_generation: u64) {
+        let visible_changed = self.visible.replace(visible) != visible;
+        let tab_changed = self.tab.replace(tab) != tab;
+        let generation_changed = self.show_generation.replace(show_generation) != show_generation;
+        if visible_changed || tab_changed || generation_changed {
+            self.ready.set(false);
+            self.awaiting_glide.set(true);
+        }
+    }
+
+    fn disarm(&self) {
+        self.ready.set(false);
+        self.awaiting_glide.set(false);
+    }
+
+    fn note_glide_landed(&self) {
+        // A glide still running from the previous slot can land after the user
+        // already changed the tab: its landing must not re-arm the follow that
+        // change just disarmed, or the frame before the tick snaps the window.
+        if !self.awaiting_glide.get() {
+            self.ready.set(true);
+        }
+    }
+
+    fn is_ready(&self) -> bool {
+        self.ready.get()
+    }
+}
+
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn register_interval(
     app: App,
@@ -177,6 +240,7 @@ pub(crate) fn register_interval(
     let history_mode_for_interval = history_mode;
     let settings_visible_for_interval = settings_visible;
     let settings_tab_for_interval = settings_tab;
+    let settings_show_generation_for_frame = settings_show_generation;
     let everything_prompt_visible_for_interval = everything_prompt_visible;
     let everything_installed_for_interval = everything_installed;
     let everything_status_for_interval = everything_status;
@@ -206,6 +270,16 @@ pub(crate) fn register_interval(
     let slide_clock = std::time::Instant::now();
     let settings_slide_for_slide = Rc::clone(&settings_slide);
     let position_for_slide = window_position.clone();
+    // Whether the frame callback may follow the width slider directly. The click
+    // that changes the tab reaches the frame callback before the tick gets to
+    // start the glide; see [`PairFollow`].
+    let pair_follow = PairFollow::new(
+        settings_visible.get(),
+        settings_tab.get(),
+        settings_show_generation.get(),
+    );
+    let pair_follow_for_tick = pair_follow.clone();
+    let pair_follow_for_frame = pair_follow;
     // Display-rate pair follow: the monitor geometry is cached in the tick so the
     // frame callback can recompute the pair from the slider without touching the
     // monitor every frame.
@@ -447,6 +521,7 @@ pub(crate) fn register_interval(
                         ride,
                         started_ms: slide_clock.elapsed().as_millis() as u64,
                     });
+                    pair_follow_for_tick.disarm();
                     // Kick the display-rate frame loop; the frame callback
                     // keeps it running until the slide lands.
                     windui::anim::request_repaint();
@@ -1018,6 +1093,13 @@ pub(crate) fn register_interval(
         }
     })
     .on_frame(move |_ctx| {
+        let frame_settings_visible = settings_visible_for_interval.get();
+        let frame_settings_tab = settings_tab_for_interval.get();
+        pair_follow_for_frame.observe(
+            frame_settings_visible,
+            frame_settings_tab,
+            settings_show_generation_for_frame.get(),
+        );
         // A size reset eases the slider signal; the follow below then moves the
         // pair on the same curve, so the thumb and the windows travel together.
         let mut easing = false;
@@ -1068,14 +1150,21 @@ pub(crate) fn register_interval(
             }
             if t >= 1.0 {
                 *guard = None;
+                // The glide landed: from here the slider may drive the pair
+                // directly, the way a drag on a settled Visual tab does.
+                pair_follow_for_frame.note_glide_landed();
                 easing
             } else {
                 true
             }
         } else {
             // No glide: follow the width slider at the paint rate, so dragging on
-            // a high-refresh display is not limited to the 16 ms search tick.
-            if settings_visible_for_interval.get() && settings_tab_for_interval.get() == 1 {
+            // a high-refresh display is not limited to the 16 ms search tick. Not
+            // while a tab/show change is waiting for its glide: the tick starts
+            // that glide one message later, and jumping to the pair slot here
+            // would consume its whole travel before it began.
+            if pair_follow_for_frame.is_ready() && frame_settings_visible && frame_settings_tab == 1
+            {
                 if let Some((bounds, dpi)) = pair_monitor_for_frame.get() {
                     let width = dimension_from_slider(
                         width_slider_for_interval.get(),
@@ -1124,7 +1213,7 @@ pub(crate) fn slow_providers_due(
 
 #[cfg(test)]
 mod tests {
-    use super::slow_providers_due;
+    use super::{slow_providers_due, PairFollow};
 
     #[test]
     fn slow_providers_wait_for_settled_generation_once() {
@@ -1140,5 +1229,56 @@ mod tests {
         assert!(slow_providers_due(1350, 1200, 1, 2, 150));
         // Clock warp saturates instead of underflowing.
         assert!(!slow_providers_due(100, 5000, 0, 1, 150));
+    }
+
+    /// The frame callback runs on the pointer event that selects Visual, one
+    /// message before the tick starts the glide. The follow must stay off until
+    /// a glide lands, or the window snaps to the pair slot on the first visit
+    /// and the glide has no travel left (observed after every launch).
+    #[test]
+    fn visual_pair_follow_waits_for_a_landed_glide() {
+        // Settings visible on General with a glide already landed: a slider drag
+        // may follow directly.
+        let follow = PairFollow::new(true, 0, 7);
+        follow.note_glide_landed();
+        assert!(follow.is_ready());
+
+        // Clicking Visual: the frame callback sees the new tab before the tick.
+        follow.observe(true, 1, 7);
+        assert!(!follow.is_ready());
+        // A hover frame racing ahead of the tick must not re-arm the follow.
+        follow.observe(true, 1, 7);
+        assert!(!follow.is_ready());
+
+        // The tick starts the glide and disarms again; the landing re-arms it.
+        follow.disarm();
+        follow.note_glide_landed();
+        assert!(follow.is_ready());
+
+        // Leaving Visual disarms; returning waits for its own glide.
+        follow.observe(true, 0, 7);
+        assert!(!follow.is_ready());
+        follow.note_glide_landed();
+        follow.observe(true, 1, 7);
+        assert!(!follow.is_ready());
+    }
+
+    #[test]
+    fn visual_pair_follow_rearms_only_after_the_glide_of_a_fresh_show() {
+        let follow = PairFollow::new(true, 1, 3);
+        follow.note_glide_landed();
+        assert!(follow.is_ready());
+
+        // A native re-show of Settings bumps the generation even when the tab
+        // did not move: the tick glides from the centred slot, so no follow.
+        follow.observe(true, 1, 4);
+        assert!(!follow.is_ready());
+
+        // Hiding is a slot change as well.
+        follow.note_glide_landed();
+        follow.observe(false, 1, 4);
+        assert!(!follow.is_ready());
+        follow.observe(true, 1, 5);
+        assert!(!follow.is_ready());
     }
 }
