@@ -179,6 +179,10 @@ The release workflow signs stable Windows artifacts only when the encrypted `WIN
 
 Flux Launcher is actively developed. The `main` branch may contain improvements that have not yet been packaged into a stable release. Download the [latest installer](https://github.com/m1nuzz/flux-launcher/releases/latest/download/FluxLauncher-Setup.exe), or follow development in the [issue tracker](https://github.com/m1nuzz/flux-launcher/issues).
 
+## Privacy
+
+Flux Launcher is local-first: there is no telemetry, analytics, or account. See [PRIVACY.md](PRIVACY.md) for what is stored locally, GitHub update checks, the optional Google Search provider, and the separate behavior of community plugins.
+
 ## Support
 
 Support Flux Launcher on [Ko-fi](https://ko-fi.com/m1nuz).
