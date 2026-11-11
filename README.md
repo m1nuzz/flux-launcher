@@ -99,7 +99,8 @@ locale-code objects. Native language names live in
 `nb-NO` uses the `nb` catalog; `sr-Cyrl-RS` uses the Cyrillic `sr` catalog.
 An explicitly requested Serbian Latin script is not mapped to Cyrillic; system
 language detection continues to the next supported preference. Arabic and Hebrew
-use native RTL shaping; full layout mirroring remains a follow-up.
+use native RTL shaping. Full layout mirroring and RTL-aware text-input caret
+positioning/hit testing remain follow-ups; input editing currently uses LTR prefix widths.
 Windows text rendering uses `Segoe UI` for consistent client/Server font resolution.
 Both native rendering paths use the selected UI locale, and glyph-run tests verify
 that Cyrillic semibold labels resolve to a face with weight 600 or higher.
@@ -110,7 +111,10 @@ inside `vec!` macros). Filesystem and process arguments must never be translated
 English result counts use singular/plural forms; translated count labels remain
 grammatical for 1, 2, 5, and 21. The Windows UI release workflow captures every
 settings tab, the language dropdown, tray labels, and application-triggered
-language restarts for all 25 languages. Screenshots still require visual
+language restarts for all 25 languages. The smoke also checks actual translated
+captions from each running process against the locale resource, before and after
+restart, and verifies that the one-shot Settings launch request is consumed.
+Screenshots still require visual
 review, especially for long Russian labels and CJK fallback fonts.
 
 | Input | Result |

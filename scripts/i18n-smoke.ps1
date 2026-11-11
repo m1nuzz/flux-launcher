@@ -61,9 +61,32 @@ New-Item -ItemType Directory -Path $configDirectory -Force | Out-Null
 $configPath=Join-Path $configDirectory 'settings.json'
 $runKey='HKCU:\Software\Microsoft\Windows\CurrentVersion\Run'
 $oldStartup=(Get-ItemProperty -LiteralPath $runKey -ErrorAction SilentlyContinue).'Flux Launcher'
-$environmentNames=@('APPDATA','FLUX_OPEN_SETTINGS','FLUX_DISABLE_SINGLE_INSTANCE','FLUX_SMOKE_SETTINGS_TAB','FLUX_DISABLE_UPDATE_CHECKS')
+$environmentNames=@('APPDATA','FLUX_OPEN_SETTINGS','FLUX_DISABLE_SINGLE_INSTANCE','FLUX_SMOKE_SETTINGS_TAB','FLUX_DISABLE_UPDATE_CHECKS','FLUX_SMOKE_SETTINGS_UI','FLUX_SMOKE_UI_PROBE_FILE')
 $savedEnvironment=@{}
 foreach ($name in $environmentNames) { $savedEnvironment[$name]=[Environment]::GetEnvironmentVariable($name,'Process') }
+$catalogPath=Join-Path $PSScriptRoot '..\crates\flux-launcher\locales\translations.json'
+$catalog=Get-Content -LiteralPath $catalogPath -Raw -Encoding utf8 | ConvertFrom-Json -AsHashtable
+
+function Assert-LocaleProbe([string]$LogPath,[string]$Language,[uint32]$ExpectedProcessId) {
+    $deadline=[DateTime]::UtcNow.AddSeconds(3)
+    do {
+        $probes=@(Get-Content -LiteralPath $LogPath -Encoding utf8 -ErrorAction SilentlyContinue |
+            Where-Object { $_.StartsWith('Settings UI locale probe: ') } |
+            ForEach-Object { try { $_.Substring('Settings UI locale probe: '.Length) | ConvertFrom-Json -ErrorAction Stop } catch { } } |
+            Where-Object { $_.process_id -eq $ExpectedProcessId })
+        if ($probes.Count -gt 0) { break }
+        Start-Sleep -Milliseconds 100
+    } while ([DateTime]::UtcNow -lt $deadline)
+    if ($probes.Count -eq 0) { throw "Missing translated UI probe for process $ExpectedProcessId" }
+    $probe=$probes[-1]
+    $expectedCaption=if ($Language -eq 'en-US') { 'Language' } else { $catalog['Language'][$Language] }
+    $expectedSubtitle=if ($Language -eq 'en-US') { 'Application • Start Menu' } else { $catalog['Application • Start Menu'][$Language] }
+    if ($probe.language -ne $Language -or $probe.caption -cne $expectedCaption -or $probe.application_subtitle -cne $expectedSubtitle) {
+        throw "UI translation mismatch for ${Language}: $($probe | ConvertTo-Json -Compress)"
+    }
+    if ($probe.open_settings_leaked -ne $false) { throw 'One-shot Settings request leaked into the resident process.' }
+    return $probe
+}
 
 function Stop-Fixture {
     Get-Process flux-launcher -ErrorAction SilentlyContinue | Where-Object { $_.Path -eq $binary } | Stop-Process -Force
@@ -107,15 +130,19 @@ $languages=@(
 )
 if (($languages | Select-Object -Unique).Count -ne 25) { throw 'Expected 25 unique language catalogs.' }
 try {
-    $env:APPDATA=$profile; $env:FLUX_OPEN_SETTINGS='1'; $env:FLUX_DISABLE_SINGLE_INSTANCE='1'; $env:FLUX_DISABLE_UPDATE_CHECKS='1'
+    $env:APPDATA=$profile; $env:FLUX_OPEN_SETTINGS='1'; $env:FLUX_DISABLE_SINGLE_INSTANCE='1'; $env:FLUX_DISABLE_UPDATE_CHECKS='1'; $env:FLUX_SMOKE_SETTINGS_UI='1'
     for ($localeIndex=0; $localeIndex -lt $languages.Count; $localeIndex++) {
         $language=$languages[$localeIndex]
         for ($tab=0; $tab -lt 5; $tab++) {
             Stop-Fixture
             @{language=$language;language_explicit=$true;start_with_windows=$false;update_checks_enabled=$false;auto_enable_everything=$false;everything_install_prompt_seen=$true;switch_to_english_layout=$false} | ConvertTo-Json | Set-Content -LiteralPath $configPath -Encoding utf8
             $env:FLUX_SMOKE_SETTINGS_TAB=$tab.ToString()
-            $app=Start-Process -FilePath $binary -WindowStyle Hidden -PassThru
+            $logPath=Join-Path $output "$language-tab-$tab.stderr.log"
+            $probePath=Join-Path $output "$language-tab-$tab.probe.log"
+            $env:FLUX_SMOKE_UI_PROBE_FILE=$probePath
+            $app=Start-Process -FilePath $binary -WindowStyle Hidden -RedirectStandardError $logPath -PassThru
             $handle=Get-FixtureWindow $app
+            $null=Assert-LocaleProbe $probePath $language ([uint32]$app.Id)
             Save-Capture $handle "$language-tab-$tab.png"
             if ($tab -ne 0) { continue }
             $client=New-Object FluxLocaleSmoke+RECT
@@ -155,12 +182,13 @@ try {
             $replacement=@(Get-Process flux-launcher -ErrorAction SilentlyContinue | Where-Object { $_.Path -eq $binary -and $_.Id -ne $app.Id })
             if ($replacement.Count -ne 1) { throw 'Language handoff did not leave exactly one replacement.' }
             $handle=Get-FixtureWindow $replacement[0]
+            $translated=Assert-LocaleProbe $probePath $languages[$targetIndex] ([uint32]$replacement[0].Id)
             Save-Capture $handle "$language-after-restart.png"
             [FluxLocaleSmoke]::PostMessage($handle,0x8001,[UIntPtr]::Zero,[IntPtr]::new(0x0205)) | Out-Null
             Start-Sleep -Milliseconds 300
             Save-Capture $handle "$language-tray.png" -FullScreen
             [FluxLocaleSmoke]::Key(0x1B)
-            $evidence += [pscustomobject]@{language=$language;changedTo=$saved.language;restarted=$true}
+            $evidence += [pscustomobject]@{language=$language;changedTo=$saved.language;restarted=$true;caption=$translated.caption;applicationSubtitle=$translated.application_subtitle;oneShotConsumed=(-not $translated.open_settings_leaked)}
         }
     }
     $evidence | ConvertTo-Json | Set-Content -LiteralPath (Join-Path $output 'language-handoffs.json') -Encoding utf8

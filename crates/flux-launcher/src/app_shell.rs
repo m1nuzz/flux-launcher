@@ -30,6 +30,27 @@ pub(crate) fn build_shell_content(
         .child(settings_panel)
         .visible_signal(settings_visible);
     if std::env::var_os("FLUX_SMOKE_SETTINGS_UI").is_some() {
+        let probe = serde_json::json!({
+            "process_id": std::process::id(),
+            "language": crate::i18n::current().code(),
+            "caption": crate::i18n::tr("Language"),
+            "application_subtitle": crate::i18n::text(crate::result_row::APPLICATION_SUBTITLES[0]),
+            "open_settings_leaked": std::env::var_os("FLUX_OPEN_SETTINGS").is_some(),
+        });
+        eprintln!("Settings UI locale probe: {probe}");
+        // A dedicated file also survives the original process's stderr relay
+        // closing during a relaunch, so the replacement can be verified by PID.
+        if let Some(path) = std::env::var_os("FLUX_SMOKE_UI_PROBE_FILE") {
+            use std::io::Write;
+            let result = std::fs::OpenOptions::new()
+                .create(true)
+                .append(true)
+                .open(path)
+                .and_then(|mut file| writeln!(file, "Settings UI locale probe: {probe}"));
+            if let Err(error) = result {
+                eprintln!("Could not write UI locale probe: {error}");
+            }
+        }
         eprintln!(
             "Settings UI contract: UpdateActionVersionLabel=Current version: {CURRENT_VERSION}; SmoothCaretTab=Visual; SmoothCaretGeneral=false"
         );

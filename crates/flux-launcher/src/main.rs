@@ -100,6 +100,7 @@ pub(crate) use theme_text::*;
 pub(crate) use update_tasks::*;
 
 fn main() {
+    let open_settings = cli::take_open_settings();
     if !relaunch::wait_for_parent() {
         return;
     }
@@ -159,7 +160,7 @@ fn main() {
     let current_sequence = signal(0_u64);
     let game_mode = signal(settings.game_mode);
     let game_mode_status = signal(game_mode_label(settings.game_mode));
-    let settings_visible = signal(std::env::var_os("FLUX_OPEN_SETTINGS").is_some());
+    let settings_visible = signal(open_settings);
     // The title strip's close control cannot hide the HWND itself: the interval
     // timers stop with the window, and they own the visual preview child that
     // has to be dropped first. The click asks for a hide, the tick performs it.

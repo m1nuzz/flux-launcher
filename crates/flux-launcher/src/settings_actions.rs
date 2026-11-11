@@ -28,6 +28,25 @@ use super::window_geometry::{
 /// draft signals, so the footer's Apply writes all of them at once instead of
 /// each tab carrying its own save button.
 pub(crate) fn apply_settings(ui: &SettingsUi, ctx: &mut EventCtx) {
+    let explicit_language = ui.language.get() != 0;
+    let language = if explicit_language {
+        flux_core::Locale::from_index(ui.language.get() - 1)
+    } else {
+        crate::system_locale::detect()
+    };
+    // Establish replacement readiness before mutating or saving the language.
+    let prepared = if language != crate::i18n::current() {
+        match crate::relaunch::prepare() {
+            Ok(prepared) => Some(prepared),
+            Err(error) => {
+                eprintln!("Could not prepare language restart: {error}");
+                ctx.toast_ok(crate::i18n::tr("Could not restart Flux"));
+                return;
+            }
+        }
+    } else {
+        None
+    };
     let duration = ui
         .caret_duration
         .get()
@@ -65,12 +84,10 @@ pub(crate) fn apply_settings(ui: &SettingsUi, ctx: &mut EventCtx) {
     let mut check_due = false;
     if let Ok(mut settings) = ui.shared_settings.write() {
         let auto_enable_previous = settings.auto_enable_everything;
-        settings.language_explicit = ui.language.get() != 0;
-        settings.language = if settings.language_explicit {
-            flux_core::Locale::from_index(ui.language.get() - 1)
-        } else {
-            crate::system_locale::detect()
-        };
+        if prepared.is_none() {
+            settings.language_explicit = explicit_language;
+            settings.language = language;
+        }
         settings.activation_hotkey = configuration;
         settings.game_mode_hotkey = HotkeyConfig {
             ctrl: ui.game_mode_ctrl.get(),
@@ -180,33 +197,32 @@ pub(crate) fn apply_settings(ui: &SettingsUi, ctx: &mut EventCtx) {
     // Persist off the UI thread and leave the window exactly where it is: Apply
     // used to write the file, sync the registry and shrink back to the search
     // strip on the click, which read as a freeze and threw away the page.
-    if ui
-        .shared_settings
-        .read()
-        .is_ok_and(|settings| settings.language != crate::i18n::current())
-    {
-        // A language change restarts all static native surfaces together, including the tray.
-        let saved = ui
-            .shared_settings
-            .read()
-            .ok()
-            .is_some_and(|settings| save_settings(&settings));
-        if !saved {
+    if let Some(prepared) = prepared {
+        let Ok(mut settings) = ui.shared_settings.write() else {
             ctx.toast_ok(crate::i18n::tr("Could not save settings"));
             return;
-        }
-        let prepared = match crate::relaunch::prepare() {
-            Ok(prepared) => prepared,
-            Err(error) => {
-                eprintln!("Could not prepare language restart: {error}");
-                ctx.toast_ok(crate::i18n::tr("Could not restart Flux"));
-                return;
-            }
         };
-        // Reap the native preview before committing the parent-exit handoff.
-        drop(ui.visual_preview.borrow_mut().take());
-        if prepared.commit().is_err() {
-            ctx.toast_ok(crate::i18n::tr("Could not restart Flux"));
+        // Hold the write lock through persistence and any rollback so queued
+        // asynchronous saves cannot observe a failed language choice.
+        let result = persist_language_change(
+            &mut settings,
+            language,
+            explicit_language,
+            save_settings,
+            || {
+                drop(ui.visual_preview.borrow_mut().take());
+                prepared.commit()
+            },
+        );
+        drop(settings);
+        if let Err(error) = result {
+            eprintln!("Could not finish language restart: {error:?}");
+            ctx.toast_ok(crate::i18n::tr(match error {
+                LanguageChangeError::Save | LanguageChangeError::Rollback => {
+                    "Could not save settings"
+                }
+                LanguageChangeError::Commit => "Could not restart Flux",
+            }));
             return;
         }
         ctx.quit();
@@ -228,6 +244,39 @@ pub(crate) fn apply_settings(ui: &SettingsUi, ctx: &mut EventCtx) {
         request_update_check(ui.update_sender.clone(), &ui.update_check_in_flight);
     }
     ctx.toast_ok(crate::i18n::tr("Settings applied"));
+}
+
+#[derive(Debug, PartialEq, Eq)]
+enum LanguageChangeError {
+    Save,
+    Commit,
+    Rollback,
+}
+
+fn persist_language_change(
+    settings: &mut Settings,
+    language: flux_core::Locale,
+    explicit: bool,
+    mut save: impl FnMut(&Settings) -> bool,
+    commit: impl FnOnce() -> std::io::Result<()>,
+) -> Result<(), LanguageChangeError> {
+    let previous = (settings.language, settings.language_explicit);
+    settings.language = language;
+    settings.language_explicit = explicit;
+    if !save(settings) {
+        (settings.language, settings.language_explicit) = previous;
+        return Err(LanguageChangeError::Save);
+    }
+    if let Err(error) = commit() {
+        eprintln!("Language restart commit failed: {error}");
+        (settings.language, settings.language_explicit) = previous;
+        return Err(if save(settings) {
+            LanguageChangeError::Commit
+        } else {
+            LanguageChangeError::Rollback
+        });
+    }
+    Ok(())
 }
 
 /// Close the Settings window without quitting: the process stays resident in
@@ -500,4 +549,90 @@ fn reset_plugins(ui: &SettingsUi, defaults: &Settings) {
     ui.obsidian_alias.set(defaults.obsidian_alias.clone());
     ui.google_enabled.set(defaults.google_enabled);
     ui.google_alias.set(defaults.google_alias.clone());
+}
+
+#[cfg(test)]
+mod language_transaction_tests {
+    use super::*;
+    use std::cell::Cell;
+
+    #[test]
+    fn a_failed_save_does_not_commit_or_change_the_active_language() {
+        let mut settings = Settings::default();
+        let committed = Cell::new(false);
+        let result = persist_language_change(
+            &mut settings,
+            flux_core::Locale::Japanese,
+            true,
+            |_| false,
+            || {
+                committed.set(true);
+                Ok(())
+            },
+        );
+        assert_eq!(result, Err(LanguageChangeError::Save));
+        assert_eq!(settings.language, flux_core::Locale::English);
+        assert!(!settings.language_explicit);
+        assert!(!committed.get());
+    }
+
+    #[test]
+    fn a_failed_commit_rolls_back_the_persisted_language_and_explicit_flag() {
+        let path = std::env::temp_dir().join(format!(
+            "flux-language-rollback-{}.json",
+            std::process::id()
+        ));
+        let mut settings = Settings {
+            language: flux_core::Locale::French,
+            language_explicit: false,
+            ..Settings::default()
+        };
+        settings.save_to(&path).unwrap();
+        let result = persist_language_change(
+            &mut settings,
+            flux_core::Locale::Japanese,
+            true,
+            |settings| settings.save_to(&path).is_ok(),
+            || {
+                let staged = Settings::load_from(&path).unwrap();
+                assert_eq!(staged.language, flux_core::Locale::Japanese);
+                assert!(staged.language_explicit);
+                Err(std::io::Error::new(
+                    std::io::ErrorKind::BrokenPipe,
+                    "replacement exited",
+                ))
+            },
+        );
+        assert_eq!(result, Err(LanguageChangeError::Commit));
+        let restored = Settings::load_from(&path).unwrap();
+        assert_eq!(restored.language, flux_core::Locale::French);
+        assert!(!restored.language_explicit);
+        assert_eq!(settings.language, restored.language);
+        assert_eq!(settings.language_explicit, restored.language_explicit);
+        std::fs::remove_file(path).unwrap();
+    }
+
+    #[test]
+    fn a_ready_replacement_commits_only_after_its_language_is_saved() {
+        let path =
+            std::env::temp_dir().join(format!("flux-language-commit-{}.json", std::process::id()));
+        let mut settings = Settings::default();
+        assert_eq!(
+            persist_language_change(
+                &mut settings,
+                flux_core::Locale::Japanese,
+                true,
+                |settings| settings.save_to(&path).is_ok(),
+                || {
+                    let saved = Settings::load_from(&path).unwrap();
+                    assert_eq!(saved.language, flux_core::Locale::Japanese);
+                    assert!(saved.language_explicit);
+                    Ok(())
+                }
+            ),
+            Ok(())
+        );
+        assert_eq!(settings.language, flux_core::Locale::Japanese);
+        std::fs::remove_file(path).unwrap();
+    }
 }

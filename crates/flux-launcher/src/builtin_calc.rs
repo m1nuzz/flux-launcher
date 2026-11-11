@@ -18,7 +18,10 @@ impl BuiltinProvider for CalculatorProvider {
             result: SearchResult {
                 id: String::from("builtin:calculator"),
                 title: format!("= {formatted}"),
-                subtitle: format!("Calculator • {expression}"),
+                subtitle: crate::i18n::format(
+                    "Calculator • {expression}",
+                    &[("expression", expression.to_string())],
+                ),
                 kind: ResultKind::Placeholder,
                 source: ResultSource::Plugin,
                 target: None,
