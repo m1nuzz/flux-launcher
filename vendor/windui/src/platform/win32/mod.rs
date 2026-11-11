@@ -1012,6 +1012,45 @@ unsafe fn clear_deactivation_recheck(hwnd: HWND) {
     }
 }
 
+/// Settle the activation of a freshly shown launch window.
+///
+/// A start that is denied the foreground must not leave a visible-but-inactive
+/// window: typing follows the foreground owner and an inactive window never
+/// receives the deactivation that would hide it, so it sits there until the
+/// hotkey toggles it. The refusal happens when the executable is started by a
+/// background process that holds no foreground rights; Explorer, the shortcut
+/// and the tray grant the activation, so ordinary launches are unaffected.
+/// The window is never forced with synthetic input: it either owns the
+/// foreground or waits in the tray, where the hotkey opens it with an
+/// activation the system allows. Returns whether the window stays on screen.
+unsafe fn settle_launch_activation(hwnd: HWND, activate_on_start: bool) -> bool {
+    if !activate_on_start || !show_takes_foreground() {
+        return true;
+    }
+    if !foreground_denied_for_smoke() && GetForegroundWindow() == hwnd {
+        return true;
+    }
+    // SW_SHOW already asked once; ask again in case the shell delivered the
+    // foreground right after the show call.
+    let _ = SetForegroundWindow(hwnd);
+    if !foreground_denied_for_smoke() && GetForegroundWindow() == hwnd {
+        return true;
+    }
+    trace_show_event(hwnd, "launch.foreground_refused", "phase=hide_to_tray");
+    hide_after_deactivation(hwnd);
+    false
+}
+
+/// Test hook: `WINDUI_SMOKE_DENY_FOREGROUND=1` pretends the system refused the
+/// activation, so a smoke can verify the tray fallback on a runner where the
+/// real launch would have won the foreground.
+fn foreground_denied_for_smoke() -> bool {
+    static DENIED: OnceLock<bool> = OnceLock::new();
+    *DENIED.get_or_init(|| {
+        std::env::var_os("WINDUI_SMOKE_DENY_FOREGROUND").is_some_and(|value| value == "1")
+    })
+}
+
 /// Remember a suppressed WA_INACTIVE and retry it after the grace. A newer
 /// suppressed deactivation resets the same timer; a show/hide clears it.
 unsafe fn arm_deactivation_recheck(hwnd: HWND, generation: u32) {
@@ -1419,7 +1458,12 @@ unsafe fn run_windowed(
         let _ = ShowWindow(hwnd, show_command);
         let _ = InvalidateRect(Some(hwnd), None, false);
         let _ = UpdateWindow(hwnd);
-        set_interval_timers(hwnd, true);
+        // The first visible frame is up before the dismissal decision, so a
+        // launch that never became active cannot take input meant for the app
+        // that kept the foreground.
+        if settle_launch_activation(hwnd, cfg.activate_on_start) {
+            set_interval_timers(hwnd, true);
+        }
     }
 
     run_message_loop(hwnd);
@@ -2678,6 +2722,14 @@ pub(crate) fn show_and_activate(hwnd: HWND) {
         // lays out, paints and receives posted messages exactly as when focused.
         if show_takes_foreground() {
             let _ = SetForegroundWindow(hwnd);
+            if GetForegroundWindow() != hwnd {
+                // The same contract as the launch path: a show that cannot
+                // activate is dismissed to the tray instead of leaving a shell
+                // that eats no keys and cannot be clicked away.
+                trace_show_event(hwnd, "show.foreground_refused", "phase=hide_to_tray");
+                hide_after_deactivation(hwnd);
+                return;
+            }
         }
         if let Some(state) = state_from(hwnd) {
             state.handler.on_window_activated();
