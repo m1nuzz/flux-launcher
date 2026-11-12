@@ -194,7 +194,7 @@ Flux Launcher is source-available under the [PolyForm Noncommercial License 1.0.
 
 Any commercial use — including use by or for a business, internal business use, paid distribution, a white-label or OEM build, or a hosted service — requires a paid commercial license. See [COMMERCIAL.md](COMMERCIAL.md).
 
-Contributions are accepted under the [Contributor License Agreement](CLA.md), which keeps the project able to offer both the noncommercial and commercial licenses.
+Contributions are accepted under the [Contributor License Agreement](CLA.md), which assigns the copyright in each contribution to the maintainer and keeps the project able to offer both the noncommercial and commercial licenses.
 
 Versions released before this license change remain under the license they were published with. The vendored `windui` framework keeps its own [MIT](vendor/windui/LICENSE-MIT) OR [Apache-2.0](vendor/windui/LICENSE-APACHE) license; its notices must be preserved.
 

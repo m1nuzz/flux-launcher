@@ -27,7 +27,7 @@ Commercial licensing is arranged individually. Open an issue at <https://github.
 
 ## Contributions
 
-Contributions are accepted under the project's [CLA](CLA.md), which keeps the project able to offer both the noncommercial and commercial licenses.
+Contributions are accepted under the project's [CLA](CLA.md), which assigns the copyright in each contribution to the maintainer and keeps the project able to offer both the noncommercial and commercial licenses.
 
 ## Earlier releases
 
