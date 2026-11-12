@@ -82,6 +82,13 @@ jobs:
         shell: pwsh
         run: ./scripts/single-instance-smoke.ps1 -Executable ./target/x86_64-pc-windows-msvc/release/flux-launcher.exe -WorkDirectory ./artifacts/windows-ui-release/single-instance-smoke
 
+      # A launch that cannot take the foreground must not stay visible but
+      # inactive: typing would land in another app and no outside click could
+      # hide it. The launch either owns the foreground or waits in the tray.
+      - name: Smoke launch foreground ownership
+        shell: pwsh
+        run: ./scripts/launch-focus-smoke.ps1 -Executable ./target/x86_64-pc-windows-msvc/release/flux-launcher.exe -WorkDirectory ./artifacts/windows-ui-release/launch-focus-smoke
+
       - name: Smoke the result viewport after a history recall
         shell: pwsh
         run: ./scripts/recall-scroll-smoke.ps1 -Executable ./target/x86_64-pc-windows-msvc/release/flux-launcher.exe -OutputDirectory ./artifacts/windows-ui-release/recall-scroll-smoke

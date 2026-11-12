@@ -361,7 +361,7 @@ impl<'ast> Visit<'ast> for Calls {
     fn visit_expr_method_call(&mut self, call: &'ast ExprMethodCall) {
         if matches!(
             call.method.to_string().as_str(),
-            "tooltip" | "title" | "subtitle" | "placeholder" | "hint" | "description"
+            "tooltip" | "title" | "subtitle" | "placeholder" | "hint" | "description" | "toast_ok"
         ) {
             if let Some(argument) = call.args.first() {
                 let mut raw = RawUiText::new(&self.bindings);
@@ -466,6 +466,8 @@ fn scanner_detects_raw_status_formats_and_accepts_localized_formats() {
 fn scanner_rejects_raw_tooltips_labels_and_subtitle_formats() {
     let source = r#"fn build() {
         Element::label("Untranslated label").tooltip("Untranslated tooltip");
+        ctx.toast_ok("Untranslated toast");
+        ctx.toast_ok(i18n::tr("Translated toast"));
         Result { subtitle: format!("Untranslated {name}") };
         Result { subtitle: format!("Application • {source}") };
         Element::label(i18n::tr("Translated")).tooltip(i18n::text("Also translated"));
@@ -481,6 +483,7 @@ fn scanner_rejects_raw_tooltips_labels_and_subtitle_formats() {
             "Application • {source}",
             "Untranslated label",
             "Untranslated setting description",
+            "Untranslated toast",
             "Untranslated tooltip",
             "Untranslated {name}"
         ]

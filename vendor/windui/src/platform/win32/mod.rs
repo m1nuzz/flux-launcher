@@ -378,6 +378,9 @@ struct WindowState {
     suppress_deactivation_hide: bool,
     /// Grace period for an asynchronous WA_INACTIVE emitted after SetWindowPos.
     suppress_deactivation_hide_until: Option<Instant>,
+    /// Generation of a WA_INACTIVE that arrived inside the grace. A one-shot
+    /// timer re-checks it after the grace instead of dropping the hide.
+    deactivation_recheck: Option<u32>,
     /// A native tray popup runs a nested message loop. Do not treat transient
     /// activation changes inside that loop as user deactivation while its action
     /// is about to show or hide this same HWND.
@@ -479,6 +482,7 @@ impl WindowState {
             in_size_move: false,
             suppress_deactivation_hide: false,
             suppress_deactivation_hide_until: None,
+            deactivation_recheck: None,
             tray_menu_active: false,
             deactivation_generation: 0,
         }
@@ -945,6 +949,129 @@ pub(crate) unsafe fn wake_main_window(main_hwnd: isize) {
 /// lets SetWindowPos restore the launcher after a transient DWM activation change.
 const WM_APP_DEACTIVATION_CHECK: u32 = WM_APP + 3;
 
+/// One-shot timer that retries a deactivation that arrived inside the resize
+/// grace. Interval timers use 1..=N, so this id never collides with them.
+const DEACTIVATION_RECHECK_TIMER: usize = 0x8000;
+
+/// Grace period after SetWindowPos in which a WA_INACTIVE may be a transient DWM
+/// activation change. A real outside click inside this window is re-checked once
+/// the grace expires, never dropped. The smoke hook stretches the grace so the
+/// regression test can click well inside it on a busy runner.
+fn deactivation_grace() -> Duration {
+    static GRACE: OnceLock<Duration> = OnceLock::new();
+    *GRACE.get_or_init(|| {
+        std::env::var("WINDUI_SMOKE_DEACTIVATION_GRACE_MS")
+            .ok()
+            .and_then(|value| value.parse::<u64>().ok())
+            .map(|ms| Duration::from_millis(ms.clamp(1, 10_000)))
+            .unwrap_or(Duration::from_millis(250))
+    })
+}
+
+/// Whether this deactivation should hide the window now. Kept separate from the
+/// message handlers so the immediate check, the timer retry and the foreground
+/// guard all apply the same policy.
+unsafe fn deactivation_should_hide(hwnd: HWND, generation: u32) -> bool {
+    IsWindowVisible(hwnd).as_bool()
+        && GetForegroundWindow() != hwnd
+        && state_from(hwnd)
+            .map(|state| {
+                state.deactivation_generation == generation
+                    && state.handler.hide_on_deactivate()
+                    && !state.suppress_deactivation_hide
+                    && !state.tray_menu_active
+                    && state
+                        .suppress_deactivation_hide_until
+                        .is_none_or(|until| Instant::now() >= until)
+            })
+            .unwrap_or(false)
+}
+
+/// Two-phase hide (Iron Rule 6): callbacks first, then OS calls after the state
+/// borrow is released.
+unsafe fn hide_after_deactivation(hwnd: HWND) {
+    if let Some(state) = state_from(hwnd) {
+        state.handler.on_window_deactivated();
+        state.handler.on_window_hide();
+    }
+    // Present the post-clear state while still visible, then hide: the frozen
+    // hidden surface must never hold a stale query frame that DWM would sample
+    // between SW_SHOW and the first post-show present on re-show.
+    let _ = InvalidateRect(Some(hwnd), None, false);
+    let _ = UpdateWindow(hwnd);
+    set_interval_timers(hwnd, false);
+    let _ = ShowWindow(hwnd, SW_HIDE);
+    apply_window_geometry_requests(hwnd);
+    clear_deactivation_recheck(hwnd);
+}
+
+unsafe fn clear_deactivation_recheck(hwnd: HWND) {
+    let _ = KillTimer(Some(hwnd), DEACTIVATION_RECHECK_TIMER);
+    if let Some(state) = state_from(hwnd) {
+        state.deactivation_recheck = None;
+    }
+}
+
+/// Settle the activation of a freshly shown launch window.
+///
+/// A start that is denied the foreground must not leave a visible-but-inactive
+/// window: typing follows the foreground owner and an inactive window never
+/// receives the deactivation that would hide it, so it sits there until the
+/// hotkey toggles it. The refusal happens when the executable is started by a
+/// background process that holds no foreground rights; Explorer, the shortcut
+/// and the tray grant the activation, so ordinary launches are unaffected.
+/// The window is never forced with synthetic input: it either owns the
+/// foreground or waits in the tray, where the hotkey opens it with an
+/// activation the system allows. Returns whether the window stays on screen.
+unsafe fn settle_launch_activation(hwnd: HWND, activate_on_start: bool) -> bool {
+    if !activate_on_start || !show_takes_foreground() {
+        return true;
+    }
+    if !foreground_denied_for_smoke() && GetForegroundWindow() == hwnd {
+        return true;
+    }
+    // SW_SHOW already asked once; ask again in case the shell delivered the
+    // foreground right after the show call.
+    let _ = SetForegroundWindow(hwnd);
+    if !foreground_denied_for_smoke() && GetForegroundWindow() == hwnd {
+        return true;
+    }
+    trace_show_event(hwnd, "launch.foreground_refused", "phase=hide_to_tray");
+    hide_after_deactivation(hwnd);
+    false
+}
+
+/// Test hook: `WINDUI_SMOKE_DENY_FOREGROUND=1` pretends the system refused the
+/// activation, so a smoke can verify the tray fallback on a runner where the
+/// real launch would have won the foreground.
+fn foreground_denied_for_smoke() -> bool {
+    static DENIED: OnceLock<bool> = OnceLock::new();
+    *DENIED.get_or_init(|| {
+        std::env::var_os("WINDUI_SMOKE_DENY_FOREGROUND").is_some_and(|value| value == "1")
+    })
+}
+
+/// Remember a suppressed WA_INACTIVE and retry it after the grace. A newer
+/// suppressed deactivation resets the same timer; a show/hide clears it.
+unsafe fn arm_deactivation_recheck(hwnd: HWND, generation: u32) {
+    let until = state_from(hwnd).and_then(|state| state.suppress_deactivation_hide_until);
+    let remaining = until
+        .map(|until| until.saturating_duration_since(Instant::now()))
+        .unwrap_or_default();
+    let delay = remaining.as_millis().min(u32::MAX as u128) as u32;
+    if let Some(state) = state_from(hwnd) {
+        state.deactivation_recheck = Some(generation);
+    }
+    // If the synchronous resize guard is still set, the grace has not been
+    // stored yet: retry shortly, then re-arm for the real remaining time.
+    let _ = SetTimer(
+        Some(hwnd),
+        DEACTIVATION_RECHECK_TIMER,
+        delay.saturating_add(16).max(16),
+        None,
+    );
+}
+
 /// 跨线程唤醒句柄：仅持 HWND 数值，PostMessage 线程安全。
 struct Win32Wake {
     hwnd: isize,
@@ -1331,7 +1458,12 @@ unsafe fn run_windowed(
         let _ = ShowWindow(hwnd, show_command);
         let _ = InvalidateRect(Some(hwnd), None, false);
         let _ = UpdateWindow(hwnd);
-        set_interval_timers(hwnd, true);
+        // The first visible frame is up before the dismissal decision, so a
+        // launch that never became active cannot take input meant for the app
+        // that kept the foreground.
+        if settle_launch_activation(hwnd, cfg.activate_on_start) {
+            set_interval_timers(hwnd, true);
+        }
     }
 
     run_message_loop(hwnd);
@@ -1549,25 +1681,26 @@ unsafe extern "system" fn wnd_proc(
         }
         WM_ACTIVATE => {
             let became_inactive = (wparam.0 & 0xffff) == WA_INACTIVE as usize;
-            let deactivation_generation = state_from(hwnd)
-                .map(|state| state.deactivation_generation)
-                .unwrap_or(0);
-            let should_hide = became_inactive
-                && IsWindowVisible(hwnd).as_bool()
-                && state_from(hwnd)
-                    .map(|state| {
-                        state.handler.hide_on_deactivate()
-                            && !state.suppress_deactivation_hide
-                            && !state.tray_menu_active
-                            && state
-                                .suppress_deactivation_hide_until
-                                .is_none_or(|until| Instant::now() >= until)
-                    })
-                    .unwrap_or(false);
+            let visible = IsWindowVisible(hwnd).as_bool();
+            let (deactivation_generation, hide_policy, suppressed) = state_from(hwnd)
+                .map(|state| {
+                    let grace_active = state
+                        .suppress_deactivation_hide_until
+                        .is_some_and(|until| Instant::now() < until);
+                    (
+                        state.deactivation_generation,
+                        state.handler.hide_on_deactivate() && !state.tray_menu_active,
+                        state.suppress_deactivation_hide || grace_active,
+                    )
+                })
+                .unwrap_or((0, false, false));
+            let eligible = became_inactive && visible && hide_policy;
+            let should_hide = eligible && !suppressed;
 
             let res = DefWindowProcW(hwnd, msg, wparam, lparam);
 
             if should_hide {
+                clear_deactivation_recheck(hwnd);
                 // Recheck foreground ownership after this message returns. DWM can
                 // emit a transient WA_INACTIVE while SetWindowPos changes height;
                 // hiding immediately would clear a valid query during expansion.
@@ -1577,40 +1710,17 @@ unsafe extern "system" fn wnd_proc(
                     WPARAM(0),
                     LPARAM(deactivation_generation as isize),
                 );
+            } else if eligible {
+                // The click is real but lands inside the resize grace. Do not
+                // drop it: retry once the grace expires.
+                arm_deactivation_recheck(hwnd, deactivation_generation);
             }
             res
         }
         WM_APP_DEACTIVATION_CHECK => {
             let check_generation = lparam.0 as u32;
-            let should_hide = IsWindowVisible(hwnd).as_bool()
-                && GetForegroundWindow() != hwnd
-                && state_from(hwnd)
-                    .map(|state| {
-                        state.deactivation_generation == check_generation
-                            && state.handler.hide_on_deactivate()
-                            && !state.suppress_deactivation_hide
-                            && !state.tray_menu_active
-                            && state
-                                .suppress_deactivation_hide_until
-                                .is_none_or(|until| Instant::now() >= until)
-                    })
-                    .unwrap_or(false);
-            if should_hide {
-                // Two-phase execution (Iron Rule 6): release state borrow before
-                // calling ShowWindow, which synchronously dispatches WM_SHOWWINDOW.
-                if let Some(state) = state_from(hwnd) {
-                    state.handler.on_window_deactivated();
-                    state.handler.on_window_hide();
-                }
-                // Present the post-clear state while still visible, then hide:
-                // the frozen hidden surface must never hold a stale query frame
-                // that DWM would sample between SW_SHOW and the first post-show
-                // present on re-show.
-                let _ = InvalidateRect(Some(hwnd), None, false);
-                let _ = UpdateWindow(hwnd);
-                set_interval_timers(hwnd, false);
-                let _ = ShowWindow(hwnd, SW_HIDE);
-                apply_window_geometry_requests(hwnd);
+            if deactivation_should_hide(hwnd, check_generation) {
+                hide_after_deactivation(hwnd);
             }
             LRESULT(0)
         }
@@ -1806,6 +1916,32 @@ unsafe extern "system" fn wnd_proc(
         }
         // 周期定时器回调：timer id = interval 索引 + 1。
         WM_TIMER => {
+            if wparam.0 == DEACTIVATION_RECHECK_TIMER {
+                let _ = KillTimer(Some(hwnd), DEACTIVATION_RECHECK_TIMER);
+                let Some(generation) =
+                    state_from(hwnd).and_then(|state| state.deactivation_recheck)
+                else {
+                    return LRESULT(0);
+                };
+                if !IsWindowVisible(hwnd).as_bool() {
+                    clear_deactivation_recheck(hwnd);
+                } else {
+                    let still_suppressed = state_from(hwnd).is_some_and(|state| {
+                        state.suppress_deactivation_hide
+                            || state
+                                .suppress_deactivation_hide_until
+                                .is_some_and(|until| Instant::now() < until)
+                    });
+                    if still_suppressed {
+                        arm_deactivation_recheck(hwnd, generation);
+                    } else if deactivation_should_hide(hwnd, generation) {
+                        hide_after_deactivation(hwnd);
+                    } else {
+                        clear_deactivation_recheck(hwnd);
+                    }
+                }
+                return LRESULT(0);
+            }
             if !IsWindowVisible(hwnd).as_bool() {
                 return LRESULT(0);
             }
@@ -2224,7 +2360,7 @@ unsafe fn run_window_size_request(hwnd: HWND, request: Option<(i32, i32)>) {
     );
     if let Some(state) = state_from(hwnd) {
         state.suppress_deactivation_hide = false;
-        state.suppress_deactivation_hide_until = Some(Instant::now() + Duration::from_millis(250));
+        state.suppress_deactivation_hide_until = Some(Instant::now() + deactivation_grace());
     }
     if was_foreground && IsWindowVisible(hwnd).as_bool() && GetForegroundWindow() != hwnd {
         let _ = SetForegroundWindow(hwnd);
@@ -2308,6 +2444,7 @@ unsafe fn run_window_op(hwnd: HWND, op: Option<WindowOp>) {
             // Apply the hide callback's compact geometry while the HWND is
             // hidden, and never let WM_SIZE Present a hidden DComp surface.
             apply_window_geometry_requests(hwnd);
+            clear_deactivation_recheck(hwnd);
         }
         Some(WindowOp::ToggleVisibility) => {
             if IsWindowVisible(hwnd).as_bool() {
@@ -2319,6 +2456,7 @@ unsafe fn run_window_op(hwnd: HWND, op: Option<WindowOp>) {
                 set_interval_timers(hwnd, false);
                 let _ = ShowWindow(hwnd, SW_HIDE);
                 apply_window_geometry_requests(hwnd);
+                clear_deactivation_recheck(hwnd);
             } else {
                 show_and_activate(hwnd);
             }
@@ -2477,6 +2615,9 @@ pub(crate) fn show_and_activate(hwnd: HWND) {
     move_to_smoke_display(hwnd);
     unsafe {
         trace_show_event(hwnd, "show.enter", "phase=begin");
+        // A pending retry belongs to the previous presentation. Showing again
+        // must not let it hide the window the user just reopened.
+        clear_deactivation_recheck(hwnd);
         // Prepare app state and DWM material while the HWND is still hidden. This
         // prevents one stale query/backdrop frame from being exposed on re-show.
         if let Some(state) = state_from(hwnd) {
@@ -2581,6 +2722,14 @@ pub(crate) fn show_and_activate(hwnd: HWND) {
         // lays out, paints and receives posted messages exactly as when focused.
         if show_takes_foreground() {
             let _ = SetForegroundWindow(hwnd);
+            if GetForegroundWindow() != hwnd {
+                // The same contract as the launch path: a show that cannot
+                // activate is dismissed to the tray instead of leaving a shell
+                // that eats no keys and cannot be clicked away.
+                trace_show_event(hwnd, "show.foreground_refused", "phase=hide_to_tray");
+                hide_after_deactivation(hwnd);
+                return;
+            }
         }
         if let Some(state) = state_from(hwnd) {
             state.handler.on_window_activated();

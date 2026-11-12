@@ -12,6 +12,7 @@
 
 <p align="center">
   <a href="https://github.com/m1nuzz/flux-launcher/releases/latest"><img src="https://img.shields.io/github/v/release/m1nuzz/flux-launcher?label=latest%20release" alt="Latest release"></a>
+  <a href="https://github.com/m1nuzz/flux-launcher/releases"><img src="https://img.shields.io/github/downloads/m1nuzz/flux-launcher/total?label=downloads" alt="Total downloads"></a>
   <a href="https://github.com/m1nuzz/flux-launcher/actions/workflows/ci.yml"><img src="https://github.com/m1nuzz/flux-launcher/actions/workflows/ci.yml/badge.svg?branch=main" alt="CI status"></a>
   <a href="https://github.com/m1nuzz/flux-launcher/blob/main/LICENSE"><img src="https://img.shields.io/badge/license-PolyForm%20Noncommercial%201.0.0-2ea44f.svg" alt="PolyForm Noncommercial 1.0.0 license"></a>
   <a href="https://ko-fi.com/m1nuz"><img src="https://img.shields.io/badge/Support%20on-Ko--fi-ff5e5b?logo=ko-fi&logoColor=white" alt="Support Flux Launcher on Ko-fi"></a>
@@ -20,10 +21,10 @@
 
 <p align="center">
   <a href="https://github.com/m1nuzz/flux-launcher/releases/latest/download/FluxLauncher-Setup.exe">Download</a>
-  · <a href="#features">Features</a>
+  · <a href="#why-flux-launcher">Features</a>
   · <a href="#usage">Usage</a>
   · <a href="#performance">Performance</a>
-  · <a href="#plugins">Plugins</a>
+  · <a href="#plugins-and-providers">Plugins</a>
   · <a href="#build-from-source">Build</a>
 </p>
 
@@ -224,6 +225,10 @@ The release workflow signs stable Windows artifacts only when the encrypted `WIN
 ## Project status
 
 Flux Launcher is actively developed. The `main` branch may contain improvements that have not yet been packaged into a stable release. Download the [latest installer](https://github.com/m1nuzz/flux-launcher/releases/latest/download/FluxLauncher-Setup.exe), or follow development in the [issue tracker](https://github.com/m1nuzz/flux-launcher/issues).
+
+## Privacy
+
+Flux Launcher is local-first: there is no telemetry, analytics, or account. See [PRIVACY.md](PRIVACY.md) for what is stored locally, GitHub update checks, the optional Google Search provider, and the separate behavior of community plugins.
 
 ## Support
 

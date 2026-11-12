@@ -11,7 +11,8 @@ use super::settings_stats::STATS_TAB_INDEX;
 use super::settings_ui::SettingsUi;
 use super::startup;
 use super::theme_text::{
-    parse_selection_color, rgb_to_hsv, selection_color_hex, stage_selection_color,
+    parse_selection_color, push_selection_appearance, rgb_to_hsv, selection_color_hex,
+    selection_rgb_for_settings, stage_selection_color,
 };
 use super::ui_constants::COMPACT_WINDOW_HEIGHT;
 use super::update_tasks::{
@@ -417,6 +418,46 @@ pub(crate) fn has_unsaved_changes(ui: &SettingsUi) -> bool {
         || settings.priority_entries != ui.priorities.get()
 }
 
+/// Discard every pending edit and put the draft signals back on the values that
+/// are actually stored, without touching the settings file or the live hotkey
+/// registrations (those only change on Apply). The size pair travels back on the
+/// same eased curve as Reset tab defaults instead of snapping.
+pub(crate) fn revert_settings(ui: &SettingsUi, ctx: &mut EventCtx) {
+    let stored = match ui.shared_settings.read() {
+        Ok(settings) => (*settings).clone(),
+        Err(_) => {
+            ctx.toast_ok(crate::i18n::tr("Could not lock Flux settings"));
+            return;
+        }
+    };
+    reset_general(ui, &stored);
+    ui.language.set(if stored.language_explicit {
+        stored.language.index() + 1
+    } else {
+        0
+    });
+    reset_visual(ui, &stored);
+    reset_plugins(ui, &stored);
+    ui.priorities.set(stored.priority_entries.clone());
+    // A recorder still armed has its global hotkey unregistered and swallows
+    // every keystroke, so leaving recording is part of reverting the drafts.
+    ui.activation_recording.set(false);
+    ui.activation_handle.set_enabled(true);
+    ui.game_mode_recording.set(false);
+    ui.game_mode_handle
+        .set_enabled(stored.game_mode_hotkey_enabled);
+    ui.game_mode_status.set(game_mode_label(stored.game_mode));
+    // The color controls stage the live selection appearance as they are used;
+    // push the stored appearance back so Revert is visible now, not at restart.
+    push_selection_appearance(
+        &ui.theme_handle,
+        ui.selection_color,
+        selection_rgb_for_settings(&stored),
+    );
+    eprintln!("Settings revert dispatched");
+    ctx.toast_ok(crate::i18n::tr("Changes discarded"));
+}
+
 /// Hand an available update to the installer without leaving Settings.
 pub(crate) fn install_update(ui: &SettingsUi, ctx: &mut EventCtx) {
     if ui.update_installing.get() {
@@ -665,6 +706,440 @@ mod language_transaction_tests {
             assert_eq!(synced_startup.get(), Some(enabled));
             assert_eq!(settings.language, flux_core::Locale::Japanese);
             std::fs::remove_file(&path).unwrap();
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::provider_snapshot::ProviderResults;
+    use crate::update_tasks::UpdateInstallResponse;
+    use flux_core::{MonitorPreference, PriorityEntry, SearchResult};
+    use std::cell::{Cell, RefCell};
+    use std::rc::Rc;
+    use std::sync::{Arc, RwLock};
+    use windui::prelude::*;
+
+    /// The Settings panel's draft signals, built the way `main` builds them but
+    /// without a window: the signals and handles are plain shared state, so the
+    /// footer actions can run against them under `windui::testing`.
+    fn fixture(stored: &Settings) -> SettingsUi {
+        let mut app = App::new("Flux settings test", 320, 200);
+        let theme_handle = app.theme_handle();
+        let window_size = app.window_size_handle();
+        let window_position = app.window_position_handle();
+        let activation_handle = app.hotkey_handle(Hotkey::new(Key::Space).alt(), |_| {});
+        let game_mode_handle = app.hotkey_handle(Hotkey::new(Key::Char('G')).ctrl(), |_| {});
+        let update_install_sender = app.channel::<UpdateInstallResponse>(|_, _| {});
+        let update_sender = app.channel::<updater::UpdateCheckResponse>(|_, _| {});
+        SettingsUi {
+            visual_preview: Rc::new(RefCell::new(None)),
+            language: signal(if stored.language_explicit {
+                stored.language.index() + 1
+            } else {
+                0
+            }),
+            shared_settings: Arc::new(RwLock::new(stored.clone())),
+            query_history: Rc::new(RefCell::new(Vec::new())),
+            stats_usage: signal(String::new()),
+            stats_top: signal(String::new()),
+            clear_history_confirm: signal(false),
+            history_cursor: signal(None::<usize>),
+            priorities: signal(stored.priority_entries.clone()),
+            update_status: signal(String::new()),
+            update_available: signal(None::<updater::StableUpdate>),
+            update_install_progress: signal(None::<(String, updater::DownloadProgress)>),
+            update_installing: signal(false),
+            update_install_sender,
+            update_install_in_flight: Rc::new(Cell::new(false)),
+            update_sender,
+            update_check_in_flight: Rc::new(Cell::new(false)),
+            game_mode: signal(stored.game_mode),
+            game_mode_status: signal(game_mode_label(stored.game_mode)),
+            settings_visible: signal(false),
+            settings_tab: signal(0),
+            width_ease: Rc::new(Cell::new(None)),
+            height_ease: Rc::new(Cell::new(None)),
+            show_results: signal(false),
+            activation_display: signal(hotkeys::display_config(&stored.activation_hotkey)),
+            activation_key: signal(stored.activation_hotkey.key.clone()),
+            activation_ctrl: signal(stored.activation_hotkey.ctrl),
+            activation_alt: signal(stored.activation_hotkey.alt),
+            activation_shift: signal(stored.activation_hotkey.shift),
+            activation_meta: signal(stored.activation_hotkey.meta),
+            activation_recording: signal(false),
+            activation_handle,
+            game_mode_key: signal(stored.game_mode_hotkey.key.clone()),
+            game_mode_display: signal(hotkeys::display_config(&stored.game_mode_hotkey)),
+            game_mode_recording: signal(false),
+            game_mode_ctrl: signal(stored.game_mode_hotkey.ctrl),
+            game_mode_alt: signal(stored.game_mode_hotkey.alt),
+            game_mode_shift: signal(stored.game_mode_hotkey.shift),
+            game_mode_meta: signal(stored.game_mode_hotkey.meta),
+            game_mode_hotkey_enabled: signal(stored.game_mode_hotkey_enabled),
+            game_mode_handle,
+            ignore_fullscreen: signal(stored.ignore_hotkeys_in_fullscreen),
+            smooth_caret: signal(stored.smooth_caret),
+            switch_to_english_layout: signal(stored.switch_to_english_layout),
+            use_system_accent: signal(stored.use_system_accent),
+            selection_color: signal(crate::theme_text::selection_color_for_settings(stored)),
+            theme_handle,
+            custom_selection_color: signal(selection_color_hex(stored.custom_selection_color)),
+            color_hsv: signal(rgb_to_hsv(
+                ((stored.custom_selection_color >> 16) & 0xff) as u8,
+                ((stored.custom_selection_color >> 8) & 0xff) as u8,
+                (stored.custom_selection_color & 0xff) as u8,
+            )),
+            caret_duration: signal(stored.smooth_caret_duration_ms.to_string()),
+            launcher_width: signal(stored.launcher_width),
+            launcher_height: signal(stored.launcher_height),
+            launcher_width_input: signal(stored.launcher_width.to_string()),
+            launcher_height_input: signal(stored.launcher_height.to_string()),
+            launcher_width_slider: signal(dimension_slider_fraction(
+                stored.launcher_width,
+                MIN_LAUNCHER_WIDTH,
+                MAX_LAUNCHER_WIDTH,
+            )),
+            launcher_height_slider: signal(dimension_slider_fraction(
+                stored.launcher_height,
+                MIN_LAUNCHER_HEIGHT,
+                MAX_LAUNCHER_HEIGHT,
+            )),
+            launcher_preview_text: signal(String::new()),
+            clear_query_on_activation: signal(stored.clear_query_on_activation),
+            start_with_windows: signal(stored.start_with_windows),
+            auto_enable_everything: signal(stored.auto_enable_everything),
+            update_checks_enabled: signal(stored.update_checks_enabled),
+            update_interval_hours: signal(stored.update_interval_hours.to_string()),
+            auto_install_updates: signal(stored.auto_install_updates),
+            obsidian_enabled: signal(stored.obsidian_enabled),
+            obsidian_alias: signal(stored.obsidian_alias.clone()),
+            google_enabled: signal(stored.google_enabled),
+            google_alias: signal(stored.google_alias.clone()),
+            everything_status: signal(String::new()),
+            everything_installed: signal(true),
+            monitor_preference: signal(monitor_preference_index(stored.monitor_preference)),
+            window_size,
+            window_position,
+            settings_hide_request: signal(false),
+            query: signal(String::new()),
+            results: signal(Vec::<SearchResult>::new()),
+            providers: Rc::new(RefCell::new(ProviderResults::default())),
+        }
+    }
+
+    /// A stored configuration that differs from the defaults on every field the
+    /// revert has to put back, so a stray write of defaults cannot pass.
+    fn customized_settings() -> Settings {
+        Settings {
+            activation_hotkey: HotkeyConfig {
+                ctrl: true,
+                alt: false,
+                shift: true,
+                meta: false,
+                key: String::from("K"),
+            },
+            ignore_hotkeys_in_fullscreen: false,
+            game_mode: true,
+            game_mode_hotkey_enabled: false,
+            smooth_caret: false,
+            switch_to_english_layout: false,
+            use_system_accent: false,
+            custom_selection_color: 0x10_7c_10,
+            launcher_width: 512,
+            launcher_height: 640,
+            clear_query_on_activation: false,
+            start_with_windows: false,
+            auto_enable_everything: false,
+            update_checks_enabled: false,
+            update_interval_hours: 6,
+            auto_install_updates: true,
+            obsidian_enabled: false,
+            obsidian_alias: String::from("notes"),
+            google_enabled: false,
+            google_alias: String::from("web"),
+            monitor_preference: MonitorPreference::Primary,
+            smooth_caret_duration_ms: 120,
+            priority_entries: vec![PriorityEntry {
+                id: String::from("application:steam"),
+                title: String::from("Steam"),
+                target: String::from("C:/Steam.lnk"),
+            }],
+            ..Settings::default()
+        }
+    }
+
+    fn edit_every_tab(ui: &SettingsUi) {
+        ui.launcher_width_input.set(String::from("700"));
+        ui.launcher_height_input.set(String::from("520"));
+        ui.launcher_width_slider.set(0.9);
+        ui.launcher_height_slider.set(0.9);
+        ui.width_ease
+            .set(Some((0.9, 0.2, std::time::Instant::now())));
+        ui.height_ease
+            .set(Some((0.9, 0.2, std::time::Instant::now())));
+        ui.smooth_caret.set(true);
+        ui.caret_duration.set(String::from("60"));
+        ui.use_system_accent.set(true);
+        ui.custom_selection_color.set(String::from("#FF0000"));
+        ui.clear_query_on_activation.set(true);
+        ui.start_with_windows.set(true);
+        ui.auto_enable_everything.set(true);
+        ui.update_checks_enabled.set(true);
+        ui.update_interval_hours.set(String::from("48"));
+        ui.auto_install_updates.set(false);
+        ui.obsidian_enabled.set(true);
+        ui.obsidian_alias.set(String::from("x"));
+        ui.google_enabled.set(true);
+        ui.google_alias.set(String::from("y"));
+        ui.monitor_preference.set(2);
+        ui.game_mode.set(false);
+        ui.game_mode_hotkey_enabled.set(true);
+        ui.ignore_fullscreen.set(true);
+        ui.switch_to_english_layout.set(true);
+        ui.activation_ctrl.set(false);
+        ui.activation_alt.set(true);
+        ui.activation_shift.set(false);
+        ui.activation_key.set(String::from("Space"));
+        ui.priorities.set(Vec::new());
+    }
+
+    /// Emulate the tick + frame callback once the size ease has landed: the
+    /// slider reaches its target and the tick writes the width fields back.
+    fn land_size_ease(ui: &SettingsUi, stored: &Settings) {
+        ui.launcher_width_slider.set(dimension_slider_fraction(
+            stored.launcher_width,
+            MIN_LAUNCHER_WIDTH,
+            MAX_LAUNCHER_WIDTH,
+        ));
+        ui.launcher_height_slider.set(dimension_slider_fraction(
+            stored.launcher_height,
+            MIN_LAUNCHER_HEIGHT,
+            MAX_LAUNCHER_HEIGHT,
+        ));
+        ui.launcher_width.set(stored.launcher_width);
+        ui.launcher_height.set(stored.launcher_height);
+        ui.launcher_width_input
+            .set(stored.launcher_width.to_string());
+        ui.launcher_height_input
+            .set(stored.launcher_height.to_string());
+    }
+
+    #[test]
+    fn revert_puts_every_draft_back_on_the_stored_values() {
+        let stored = customized_settings();
+        let ui = fixture(&stored);
+        edit_every_tab(&ui);
+        assert!(has_unsaved_changes(&ui));
+
+        windui::testing::run_with_ctx(|ctx| revert_settings(&ui, ctx));
+
+        assert!(!ui.smooth_caret.get());
+        assert_eq!(ui.caret_duration.get(), "120");
+        assert!(!ui.use_system_accent.get());
+        assert_eq!(ui.custom_selection_color.get(), "#107C10");
+        assert_eq!(
+            ui.selection_color.get(),
+            Color::rgba(16, 124, 16, 84),
+            "the live selection color must follow the restored draft"
+        );
+        assert!(!ui.clear_query_on_activation.get());
+        assert!(!ui.start_with_windows.get());
+        assert!(!ui.auto_enable_everything.get());
+        assert!(!ui.update_checks_enabled.get());
+        assert_eq!(ui.update_interval_hours.get(), "6");
+        assert!(ui.auto_install_updates.get());
+        assert!(!ui.obsidian_enabled.get());
+        assert_eq!(ui.obsidian_alias.get(), "notes");
+        assert!(!ui.google_enabled.get());
+        assert_eq!(ui.google_alias.get(), "web");
+        assert_eq!(ui.monitor_preference.get(), 0);
+        assert!(ui.game_mode.get());
+        assert!(!ui.game_mode_hotkey_enabled.get());
+        assert!(!ui.ignore_fullscreen.get());
+        assert!(!ui.switch_to_english_layout.get());
+        assert_eq!(ui.activation_key.get(), "K");
+        assert_eq!(ui.activation_display.get(), "Ctrl + Shift + K");
+        assert_eq!(ui.priorities.get(), stored.priority_entries);
+        assert_eq!(
+            *ui.shared_settings.read().unwrap(),
+            stored,
+            "Revert is a draft action; Apply remains the only persist point"
+        );
+
+        // The size pair travels back on the eased curve instead of snapping;
+        // once the ease lands the footer has nothing left to save.
+        land_size_ease(&ui, &stored);
+        assert_eq!(ui.launcher_width_input.get(), "512");
+        assert_eq!(ui.launcher_height_input.get(), "640");
+        assert!(!has_unsaved_changes(&ui));
+    }
+
+    #[test]
+    fn revert_eases_the_size_back_instead_of_snapping() {
+        let stored = Settings::default();
+        let ui = fixture(&stored);
+        ui.launcher_width_input.set(String::from("700"));
+        ui.launcher_height_input.set(String::from("520"));
+        ui.launcher_width_slider.set(0.9);
+        ui.launcher_height_slider.set(0.9);
+        assert!(has_unsaved_changes(&ui));
+
+        windui::testing::run_with_ctx(|ctx| revert_settings(&ui, ctx));
+
+        // Same contract as Reset tab defaults: the slider keeps its current
+        // position and the frame callback eases it to the stored fraction.
+        let (from, to, _) = ui.width_ease.get().expect("width ease starts");
+        assert_eq!(from, 0.9);
+        assert_eq!(
+            to,
+            dimension_slider_fraction(
+                stored.launcher_width,
+                MIN_LAUNCHER_WIDTH,
+                MAX_LAUNCHER_WIDTH
+            )
+        );
+        assert_eq!(ui.launcher_width_slider.get(), 0.9);
+        let (from, to, _) = ui.height_ease.get().expect("height ease starts");
+        assert_eq!(from, 0.9);
+        assert_eq!(
+            to,
+            dimension_slider_fraction(
+                stored.launcher_height,
+                MIN_LAUNCHER_HEIGHT,
+                MAX_LAUNCHER_HEIGHT
+            )
+        );
+
+        // A second revert with the glide still running re-targets the same
+        // stored value from wherever the thumb is now, and nothing is persisted.
+        windui::testing::run_with_ctx(|ctx| revert_settings(&ui, ctx));
+        assert!(ui.width_ease.get().is_some());
+        assert_eq!(*ui.shared_settings.read().unwrap(), stored);
+
+        land_size_ease(&ui, &stored);
+        assert!(!has_unsaved_changes(&ui));
+    }
+
+    #[test]
+    fn revert_restores_explicit_and_system_language_drafts_for_every_locale() {
+        for language in flux_core::Locale::ALL {
+            crate::i18n::with_locale(language, || {
+                for explicit in [true, false] {
+                    let stored = Settings {
+                        language,
+                        language_explicit: explicit,
+                        ..Settings::default()
+                    };
+                    let ui = fixture(&stored);
+                    assert!(!has_unsaved_changes(&ui));
+                    ui.language
+                        .set(if explicit { 0 } else { language.index() + 1 });
+                    assert!(has_unsaved_changes(&ui));
+                    windui::testing::run_with_ctx(|ctx| revert_settings(&ui, ctx));
+                    assert_eq!(
+                        ui.language.get(),
+                        if explicit { language.index() + 1 } else { 0 }
+                    );
+                    assert!(
+                        !has_unsaved_changes(&ui),
+                        "{} / explicit={explicit}",
+                        language.code()
+                    );
+                    assert_eq!(*ui.shared_settings.read().unwrap(), stored);
+                }
+            });
+        }
+    }
+
+    #[test]
+    fn reset_general_still_selects_system_default_language() {
+        let stored = Settings {
+            language: flux_core::Locale::French,
+            language_explicit: true,
+            ..Settings::default()
+        };
+        let ui = fixture(&stored);
+        reset_general(&ui, &Settings::default());
+        assert_eq!(ui.language.get(), 0);
+        assert_eq!(*ui.shared_settings.read().unwrap(), stored);
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn localized_footer_controls_fit_without_overlap_for_every_locale() {
+        use crate::settings_shell::build_settings_panel;
+        use crate::ui_constants::{LAUNCHER_FONT_FAMILY, SETTINGS_WINDOW_WIDTH};
+        use windui::core::Tree;
+        use windui::text::DWriteEngine;
+
+        struct RestoreLocale(String);
+        impl Drop for RestoreLocale {
+            fn drop(&mut self) {
+                windui::text::set_ui_locale(&self.0);
+            }
+        }
+        let _restore = RestoreLocale(windui::text::ui_locale());
+        for language in flux_core::Locale::ALL {
+            windui::text::set_ui_locale(language.code());
+            crate::i18n::with_locale(language, || {
+                let stored = Settings {
+                    language,
+                    language_explicit: true,
+                    ..Settings::default()
+                };
+                let ui = fixture(&stored);
+                ui.language.set(0);
+                let panel = build_settings_panel(
+                    &ui,
+                    Element::leaf(),
+                    Element::leaf(),
+                    Element::leaf(),
+                    Element::leaf(),
+                    Element::leaf(),
+                )
+                .font_family(LAUNCHER_FONT_FAMILY);
+                let mut tree = Tree::new();
+                let root = panel.build(&mut tree);
+                tree.root = Some(root);
+                let mut engine = DWriteEngine::new();
+                tree.layout_root(Size::new(SETTINGS_WINDOW_WIDTH, 520), &mut engine);
+                let body = *tree.get(root).unwrap().children.last().unwrap();
+                let content = *tree.get(body).unwrap().children.last().unwrap();
+                let footer = *tree.get(content).unwrap().children.last().unwrap();
+                let bounds = tree.abs_bounds(footer);
+                let controls = &tree.get(footer).unwrap().children;
+                assert_eq!(controls.len(), 3);
+                let mut right = bounds.x;
+                for id in controls {
+                    let node = tree.get(*id).unwrap();
+                    let rect = tree.abs_bounds(*id);
+                    assert!(node.effective_visible());
+                    assert!(rect.w > 0 && rect.h > 0);
+                    assert!(
+                        rect.x >= right && rect.x + rect.w <= bounds.x + bounds.w,
+                        "{} footer controls overlap or overflow: {rect:?} / {bounds:?}",
+                        language.code()
+                    );
+                    assert!(rect.y >= bounds.y && rect.y + rect.h <= bounds.y + bounds.h);
+                    let natural =
+                        node.widget
+                            .measure(Size::new(rect.w, 1000), &node.style, &mut engine);
+                    assert!(
+                        natural.w <= rect.w && natural.h <= rect.h,
+                        "{} footer caption is clipped: {natural:?} / {rect:?}",
+                        language.code()
+                    );
+                    right = rect.x + rect.w;
+                }
+                assert_eq!(
+                    tree.get(controls[1]).unwrap().tooltip.as_deref(),
+                    Some(crate::i18n::tr(
+                        "Discard unsaved changes and restore the saved values."
+                    ))
+                );
+            });
         }
     }
 }

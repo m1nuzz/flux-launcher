@@ -86,31 +86,6 @@ fn smoke_alt_held() -> bool {
     std::env::var_os("FLUX_SMOKE_ALT_FILE").is_some_and(|path| std::path::Path::new(&path).exists())
 }
 
-#[cfg(windows)]
-pub(crate) fn launcher_is_foreground() -> bool {
-    use windows::Win32::System::Threading::GetCurrentProcessId;
-    use windows::Win32::UI::WindowsAndMessaging::{GetForegroundWindow, GetWindowThreadProcessId};
-
-    unsafe {
-        let foreground = GetForegroundWindow();
-        if foreground.is_invalid() {
-            return false;
-        }
-        let mut process_id = 0_u32;
-        GetWindowThreadProcessId(foreground, Some(&mut process_id));
-        process_id == GetCurrentProcessId()
-    }
-}
-
-#[cfg(not(windows))]
-pub(crate) fn launcher_is_foreground() -> bool {
-    false
-}
-
-pub(crate) fn should_show_launcher(is_foreground: bool) -> bool {
-    !is_foreground
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -216,11 +191,5 @@ mod tests {
             shift: true,
             ctrl: false,
         }));
-    }
-
-    #[test]
-    fn activation_shows_when_flux_is_not_foreground() {
-        assert!(should_show_launcher(false));
-        assert!(!should_show_launcher(true));
     }
 }

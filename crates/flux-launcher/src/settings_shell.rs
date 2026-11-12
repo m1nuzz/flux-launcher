@@ -1,7 +1,8 @@
 use windui::prelude::*;
 
 use super::settings_actions::{
-    apply_settings, close_settings, has_unsaved_changes, reset_active_tab, tab_is_resettable,
+    apply_settings, close_settings, has_unsaved_changes, reset_active_tab, revert_settings,
+    tab_is_resettable,
 };
 use super::settings_ui::SettingsUi;
 use super::ui_constants::SETTINGS_SIDEBAR_WIDTH;
@@ -179,6 +180,8 @@ pub(crate) fn build_settings_panel(
     let header = heading;
 
     let ui_for_hint = ui.clone();
+    let ui_for_revert = ui.clone();
+    let ui_for_revert_visible = ui.clone();
     let ui_for_apply_visible = ui.clone();
     let footer = Element::row()
         .width_match()
@@ -192,6 +195,15 @@ pub(crate) fn build_settings_panel(
             .fg(Color::rgba(235, 241, 255, 210))
             .weight(1.0)
             .visible_when(move || has_unsaved_changes(&ui_for_hint)),
+        )
+        .child(
+            Element::button(crate::i18n::tr("Revert"))
+                .neutral()
+                .visible_when(move || has_unsaved_changes(&ui_for_revert_visible))
+                .tooltip(crate::i18n::tr(
+                    "Discard unsaved changes and restore the saved values.",
+                ))
+                .on_click(move |ctx| revert_settings(&ui_for_revert, ctx)),
         )
         .child(
             Element::button(crate::i18n::tr("\u{2713} Apply settings"))
