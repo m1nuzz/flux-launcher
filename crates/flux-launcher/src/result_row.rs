@@ -48,6 +48,12 @@ pub(crate) struct ResultRowAnchor {
     last_pointer: Option<(i32, i32)>,
     last_selected: Option<bool>,
     last_query: String,
+    last_launcher_width: u16,
+}
+
+fn result_title_width(launcher_width: u16) -> i32 {
+    // 行内可用宽度：左右内边距、图标、两个子项间距和右侧 Enter 提示。
+    i32::from(launcher_width).saturating_sub(98).max(0)
 }
 
 pub(crate) fn hover_position_changed(last: &mut Option<(i32, i32)>, position: (i32, i32)) -> bool {
@@ -85,10 +91,15 @@ impl Widget for ResultRowAnchor {
         let query = self.query.get();
         let selection_changed = self.last_selected != Some(selected);
         let query_changed = self.last_query != query;
+        let launcher_width = self.launcher_width.get();
+        let width_changed = self.last_launcher_width != launcher_width;
         let scroll_requested = self.scroll_pending.get();
-        if selection_changed || query_changed {
-            self.title_doc_signal
-                .set(title_match_doc(&self.title, &query));
+        if selection_changed || query_changed || width_changed {
+            self.title_doc_signal.set(title_match_doc(
+                &self.title,
+                &query,
+                result_title_width(launcher_width),
+            ));
             self.trailing_signal.set(if selected {
                 String::from("↵")
             } else {
@@ -97,6 +108,7 @@ impl Widget for ResultRowAnchor {
         }
         self.last_selected = Some(selected);
         self.last_query = query;
+        self.last_launcher_width = launcher_width;
         // Scroll only after an explicit query/keyboard request. Wheel scrolling,
         // hover selection, and list repaints must never call scroll_into_view;
         // doing so feeds a layout mutation back into the ScrollWidget and pins
@@ -387,7 +399,12 @@ pub(crate) fn result_row(
         .height(32)
         .corner(7.0);
     let selected = selected_id.get() == id;
-    let title_doc_signal = signal(title_match_doc(&title, &query.get()));
+    let initial_launcher_width = launcher_width.get();
+    let title_doc_signal = signal(title_match_doc(
+        &title,
+        &query.get(),
+        result_title_width(initial_launcher_width),
+    ));
     let trailing_signal = signal(if selected {
         String::from("↵")
     } else {
@@ -418,6 +435,7 @@ pub(crate) fn result_row(
             last_pointer: None,
             last_selected: None,
             last_query: query.get(),
+            last_launcher_width: initial_launcher_width,
         })
         .reactive()
         .width_match()

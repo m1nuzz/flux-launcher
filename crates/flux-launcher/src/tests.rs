@@ -19,7 +19,6 @@ use crate::query::{
     ProviderResults,
 };
 use crate::result_row::hover_position_changed;
-use crate::ui_helpers::display_title;
 use crate::update_state::{format_bytes, format_update_progress};
 use crate::updater::relaunch_mode_for_auto_install;
 use crate::window_state::{
@@ -554,26 +553,6 @@ fn extension_aliases_normalize_only_the_everything_query_prefix() {
     assert_eq!(normalize_everything_query("."), ".");
 }
 
-#[test]
-fn display_title_keeps_extension_and_filename_ending_visible() {
-    let first = display_title("finishлицензии_0019.veg");
-    let second = display_title("finishлицензии_0019_Untitled Timeline.veg");
-    assert_eq!(first, "finishлицензии_0019.veg");
-    assert!(first.ends_with(".veg"));
-    assert!(second.ends_with(".veg"));
-    assert!(second.contains("Timeline"));
-    assert_ne!(first, second);
-}
-
-#[test]
-fn display_title_uses_middle_ellipsis_for_long_names() {
-    let displayed = display_title("finishлицензии_0019_Untitled Timeline.veg");
-    assert!(displayed.contains('…'));
-    assert!(displayed.ends_with(".veg"));
-    assert!(displayed.starts_with("finish"));
-    assert!(displayed.contains("Timeline"));
-    assert!(displayed.chars().count() <= 26);
-}
 
 #[test]
 fn activation_shows_while_window_is_hidden() {

@@ -203,6 +203,10 @@ pub struct Para {
     /// （如搜索结果行标题）用。与 `clamp` 互斥；设此位时布局按它限行，溢出处以「…」
     /// 收尾，`clamp_expanded` 保持 None（不进折叠快照）。
     plain_lines: Option<usize>,
+    /// 宽度（像素）限制的纯省略号单行截断：当段落总宽度超过 `width` 时，布局会在
+    /// 内容期计算宽度，并把文本截断为「头部 + … + 尾部」的中间省略形式。仅用于单行
+    /// 标题等不能折行的生命周期场景。`plain_lines` 与它互斥。
+    plain_middle: Option<i32>,
 }
 
 impl Para {
@@ -315,6 +319,13 @@ impl Para {
     /// 的「… 展开」可展开标记：点击不会展开、也不会破坏所在布局。
     pub fn max_lines_plain(mut self, n: usize) -> Self {
         self.plain_lines = Some(n.max(1));
+        self
+    }
+
+    /// 宽度（像素）限制的单行中间省略截断：当段落总宽度超过 `width` 时，布局会把文本
+    /// 截断为「头部 + … + 尾部」的中间省略形式。仅用于单行标题等不能折行的场景。
+    pub fn max_lines_plain_middle(mut self, width: i32) -> Self {
+        self.plain_middle = Some(width.max(0));
         self
     }
 }
@@ -552,6 +563,8 @@ struct LayoutKey {
     collapsed: Vec<bool>,
     /// 主题间距参数（para_spacing, section_indent）。
     spacing: (i32, i32),
+    /// 文本段落 `plain_middle` 宽度限制的最大值（若任意段落设置了该值则为 Some）。
+    plain_middle: Option<i32>,
 }
 
 /// 布局产物。
@@ -572,6 +585,7 @@ struct RichLayout {
 }
 
 /// 行内待排项（碎片测量结果 + 盒参数）。
+#[derive(Clone)]
 struct Item {
     text: String,
     style: FragStyle,
@@ -862,7 +876,14 @@ impl Walker<'_> {
         // 词典编号义项即此："1. 释义…" 换行后续行对齐释义首字而非编号。
         let x_first = indent + p.indent;
         let x_rest = indent + p.hanging.unwrap_or(p.indent);
-        let mut x0 = x_first;
+        let x0 = x_first;
+        // 纯文本中间省略按实际像素宽度布局；它必须在普通换行/行数截断前处理，
+        // 否则尾部省略会与中间省略叠加。
+        if let Some(width) = p.plain_middle {
+            self.para_plain_middle(p, styles, base, x0, width, extra);
+            return;
+        }
+        let mut x0 = x0;
         let mut line: Vec<Item> = Vec::new();
         let mut x = x0;
         if let Some(it) = extra {
@@ -936,6 +957,111 @@ impl Walker<'_> {
                 }
             }
         }
+        self.flush_line(&mut line, x0);
+    }
+
+    /// 按像素宽度排单行中间省略，保留原 span 样式和尾部扩展名。
+    fn para_plain_middle(
+        &mut self,
+        p: &Para,
+        styles: &HashMap<String, SpanStyle>,
+        base: &Style,
+        x0: i32,
+        width: i32,
+        extra: Option<Item>,
+    ) {
+        let mut chars: Vec<Item> = Vec::new();
+        for span in &p.spans {
+            let style = self.resolve(span, styles, base);
+            for character in span.text.chars() {
+                let text = character.to_string();
+                chars.push(self.item(&text, &style, false, false, span.id.clone()));
+            }
+        }
+        if chars.is_empty() {
+            return;
+        }
+
+        let extra_width = extra.as_ref().map_or(0, Item::box_w);
+        let available = (width - x0 - extra_width).max(0);
+        let full_width: i32 = chars.iter().map(Item::box_w).sum();
+        let mut line = Vec::new();
+        if full_width <= available {
+            if let Some(item) = extra {
+                line.push(item);
+            }
+            line.extend(chars);
+            self.flush_line(&mut line, x0);
+            return;
+        }
+
+        let ellipsis_style = FragStyle {
+            size: base.font_size,
+            weight: base.font_weight,
+            family: base.font_family.clone(),
+            line_height: base.line_height,
+            fg: None,
+            bg: None,
+            underline: false,
+            strike: false,
+            chip: false,
+        };
+        let ellipsis = self.item("…", &ellipsis_style, false, false, None);
+        let remaining = available.saturating_sub(ellipsis.box_w());
+        if remaining <= 0 {
+            if let Some(item) = extra {
+                line.push(item);
+            }
+            line.push(ellipsis);
+            self.flush_line(&mut line, x0);
+            return;
+        }
+
+        // 先给尾部至少保留扩展名，再把剩余空间分给头部和尾部。
+        let extension_start = chars
+            .iter()
+            .enumerate()
+            .rev()
+            .find_map(|(index, item)| (item.text == "." && index > 0).then_some(index));
+        let extension_width: i32 = extension_start
+            .map(|index| chars[index..].iter().map(Item::box_w).sum())
+            .unwrap_or(0);
+        let suffix_budget = extension_width.max(remaining / 2).min(remaining);
+        let prefix_budget = remaining.saturating_sub(suffix_budget);
+        let mut suffix_start = chars.len();
+        let mut suffix_width = 0;
+        while suffix_start > 0 {
+            let next = chars[suffix_start - 1].box_w();
+            if suffix_width + next > suffix_budget {
+                break;
+            }
+            suffix_start -= 1;
+            suffix_width += next;
+        }
+        let mut prefix_end = 0;
+        let mut prefix_width = 0;
+        while prefix_end < suffix_start {
+            let next = chars[prefix_end].box_w();
+            if prefix_width + next > prefix_budget {
+                break;
+            }
+            prefix_end += 1;
+            prefix_width += next;
+        }
+        // 若扩展名预算因极窄宽度无法容纳，仍尽量从尾部保留字符，确保单行。
+        while prefix_end < suffix_start
+            && prefix_width + suffix_width + chars[prefix_end].box_w() <= remaining
+        {
+            prefix_width += chars[prefix_end].box_w();
+            prefix_end += 1;
+        }
+
+        if let Some(item) = extra {
+            line.push(item);
+        }
+        line.extend(chars[..prefix_end].iter().cloned());
+        line.push(ellipsis);
+        line.extend(chars[suffix_start..].iter().cloned());
         self.flush_line(&mut line, x0);
     }
 
@@ -1398,6 +1524,15 @@ impl RichText {
             scale_bits: scale.to_bits(),
             collapsed,
             spacing: (th.rich.para_spacing(), th.rich.section_indent()),
+            plain_middle: self
+                .doc
+                .blocks
+                .iter()
+                .filter_map(|block| match block {
+                    RichBlock::Para(para) => para.plain_middle,
+                    _ => None,
+                })
+                .max(),
         }
     }
 
@@ -1420,6 +1555,16 @@ impl RichText {
                 && k.line_height_bits == style.line_height.map(f32::to_bits)
                 && k.scale_bits == scale.to_bits()
                 && k.spacing == (th.rich.para_spacing(), th.rich.section_indent())
+                && k.plain_middle
+                    == self
+                        .doc
+                        .blocks
+                        .iter()
+                        .filter_map(|block| match block {
+                            RichBlock::Para(para) => para.plain_middle,
+                            _ => None,
+                        })
+                        .max()
                 && collapsed_matches(&self.doc.blocks, &k.collapsed)
         });
         if !hit {
@@ -2126,6 +2271,58 @@ mod tests {
 
     fn node_h(tree: &Tree, id: crate::core::NodeId) -> i32 {
         tree.get(id).unwrap().bounds.h
+    }
+
+    fn layout_texts(rt: &RichText) -> String {
+        rt.cache
+            .borrow()
+            .as_ref()
+            .unwrap()
+            .frags
+            .iter()
+            .map(|frag| frag.text.as_str())
+            .collect()
+    }
+
+    #[test]
+    fn plain_middle_keeps_short_title_unchanged() {
+        let doc = RichDoc::new().para(Para::new().text("短标题.pdf").max_lines_plain_middle(200));
+        let rt = RichText::new(doc);
+        let style = Style::default();
+        rt.measure(Size::new(200, 0), &style, &mut crate::text::NullTextEngine);
+        assert_eq!(layout_texts(&rt), "短标题.pdf");
+    }
+
+    #[test]
+    fn plain_middle_keeps_one_ellipsis_and_extension() {
+        let title = "finishлицензии_0019_Untitled Timeline.pdf";
+        let doc = RichDoc::new().para(Para::new().text(title).max_lines_plain_middle(140));
+        let rt = RichText::new(doc);
+        let style = Style::default();
+        rt.measure(Size::new(140, 0), &style, &mut crate::text::NullTextEngine);
+        let text = layout_texts(&rt);
+        assert_eq!(text.matches('…').count(), 1);
+        assert!(text.starts_with("f"));
+        assert!(text.ends_with(".pdf"));
+    }
+
+    #[test]
+    fn plain_middle_changes_with_available_width() {
+        let title = "这是一个非常长的中文 PDF 文件标题-2026.pdf";
+        let narrow = RichDoc::new().para(Para::new().text(title).max_lines_plain_middle(90));
+        let wide = RichDoc::new().para(Para::new().text(title).max_lines_plain_middle(180));
+        let style = Style::default();
+        let narrow_rt = RichText::new(narrow);
+        let wide_rt = RichText::new(wide);
+        narrow_rt.measure(Size::new(90, 0), &style, &mut crate::text::NullTextEngine);
+        wide_rt.measure(Size::new(180, 0), &style, &mut crate::text::NullTextEngine);
+        let narrow_text = layout_texts(&narrow_rt);
+        let wide_text = layout_texts(&wide_rt);
+        assert_eq!(narrow_text.matches('…').count(), 1);
+        assert_eq!(wide_text.matches('…').count(), 1);
+        assert!(wide_text.len() > narrow_text.len());
+        assert!(narrow_text.ends_with(".pdf"));
+        assert!(wide_text.ends_with(".pdf"));
     }
 
     #[test]

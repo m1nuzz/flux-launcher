@@ -289,50 +289,7 @@ pub(crate) fn game_mode_label(enabled: bool) -> String {
     }
 }
 
-pub(crate) fn display_title(title: &str) -> String {
-    const MAX_TITLE_CHARS: usize = 26;
-    let chars: Vec<char> = title.chars().collect();
-    if chars.len() <= MAX_TITLE_CHARS {
-        return title.to_owned();
-    }
-
-    let extension_start = title
-        .char_indices()
-        .rev()
-        .find_map(|(index, character)| (character == '.' && index > 0).then_some(index));
-    let (stem, extension) = extension_start
-        .map(|index| title.split_at(index))
-        .unwrap_or((title, ""));
-    let extension_chars: Vec<char> = extension.chars().collect();
-    let available_stem_chars = MAX_TITLE_CHARS
-        .saturating_sub(extension_chars.len())
-        .saturating_sub(1);
-    if available_stem_chars < 2 {
-        return chars
-            .into_iter()
-            .take(MAX_TITLE_CHARS.saturating_sub(1))
-            .chain(std::iter::once('…'))
-            .collect();
-    }
-
-    let stem_chars: Vec<char> = stem.chars().collect();
-    let prefix_len = available_stem_chars.div_ceil(2);
-    let suffix_len = available_stem_chars / 2;
-    stem_chars
-        .iter()
-        .take(prefix_len)
-        .chain(std::iter::once(&'…'))
-        .chain(
-            stem_chars
-                .iter()
-                .skip(stem_chars.len().saturating_sub(suffix_len)),
-        )
-        .copied()
-        .chain(extension_chars)
-        .collect()
-}
-
-pub(crate) fn title_match_doc(title: &str, query: &str) -> RichDoc {
+pub(crate) fn title_match_doc(title: &str, query: &str, available_width: i32) -> RichDoc {
     // Follow the Windows 11 type hierarchy: regular body text, with stronger
     // weight reserved for the characters matched by the current query.
     let normal = SpanStyle::new()
@@ -351,8 +308,7 @@ pub(crate) fn title_match_doc(title: &str, query: &str) -> RichDoc {
         .filter(|character| !character.is_whitespace())
         .flat_map(char::to_lowercase)
         .collect();
-    let display_title = display_title(title);
-    let title_chars: Vec<char> = display_title.chars().collect();
+    let title_chars: Vec<char> = title.chars().collect();
     let mut matched_flags = vec![false; title_chars.len()];
     let mut query_index = 0;
     for (index, character) in title_chars.iter().enumerate() {
@@ -384,7 +340,7 @@ pub(crate) fn title_match_doc(title: &str, query: &str) -> RichDoc {
         );
         start = end;
     }
-    RichDoc::new().para(para.max_lines_plain(1))
+    RichDoc::new().para(para.max_lines_plain_middle(available_width))
 }
 
 pub(crate) fn inline_completion_suffix(query: &str, results: &[SearchResult]) -> String {
