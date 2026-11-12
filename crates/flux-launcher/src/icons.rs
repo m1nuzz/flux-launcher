@@ -15,6 +15,9 @@ use windui::render::Canvas;
 
 #[cfg(windows)]
 pub(crate) const MAX_SHELL_ICON_CACHE_ENTRIES: usize = 512;
+/// 扩展名级共享缓存上限：同一扩展名只向 Shell 支付一次，数量天然有限。
+#[cfg(windows)]
+pub(crate) const MAX_SHELL_EXTENSION_ICON_CACHE_ENTRIES: usize = 128;
 #[cfg(windows)]
 static SHELL_ICON_CACHE: OnceLock<Mutex<ShellIconCache>> = OnceLock::new();
 pub(crate) static SHELL_ICON_COMPLETION_GENERATION: AtomicU64 = AtomicU64::new(0);
@@ -262,6 +265,29 @@ pub(crate) fn icon_target_for_path(target: &str) -> String {
     resolve_bare_executable_path(target).unwrap_or_else(|| target.to_owned())
 }
 
+/// 图标提取路由：已存在的目标（以及相对、无扩展名目标）走既有按路径提取链；
+/// 磁盘上已不存在的绝对路径（Everything 仍会索引的已删除文件）按扩展名共享一次提取，
+/// 避免每条幽灵路径各自支付注定失败的 Shell 往返。
+/// `exists` 判定只允许发生在后台图标线程（`shell_icon_rgba`）；UI 线程的缓存查找
+/// 不得触碰磁盘。
+pub(crate) enum IconExtractionRoute {
+    ByTarget,
+    ByExtension(String),
+}
+
+pub(crate) fn icon_extraction_route(target: &str) -> IconExtractionRoute {
+    let path = std::path::Path::new(target.trim().trim_matches('"'));
+    if !path.is_absolute() || path.exists() {
+        return IconExtractionRoute::ByTarget;
+    }
+    match path.extension().and_then(|extension| extension.to_str()) {
+        Some(extension) if !extension.is_empty() => {
+            IconExtractionRoute::ByExtension(extension.to_ascii_lowercase())
+        }
+        _ => IconExtractionRoute::ByTarget,
+    }
+}
+
 /// 从结果集中取出「立即提取窗口」内的图标目标（去重、限量），供空闲预热或
 /// 调试使用；返回的目标可直接交给 `request_shell_icon` 排队。
 pub(crate) fn prewarm_icon_targets(
@@ -290,6 +316,10 @@ pub(crate) fn prewarm_icon_targets(
 pub(crate) struct ShellIconCache {
     pub(crate) entries: HashMap<String, Option<Vec<u8>>>,
     pub(crate) lru_order: VecDeque<String>,
+    /// 按扩展名共享的图标：仅「磁盘上已不存在的绝对路径」使用。同一扩展名只向
+    /// Shell 支付一次提取（含共享的失败结果），之后的幽灵行直接复用。
+    pub(crate) extension_entries: HashMap<String, Option<Vec<u8>>>,
+    pub(crate) extension_lru_order: VecDeque<String>,
 }
 
 #[cfg(windows)]
@@ -298,37 +328,73 @@ impl ShellIconCache {
         Self {
             entries: HashMap::new(),
             lru_order: VecDeque::new(),
+            extension_entries: HashMap::new(),
+            extension_lru_order: VecDeque::new(),
         }
     }
 
     pub(crate) fn get(&mut self, target: &str) -> Option<Option<Vec<u8>>> {
         let icon = self.entries.get(target).cloned()?;
-        self.touch(target);
+        touch_lru_entry(&mut self.lru_order, target);
         Some(icon)
     }
 
     pub(crate) fn insert(&mut self, target: String, icon: Option<Vec<u8>>) {
-        if self.entries.contains_key(&target) {
-            self.entries.insert(target.clone(), icon);
-            self.touch(&target);
-            return;
-        }
-        while self.entries.len() >= MAX_SHELL_ICON_CACHE_ENTRIES {
-            let Some(oldest) = self.lru_order.pop_front() else {
-                break;
-            };
-            self.entries.remove(&oldest);
-        }
-        self.lru_order.push_back(target.clone());
-        self.entries.insert(target, icon);
+        bounded_lru_insert(
+            &mut self.entries,
+            &mut self.lru_order,
+            MAX_SHELL_ICON_CACHE_ENTRIES,
+            target,
+            icon,
+        );
     }
 
-    fn touch(&mut self, target: &str) {
-        if let Some(position) = self.lru_order.iter().position(|key| key == target) {
-            self.lru_order.remove(position);
-        }
-        self.lru_order.push_back(target.to_owned());
+    pub(crate) fn get_extension(&mut self, extension: &str) -> Option<Option<Vec<u8>>> {
+        let icon = self.extension_entries.get(extension).cloned()?;
+        touch_lru_entry(&mut self.extension_lru_order, extension);
+        Some(icon)
     }
+
+    pub(crate) fn insert_extension(&mut self, extension: String, icon: Option<Vec<u8>>) {
+        bounded_lru_insert(
+            &mut self.extension_entries,
+            &mut self.extension_lru_order,
+            MAX_SHELL_EXTENSION_ICON_CACHE_ENTRIES,
+            extension,
+            icon,
+        );
+    }
+}
+
+#[cfg(windows)]
+fn touch_lru_entry(order: &mut VecDeque<String>, key: &str) {
+    if let Some(position) = order.iter().position(|value| value == key) {
+        order.remove(position);
+    }
+    order.push_back(key.to_owned());
+}
+
+#[cfg(windows)]
+fn bounded_lru_insert(
+    entries: &mut HashMap<String, Option<Vec<u8>>>,
+    order: &mut VecDeque<String>,
+    capacity: usize,
+    key: String,
+    icon: Option<Vec<u8>>,
+) {
+    if entries.contains_key(&key) {
+        entries.insert(key.clone(), icon);
+        touch_lru_entry(order, &key);
+        return;
+    }
+    while entries.len() >= capacity {
+        let Some(oldest) = order.pop_front() else {
+            break;
+        };
+        entries.remove(&oldest);
+    }
+    order.push_back(key.clone());
+    entries.insert(key, icon);
 }
 
 struct ShellIconWorker {
@@ -526,6 +592,31 @@ fn shell_icon_rgba(target: &str) -> Option<Vec<u8>> {
         if let Some(icon) = cache.get(target) {
             return icon;
         }
+    }
+
+    // 已删除（磁盘无响应）的绝对路径：一次扩展名提取，同扩展名的后续幽灵行直接
+    // 复用共享结果（含共享失败），不再逐条支付失败的 Shell 往返。共享结果同时写入
+    // 路径键，供行在完成通知后回读；真实存在的目标不受影响。
+    if let IconExtractionRoute::ByExtension(extension) = icon_extraction_route(target) {
+        let shared = cache
+            .lock()
+            .ok()
+            .and_then(|mut cache| cache.get_extension(&extension));
+        let icon = match shared {
+            Some(icon) => icon,
+            None => {
+                let icon = extract_extension_icon_rgba(&extension);
+                if let Ok(mut cache) = cache.lock() {
+                    cache.insert_extension(extension, icon.clone());
+                }
+                icon
+            }
+        };
+        trace_shell_icon_probe(target, icon.is_some());
+        if let Ok(mut cache) = cache.lock() {
+            cache.insert(target.to_owned(), icon.clone());
+        }
+        return icon;
     }
 
     // Steam's Start Menu entries are commonly .lnk/.url shortcuts whose icon is
@@ -757,6 +848,22 @@ pub(crate) fn is_executable_icon_target(target: &str) -> bool {
 
 #[cfg(windows)]
 fn extract_icon_rgba_from_source(source: &str, icon_index: Option<i32>) -> Option<Vec<u8>> {
+    extract_icon_rgba(source, icon_index, false)
+}
+
+/// 按扩展名取「文件类型」图标：`SHGFI_USEFILEATTRIBUTES` 只读扩展名属性、不访问磁盘，
+/// 因此可用于已删除路径的共享提取。
+#[cfg(windows)]
+fn extract_extension_icon_rgba(extension: &str) -> Option<Vec<u8>> {
+    extract_icon_rgba(&format!("*.{extension}"), None, true)
+}
+
+#[cfg(windows)]
+fn extract_icon_rgba(
+    source: &str,
+    icon_index: Option<i32>,
+    use_file_attributes: bool,
+) -> Option<Vec<u8>> {
     use std::ffi::c_void;
     use std::mem::size_of;
     use std::ptr::null_mut;
@@ -767,6 +874,7 @@ fn extract_icon_rgba_from_source(source: &str, icon_index: Option<i32>) -> Optio
     };
     use windows::Win32::UI::Shell::{
         ExtractIconExW, SHGetFileInfoW, SHFILEINFOW, SHGFI_FLAGS, SHGFI_ICON, SHGFI_LARGEICON,
+        SHGFI_USEFILEATTRIBUTES,
     };
     use windows::Win32::UI::WindowsAndMessaging::{DestroyIcon, DrawIconEx, DI_NORMAL, HICON};
 
@@ -786,7 +894,10 @@ fn extract_icon_rgba_from_source(source: &str, icon_index: Option<i32>) -> Optio
         (extracted > 0 && !icon.is_invalid()).then_some(icon)?
     } else {
         let mut file_info = SHFILEINFOW::default();
-        let flags = SHGFI_FLAGS(SHGFI_ICON.0 | SHGFI_LARGEICON.0);
+        let mut flags = SHGFI_FLAGS(SHGFI_ICON.0 | SHGFI_LARGEICON.0);
+        if use_file_attributes {
+            flags = SHGFI_FLAGS(flags.0 | SHGFI_USEFILEATTRIBUTES.0);
+        }
         let result = unsafe {
             SHGetFileInfoW(
                 PCWSTR(path.as_ptr()),

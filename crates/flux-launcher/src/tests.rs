@@ -7,10 +7,11 @@ use crate::applications::{canonical_application_id, resolve_bare_executable_path
 use crate::entry::{is_shutdown_mode, should_claim_single_instance};
 use crate::everything::normalize_everything_query;
 use crate::icons::{
-    bundled_icon_rgba, google_icon_rgba, icon_completion_generation_changed,
+    bundled_icon_rgba, google_icon_rgba, icon_completion_generation_changed, icon_extraction_route,
     icon_row_within_eager_window, icon_target_for_path, is_executable_icon_target,
     obsidian_icon_rgba, parse_internet_shortcut_icon_location, resolve_shortcut_icon_path,
-    ResultIconView, ShellIconCache, MAX_SHELL_ICON_CACHE_ENTRIES,
+    IconExtractionRoute, ResultIconView, ShellIconCache, MAX_SHELL_EXTENSION_ICON_CACHE_ENTRIES,
+    MAX_SHELL_ICON_CACHE_ENTRIES,
 };
 use crate::keyboard::{history_cursor_step, is_run_as_admin_key};
 use crate::query::{
@@ -108,6 +109,96 @@ fn bounded_shell_icon_cache_evicts_oldest_entries() {
     assert!(cache.get("target-0").is_none());
     assert!(cache
         .get(&format!("target-{MAX_SHELL_ICON_CACHE_ENTRIES}"))
+        .is_some());
+}
+
+#[test]
+fn deleted_absolute_file_routes_to_shared_extension_icon() {
+    // Everything 会继续索引已被删除的文件；这类幽灵行按扩展名共享一次提取，
+    // 不再为每条路径各自支付注定失败的 Shell 往返。
+    let missing = std::env::temp_dir().join(format!("flux-icon-ghost-{}.TMP", std::process::id()));
+    let _ = std::fs::remove_file(&missing);
+    assert!(!missing.exists(), "前置条件：夹具必须不存在");
+    assert!(
+        matches!(
+            icon_extraction_route(&missing.to_string_lossy()),
+            IconExtractionRoute::ByExtension(extension) if extension == "tmp"
+        ),
+        "缺失的绝对路径应路由到小写扩展名共享"
+    );
+    // 引号包裹的目标与裸路径一致。
+    let quoted = format!("\"{}\"", missing.to_string_lossy());
+    assert!(matches!(
+        icon_extraction_route(&quoted),
+        IconExtractionRoute::ByExtension(extension) if extension == "tmp"
+    ));
+}
+
+#[test]
+fn existing_and_non_path_targets_keep_their_own_extraction_route() {
+    let root = std::env::temp_dir().join(format!("flux-icon-route-{}", std::process::id()));
+    std::fs::create_dir_all(&root).expect("临时目录应可创建");
+    let file = root.join("present.txt");
+    std::fs::write(&file, b"").expect("临时文件应可写入");
+    // 已存在的文件始终按路径提取：它可能有自定义图标。
+    assert!(matches!(
+        icon_extraction_route(&file.to_string_lossy()),
+        IconExtractionRoute::ByTarget
+    ));
+    // 已存在的含点目录名不能被判为共享扩展名，否则目录会被绑到文件图标。
+    let dotted_dir = root.join("v1.0");
+    std::fs::create_dir_all(&dotted_dir).expect("含点目录应可创建");
+    assert!(matches!(
+        icon_extraction_route(&dotted_dir.to_string_lossy()),
+        IconExtractionRoute::ByTarget
+    ));
+    // 无扩展名的缺失目标（如已删除的文件夹）回退按目标提取。
+    let ghost_dir = root.join(format!("flux-icon-ghostdir-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&ghost_dir);
+    assert!(matches!(
+        icon_extraction_route(&ghost_dir.to_string_lossy()),
+        IconExtractionRoute::ByTarget
+    ));
+    // 相对路径与内置 / URL 类目标不参与共享，避免误路由。
+    assert!(matches!(
+        icon_extraction_route("relative.txt"),
+        IconExtractionRoute::ByTarget
+    ));
+    assert!(matches!(
+        icon_extraction_route("builtin:google-search"),
+        IconExtractionRoute::ByTarget
+    ));
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+#[test]
+fn extension_icon_cache_shares_one_extraction_per_extension() {
+    let mut cache = ShellIconCache::new();
+    assert!(cache.get_extension("tmp").is_none());
+    cache.insert_extension(String::from("tmp"), Some(vec![7_u8; 4]));
+    assert_eq!(cache.get_extension("tmp"), Some(Some(vec![7_u8; 4])));
+    // 共享失败也入缓存：幽灵行不再重复支付 Shell。
+    cache.insert_extension(String::from("ghost"), None);
+    assert_eq!(cache.get_extension("ghost"), Some(None));
+    // 不同扩展名彼此隔离。
+    assert!(cache.get_extension("mkv").is_none());
+    // 扩展名缓存与路径缓存互不串键。
+    assert!(cache.get("tmp").is_none());
+}
+
+#[test]
+fn extension_icon_cache_evicts_oldest_entries() {
+    let mut cache = ShellIconCache::new();
+    for index in 0..=MAX_SHELL_EXTENSION_ICON_CACHE_ENTRIES {
+        cache.insert_extension(format!("ext-{index}"), Some(vec![index as u8; 4]));
+    }
+    assert_eq!(
+        cache.extension_entries.len(),
+        MAX_SHELL_EXTENSION_ICON_CACHE_ENTRIES
+    );
+    assert!(cache.get_extension("ext-0").is_none());
+    assert!(cache
+        .get_extension(&format!("ext-{MAX_SHELL_EXTENSION_ICON_CACHE_ENTRIES}"))
         .is_some());
 }
 
