@@ -338,12 +338,21 @@ impl<'ast> Visit<'ast> for Calls {
     }
 
     fn visit_item_const(&mut self, item: &'ast ItemConst) {
-        if matches!(
-            item.ident.to_string().as_str(),
-            "TAB_NAMES" | "TAB_DESCRIPTIONS" | "APPLICATION_SUBTITLES"
-        ) {
+        // Filesystem exclusions are data, not captions. All other string
+        // arrays must be covered regardless of their names.
+        const NON_UI_STRING_ARRAYS: &[&str] = &["NEVER_WALKED"];
+        let string_array = matches!(&*item.ty, syn::Type::Array(array)
+            if matches!(&*array.elem, syn::Type::Reference(reference)
+                if matches!(&*reference.elem, syn::Type::Path(path) if path.path.is_ident("str"))));
+        if string_array && !NON_UI_STRING_ARRAYS.contains(&item.ident.to_string().as_str()) {
             if let Expr::Array(array) = &*item.expr {
-                self.keys.extend(array.elems.iter().filter_map(literal));
+                self.keys.extend(
+                    array
+                        .elems
+                        .iter()
+                        .filter_map(literal)
+                        .filter(|value| !invariant_ui_text(value)),
+                );
             }
         }
         visit::visit_item_const(self, item);
@@ -524,4 +533,52 @@ fn scanner_collects_returned_dynamic_translation_keys_without_patterns() {
     );
     assert!(!calls.keys.contains("protocol-id"));
     assert!(calls.raw_ui_strings.is_empty());
+}
+
+#[test]
+fn scanner_collects_caption_arrays_without_relying_on_their_names() {
+    let mut calls = Calls::default();
+    let item: ItemConst = syn::parse_str(
+        r#"const RENAMED_CAPTIONS: [&str; 4] = ["First caption", "Second caption", "\u{e713}", "Flux Launcher"];"#,
+    )
+    .unwrap();
+    calls.visit_item_const(&item);
+    assert_eq!(
+        calls.keys,
+        HashSet::from(["First caption".to_owned(), "Second caption".to_owned()])
+    );
+
+    let source = r#"
+        const NEVER_WALKED: [&str; 1] = ["System Volume Information"];
+        const TAB_GLYPHS: [&str; 1] = ["\u{e713}"];
+        const NUMBERS: [u8; 2] = [1, 2];
+        const SCALAR: &str = "Not an array";
+    "#;
+    calls.visit_file(&syn::parse_file(source).unwrap());
+    assert_eq!(calls.keys.len(), 2);
+}
+
+#[test]
+fn scanner_rejects_raw_conditional_and_match_captions_without_conditions_or_patterns() {
+    let source = r#"fn build() {
+        Element::label(if code == "condition-id" { "Raw if A" } else { "Raw if B" });
+        Element::label(match "scrutinee-id" {
+            "pattern-id" => "Raw match A",
+            _ if code == "guard-id" => { "Raw match B" },
+            _ => "Raw match C",
+        });
+    }"#;
+    let mut calls = Calls::default();
+    calls.visit_file(&syn::parse_file(source).unwrap());
+    calls.raw_ui_strings.sort();
+    assert_eq!(
+        calls.raw_ui_strings,
+        [
+            "Raw if A",
+            "Raw if B",
+            "Raw match A",
+            "Raw match B",
+            "Raw match C"
+        ]
+    );
 }

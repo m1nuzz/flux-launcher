@@ -634,24 +634,37 @@ mod language_transaction_tests {
     fn a_ready_replacement_commits_only_after_its_language_is_saved() {
         let path =
             std::env::temp_dir().join(format!("flux-language-commit-{}.json", std::process::id()));
-        let mut settings = Settings::default();
-        assert_eq!(
-            persist_language_change(
-                &mut settings,
-                flux_core::Locale::Japanese,
-                true,
-                |settings| settings.save_to(&path).is_ok(),
-                || {
-                    let saved = Settings::load_from(&path).unwrap();
-                    assert_eq!(saved.language, flux_core::Locale::Japanese);
-                    assert!(saved.language_explicit);
-                    Ok(())
-                },
-                |_| {},
-            ),
-            Ok(())
-        );
-        assert_eq!(settings.language, flux_core::Locale::Japanese);
-        std::fs::remove_file(path).unwrap();
+        for enabled in [true, false] {
+            let mut settings = Settings {
+                start_with_windows: enabled,
+                ..Settings::default()
+            };
+            let synced_startup = Cell::new(None);
+            assert_eq!(
+                persist_language_change(
+                    &mut settings,
+                    flux_core::Locale::Japanese,
+                    true,
+                    |settings| settings.save_to(&path).is_ok(),
+                    || {
+                        let saved = Settings::load_from(&path).unwrap();
+                        assert_eq!(saved.language, flux_core::Locale::Japanese);
+                        assert!(saved.language_explicit);
+                        assert_eq!(saved.start_with_windows, enabled);
+                        assert_eq!(synced_startup.get(), Some(enabled));
+                        Ok(())
+                    },
+                    |value| {
+                        let saved = Settings::load_from(&path).unwrap();
+                        assert_eq!(saved.start_with_windows, value);
+                        assert_eq!(synced_startup.replace(Some(value)), None);
+                    },
+                ),
+                Ok(())
+            );
+            assert_eq!(synced_startup.get(), Some(enabled));
+            assert_eq!(settings.language, flux_core::Locale::Japanese);
+            std::fs::remove_file(&path).unwrap();
+        }
     }
 }
