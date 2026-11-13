@@ -60,6 +60,8 @@ fn resolved_family<'a>(factory: &IDWriteFactory, requested: &'a str) -> &'a str 
     // SAFETY: DirectWrite writes a reference-counted collection to a valid out pointer.
     if unsafe { factory.GetSystemFontCollection(&mut collection, false) }.is_ok() {
         if let Some(collection) = collection {
+            // Use Variable Text at every size when the umbrella family is absent
+            // so both native rendering paths keep consistent measured layouts.
             for candidate in [DEFAULT_FAMILY, "Segoe UI Variable Text", "Segoe UI"] {
                 let name = wide_nul(candidate);
                 let mut index = 0;
