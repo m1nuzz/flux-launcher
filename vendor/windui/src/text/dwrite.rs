@@ -50,7 +50,34 @@ fn wide(s: &str) -> Vec<u16> {
     s.encode_utf16().collect()
 }
 
-pub(crate) const DEFAULT_FAMILY: &str = "Segoe UI";
+pub(crate) const DEFAULT_FAMILY: &str = "Segoe UI Variable";
+
+fn resolved_family<'a>(factory: &IDWriteFactory, requested: &'a str) -> &'a str {
+    if requested != DEFAULT_FAMILY {
+        return requested;
+    }
+    let mut collection = None;
+    // SAFETY: DirectWrite writes a reference-counted collection to a valid out pointer.
+    if unsafe { factory.GetSystemFontCollection(&mut collection, false) }.is_ok() {
+        if let Some(collection) = collection {
+            for candidate in [DEFAULT_FAMILY, "Segoe UI Variable Text", "Segoe UI"] {
+                let name = wide_nul(candidate);
+                let mut index = 0;
+                let mut exists = BOOL(0);
+                // SAFETY: name is NUL-terminated and both out pointers are writable.
+                if unsafe {
+                    collection.FindFamilyName(PCWSTR(name.as_ptr()), &mut index, &mut exists)
+                }
+                .is_ok()
+                    && exists.as_bool()
+                {
+                    return candidate;
+                }
+            }
+        }
+    }
+    requested
+}
 
 thread_local! {
     static UI_LOCALE: std::cell::RefCell<String> = std::cell::RefCell::new(system_locale());
@@ -337,7 +364,10 @@ pub(crate) fn create_text_format(
     } else {
         DWRITE_FONT_WEIGHT(ts.weight as i32)
     };
-    let fam_w = wide_nul(ts.family.unwrap_or(DEFAULT_FAMILY));
+    let fam_w = wide_nul(resolved_family(
+        factory,
+        ts.family.unwrap_or(DEFAULT_FAMILY),
+    ));
     let locale_w = wide_nul(locale);
     let format = unsafe {
         factory

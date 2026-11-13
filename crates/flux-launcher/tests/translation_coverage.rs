@@ -398,6 +398,45 @@ fn inspect_directory(path: &Path, calls: &mut Calls) {
     }
 }
 
+fn system_caption_keys(source: &str) -> HashSet<String> {
+    let file = syn::parse_file(source).expect("system results parse as Rust");
+    let item = file
+        .items
+        .iter()
+        .find_map(|item| match item {
+            syn::Item::Const(item) if item.ident == "SYSTEM_RESULT_SPECS" => Some(item),
+            _ => None,
+        })
+        .expect("system result specification constant exists");
+    let Expr::Reference(reference) = &*item.expr else {
+        panic!("expected system result slice");
+    };
+    let Expr::Array(array) = &*reference.expr else {
+        panic!("expected system result array");
+    };
+    let mut keys = HashSet::new();
+    for value in &array.elems {
+        let Expr::Struct(spec) = value else {
+            panic!("expected system result specification");
+        };
+        for name in ["title", "subtitle"] {
+            let field = spec
+                .fields
+                .iter()
+                .find(|field| matches!(&field.member, syn::Member::Named(member) if member == name))
+                .expect("system result has both captions");
+            let caption = literal(&field.expr).expect("system captions are literal keys");
+            if !matches!(
+                caption.as_str(),
+                "PowerShell" | "Windows PowerShell" | "Wi-Fi" | "VPN"
+            ) {
+                keys.insert(caption);
+            }
+        }
+    }
+    keys
+}
+
 #[test]
 fn every_translation_call_and_dynamic_settings_caption_has_a_catalog_entry() {
     let mut calls = Calls::default();
@@ -407,6 +446,33 @@ fn every_translation_call_and_dynamic_settings_caption_has_a_catalog_entry() {
     );
     let catalog: HashMap<String, serde_json::Value> =
         serde_json::from_str(include_str!("../locales/translations.json")).unwrap();
+    for invariant in ["PowerShell", "Windows PowerShell", "Wi-Fi", "VPN"] {
+        if let Some(translations) = catalog.get(invariant) {
+            assert!(
+                translations
+                    .as_object()
+                    .unwrap()
+                    .values()
+                    .all(|value| value.as_str() == Some(invariant)),
+                "technical names must remain invariant: {invariant}"
+            );
+        }
+    }
+    let update = catalog["Windows Update"].as_object().unwrap();
+    for (locale, title) in update {
+        assert!(
+            catalog["Windows Settings • Windows Update"][locale]
+                .as_str()
+                .unwrap()
+                .ends_with(title.as_str().unwrap()),
+            "Windows Update title/subtitle disagree: {locale}"
+        );
+    }
+    assert_eq!(update["de"], "Windows Update");
+    assert_eq!(update["fr"], "Windows Update");
+    calls.keys.extend(system_caption_keys(include_str!(
+        "../../flux-core/src/system_results.rs"
+    )));
     let mut missing: Vec<_> = calls
         .keys
         .iter()
@@ -437,6 +503,21 @@ fn every_translation_call_and_dynamic_settings_caption_has_a_catalog_entry() {
         calls.raw_ui_strings.is_empty(),
         "UI text must use the catalog: {:?}",
         calls.raw_ui_strings
+    );
+}
+
+#[test]
+fn system_caption_guard_collects_both_captions_and_ignores_only_classified_names() {
+    let keys = system_caption_keys(
+        r#"const SYSTEM_RESULT_SPECS: &[SystemResultSpec] = &[
+        SystemResultSpec { title: "New title", subtitle: "New subtitle", target: "protocol:target" },
+        SystemResultSpec { title: "PowerShell", subtitle: "Windows PowerShell" },
+        SystemResultSpec { title: "Wi-Fi", subtitle: "VPN" },
+    ];"#,
+    );
+    assert_eq!(
+        keys,
+        HashSet::from(["New title".to_owned(), "New subtitle".to_owned()])
     );
 }
 

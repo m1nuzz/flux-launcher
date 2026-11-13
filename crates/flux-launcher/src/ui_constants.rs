@@ -61,7 +61,7 @@ pub(crate) const PATH_PROBE_PUBLISH_GATE_MS: u64 = 60;
 /// that never answers cannot hide the icons.
 pub(crate) const ICON_SETTLE_TICKS: u32 = 30;
 pub(crate) const SETTINGS_WINDOW_HEIGHT: i32 = 520;
-pub(crate) const LAUNCHER_FONT_FAMILY: &str = "Segoe UI";
+pub(crate) const LAUNCHER_FONT_FAMILY: &str = "Segoe UI Variable";
 /// The search tick is what first *notices* a keystroke: the key handler updates the
 /// text, the tick compares it against the last query, and only then are the providers
 /// asked. That wait would otherwise sit in front of every letter, which is why the key

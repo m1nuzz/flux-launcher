@@ -148,8 +148,18 @@ fn probe(layout: &IDWriteTextLayout) -> Vec<Run> {
 #[test]
 fn cyrillic_semibold_resolves_to_a_semibold_glyph_face() {
     let _locale = RestoreLocale::set("ru-RU");
-    for family in [None, Some("Segoe UI")] {
+    for family in [
+        None,
+        Some("Segoe UI Variable"),
+        Some("Segoe UI Variable Text"),
+        Some("Segoe UI"),
+    ] {
         let mut engine = DWriteEngine::new();
+        if family == Some("Segoe UI Variable Text")
+            && resolved_family(&engine.factory, DEFAULT_FAMILY) != "Segoe UI Variable Text"
+        {
+            continue;
+        }
         let style = TextStyle {
             family,
             weight: 600,
@@ -157,6 +167,10 @@ fn cyrillic_semibold_resolves_to_a_semibold_glyph_face() {
         };
         let layout = engine.layout("\u{41a}\u{43b}\u{430}\u{432}\u{438}\u{448}\u{430} \u{430}\u{43a}\u{442}\u{438}\u{432}\u{430}\u{446}\u{438}\u{438}", &style, 14.0, 600.0).unwrap();
         let runs = probe(&layout);
+        eprintln!(
+            "Cyrillic semibold requested {family:?}, format family {}: {runs:?}",
+            resolved_family(&engine.factory, family.unwrap_or(DEFAULT_FAMILY))
+        );
         assert!(!runs.is_empty());
         assert!(
             runs.iter().all(|run| run.weight >= 600),
