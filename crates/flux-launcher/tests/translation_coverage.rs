@@ -479,17 +479,25 @@ fn every_translation_call_and_dynamic_settings_caption_has_a_catalog_entry() {
         catalog["Windows Settings"]["uk-UA"],
         "\u{41f}\u{430}\u{440}\u{430}\u{43c}\u{435}\u{442}\u{440}\u{438} Windows"
     );
+    let mut windows_settings_subtitles = 0;
     for (key, translations) in &catalog {
         if key.starts_with("Windows Settings • ") {
+            windows_settings_subtitles += 1;
             assert!(translations["uk-UA"].as_str().unwrap().starts_with("\u{41f}\u{430}\u{440}\u{430}\u{43c}\u{435}\u{442}\u{440}\u{438} Windows \u{2022} "),
                 "Ukrainian Windows Settings app name must be consistent: {key}");
         }
     }
+    assert_eq!(
+        windows_settings_subtitles, 10,
+        "Windows Settings prefix coverage must remain non-vacuous"
+    );
+    assert_eq!(catalog["Accessibility"]["uk-UA"], "\u{421}\u{43f}\u{435}\u{446}\u{456}\u{430}\u{43b}\u{44c}\u{43d}\u{456} \u{43c}\u{43e}\u{436}\u{43b}\u{438}\u{432}\u{43e}\u{441}\u{442}\u{456}");
+    assert_eq!(catalog["Windows Settings • Accessibility"]["uk-UA"], "\u{41f}\u{430}\u{440}\u{430}\u{43c}\u{435}\u{442}\u{440}\u{438} Windows \u{2022} \u{421}\u{43f}\u{435}\u{446}\u{456}\u{430}\u{43b}\u{44c}\u{43d}\u{456} \u{43c}\u{43e}\u{436}\u{43b}\u{438}\u{432}\u{43e}\u{441}\u{442}\u{456}");
     assert_eq!(catalog["Windows Settings • System"]["uk-UA"], "\u{41f}\u{430}\u{440}\u{430}\u{43c}\u{435}\u{442}\u{440}\u{438} Windows \u{2022} \u{421}\u{438}\u{441}\u{442}\u{435}\u{43c}\u{430}");
     assert_eq!(catalog["Settings applied"]["uk-UA"], "\u{41d}\u{430}\u{43b}\u{430}\u{448}\u{442}\u{443}\u{432}\u{430}\u{43d}\u{43d}\u{44f} \u{437}\u{430}\u{441}\u{442}\u{43e}\u{441}\u{43e}\u{432}\u{430}\u{43d}\u{43e}");
     assert_eq!(
         catalog["Flux Settings"]["uk-UA"],
-        "\u{41d}\u{430}\u{43b}\u{430}\u{448}\u{442}\u{443}\u{432}\u{430}\u{43d}\u{43d}\u{44f} Flux"
+        "\u{41f}\u{430}\u{440}\u{430}\u{43c}\u{435}\u{442}\u{440}\u{438} Flux"
     );
     assert_eq!(update["uk-UA"], "\u{426}\u{435}\u{43d}\u{442}\u{440} \u{43e}\u{43d}\u{43e}\u{432}\u{43b}\u{435}\u{43d}\u{43d}\u{44f} Windows");
     assert_eq!(catalog["Windows Settings • Windows Update"]["uk-UA"],
