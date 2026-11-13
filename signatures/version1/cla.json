@@ -1,3 +1,12 @@
 {
-   "signedContributors": []
+  "signedContributors": [
+    {
+      "name": "OpenBigc",
+      "id": 71974459,
+      "comment_id": 6840296594,
+      "created_at": "2026-11-13T00:43:02Z",
+      "repoId": 1334335738,
+      "pullRequestNo": 8
+    }
+  ]
 }
