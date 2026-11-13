@@ -76,7 +76,7 @@ fn resolved_family<'a>(factory: &IDWriteFactory, requested: &'a str) -> &'a str 
             }
         }
     }
-    requested
+    "Segoe UI"
 }
 
 thread_local! {

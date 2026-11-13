@@ -329,7 +329,7 @@ mod action_bar_fit {
             "centered hints: {leading}/{trailing}"
         );
         if language == flux_core::Locale::English {
-            // Segoe UI leaves 58 DIP on each side of the English key hints.
+            // Pin the measured key-hint geometry; remeasure if font mapping changes.
             assert_eq!(
                 hints.w, 224,
                 "remeasure free space if hints or the font change"

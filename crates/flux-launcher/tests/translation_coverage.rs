@@ -470,6 +470,9 @@ fn every_translation_call_and_dynamic_settings_caption_has_a_catalog_entry() {
     }
     assert_eq!(update["de"], "Windows Update");
     assert_eq!(update["fr"], "Windows Update");
+    assert_eq!(update["uk-UA"], "\u{426}\u{435}\u{43d}\u{442}\u{440} \u{43e}\u{43d}\u{43e}\u{432}\u{43b}\u{435}\u{43d}\u{43d}\u{44f} Windows");
+    assert_eq!(catalog["Windows Settings • Windows Update"]["uk-UA"],
+        "\u{41f}\u{430}\u{440}\u{430}\u{43c}\u{435}\u{442}\u{440}\u{438} Windows \u{2022} \u{426}\u{435}\u{43d}\u{442}\u{440} \u{43e}\u{43d}\u{43e}\u{432}\u{43b}\u{435}\u{43d}\u{43d}\u{44f} Windows");
     calls.keys.extend(system_caption_keys(include_str!(
         "../../flux-core/src/system_results.rs"
     )));

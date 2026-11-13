@@ -102,7 +102,11 @@ An explicitly requested Serbian Latin script is not mapped to Cyrillic; system
 language detection continues to the next supported preference. Arabic and Hebrew
 use native RTL shaping. Full layout mirroring and RTL-aware text-input caret
 positioning/hit testing remain follow-ups; input editing currently uses LTR prefix widths.
-Windows text rendering uses `Segoe UI` for consistent client/Server font resolution.
+Windows text rendering requests `Segoe UI Variable`. If the umbrella family is not
+registered, both renderers intentionally use `Segoe UI Variable Text` at all sizes
+to keep measured layouts consistent; they do not switch to Small or Display by
+optical size. `Segoe UI` is the fallback when Variable is unavailable or querying
+the font collection fails.
 Both native rendering paths use the selected UI locale, and glyph-run tests verify
 that Cyrillic semibold labels resolve to a face with weight 600 or higher.
 Preserve named placeholders such as `{version}` when editing translations.
