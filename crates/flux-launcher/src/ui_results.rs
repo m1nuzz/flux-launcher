@@ -44,9 +44,9 @@ pub(crate) fn build_action_bar(show_results: Signal<bool>, action_mode: Signal<b
     let action_bar_content = Element::row()
         .height(22)
         .spacing(8)
-        .child(action_hint("↵", "Open"))
-        .child(action_hint("Ctrl + R", "Admin"))
-        .child(action_hint("Alt + Enter", "Location"));
+        .child(action_hint("↵", crate::i18n::tr("Open")))
+        .child(action_hint("Ctrl + R", crate::i18n::tr("Admin")))
+        .child(action_hint("Alt + Enter", crate::i18n::tr("Location")));
     Element::stack()
         .width(ACTION_BAR_WIDTH)
         .height(ACTION_BAR_HEIGHT)
@@ -284,6 +284,20 @@ mod action_bar_fit {
     /// hints fill the 340 px bar centred, with free space at each edge.
     #[test]
     fn the_key_hints_fit_the_action_bar() {
+        struct RestoreLocale(String);
+        impl Drop for RestoreLocale {
+            fn drop(&mut self) {
+                windui::text::set_ui_locale(&self.0);
+            }
+        }
+        let _restore = RestoreLocale(windui::text::ui_locale());
+        for language in flux_core::Locale::ALL {
+            windui::text::set_ui_locale(language.code());
+            crate::i18n::with_locale(language, || check_action_bar(language));
+        }
+    }
+
+    fn check_action_bar(language: flux_core::Locale) {
         let mut tree = Tree::new();
         let root = windui::ui::Element::col()
             .width_match()
@@ -303,20 +317,25 @@ mod action_bar_fit {
         assert_eq!(bar.w, super::super::ui_constants::ACTION_BAR_WIDTH);
         assert!(
             hints.w <= bar.w,
-            "the key hints must fit the bar: hints {} vs bar {}",
+            "{} key hints must fit the bar: hints {} vs bar {}",
+            language.code(),
             hints.w,
             bar.w
         );
-        assert_eq!(
-            hints.w, 238,
-            "the hints' measured width; a different value means a hint changed, and the \
-             free space a status could use has to be re-measured"
+        let leading = hints.x - bar.x;
+        let trailing = (bar.x + bar.w) - (hints.x + hints.w);
+        assert!(
+            (leading - trailing).abs() <= 1,
+            "centered hints: {leading}/{trailing}"
         );
-        assert_eq!(hints.x - bar.x, 51, "free space at the leading edge");
-        assert_eq!(
-            (bar.x + bar.w) - (hints.x + hints.w),
-            51,
-            "free space at the trailing edge"
-        );
+        if language == flux_core::Locale::English {
+            // Pin the measured key-hint geometry; remeasure if font mapping changes.
+            assert_eq!(
+                hints.w, 224,
+                "remeasure free space if hints or the font change"
+            );
+            assert_eq!(leading, 58);
+            assert_eq!(trailing, 58);
+        }
     }
 }

@@ -9,9 +9,9 @@ use super::update_tasks::{save_settings, save_settings_async};
 
 pub(crate) fn game_mode_label(enabled: bool) -> String {
     if enabled {
-        String::from("Game Mode: On")
+        String::from(crate::i18n::tr("Game Mode: On"))
     } else {
-        String::from("Game Mode: Off")
+        String::from(crate::i18n::tr("Game Mode: Off"))
     }
 }
 

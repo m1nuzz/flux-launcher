@@ -189,7 +189,7 @@ fn query_plugins(plugins: &[PluginDescriptor], request: PluginRequest) -> Plugin
             sequence: request.sequence,
             query: request.query,
             results,
-            status: String::from("No native Flow plugins installed"),
+            status: String::from(crate::i18n::tr("No native Flow plugins installed")),
             available: false,
             actions,
         };
@@ -227,9 +227,17 @@ fn query_plugins(plugins: &[PluginDescriptor], request: PluginRequest) -> Plugin
     }
 
     let status = if results.is_empty() && failures > 0 {
-        format!("{failures} native Flow plugin(s) did not respond")
+        crate::i18n::count(
+            "{count} native Flow plugin did not respond",
+            "{count} native Flow plugins did not respond",
+            failures,
+        )
     } else {
-        format!("{} Flow plugin result(s)", results.len())
+        crate::i18n::count(
+            "{count} Flow plugin result",
+            "{count} Flow plugin results",
+            results.len(),
+        )
     };
     PluginQueryResponse {
         sequence: request.sequence,
@@ -338,11 +346,21 @@ fn discover_plugins() -> Vec<PluginDescriptor> {
 }
 
 fn plugin_roots() -> Vec<PathBuf> {
+    plugin_roots_from(
+        std::env::var_os("APPDATA"),
+        std::env::var_os("FLUX_PLUGIN_DIR"),
+    )
+}
+
+fn plugin_roots_from(
+    app_data: Option<std::ffi::OsString>,
+    extra: Option<std::ffi::OsString>,
+) -> Vec<PathBuf> {
     let mut roots = Vec::new();
-    if let Some(app_data) = std::env::var_os("APPDATA") {
+    if let Some(app_data) = app_data {
         roots.push(PathBuf::from(app_data).join("FluxLauncher").join("Plugins"));
     }
-    if let Some(extra) = std::env::var_os("FLUX_PLUGIN_DIR") {
+    if let Some(extra) = extra {
         roots.push(PathBuf::from(extra));
     }
     roots
@@ -450,6 +468,30 @@ pub(crate) fn terminate_process(child: &mut Child) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn plugin_roots_are_locale_independent() {
+        for language in flux_core::Locale::ALL {
+            crate::i18n::with_locale(language, || {
+                let roots =
+                    plugin_roots_from(Some("profile".into()), Some("custom-plugins".into()));
+                assert_eq!(
+                    roots[0],
+                    PathBuf::from("profile")
+                        .join("FluxLauncher")
+                        .join("Plugins")
+                );
+                assert_eq!(roots[0].file_name(), Some(std::ffi::OsStr::new("Plugins")));
+                assert_eq!(roots[1], PathBuf::from("custom-plugins"));
+                if let Some(base) = std::env::var_os("APPDATA") {
+                    assert_eq!(
+                        plugin_roots()[0],
+                        PathBuf::from(base).join("FluxLauncher").join("Plugins")
+                    );
+                }
+            });
+        }
+    }
 
     #[test]
     fn builtin_calculator_is_exposed_as_copy_text_plugin_action() {

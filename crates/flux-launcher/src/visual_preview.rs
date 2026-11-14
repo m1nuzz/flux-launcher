@@ -220,8 +220,12 @@ fn parent_process_alive(pid: u32) -> bool {
     }
 }
 
-fn preview_content(size_label: Signal<String>) -> Element {
-    Element::col()
+fn preview_content(width: i32, height: i32) -> (Element, Signal<String>) {
+    let size_label = signal(crate::i18n::format(
+        "{width} × {height} logical px client area",
+        &[("width", width.to_string()), ("height", height.to_string())],
+    ));
+    let content = Element::col()
         .fill()
         .padding(20)
         .spacing(12)
@@ -247,10 +251,10 @@ fn preview_content(size_label: Signal<String>) -> Element {
                 .cross(Align::Center)
                 .corner(8.0)
                 .bg(Color::rgba(255, 255, 255, 24))
-                .child(Element::label("Search").font_size(15.0).fg(Color::rgba(255, 255, 255, 220))),
+                .child(Element::label(crate::i18n::tr("Search")).font_size(15.0).fg(Color::rgba(255, 255, 255, 220))),
         )
         .child(
-            Element::label("This is the actual launcher preview window. Its client area is resized directly, not scaled into a mock card.")
+            Element::label(crate::i18n::tr("This is the actual launcher preview window. Its client area is resized directly, not scaled into a mock card."))
                 .font_size(11.0)
                 .fg(Color::rgba(235, 241, 255, 170))
                 .max_lines(2)
@@ -260,23 +264,24 @@ fn preview_content(size_label: Signal<String>) -> Element {
             Element::col()
                 .width_match()
                 .spacing(6)
-                .child(preview_result("Preview result", "Native windui surface"))
+                .child(preview_result(crate::i18n::tr("Preview result"), crate::i18n::tr("Native windui surface")))
                 .child(preview_result(
-                    "Width and height are exact",
-                    "Measured from this window client area",
+                    crate::i18n::tr("Width and height are exact"),
+                    crate::i18n::tr("Measured from this window client area"),
                 ))
                 .child(preview_result(
-                    "Acrylic/Mica remains active",
-                    "The Settings window stays separate",
+                    crate::i18n::tr("Acrylic/Mica remains active"),
+                    crate::i18n::tr("The Settings window stays separate"),
                 )),
         )
         .child(
-            Element::label("Logical client units (DIP); the window is resized, not scaled.")
+            Element::label(crate::i18n::tr("Logical client units (DIP); the window is resized, not scaled."))
                 .font_size(10.0)
                 .fg(Color::rgba(235, 241, 255, 150))
                 .max_lines(1)
                 .truncate(Truncate::End),
-        )
+        );
+    (content, size_label)
 }
 
 fn preview_result(title: &str, subtitle: &str) -> Element {
@@ -343,11 +348,15 @@ fn current_window_geometry() -> Option<(i32, i32, u32)> {
 }
 
 pub(crate) fn run(width: i32, height: i32, x: i32, y: i32) {
+    let mut settings =
+        flux_core::Settings::load_from(&flux_core::Settings::config_path()).unwrap_or_default();
+    crate::system_locale::resolve(&mut settings);
+    crate::i18n::init(settings.language);
     let width = width.clamp(1, i32::from(u16::MAX));
     let height = height.clamp(1, i32::from(u16::MAX));
     let width_signal = signal(width as u16);
     let height_signal = signal(height as u16);
-    let size_label = signal(format!("{width} × {height} logical px client area"));
+    let (content, size_label) = preview_content(width, height);
     let width_for_commands = width_signal;
     let height_for_commands = height_signal;
     let size_label_for_commands = size_label;
@@ -364,7 +373,7 @@ pub(crate) fn run(width: i32, height: i32, x: i32, y: i32) {
         // under the same always-on-top apps the launcher now covers.
         .topmost()
         .bg(Color::rgba(32, 33, 35, 255))
-        .content(preview_content(size_label));
+        .content(content);
     let size_handle: WindowSizeHandle = app.window_size_handle();
     let position_handle: WindowPositionHandle = app.window_position_handle();
 
@@ -379,7 +388,10 @@ pub(crate) fn run(width: i32, height: i32, x: i32, y: i32) {
             let height = height.clamp(1, i32::from(u16::MAX));
             width_for_commands.set(width as u16);
             height_for_commands.set(height as u16);
-            size_label_for_commands.set(format!("{width} × {height} logical px client area"));
+            size_label_for_commands.set(crate::i18n::format(
+                "{width} × {height} logical px client area",
+                &[("width", width.to_string()), ("height", height.to_string())],
+            ));
             size_handle.set(width, height);
             position_handle.set(x, y);
         }

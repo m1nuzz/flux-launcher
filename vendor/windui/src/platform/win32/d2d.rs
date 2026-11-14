@@ -12,7 +12,7 @@
 use std::cell::{Cell, RefCell};
 use std::collections::HashMap;
 
-use windows::core::{Interface, Result, HRESULT, PCWSTR};
+use windows::core::{Interface, Result, HRESULT};
 use windows::Win32::Foundation::{D2DERR_RECREATE_TARGET, HWND, RECT};
 
 use windows::Win32::Graphics::Direct2D::Common::{
@@ -43,9 +43,7 @@ use windows::Win32::Graphics::DirectComposition::{
 };
 use windows::Win32::Graphics::DirectWrite::{
     DWriteCreateFactory, IDWriteFactory, IDWriteTextFormat, IDWriteTextLayout,
-    DWRITE_FACTORY_TYPE_SHARED, DWRITE_FONT_STRETCH_NORMAL, DWRITE_FONT_STYLE_NORMAL,
-    DWRITE_FONT_WEIGHT, DWRITE_FONT_WEIGHT_NORMAL, DWRITE_PARAGRAPH_ALIGNMENT_NEAR,
-    DWRITE_TEXT_ALIGNMENT_CENTER, DWRITE_TEXT_ALIGNMENT_LEADING, DWRITE_TEXT_ALIGNMENT_TRAILING,
+    DWRITE_FACTORY_TYPE_SHARED, DWRITE_PARAGRAPH_ALIGNMENT_NEAR,
 };
 use windows::Win32::Graphics::Dxgi::Common::{
     DXGI_ALPHA_MODE_IGNORE, DXGI_ALPHA_MODE_PREMULTIPLIED, DXGI_FORMAT_B8G8R8A8_UNORM,
@@ -103,9 +101,9 @@ pub(super) struct D2DBackend {
     /// device-**独立**资源（进程级系统字体缓存），设备丢失**无需**重建——
     /// 不同于 solid/渐变缓存，**别**放进 Task 11 的设备丢失重建清单。
     dwrite_factory: IDWriteFactory,
-    /// TextFormat 缓存：键 (family, 逻辑字号 bits, 字重)，与软引擎 `DWriteEngine::format` 同构。
+    /// Formats are keyed by UI locale, family, size, weight, and line spacing.
     /// IDWriteTextFormat 亦 device-independent，设备丢失无需清空。对齐不进 key（在 layout 上设）。
-    format_cache: HashMap<(String, u32, u16, Option<u32>), IDWriteTextFormat>,
+    format_cache: HashMap<FormatKey, IDWriteTextFormat>,
     /// 文字 layout 缓存（键 `LayoutKey`）：`IDWriteTextLayout` 是重对象（字形整形/换行排版），
     /// 每帧每文字重建会 churn 驱动内存——官方文档明确要复用。device-independent，设备丢失无需清。
     layout_cache: HashMap<LayoutKey, IDWriteTextLayout>,
@@ -175,8 +173,9 @@ impl CompositionPresenter {
 /// 连续重建失败上限：超过即放弃 GPU、降级软后端。
 const MAX_RECREATE_FAILS: u32 = 3;
 
-/// 文字 layout 缓存键：(family, text, 字号 bits, 字重, maxWidth bits, maxHeight bits)。
-type LayoutKey = (String, String, u32, u16, Option<u32>, u32, u32);
+/// Layout key: UI locale, family, text, size, weight, line height, and bounds.
+type LayoutKey = (String, String, String, u32, u16, Option<u32>, u32, u32);
+type FormatKey = (String, String, u32, u16, Option<u32>);
 
 /// 烘焙阴影缓存键：(宽 px, 高 px, 圆角 px, 模糊 bits, 颜色 rgba)，前三项量化逻辑像素整数。
 type ShadowKey = (u32, u32, u32, u32, u32);
@@ -666,7 +665,7 @@ struct D2DTarget<'a> {
     solid: &'a ID2D1SolidColorBrush,
     grad_cache: &'a mut HashMap<GradKey, ID2D1Brush>,
     dwrite_factory: &'a IDWriteFactory,
-    format_cache: &'a mut HashMap<(String, u32, u16, Option<u32>), IDWriteTextFormat>,
+    format_cache: &'a mut HashMap<FormatKey, IDWriteTextFormat>,
     layout_cache: &'a mut HashMap<LayoutKey, IDWriteTextLayout>,
     image_cache: &'a mut HashMap<usize, ID2D1Bitmap1>,
     bake_ctx: &'a ID2D1DeviceContext,
@@ -719,8 +718,8 @@ struct D2DCanvas<'a> {
     grad_cache: &'a mut HashMap<GradKey, ID2D1Brush>,
     /// DirectWrite 工厂（借入）：建 format/layout。
     dwrite_factory: &'a IDWriteFactory,
-    /// TextFormat 缓存（借入，可变）：按 (family, 逻辑字号 bits, 字重) 复用。
-    format_cache: &'a mut HashMap<(String, u32, u16, Option<u32>), IDWriteTextFormat>,
+    /// Borrowed formats, including the UI locale in every cache key.
+    format_cache: &'a mut HashMap<FormatKey, IDWriteTextFormat>,
     layout_cache: &'a mut HashMap<LayoutKey, IDWriteTextLayout>,
     /// 图片位图缓存（借入，可变）：按 `Image::cache_id()` 复用 GPU 位图，避免每帧 `CreateBitmap`。
     image_cache: &'a mut HashMap<usize, ID2D1Bitmap1>,
@@ -757,6 +756,7 @@ impl D2DCanvas<'_> {
         let fam = ts.family.unwrap_or(DEFAULT_FAMILY).to_string();
         let weight = ts.weight;
         let key: LayoutKey = (
+            crate::text::dwrite::current_ui_locale(),
             fam,
             text.to_string(),
             ts.size.to_bits(),
@@ -1168,14 +1168,14 @@ impl D2DCanvas<'_> {
         }
     }
 
-    /// 取/建 `IDWriteTextFormat`（逻辑字号；DPI scale 由 SetTransform 应用，**不**在此 ×scale）。
-    /// 缓存键 (family, 逻辑字号 bits, 字重, 行高 bits) 与软引擎 `DWriteEngine::format` 同构，
-    /// 保证两后端字体/字重/行距一致。family 缺省 `DEFAULT_FAMILY`、locale 固定 "zh-cn"。
-    /// 对齐**不**进 key（在 layout 上设），避免污染缓存的 format。
+    /// Cache logical-size formats using the same builder as the software path.
+    /// The active UI locale is included; alignment is applied to each layout.
     fn text_format(&mut self, ts: &crate::text::TextStyle) -> Option<IDWriteTextFormat> {
         let fam = ts.family.unwrap_or(DEFAULT_FAMILY).to_string();
         let (weight, size) = (ts.weight, ts.size);
+        let active_locale = crate::text::dwrite::current_ui_locale();
         let key = (
+            active_locale.clone(),
             fam.clone(),
             size.to_bits(),
             weight,
@@ -1184,38 +1184,8 @@ impl D2DCanvas<'_> {
         if let Some(f) = self.format_cache.get(&key) {
             return Some(f.clone());
         }
-        let dw_weight = if weight == crate::text::WEIGHT_NORMAL {
-            DWRITE_FONT_WEIGHT_NORMAL
-        } else {
-            DWRITE_FONT_WEIGHT(weight as i32)
-        };
-        let fam_w = wide_nul(&fam);
-        let locale = wide_nul("zh-cn");
-        let format = unsafe {
-            self.dwrite_factory
-                .CreateTextFormat(
-                    PCWSTR(fam_w.as_ptr()),
-                    None,
-                    dw_weight,
-                    DWRITE_FONT_STYLE_NORMAL,
-                    DWRITE_FONT_STRETCH_NORMAL,
-                    size, // 逻辑字号：D2D 变换会放大到物理像素，绝不在此 ×scale
-                    PCWSTR(locale.as_ptr()),
-                )
-                .ok()?
-        };
-        // 行距与软引擎 `DWriteEngine::format` 同款：UNIFORM + 基线 0.8，两后端须一致，
-        // 否则同一份界面在硬件与软件渲染下行高不同。
-        if let Some(mult) = ts.line_height {
-            let line = size * mult;
-            unsafe {
-                let _ = format.SetLineSpacing(
-                    windows::Win32::Graphics::DirectWrite::DWRITE_LINE_SPACING_METHOD_UNIFORM,
-                    line,
-                    line * 0.8,
-                );
-            }
-        }
+        let format =
+            crate::text::dwrite::create_text_format(self.dwrite_factory, ts, size, &active_locale)?;
         self.format_cache.insert(key, format.clone());
         Some(format)
     }
@@ -1544,14 +1514,10 @@ impl Canvas for D2DCanvas<'_> {
         let Some(layout) = self.text_layout(text, ts, rect.w as f32, f32::MAX) else {
             return;
         };
-        // 水平：与软路径 text_x0 的 Start/Center/End 语义一致（Stretch 同 Start→LEADING）。
-        let h_align = match align {
-            crate::spec::Align::Start | crate::spec::Align::Stretch => {
-                DWRITE_TEXT_ALIGNMENT_LEADING
-            }
-            crate::spec::Align::Center => DWRITE_TEXT_ALIGNMENT_CENTER,
-            crate::spec::Align::End => DWRITE_TEXT_ALIGNMENT_TRAILING,
-        };
+        // Keep physical alignment consistent with the software path. RTL changes
+        // glyph ordering, without mirroring the application's widget geometry.
+        let rtl = crate::text::dwrite::is_rtl_locale(&crate::text::dwrite::current_ui_locale());
+        let h_align = crate::text::dwrite::physical_text_alignment(align, rtl);
         // 文本块总高（含软/硬换行的全部行），用于纵向定位。
         let mut m = windows::Win32::Graphics::DirectWrite::DWRITE_TEXT_METRICS::default();
         let th = if unsafe { layout.GetMetrics(&mut m) }.is_ok() {
@@ -1762,17 +1728,12 @@ const INFINITE_RECT: D2D_RECT_F = D2D_RECT_F {
     bottom: 1e7,
 };
 
-/// 中文友好默认字体，与软引擎 `DWriteEngine` 的 `DEFAULT_FAMILY` 同值（两后端字体一致）。
-const DEFAULT_FAMILY: &str = "Microsoft YaHei UI";
+/// Use the same deterministic default family as the software renderer.
+const DEFAULT_FAMILY: &str = crate::text::dwrite::DEFAULT_FAMILY;
 
 /// `&str` → UTF-16（不含 NUL），供 `CreateTextLayout`（带长度，不需 NUL）。
 fn wide(s: &str) -> Vec<u16> {
     s.encode_utf16().collect()
-}
-
-/// `&str` → 以 NUL 结尾的 UTF-16，供 `CreateTextFormat`/locale（PCWSTR 需 NUL 终止）。
-fn wide_nul(s: &str) -> Vec<u16> {
-    s.encode_utf16().chain(std::iter::once(0)).collect()
 }
 
 /// 构造 D2D 矩形（left/top/right/bottom，注意非 x/y/w/h）。
@@ -1850,7 +1811,7 @@ pub(crate) mod offscreen {
         w: u32,
         h: u32,
         grad_cache: HashMap<GradKey, ID2D1Brush>,
-        format_cache: HashMap<(String, u32, u16, Option<u32>), IDWriteTextFormat>,
+        format_cache: HashMap<FormatKey, IDWriteTextFormat>,
         layout_cache: HashMap<LayoutKey, IDWriteTextLayout>,
         image_cache: HashMap<usize, ID2D1Bitmap1>,
         shadow_effect: Option<ID2D1Effect>,

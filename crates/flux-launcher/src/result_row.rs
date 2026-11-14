@@ -57,6 +57,32 @@ pub(crate) fn icon_target_for_path(target: &str) -> String {
     resolve_bare_executable_path(target).unwrap_or_else(|| target.to_owned())
 }
 
+pub(crate) use super::app_scan::APPLICATION_SUBTITLES;
+
+pub(crate) fn localized_subtitle(result: &SearchResult) -> String {
+    if result.source == flux_core::ResultSource::BuiltIn
+        || (result.source == flux_core::ResultSource::ApplicationCatalog
+            && result.kind == flux_core::ResultKind::Application
+            && APPLICATION_SUBTITLES.contains(&result.subtitle.as_str()))
+    {
+        crate::i18n::text(&result.subtitle)
+    } else {
+        result.subtitle.clone()
+    }
+}
+
+fn fallback_glyph(id: &str, kind: &flux_core::ResultKind) -> (String, &'static str) {
+    match id {
+        "empty-recycle-bin" => (String::from("\u{ea99}"), "Segoe Fluent Icons"),
+        "open-recycle-bin" => (String::from("\u{e74d}"), "Segoe Fluent Icons"),
+        _ if id.starts_with("history:") => (String::from("⏳"), "Segoe UI Symbol"),
+        _ if *kind == flux_core::ResultKind::Application => {
+            (String::from("◉"), LAUNCHER_FONT_FAMILY)
+        }
+        _ => (String::from("▣"), LAUNCHER_FONT_FAMILY),
+    }
+}
+
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn result_row(
     result: SearchResult,
@@ -84,22 +110,18 @@ pub(crate) fn result_row(
     window_size_slot: Rc<RefCell<Option<WindowSizeHandle>>>,
 ) -> Element {
     let result_for_actions = result.clone();
+    let subtitle = localized_subtitle(&result);
     let id = result.id;
     let target = result.target;
-    let title = result.title;
-    let subtitle = result.subtitle;
-    let icon_target = target.as_deref().map(icon_target_for_path);
-    let (glyph, glyph_font) = match id.as_str() {
-        "empty-recycle-bin" => (String::from("\u{ea99}"), "Segoe Fluent Icons"),
-        "open-recycle-bin" => (String::from("\u{e74d}"), "Segoe Fluent Icons"),
-        // Recalling a previous search is what these rows do, so mark them with an
-        // hourglass instead of the generic placeholder square. The family is named
-        // explicitly: U+231B has an emoji presentation by default, and the rows are
-        // painted monochrome.
-        _ if id.starts_with("history:") => (String::from("⏳"), "Segoe UI Symbol"),
-        _ if subtitle.contains("Application") => (String::from("◉"), LAUNCHER_FONT_FAMILY),
-        _ => (String::from("▣"), LAUNCHER_FONT_FAMILY),
+    let local_caption =
+        result.source == flux_core::ResultSource::BuiltIn && !id.starts_with("history:");
+    let title = if local_caption {
+        crate::i18n::text(&result.title)
+    } else {
+        result.title
     };
+    let icon_target = target.as_deref().map(icon_target_for_path);
+    let (glyph, glyph_font) = fallback_glyph(&id, &result_for_actions.kind);
     let icon =
         bundled_icon_rgba(&id).or_else(|| icon_target.as_deref().and_then(request_shell_icon));
     let actions = actions_for_result(&result_for_actions, &plugin_actions.borrow());
@@ -259,6 +281,64 @@ mod tests {
     use super::*;
     use crate::provider_merge::normalize_built_in_executable_targets;
     use flux_core::{ResultKind, ResultSource};
+
+    #[test]
+    fn application_subtitles_translate_without_changing_identity_or_icon() {
+        for language in flux_core::Locale::ALL {
+            crate::i18n::with_locale(language, || {
+                for subtitle in APPLICATION_SUBTITLES {
+                    let result = SearchResult {
+                        id: "application:target:example.exe".to_owned(),
+                        title: "Example App".to_owned(),
+                        subtitle: subtitle.to_owned(),
+                        kind: ResultKind::Application,
+                        source: ResultSource::ApplicationCatalog,
+                        target: Some(r"C:\Example App\example.exe".to_owned()),
+                    };
+                    let unchanged = result.clone();
+                    let caption = localized_subtitle(&result);
+                    assert!(!caption.is_empty());
+                    if language != flux_core::Locale::English
+                        && subtitle == APPLICATION_SUBTITLES[0]
+                    {
+                        assert_ne!(caption, subtitle);
+                    }
+                    assert_eq!(fallback_glyph(&result.id, &result.kind).0, "◉");
+                    assert_eq!(result, unchanged);
+                    let plugin = SearchResult {
+                        source: ResultSource::Plugin,
+                        ..result.clone()
+                    };
+                    assert_eq!(localized_subtitle(&plugin), subtitle);
+                    let path = SearchResult {
+                        subtitle: r"C:\Application data".to_owned(),
+                        source: ResultSource::Everything,
+                        ..result
+                    };
+                    assert_eq!(localized_subtitle(&path), r"C:\Application data");
+                }
+            });
+        }
+        assert_eq!(fallback_glyph("file:example", &ResultKind::File).0, "▣");
+    }
+
+    #[test]
+    fn unknown_application_origins_remain_unmodified() {
+        for language in flux_core::Locale::ALL {
+            crate::i18n::with_locale(language, || {
+                let result = SearchResult {
+                    id: "application:unknown".to_owned(),
+                    title: "Third Source App".to_owned(),
+                    subtitle: "Application • Third-party origin".to_owned(),
+                    kind: ResultKind::Application,
+                    source: ResultSource::ApplicationCatalog,
+                    target: None,
+                };
+                assert_eq!(localized_subtitle(&result), result.subtitle);
+                assert_eq!(fallback_glyph(&result.id, &result.kind).0, "◉");
+            });
+        }
+    }
 
     #[test]
     fn icon_target_preserves_explicit_paths_and_resolves_bare_names_on_windows() {

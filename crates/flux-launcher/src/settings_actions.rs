@@ -16,7 +16,8 @@ use super::theme_text::{
 };
 use super::ui_constants::COMPACT_WINDOW_HEIGHT;
 use super::update_tasks::{
-    request_update_check, request_update_install, save_settings_async, update_check_due,
+    request_update_check, request_update_install, save_settings, save_settings_async,
+    update_check_due,
 };
 use super::updater;
 use super::window_geometry::{
@@ -28,6 +29,25 @@ use super::window_geometry::{
 /// draft signals, so the footer's Apply writes all of them at once instead of
 /// each tab carrying its own save button.
 pub(crate) fn apply_settings(ui: &SettingsUi, ctx: &mut EventCtx) {
+    let explicit_language = ui.language.get() != 0;
+    let language = if explicit_language {
+        flux_core::Locale::from_index(ui.language.get() - 1)
+    } else {
+        crate::system_locale::detect()
+    };
+    // Establish replacement readiness before mutating or saving the language.
+    let prepared = if language != crate::i18n::current() {
+        match crate::relaunch::prepare() {
+            Ok(prepared) => Some(prepared),
+            Err(error) => {
+                eprintln!("Could not prepare language restart: {error}");
+                ctx.toast_ok(crate::i18n::tr("Could not restart Flux"));
+                return;
+            }
+        }
+    } else {
+        None
+    };
     let duration = ui
         .caret_duration
         .get()
@@ -65,6 +85,10 @@ pub(crate) fn apply_settings(ui: &SettingsUi, ctx: &mut EventCtx) {
     let mut check_due = false;
     if let Ok(mut settings) = ui.shared_settings.write() {
         let auto_enable_previous = settings.auto_enable_everything;
+        if prepared.is_none() {
+            settings.language_explicit = explicit_language;
+            settings.language = language;
+        }
         settings.activation_hotkey = configuration;
         settings.game_mode_hotkey = HotkeyConfig {
             ctrl: ui.game_mode_ctrl.get(),
@@ -121,9 +145,12 @@ pub(crate) fn apply_settings(ui: &SettingsUi, ctx: &mut EventCtx) {
             MIN_LAUNCHER_HEIGHT,
             MAX_LAUNCHER_HEIGHT,
         ));
-        ui.launcher_preview_text.set(format!(
-            "Current launcher client area: {} × {} logical px (DIP)",
-            settings.launcher_width, settings.launcher_height
+        ui.launcher_preview_text.set(crate::i18n::format(
+            "Current launcher client area: {width} × {height} logical px (DIP)",
+            &[
+                ("width", settings.launcher_width.to_string()),
+                ("height", settings.launcher_height.to_string()),
+            ],
         ));
         ui.activation_handle
             .set(hotkeys::activation_hotkey(&settings.activation_hotkey));
@@ -144,22 +171,22 @@ pub(crate) fn apply_settings(ui: &SettingsUi, ctx: &mut EventCtx) {
                 match everything::start_background_if_installed() {
                     Ok(InstallationState::Installed(_)) => {
                         ui.everything_installed.set(true);
-                        ui.everything_status.set(String::from(
+                        ui.everything_status.set(String::from(crate::i18n::tr(
                             "Everything is already installed; Flux will enable IPC automatically",
-                        ));
+                        )));
                     }
                     Ok(InstallationState::Missing) => {
                         ui.everything_installed.set(false);
                         ui.everything_status.set(String::from(
-                            "Everything is not installed. Install it with winget to enable file search.",
+                            crate::i18n::tr("Everything is not installed. Install it with winget to enable file search."),
                         ));
                     }
                     Err(error) => ui.everything_status.set(error),
                 }
             } else {
-                ui.everything_status.set(String::from(
+                ui.everything_status.set(String::from(crate::i18n::tr(
                     "Everything auto-enable is disabled in Flux settings",
-                ));
+                )));
             }
         }
         eprintln!(
@@ -171,6 +198,42 @@ pub(crate) fn apply_settings(ui: &SettingsUi, ctx: &mut EventCtx) {
     // Persist off the UI thread and leave the window exactly where it is: Apply
     // used to write the file, sync the registry and shrink back to the search
     // strip on the click, which read as a freeze and threw away the page.
+    if let Some(prepared) = prepared {
+        let Ok(mut settings) = ui.shared_settings.write() else {
+            ctx.toast_ok(crate::i18n::tr("Could not save settings"));
+            return;
+        };
+        // Hold the write lock through persistence and any rollback so queued
+        // asynchronous saves cannot observe a failed language choice.
+        let result = persist_language_change(
+            &mut settings,
+            language,
+            explicit_language,
+            save_settings,
+            || {
+                drop(ui.visual_preview.borrow_mut().take());
+                prepared.commit()
+            },
+            |enabled| {
+                if let Err(error) = startup::set_enabled(enabled) {
+                    eprintln!("Could not synchronize Windows startup setting: {error}");
+                }
+            },
+        );
+        drop(settings);
+        if let Err(error) = result {
+            eprintln!("Could not finish language restart: {error:?}");
+            ctx.toast_ok(crate::i18n::tr(match error {
+                LanguageChangeError::Save | LanguageChangeError::Rollback => {
+                    "Could not save settings"
+                }
+                LanguageChangeError::Commit => "Could not restart Flux",
+            }));
+            return;
+        }
+        ctx.quit();
+        return;
+    }
     save_settings_async(&ui.shared_settings);
     let start_with_windows = ui.start_with_windows.get();
     let _ = std::thread::Builder::new()
@@ -181,11 +244,49 @@ pub(crate) fn apply_settings(ui: &SettingsUi, ctx: &mut EventCtx) {
             }
         });
     if check_due {
-        ui.update_status
-            .set(String::from("Checking stable GitHub releases..."));
+        ui.update_status.set(String::from(crate::i18n::tr(
+            "Checking stable GitHub releases...",
+        )));
         request_update_check(ui.update_sender.clone(), &ui.update_check_in_flight);
     }
-    ctx.toast_ok("Settings applied");
+    ctx.toast_ok(crate::i18n::tr("Settings applied"));
+}
+
+#[derive(Debug, PartialEq, Eq)]
+enum LanguageChangeError {
+    Save,
+    Commit,
+    Rollback,
+}
+
+fn persist_language_change(
+    settings: &mut Settings,
+    language: flux_core::Locale,
+    explicit: bool,
+    mut save: impl FnMut(&Settings) -> bool,
+    commit: impl FnOnce() -> std::io::Result<()>,
+    sync_startup: impl FnOnce(bool),
+) -> Result<(), LanguageChangeError> {
+    let previous = (settings.language, settings.language_explicit);
+    settings.language = language;
+    settings.language_explicit = explicit;
+    if !save(settings) {
+        (settings.language, settings.language_explicit) = previous;
+        return Err(LanguageChangeError::Save);
+    }
+    // Other settings remain applied if only the language commit fails. Match
+    // the registry to the successfully saved startup choice before that commit.
+    sync_startup(settings.start_with_windows);
+    if let Err(error) = commit() {
+        eprintln!("Language restart commit failed: {error}");
+        (settings.language, settings.language_explicit) = previous;
+        return Err(if save(settings) {
+            LanguageChangeError::Commit
+        } else {
+            LanguageChangeError::Rollback
+        });
+    }
+    Ok(())
 }
 
 /// Close the Settings window without quitting: the process stays resident in
@@ -287,7 +388,11 @@ pub(crate) fn has_unsaved_changes(ui: &SettingsUi) -> bool {
         .unwrap_or(24)
         .clamp(1, 168);
     let accent = parse_selection_color(&ui.custom_selection_color.get()).unwrap_or(0x4c_8b_f4);
-    settings.activation_hotkey != hotkey
+    settings.language != crate::i18n::current()
+        || settings.language_explicit != (ui.language.get() != 0)
+        || (ui.language.get() != 0
+            && settings.language != flux_core::Locale::from_index(ui.language.get() - 1))
+        || settings.activation_hotkey != hotkey
         || settings.game_mode_hotkey != game_hotkey
         || settings.game_mode_hotkey_enabled != ui.game_mode_hotkey_enabled.get()
         || settings.ignore_hotkeys_in_fullscreen != ui.ignore_fullscreen.get()
@@ -321,11 +426,16 @@ pub(crate) fn revert_settings(ui: &SettingsUi, ctx: &mut EventCtx) {
     let stored = match ui.shared_settings.read() {
         Ok(settings) => (*settings).clone(),
         Err(_) => {
-            ctx.toast_ok("Could not lock Flux settings");
+            ctx.toast_ok(crate::i18n::tr("Could not lock Flux settings"));
             return;
         }
     };
     reset_general(ui, &stored);
+    ui.language.set(if stored.language_explicit {
+        stored.language.index() + 1
+    } else {
+        0
+    });
     reset_visual(ui, &stored);
     reset_plugins(ui, &stored);
     ui.priorities.set(stored.priority_entries.clone());
@@ -345,7 +455,7 @@ pub(crate) fn revert_settings(ui: &SettingsUi, ctx: &mut EventCtx) {
         selection_rgb_for_settings(&stored),
     );
     eprintln!("Settings revert dispatched");
-    ctx.toast_ok("Changes discarded");
+    ctx.toast_ok(crate::i18n::tr("Changes discarded"));
 }
 
 /// Hand an available update to the installer without leaving Settings.
@@ -358,9 +468,9 @@ pub(crate) fn install_update(ui: &SettingsUi, ctx: &mut EventCtx) {
     };
     ui.update_installing.set(true);
     ui.update_install_progress.set(None);
-    ui.update_status.set(format!(
-        "Preparing stable {} for download...",
-        update.version
+    ui.update_status.set(crate::i18n::format(
+        "Preparing stable {version} for download...",
+        &[("version", update.version.to_string())],
     ));
     if !request_update_install(
         update,
@@ -369,17 +479,19 @@ pub(crate) fn install_update(ui: &SettingsUi, ctx: &mut EventCtx) {
         updater::RelaunchMode::Visible,
     ) {
         ui.update_installing.set(false);
-        ui.update_status
-            .set(String::from("An update is already being installed"));
-        ctx.toast_ok("An update is already being installed");
+        ui.update_status.set(String::from(crate::i18n::tr(
+            "An update is already being installed",
+        )));
+        ctx.toast_ok(crate::i18n::tr("An update is already being installed"));
     }
 }
 
 pub(crate) fn check_for_updates_now(ui: &SettingsUi, ctx: &mut EventCtx) {
-    ui.update_status
-        .set(String::from("Checking stable GitHub releases..."));
+    ui.update_status.set(String::from(crate::i18n::tr(
+        "Checking stable GitHub releases...",
+    )));
     request_update_check(ui.update_sender.clone(), &ui.update_check_in_flight);
-    ctx.toast_ok("Checking stable updates");
+    ctx.toast_ok(crate::i18n::tr("Checking stable updates"));
 }
 
 /// Restore the defaults of the visible tab into the draft signals only.
@@ -399,7 +511,9 @@ pub(crate) fn reset_active_tab(ui: &SettingsUi, ctx: &mut EventCtx) {
         _ => {}
     }
     eprintln!("Settings tab reset: {tab}");
-    ctx.toast_ok("Defaults restored for this tab. Press Apply settings to save.");
+    ctx.toast_ok(crate::i18n::tr(
+        "Defaults restored for this tab. Press Apply settings to save.",
+    ));
 }
 
 /// The Stats tab holds counters rather than settings, so it has nothing to
@@ -409,6 +523,7 @@ pub(crate) fn tab_is_resettable(tab: usize) -> bool {
 }
 
 fn reset_general(ui: &SettingsUi, defaults: &Settings) {
+    ui.language.set(0);
     ui.activation_ctrl.set(defaults.activation_hotkey.ctrl);
     ui.activation_alt.set(defaults.activation_hotkey.alt);
     ui.activation_shift.set(defaults.activation_hotkey.shift);
@@ -487,6 +602,115 @@ fn reset_plugins(ui: &SettingsUi, defaults: &Settings) {
 }
 
 #[cfg(test)]
+mod language_transaction_tests {
+    use super::*;
+    use std::cell::Cell;
+
+    #[test]
+    fn a_failed_save_does_not_commit_or_change_the_active_language() {
+        let mut settings = Settings::default();
+        let committed = Cell::new(false);
+        let result = persist_language_change(
+            &mut settings,
+            flux_core::Locale::Japanese,
+            true,
+            |_| false,
+            || {
+                committed.set(true);
+                Ok(())
+            },
+            |_| panic!("startup must not change when saving fails"),
+        );
+        assert_eq!(result, Err(LanguageChangeError::Save));
+        assert_eq!(settings.language, flux_core::Locale::English);
+        assert!(!settings.language_explicit);
+        assert!(!committed.get());
+    }
+
+    #[test]
+    fn a_failed_commit_rolls_back_the_persisted_language_and_explicit_flag() {
+        let path = std::env::temp_dir().join(format!(
+            "flux-language-rollback-{}.json",
+            std::process::id()
+        ));
+        let mut settings = Settings {
+            language: flux_core::Locale::French,
+            language_explicit: false,
+            start_with_windows: false,
+            ..Settings::default()
+        };
+        settings.save_to(&path).unwrap();
+        let registry_startup = Cell::new(false);
+        settings.start_with_windows = true;
+        let result = persist_language_change(
+            &mut settings,
+            flux_core::Locale::Japanese,
+            true,
+            |settings| settings.save_to(&path).is_ok(),
+            || {
+                let staged = Settings::load_from(&path).unwrap();
+                assert_eq!(staged.language, flux_core::Locale::Japanese);
+                assert!(staged.language_explicit);
+                assert!(staged.start_with_windows);
+                assert!(registry_startup.get());
+                Err(std::io::Error::new(
+                    std::io::ErrorKind::BrokenPipe,
+                    "replacement exited",
+                ))
+            },
+            |enabled| registry_startup.set(enabled),
+        );
+        assert_eq!(result, Err(LanguageChangeError::Commit));
+        let restored = Settings::load_from(&path).unwrap();
+        assert_eq!(restored.language, flux_core::Locale::French);
+        assert!(!restored.language_explicit);
+        assert!(restored.start_with_windows);
+        assert_eq!(registry_startup.get(), restored.start_with_windows);
+        assert_eq!(settings.language, restored.language);
+        assert_eq!(settings.language_explicit, restored.language_explicit);
+        std::fs::remove_file(path).unwrap();
+    }
+
+    #[test]
+    fn a_ready_replacement_commits_only_after_its_language_is_saved() {
+        let path =
+            std::env::temp_dir().join(format!("flux-language-commit-{}.json", std::process::id()));
+        for enabled in [true, false] {
+            let mut settings = Settings {
+                start_with_windows: enabled,
+                ..Settings::default()
+            };
+            let synced_startup = Cell::new(None);
+            assert_eq!(
+                persist_language_change(
+                    &mut settings,
+                    flux_core::Locale::Japanese,
+                    true,
+                    |settings| settings.save_to(&path).is_ok(),
+                    || {
+                        let saved = Settings::load_from(&path).unwrap();
+                        assert_eq!(saved.language, flux_core::Locale::Japanese);
+                        assert!(saved.language_explicit);
+                        assert_eq!(saved.start_with_windows, enabled);
+                        assert_eq!(synced_startup.get(), Some(enabled));
+                        Ok(())
+                    },
+                    |value| {
+                        let saved = Settings::load_from(&path).unwrap();
+                        assert_eq!(saved.start_with_windows, value);
+                        assert_eq!(synced_startup.replace(Some(value)), None);
+                    },
+                ),
+                Ok(())
+            );
+            assert_eq!(synced_startup.get(), Some(enabled));
+            assert_eq!(settings.language, flux_core::Locale::Japanese);
+            std::fs::remove_file(&path).unwrap();
+        }
+    }
+}
+
+#[cfg(test)]
 mod tests {
     use super::*;
     use crate::provider_snapshot::ProviderResults;
@@ -510,6 +734,12 @@ mod tests {
         let update_install_sender = app.channel::<UpdateInstallResponse>(|_, _| {});
         let update_sender = app.channel::<updater::UpdateCheckResponse>(|_, _| {});
         SettingsUi {
+            visual_preview: Rc::new(RefCell::new(None)),
+            language: signal(if stored.language_explicit {
+                stored.language.index() + 1
+            } else {
+                0
+            }),
             shared_settings: Arc::new(RwLock::new(stored.clone())),
             query_history: Rc::new(RefCell::new(Vec::new())),
             stats_usage: signal(String::new()),
@@ -790,5 +1020,126 @@ mod tests {
 
         land_size_ease(&ui, &stored);
         assert!(!has_unsaved_changes(&ui));
+    }
+
+    #[test]
+    fn revert_restores_explicit_and_system_language_drafts_for_every_locale() {
+        for language in flux_core::Locale::ALL {
+            crate::i18n::with_locale(language, || {
+                for explicit in [true, false] {
+                    let stored = Settings {
+                        language,
+                        language_explicit: explicit,
+                        ..Settings::default()
+                    };
+                    let ui = fixture(&stored);
+                    assert!(!has_unsaved_changes(&ui));
+                    ui.language
+                        .set(if explicit { 0 } else { language.index() + 1 });
+                    assert!(has_unsaved_changes(&ui));
+                    windui::testing::run_with_ctx(|ctx| revert_settings(&ui, ctx));
+                    assert_eq!(
+                        ui.language.get(),
+                        if explicit { language.index() + 1 } else { 0 }
+                    );
+                    assert!(
+                        !has_unsaved_changes(&ui),
+                        "{} / explicit={explicit}",
+                        language.code()
+                    );
+                    assert_eq!(*ui.shared_settings.read().unwrap(), stored);
+                }
+            });
+        }
+    }
+
+    #[test]
+    fn reset_general_still_selects_system_default_language() {
+        let stored = Settings {
+            language: flux_core::Locale::French,
+            language_explicit: true,
+            ..Settings::default()
+        };
+        let ui = fixture(&stored);
+        reset_general(&ui, &Settings::default());
+        assert_eq!(ui.language.get(), 0);
+        assert_eq!(*ui.shared_settings.read().unwrap(), stored);
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn localized_footer_controls_fit_without_overlap_for_every_locale() {
+        use crate::settings_shell::build_settings_panel;
+        use crate::ui_constants::{LAUNCHER_FONT_FAMILY, SETTINGS_WINDOW_WIDTH};
+        use windui::core::Tree;
+        use windui::text::DWriteEngine;
+
+        struct RestoreLocale(String);
+        impl Drop for RestoreLocale {
+            fn drop(&mut self) {
+                windui::text::set_ui_locale(&self.0);
+            }
+        }
+        let _restore = RestoreLocale(windui::text::ui_locale());
+        for language in flux_core::Locale::ALL {
+            windui::text::set_ui_locale(language.code());
+            crate::i18n::with_locale(language, || {
+                let stored = Settings {
+                    language,
+                    language_explicit: true,
+                    ..Settings::default()
+                };
+                let ui = fixture(&stored);
+                ui.language.set(0);
+                let panel = build_settings_panel(
+                    &ui,
+                    Element::leaf(),
+                    Element::leaf(),
+                    Element::leaf(),
+                    Element::leaf(),
+                    Element::leaf(),
+                )
+                .font_family(LAUNCHER_FONT_FAMILY);
+                let mut tree = Tree::new();
+                let root = panel.build(&mut tree);
+                tree.root = Some(root);
+                let mut engine = DWriteEngine::new();
+                tree.layout_root(Size::new(SETTINGS_WINDOW_WIDTH, 520), &mut engine);
+                let body = *tree.get(root).unwrap().children.last().unwrap();
+                let content = *tree.get(body).unwrap().children.last().unwrap();
+                let footer = *tree.get(content).unwrap().children.last().unwrap();
+                let bounds = tree.abs_bounds(footer);
+                let controls = &tree.get(footer).unwrap().children;
+                assert_eq!(controls.len(), 3);
+                let mut right = bounds.x;
+                for id in controls {
+                    let node = tree.get(*id).unwrap();
+                    let rect = tree.abs_bounds(*id);
+                    assert!(node.effective_visible());
+                    assert!(rect.w > 0 && rect.h > 0);
+                    assert!(
+                        rect.x >= right && rect.x + rect.w <= bounds.x + bounds.w,
+                        "{} footer controls overlap or overflow: {rect:?} / {bounds:?}",
+                        language.code()
+                    );
+                    assert!(rect.y >= bounds.y && rect.y + rect.h <= bounds.y + bounds.h);
+                    let natural =
+                        node.widget
+                            .measure(Size::new(rect.w, 1000), &node.style, &mut engine);
+                    assert!(
+                        natural.w <= rect.w && natural.h <= rect.h,
+                        "{} footer caption is clipped: {natural:?} / {rect:?}",
+                        language.code()
+                    );
+                    right = rect.x + rect.w;
+                }
+                assert_eq!(
+                    tree.get(controls[1]).unwrap().tooltip.as_deref(),
+                    Some(crate::i18n::tr(
+                        "Discard unsaved changes and restore the saved values."
+                    ))
+                );
+            });
+        }
     }
 }

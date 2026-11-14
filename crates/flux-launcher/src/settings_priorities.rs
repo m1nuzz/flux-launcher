@@ -79,7 +79,7 @@ pub(crate) fn build_priority_list(ui: &SettingsUi) -> Element {
                             priorities,
                             results,
                         );
-                        ctx.toast_ok("Priority moved up");
+                        ctx.toast_ok(crate::i18n::tr("Priority moved up"));
                     }
                 }))
                 .child(Element::button("↓").small().neutral().on_click(move |ctx| {
@@ -90,20 +90,28 @@ pub(crate) fn build_priority_list(ui: &SettingsUi) -> Element {
                             priorities,
                             results,
                         );
-                        ctx.toast_ok("Priority moved down");
+                        ctx.toast_ok(crate::i18n::tr("Priority moved down"));
                     }
                 }))
-                .child(Element::button("Remove").small().on_click(move |ctx| {
-                    if remove_priority_entry(&settings_for_remove, priorities, &id_for_remove) {
-                        refresh_merged_results(
-                            &providers_for_remove,
-                            query_for_remove,
-                            priorities,
-                            results,
-                        );
-                        ctx.toast_ok("Priority removed");
-                    }
-                }))
+                .child(
+                    Element::button(crate::i18n::tr("Remove"))
+                        .small()
+                        .on_click(move |ctx| {
+                            if remove_priority_entry(
+                                &settings_for_remove,
+                                priorities,
+                                &id_for_remove,
+                            ) {
+                                refresh_merged_results(
+                                    &providers_for_remove,
+                                    query_for_remove,
+                                    priorities,
+                                    results,
+                                );
+                                ctx.toast_ok(crate::i18n::tr("Priority removed"));
+                            }
+                        }),
+                )
         },
     )
 }
@@ -111,7 +119,7 @@ pub(crate) fn build_priority_list(ui: &SettingsUi) -> Element {
 pub(crate) fn build_priorities_empty(ui: &SettingsUi) -> Element {
     let priorities = ui.priorities;
     Element::label(
-        "No explicit priorities yet. Select an application, press Right, then choose Set as priority.",
+        crate::i18n::tr("No explicit priorities yet. Select an application, press Right, then choose Set as priority."),
     )
     .font_size(12.0)
     .fg_role(Role::TextSubtle)
@@ -134,7 +142,7 @@ pub(crate) fn build_priorities_tab(
             Element::row()
                 .width_match()
                 .child(Element::col().weight(1.0).spacing(16).child(settings_group(
-                    "Ranked applications",
+                    crate::i18n::tr("Ranked applications"),
                     vec![priorities_empty, priority_list],
                 )))
                 .child(settings_scroll_gutter()),

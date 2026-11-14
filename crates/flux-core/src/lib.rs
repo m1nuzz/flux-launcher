@@ -1,6 +1,8 @@
 //! Platform-independent core state and policies for Flux Launcher.
 
 pub mod flow;
+pub mod locale;
+pub use locale::Locale;
 pub mod game_mode;
 pub mod search;
 mod search_match;

@@ -24,15 +24,15 @@ pub(crate) fn build_plugins_tab(ui: &SettingsUi) -> Element {
                             "Everything",
                             vec![
                                 Element::setting_row_desc(
-                                    "Auto-enable Everything",
-                                    "Use Everything for file results while it is installed",
+                                    crate::i18n::tr("Auto-enable Everything"),
+                                    crate::i18n::tr("Use Everything for file results while it is installed"),
                                     Element::switch(ui.auto_enable_everything),
                                 ),
-                                Element::label("Everything is already installed")
+                                Element::label(crate::i18n::tr("Everything is already installed"))
                                     .font_size(12.0)
                                     .fg(Color::rgba(180, 255, 205, 235))
                                     .visible_when(move || everything_installed.get()),
-                                Element::label("Everything is not installed")
+                                Element::label(crate::i18n::tr("Everything is not installed"))
                                     .font_size(12.0)
                                     .fg(Color::rgba(255, 225, 175, 235))
                                     .visible_when(move || !everything_installed.get()),
@@ -42,16 +42,16 @@ pub(crate) fn build_plugins_tab(ui: &SettingsUi) -> Element {
                                     .max_lines(2)
                                     .truncate(Truncate::End)
                                     .width_match(),
-                                Element::button("Install Everything")
+                                Element::button(crate::i18n::tr("Install Everything"))
                                     .small()
                                     .visible_when(move || !everything_installed.get())
                                     .on_click(move |ctx| {
                                         match everything::launch_winget_install() {
                                             Ok(()) => {
                                                 everything_status.set(String::from(
-                                                "winget install started. Restart Flux after Everything is installed.",
+                                                crate::i18n::tr("winget install started. Restart Flux after Everything is installed."),
                                             ));
-                                                ctx.toast_ok("winget install started");
+                                                ctx.toast_ok(crate::i18n::tr("winget install started"));
                                             }
                                             Err(error) => {
                                                 let message = error.clone();
@@ -66,16 +66,16 @@ pub(crate) fn build_plugins_tab(ui: &SettingsUi) -> Element {
                             "Obsidian",
                             vec![
                                 Element::setting_row_desc(
-                                    "Obsidian vault search",
-                                    "Search notes and vault files by keyword",
+                                    crate::i18n::tr("Obsidian vault search"),
+                                    crate::i18n::tr("Search notes and vault files by keyword"),
                                     Element::switch(ui.obsidian_enabled),
                                 ),
                                 Element::setting_row_desc(
-                                    "Action keyword",
-                                    "Prefix typed before the vault query",
+                                    crate::i18n::tr("Action keyword"),
+                                    crate::i18n::tr("Prefix typed before the vault query"),
                                     Element::text_input(ui.obsidian_alias, "ob").width(140),
                                 ),
-                                Element::label("For example: ob meeting. Use `ob create project` to create a new note.")
+                                Element::label(crate::i18n::tr("For example: ob meeting. Use `ob create project` to create a new note."))
                                     .font_size(11.0)
                                     .fg_role(Role::TextSubtle)
                                     .max_lines(2)
@@ -84,19 +84,19 @@ pub(crate) fn build_plugins_tab(ui: &SettingsUi) -> Element {
                             ],
                         ))
                         .child(settings_group(
-                            "Google Search",
+                            crate::i18n::tr("Google Search"),
                             vec![
                                 Element::setting_row_desc(
-                                    "Google web search",
-                                    "Open a browser search from the launcher",
+                                    crate::i18n::tr("Google web search"),
+                                    crate::i18n::tr("Open a browser search from the launcher"),
                                     Element::switch(ui.google_enabled),
                                 ),
                                 Element::setting_row_desc(
-                                    "Action keyword",
-                                    "Prefix typed before the web query",
+                                    crate::i18n::tr("Action keyword"),
+                                    crate::i18n::tr("Prefix typed before the web query"),
                                     Element::text_input(ui.google_alias, "g").width(140),
                                 ),
-                                Element::label("For example: g space exploration. The result opens in your default browser.")
+                                Element::label(crate::i18n::tr("For example: g space exploration. The result opens in your default browser."))
                                     .font_size(11.0)
                                     .fg_role(Role::TextSubtle)
                                     .max_lines(2)
@@ -105,24 +105,21 @@ pub(crate) fn build_plugins_tab(ui: &SettingsUi) -> Element {
                             ],
                         ))
                         .child(settings_group(
-                            "Native plugins",
+                            crate::i18n::tr("Native plugins"),
                             vec![
-                                Element::label("Built-in providers run inside Flux. Community Rust DLL plugins run in one isolated shared worker spawned from this same flux-launcher.exe.")
+                                Element::label(crate::i18n::tr("Built-in providers run inside Flux. Community Rust DLL plugins run in one isolated shared worker spawned from this same flux-launcher.exe."))
                                     .font_size(11.0)
                                     .fg_role(Role::TextSubtle)
                                     .max_lines(3)
                                     .truncate(Truncate::End)
                                     .width_match(),
-                                Element::label("Native Flow plugins: %APPDATA%\\FluxLauncher\\Plugins or FLUX_PLUGIN_DIR")
+                                Element::label(crate::i18n::tr("Native Flow plugins: %APPDATA%\\FluxLauncher\\Plugins or FLUX_PLUGIN_DIR"))
                                     .font_size(11.0)
                                     .fg_role(Role::TextSubtle)
                                     .max_lines(2)
                                     .truncate(Truncate::End)
                                     .width_match(),
-                                Element::label(format!(
-                                    "Community plugin folder: {}",
-                                    native_plugin_install_path()
-                                ))
+                                Element::label(crate::i18n::format("Community plugin folder: {path}", &[("path", native_plugin_install_path())]))
                                 .font_size(11.0)
                                 .fg_role(Role::TextSubtle)
                                 .max_lines(2)
