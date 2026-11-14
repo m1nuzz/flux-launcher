@@ -7177,7 +7177,7 @@
   },
   "{width} × {height} logical px client area": {
     "zh-CN": "客户区：{width} × {height} 逻辑像素",
-    "zh-TW": "工作區：{width} × {height} 邏輯像素",
+    "zh-TW": "客戶區：{width} × {height} 邏輯像素",
     "ja-JP": "クライアント領域：{width} × {height} 論理ピクセル",
     "ru-RU": "Клиентская область: {width} × {height} логических пикселей",
     "ko": "클라이언트 영역: {width} × {height} 논리 픽셀",
@@ -7200,5 +7200,31 @@
     "ar": "مساحة العميل: {width} × {height} بكسل منطقي",
     "he": "אזור לקוח: {width} × {height} פיקסלים לוגיים",
     "nb": "Klientområde: {width} × {height} logiske piksler"
+  },
+  "{min}-{max} logical px (DIP)": {
+    "zh-CN": "{min}-{max} 逻辑像素 (DIP)",
+    "zh-TW": "{min}-{max} 邏輯像素 (DIP)",
+    "ja-JP": "{min}-{max} 論理ピクセル (DIP)",
+    "ru-RU": "{min}-{max} логических пикселей (DIP)",
+    "ko": "{min}-{max} 논리 픽셀 (DIP)",
+    "uk-UA": "{min}-{max} логічних пікселів (DIP)",
+    "de": "{min}-{max} logische Pixel (DIP)",
+    "fr": "{min}-{max} pixels logiques (DIP)",
+    "es": "{min}-{max} píxeles lógicos (DIP)",
+    "es-419": "{min}-{max} píxeles lógicos (DIP)",
+    "it": "{min}-{max} pixel logici (DIP)",
+    "pt-BR": "{min}-{max} pixels lógicos (DIP)",
+    "pt-PT": "{min}-{max} píxeis lógicos (DIP)",
+    "pl": "{min}-{max} pikseli logicznych (DIP)",
+    "tr": "{min}-{max} mantıksal piksel (DIP)",
+    "nl": "{min}-{max} logische pixels (DIP)",
+    "cs": "{min}-{max} logických pixelů (DIP)",
+    "da": "{min}-{max} logiske pixels (DIP)",
+    "sk": "{min}-{max} logických pixelov (DIP)",
+    "sr": "{min}-{max} логичких пиксела (DIP)",
+    "vi": "{min}-{max} pixel lô-gic (DIP)",
+    "ar": "{min}-{max} بكسل منطقي (DIP)",
+    "he": "{min}-{max} פיקסלים לוגיים (DIP)",
+    "nb": "{min}-{max} logiske piksler (DIP)"
   }
 }

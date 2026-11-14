@@ -88,7 +88,10 @@ pub(crate) fn build_visual_tab(ui: &SettingsUi) -> Element {
                             vec![
                                 dimension_row(
                                     crate::i18n::tr("Launcher width"),
-                                    format!("{MIN_LAUNCHER_WIDTH}-{MAX_LAUNCHER_WIDTH} logical px (DIP)"),
+                                    crate::i18n::format(
+                                        "{min}-{max} logical px (DIP)",
+                                        &[("min", MIN_LAUNCHER_WIDTH.to_string()), ("max", MAX_LAUNCHER_WIDTH.to_string())],
+                                    ),
                                     dimension_editor(
                                         ui.launcher_width_slider,
                                         ui.launcher_width_input,
@@ -98,7 +101,10 @@ pub(crate) fn build_visual_tab(ui: &SettingsUi) -> Element {
                                 ),
                                 dimension_row(
                                     crate::i18n::tr("Results height"),
-                                    format!("{MIN_LAUNCHER_HEIGHT}-{MAX_LAUNCHER_HEIGHT} logical px (DIP)"),
+                                    crate::i18n::format(
+                                        "{min}-{max} logical px (DIP)",
+                                        &[("min", MIN_LAUNCHER_HEIGHT.to_string()), ("max", MAX_LAUNCHER_HEIGHT.to_string())],
+                                    ),
                                     dimension_editor(
                                         ui.launcher_height_slider,
                                         ui.launcher_height_input,

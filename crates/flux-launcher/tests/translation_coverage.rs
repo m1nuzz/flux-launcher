@@ -50,6 +50,7 @@ fn invariant_ui_text(value: &str) -> bool {
                 | "Obsidian • {} • {}"
                 | "Flux Launcher v{version} • github.com/m1nuzz/flux-launcher"
                 | "{rank}"
+                | "{query}{suffix}"
                 | "g"
                 | "ob"
                 | "#4C8BF4"
@@ -74,7 +75,14 @@ impl<'a> RawUiText<'a> {
 
 impl<'ast> Visit<'ast> for RawUiText<'ast> {
     fn visit_expr_call(&mut self, call: &'ast ExprCall) {
-        if !translation_call(call) {
+        // Environment lookup arguments name protocol keys; their runtime values
+        // are data rather than captions, including values assigned to signals.
+        let environment_lookup = matches!(&*call.func, Expr::Path(path)
+            if path.path.segments.len() == 3
+                && path.path.segments[0].ident == "std"
+                && path.path.segments[1].ident == "env"
+                && matches!(path.path.segments[2].ident.to_string().as_str(), "var" | "var_os"));
+        if !translation_call(call) && !environment_lookup {
             visit::visit_expr_call(self, call);
         }
     }
@@ -297,6 +305,7 @@ impl<'ast> Visit<'ast> for Calls {
             });
             let (skip, count) = match name.as_str() {
                 "settings_group" | "settings_section_header" => (0, 1),
+                "dimension_row" => (0, 2),
                 "setting_row_desc" if element => (0, 2),
                 "text_input" if element => (1, 1),
                 "label" | "label_signal" | "rich_signal" | "button" | "checkbox" | "nav_row"
@@ -359,10 +368,12 @@ impl<'ast> Visit<'ast> for Calls {
     }
 
     fn visit_expr_method_call(&mut self, call: &'ast ExprMethodCall) {
+        // Signal::set has one value; HTTP Request::set has a header and value.
         if matches!(
             call.method.to_string().as_str(),
             "tooltip" | "title" | "subtitle" | "placeholder" | "hint" | "description" | "toast_ok"
-        ) {
+        ) || (call.method == "set" && call.args.len() == 1)
+        {
             if let Some(argument) = call.args.first() {
                 let mut raw = RawUiText::new(&self.bindings);
                 raw.visit_expr(argument);
@@ -590,6 +601,37 @@ fn every_translation_call_and_dynamic_settings_caption_has_a_catalog_entry() {
         "UI text must use the catalog: {:?}",
         calls.raw_ui_strings
     );
+}
+
+#[test]
+fn scanner_checks_dimension_row_captions_and_signal_setters() {
+    let source = r#"fn build(width: i32, height: i32) {
+        let runtime = Cell::new(std::env::var("PROTOCOL_KEY").ok().and_then(|v| v.parse::<u32>().ok()).unwrap_or(0));
+        dimension_row(i18n::tr("Width"), format!("{min}-{max} raw DIP range"), editor);
+        dimension_row("Raw dimension title", i18n::format("{min}-{max} translated DIP range", &[]), editor);
+        caption.set(format!("{width} by {height} raw resized area"));
+        caption.set(i18n::format("{width} by {height} translated resized area", &[]));
+        enabled.set(true);
+        count.set(42);
+        count.set(runtime.get().saturating_sub(1));
+        request.set("User-Agent", "protocol-header");
+        query.set(format!("{query}{suffix}"));
+    }"#;
+    let mut calls = Calls::default();
+    calls.visit_file(&syn::parse_file(source).unwrap());
+    calls.raw_ui_strings.sort();
+    assert_eq!(
+        calls.raw_ui_strings,
+        [
+            "Raw dimension title",
+            "{min}-{max} raw DIP range",
+            "{width} by {height} raw resized area",
+        ]
+    );
+    assert!(calls.keys.contains("{min}-{max} translated DIP range"));
+    assert!(calls
+        .keys
+        .contains("{width} by {height} translated resized area"));
 }
 
 #[test]
