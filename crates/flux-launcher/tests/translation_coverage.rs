@@ -437,6 +437,53 @@ fn system_caption_keys(source: &str) -> HashSet<String> {
     keys
 }
 
+fn command_caption_keys(source: &str) -> HashSet<String> {
+    let file = syn::parse_file(source).expect("system results parse as Rust");
+    let function = file
+        .items
+        .iter()
+        .find_map(|item| match item {
+            syn::Item::Fn(function) if function.sig.ident == "built_in_results" => Some(function),
+            _ => None,
+        })
+        .expect("built-in result function exists");
+    let commands = function.block.stmts.iter().find_map(|statement| match statement {
+        syn::Stmt::Local(local) if matches!(&local.pat, syn::Pat::Ident(name) if name.ident == "commands") => Some(local),
+        _ => None,
+    }).expect("built-in command table exists");
+    let Expr::Array(array) = &*commands
+        .init
+        .as_ref()
+        .expect("command table is initialized")
+        .expr
+    else {
+        panic!("expected built-in command array");
+    };
+    assert!(
+        !array.elems.is_empty(),
+        "built-in command coverage must not be empty"
+    );
+    let mut keys = HashSet::new();
+    for command in &array.elems {
+        let Expr::Tuple(fields) = command else {
+            panic!("expected built-in command tuple");
+        };
+        assert_eq!(
+            fields.elems.len(),
+            3,
+            "command tuple contains id, title, subtitle"
+        );
+        keys.extend(
+            fields
+                .elems
+                .iter()
+                .skip(1)
+                .map(|value| literal(value).expect("command captions are literal keys")),
+        );
+    }
+    keys
+}
+
 #[test]
 fn every_translation_call_and_dynamic_settings_caption_has_a_catalog_entry() {
     let mut calls = Calls::default();
@@ -509,6 +556,9 @@ fn every_translation_call_and_dynamic_settings_caption_has_a_catalog_entry() {
     calls.keys.extend(system_caption_keys(include_str!(
         "../../flux-core/src/system_results.rs"
     )));
+    calls.keys.extend(command_caption_keys(include_str!(
+        "../../flux-core/src/system_results.rs"
+    )));
     let mut missing: Vec<_> = calls
         .keys
         .iter()
@@ -540,6 +590,42 @@ fn every_translation_call_and_dynamic_settings_caption_has_a_catalog_entry() {
         "UI text must use the catalog: {:?}",
         calls.raw_ui_strings
     );
+}
+
+#[test]
+fn command_caption_guard_collects_titles_and_subtitles_without_ids() {
+    let keys = command_caption_keys(
+        r#"fn built_in_results(query: &str) {
+        let commands = [("protocol-id", "New command title", "New command subtitle")];
+    }"#,
+    );
+    assert_eq!(
+        keys,
+        HashSet::from([
+            "New command title".to_owned(),
+            "New command subtitle".to_owned()
+        ])
+    );
+}
+
+#[test]
+fn scanner_checks_preview_caption_initialization_at_the_widget_builder() {
+    let source = r#"fn preview_content(width: i32, height: i32) {
+        let raw = signal(format!("{width} by {height} raw preview area"));
+        Element::label_signal(raw);
+        let translated = signal(i18n::format("{width} by {height} translated preview area", &[]));
+        Element::label_signal(translated);
+    }
+    fn run() { preview_content(420, 520); }"#;
+    let mut calls = Calls::default();
+    calls.visit_file(&syn::parse_file(source).unwrap());
+    assert_eq!(
+        calls.raw_ui_strings,
+        ["{width} by {height} raw preview area"]
+    );
+    assert!(calls
+        .keys
+        .contains("{width} by {height} translated preview area"));
 }
 
 #[test]

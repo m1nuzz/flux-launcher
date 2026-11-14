@@ -79,6 +79,7 @@ function Assert-LocaleProbe([string]$LogPath,[string]$Language,[uint32]$Expected
     } while ([DateTime]::UtcNow -lt $deadline)
     if ($probes.Count -eq 0) { throw "Missing translated UI probe for process $ExpectedProcessId" }
     $probe=$probes[-1]
+    if ($probe.settings_visible -isnot [bool] -or -not $probe.settings_visible) { throw 'Settings panel was not visible in the locale probe.' }
     $expectedCaption=if ($Language -eq 'en-US') { 'Language' } else { $catalog['Language'][$Language] }
     if ($probe.language -ne $Language -or $probe.caption -cne $expectedCaption) {
         throw "UI translation mismatch for ${Language}: $($probe | ConvertTo-Json -Compress)"
@@ -194,7 +195,7 @@ try {
             Start-Sleep -Milliseconds 300
             Save-Capture $handle "$language-tray.png" -FullScreen
             [FluxLocaleSmoke]::Key(0x1B)
-            $evidence += [pscustomobject]@{language=$language;changedTo=$saved.language;restarted=$true;caption=$translated.caption;applicationSubtitles=$translated.application_subtitles;oneShotConsumed=(-not $translated.open_settings_leaked)}
+            $evidence += [pscustomobject]@{language=$language;changedTo=$saved.language;restarted=$true;caption=$translated.caption;applicationSubtitles=$translated.application_subtitles;oneShotConsumed=(-not $translated.open_settings_leaked);settingsVisible=$translated.settings_visible}
         }
     }
     $evidence | ConvertTo-Json | Set-Content -LiteralPath (Join-Path $output 'language-handoffs.json') -Encoding utf8

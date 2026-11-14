@@ -220,8 +220,12 @@ fn parent_process_alive(pid: u32) -> bool {
     }
 }
 
-fn preview_content(size_label: Signal<String>) -> Element {
-    Element::col()
+fn preview_content(width: i32, height: i32) -> (Element, Signal<String>) {
+    let size_label = signal(crate::i18n::format(
+        "{width} × {height} logical px client area",
+        &[("width", width.to_string()), ("height", height.to_string())],
+    ));
+    let content = Element::col()
         .fill()
         .padding(20)
         .spacing(12)
@@ -276,7 +280,8 @@ fn preview_content(size_label: Signal<String>) -> Element {
                 .fg(Color::rgba(235, 241, 255, 150))
                 .max_lines(1)
                 .truncate(Truncate::End),
-        )
+        );
+    (content, size_label)
 }
 
 fn preview_result(title: &str, subtitle: &str) -> Element {
@@ -351,7 +356,7 @@ pub(crate) fn run(width: i32, height: i32, x: i32, y: i32) {
     let height = height.clamp(1, i32::from(u16::MAX));
     let width_signal = signal(width as u16);
     let height_signal = signal(height as u16);
-    let size_label = signal(format!("{width} × {height} logical px client area"));
+    let (content, size_label) = preview_content(width, height);
     let width_for_commands = width_signal;
     let height_for_commands = height_signal;
     let size_label_for_commands = size_label;
@@ -368,7 +373,7 @@ pub(crate) fn run(width: i32, height: i32, x: i32, y: i32) {
         // under the same always-on-top apps the launcher now covers.
         .topmost()
         .bg(Color::rgba(32, 33, 35, 255))
-        .content(preview_content(size_label));
+        .content(content);
     let size_handle: WindowSizeHandle = app.window_size_handle();
     let position_handle: WindowPositionHandle = app.window_position_handle();
 
@@ -383,7 +388,10 @@ pub(crate) fn run(width: i32, height: i32, x: i32, y: i32) {
             let height = height.clamp(1, i32::from(u16::MAX));
             width_for_commands.set(width as u16);
             height_for_commands.set(height as u16);
-            size_label_for_commands.set(format!("{width} × {height} logical px client area"));
+            size_label_for_commands.set(crate::i18n::format(
+                "{width} × {height} logical px client area",
+                &[("width", width.to_string()), ("height", height.to_string())],
+            ));
             size_handle.set(width, height);
             position_handle.set(x, y);
         }

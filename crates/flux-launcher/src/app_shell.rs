@@ -49,6 +49,7 @@ pub(crate) fn build_shell_content(
             "process_id": std::process::id(),
             "language": crate::i18n::current().code(),
             "caption": crate::i18n::tr("Language"),
+            "settings_visible": settings_visible.get(),
             "application_subtitles": application_subtitles,
             "open_settings_leaked": std::env::var_os("FLUX_OPEN_SETTINGS").is_some(),
         });
