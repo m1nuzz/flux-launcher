@@ -644,6 +644,37 @@ fn extension_aliases_normalize_only_the_everything_query_prefix() {
     assert_eq!(normalize_everything_query("."), ".");
 }
 
+#[test]
+fn one_pair_of_quotes_around_a_path_is_dropped_and_nothing_else_is() {
+    // Everything 把引号字符本身当作文件名的一部分，带引号的路径会搜不到任何东西；
+    // 只有当内部确实是 Windows 路径时才去掉这一层包装。
+    assert_eq!(
+        normalize_everything_query(r#""c:\Tools\cmd""#),
+        r"c:\Tools\cmd"
+    );
+    assert_eq!(
+        normalize_everything_query(r#""\\nas\media\films""#),
+        r"\\nas\media\films"
+    );
+    // 带引号的短语、alternation 和扩展名都是对名称的搜索：它们不是路径，
+    // 因此一律按原样传给 provider。
+    assert_eq!(
+        normalize_everything_query(r#""artist name""#),
+        r#""artist name""#
+    );
+    assert_eq!(normalize_everything_query(r#""a|b""#), r#""a|b""#);
+    assert_eq!(normalize_everything_query(r#"" .zip ""#), r#"" .zip ""#);
+    assert_eq!(normalize_everything_query(r#"ext:"x y""#), r#"ext:"x y""#);
+    assert_eq!(normalize_everything_query(r#""""#), r#""""#);
+    // 嵌套引号的文本不能按路径处理，保持原样。
+    assert_eq!(
+        normalize_everything_query(r#"""c:\Tools"""#),
+        r#"""c:\Tools"""#
+    );
+    // 只有 `.ext` 规则会做翻译，且它在路径去引号之后仍然生效。
+    assert_eq!(normalize_everything_query(r#"".zip""#), r#"".zip""#);
+    assert_eq!(normalize_everything_query(".zip"), "ext:zip");
+}
 
 #[test]
 fn activation_shows_while_window_is_hidden() {
@@ -849,7 +880,7 @@ fn missing_everything_prompt_does_not_override_normal_launcher_geometry() {
 }
 
 #[test]
-fn everything_prompt_requires_missing_auto_enabled_and_unseen_state() {
+fn everything_prompt_requires_missing_search_enabled_and_unseen_state() {
     assert!(should_show_everything_install_prompt(
         false, true, false, false
     ));
