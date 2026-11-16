@@ -18,7 +18,7 @@ pub(crate) fn dispatch_query(
     sequence: &mut u64,
     query: &str,
     has_query: bool,
-    auto_enable_everything: Signal<bool>,
+    everything_enabled: Signal<bool>,
     obsidian_enabled: Signal<bool>,
     obsidian_alias: Signal<String>,
     google_enabled: Signal<bool>,
@@ -47,7 +47,7 @@ pub(crate) fn dispatch_query(
     let mut built_in_results = model.results().to_vec();
     normalize_built_in_executable_targets(&mut built_in_results);
     let everything_expected =
-        auto_enable_everything.get() && query.trim().len() >= crate::EVERYTHING_MIN_QUERY_LEN;
+        everything_enabled.get() && query.trim().len() >= crate::EVERYTHING_MIN_QUERY_LEN;
     {
         let mut providers = provider_results.borrow_mut();
         providers.reset(
@@ -85,7 +85,7 @@ pub(crate) fn dispatch_query(
     }
     status.set(t!("status.searching").into_owned());
     application_worker.request(current_sequence, query.to_owned());
-    if auto_enable_everything.get() && query.trim().len() >= crate::EVERYTHING_MIN_QUERY_LEN {
+    if everything_enabled.get() && query.trim().len() >= crate::EVERYTHING_MIN_QUERY_LEN {
         everything_worker.request(
             current_sequence,
             crate::everything::normalize_everything_query(query),

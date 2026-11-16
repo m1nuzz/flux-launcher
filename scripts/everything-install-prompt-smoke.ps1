@@ -126,7 +126,7 @@ $env:WINDUI_D2D = "1"
 @'
 {
   "start_with_windows": false,
-  "auto_enable_everything": true,
+  "everything_enabled": true,
   "everything_install_prompt_seen": false,
   "update_checks_enabled": false,
   "clear_query_on_activation": true

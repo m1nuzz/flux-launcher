@@ -138,11 +138,11 @@ pub(crate) fn launcher_window_geometry_with_prompt(
 
 pub(crate) fn should_show_everything_install_prompt(
     everything_installed: bool,
-    auto_enable_everything: bool,
+    everything_enabled: bool,
     prompt_seen: bool,
     prompt_disabled: bool,
 ) -> bool {
-    auto_enable_everything && !everything_installed && !prompt_seen && !prompt_disabled
+    everything_enabled && !everything_installed && !prompt_seen && !prompt_disabled
 }
 
 pub(crate) fn visual_preview_position(

@@ -60,12 +60,12 @@ impl EverythingDetectionSlot {
 /// 目的：状态文案反映真实可用性——用户在外部退出 Everything 后，这里会立即
 /// 把状态改成「已安装但 IPC 不可用」，而不是保留启动时的陈旧结论。
 pub(crate) fn refresh_everything_status_cheap(
-    auto_enable: Signal<bool>,
+    everything_enabled: Signal<bool>,
     installed: Signal<bool>,
     status: Signal<String>,
 ) {
-    if !auto_enable.get() {
-        status.set(t!("everything.auto_enable_disabled").into_owned());
+    if !everything_enabled.get() {
+        status.set(t!("everything.search_disabled").into_owned());
         return;
     }
     let outcome = refresh_state_cheap();
@@ -73,9 +73,35 @@ pub(crate) fn refresh_everything_status_cheap(
     status.set(outcome.status_message());
 }
 
+/// 内部内容是否是 Windows 绝对路径（驱动器盘符根或 UNC 根）。
+///
+/// 用于判断「一对外层双引号」是否只是路径的包装：Windows 的文件与文件夹名既不能
+/// 含 `"` 也不能含 `\`，因此带引号且内部是路径的文本不可能是对文件名的搜索。
+fn is_windows_absolute_path(value: &str) -> bool {
+    let bytes = value.as_bytes();
+    let drive_root = bytes.len() >= 3
+        && bytes[0].is_ascii_alphabetic()
+        && bytes[1] == b':'
+        && (bytes[2] == b'\\' || bytes[2] == b'/');
+    let unc_root = value.starts_with("\\\\") || value.starts_with("//");
+    drive_root || unc_root
+}
+
 /// 把 `.ext query` 形式的查询规范化为 Everything 的 `ext:` 原生语法。
+///
+/// 在此之前先处理路径外层引号：Everything 把引号字符本身当作文件名的一部分，因此
+/// `"C:\Tools\cmd"` 搜不到任何东西。仅当一对外层引号内部确实是 Windows 绝对路径时
+/// 才去掉这层包装——短语、alternation、扩展名与其它原生语法一律原样传给 provider。
 pub(crate) fn normalize_everything_query(query: &str) -> String {
     let trimmed = query.trim();
+    if let Some(unquoted) = trimmed
+        .strip_prefix('"')
+        .and_then(|value| value.strip_suffix('"'))
+    {
+        if !unquoted.contains('"') && is_windows_absolute_path(unquoted) {
+            return unquoted.to_owned();
+        }
+    }
     let Some(rest) = trimmed.strip_prefix('.') else {
         return trimmed.to_owned();
     };
@@ -116,19 +142,19 @@ impl EverythingRuntimeState {
             == Some("1");
         let prompt_visible_at_start = crate::window_state::should_show_everything_install_prompt(
             installed_at_start,
-            settings.auto_enable_everything,
+            settings.everything_enabled,
             settings.everything_install_prompt_seen,
             prompt_disabled,
         );
         let installed = signal(installed_at_start);
         let status = signal(if !installed_at_start {
             t!("everything.not_installed_winget").into_owned()
-        } else if settings.auto_enable_everything {
+        } else if settings.everything_enabled {
             // 真实的 IPC 可用性由紧随其后的 start_background_if_installed() 回填；
             // 这里不预判「已启用 IPC」，避免状态文案与事实不符。
             t!("everything.detecting").into_owned()
         } else {
-            t!("everything.auto_enable_disabled").into_owned()
+            t!("everything.search_disabled").into_owned()
         });
         Self {
             installed,
@@ -280,16 +306,43 @@ pub fn winget_install_args() -> [&'static str; 4] {
     ["install", "-e", "--id", WINGET_PACKAGE_ID]
 }
 
+/// 交叉进程守卫包住「探测 + 拉起」序列：两个 Flux 进程（登录风暴、重复启动、
+/// 单实例交接抖动）可能同时观察到「无客户端」并各自拉起 Everything，两个 IPC 服务
+/// 会互相挤占。Session 级命名互斥把序列串行化，落败方跳过拉起（由胜者处理）。
+/// 已放弃（持有者崩溃）的互斥算可获取。它与 Everything 自身的单实例退出一起构成
+/// 重复拉起的保护，因此不再需要进程内粘性标记。
 #[cfg(windows)]
 fn everything_start_lock() -> &'static Mutex<()> {
     static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
     LOCK.get_or_init(|| Mutex::new(()))
 }
 
+/// 是否把 `tasklist /FO CSV /NH` 的一行视为「用户会话中可提供 IPC 的 Everything 客户端进程」。
+///
+/// Everything 服务与 GUI 客户端共用 `Everything.exe` 可执行名，但服务恒在 Session 0，
+/// 而 Flux 需要 IPC 的 GUI 客户端运行在用户会话（非 0）。若按名称匹配服务，
+/// Flux 会认为客户端已在运行而永远跳过拉起。
+///
+/// CSV 列序为：Image Name, PID, Session Name, Session#, Mem Usage。
+/// 短行缺少 session 列时保守沿用旧有的仅名称匹配，避免解析失败导致误判。
 #[cfg(windows)]
-fn everything_start_requested() -> &'static AtomicBool {
-    static REQUESTED: AtomicBool = AtomicBool::new(false);
-    &REQUESTED
+fn is_everything_tasklist_line(line: &str) -> bool {
+    let cells: Vec<&str> = line
+        .trim_start()
+        .trim_start_matches('"')
+        .split([',', '"'])
+        .filter(|cell| !cell.is_empty())
+        .collect();
+    let [name, ..] = cells.as_slice() else {
+        return false;
+    };
+    if !name.eq_ignore_ascii_case("Everything.exe") {
+        return false;
+    }
+    match cells.get(3) {
+        Some(session) => *session != "0",
+        None => true,
+    }
 }
 
 fn should_start_everything(ipc_available: bool, process_running: bool) -> bool {
@@ -312,7 +365,7 @@ fn everything_process_running() -> bool {
 
     String::from_utf8_lossy(&output.stdout)
         .lines()
-        .any(|line| line.trim_start().starts_with("\"Everything.exe\""))
+        .any(is_everything_tasklist_line)
 }
 
 pub fn start_background_if_installed() -> Result<EverythingStartup, String> {
@@ -328,26 +381,21 @@ pub fn start_background_if_installed() -> Result<EverythingStartup, String> {
             .map_err(|_| String::from("Everything startup lock is poisoned"))?;
         let ipc_available = probe_ipc();
         if ipc_available {
-            everything_start_requested().store(false, Ordering::Release);
             return Ok(EverythingStartup::new(state, true, false));
         }
         let process_running = everything_process_running();
         if !should_start_everything(ipc_available, process_running) {
-            everything_start_requested().store(false, Ordering::Release);
             return Ok(EverythingStartup::new(state, false, false));
         }
-        if everything_start_requested().load(Ordering::Acquire) {
-            // 本进程已请求过拉起，IPC 仍未就绪：如实报告「已尝试启动，但仍不可用」。
-            return Ok(EverythingStartup::new(state, false, true));
-        }
-
-        everything_start_requested().store(true, Ordering::Release);
+        // 走到这里说明没有可用的客户端（IPC 不通、用户会话也没有客户端进程）：拉起。
+        // 不保留进程内「已请求过」粘性标记——按定义此前任何尝试对应的子进程都已消亡，
+        // 它不得永久阻断下一次重试；重复拉起由上面的跨进程互斥与 Everything 自身的
+        // 单实例退出共同兜底。
         if let Err(error) = Command::new(path)
             .args(startup_args())
             .creation_flags(CREATE_NO_WINDOW)
             .spawn()
         {
-            everything_start_requested().store(false, Ordering::Release);
             return Err(format!(
                 "Unable to start Everything in the background: {error}"
             ));
@@ -605,8 +653,8 @@ fn join_everything_path(folder: &str, filename: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::{
-        join_everything_path, should_start_everything, startup_args, winget_install_args,
-        EverythingDetectionSlot, WINGET_PACKAGE_ID,
+        is_everything_tasklist_line, join_everything_path, should_start_everything, startup_args,
+        winget_install_args, EverythingDetectionSlot, WINGET_PACKAGE_ID,
     };
     use std::sync::atomic::Ordering;
     use std::sync::Arc;
@@ -672,6 +720,29 @@ mod tests {
         slot.spawn_detection();
         assert!(slot.take_result().is_none());
         slot.running.store(false, Ordering::SeqCst);
+    }
+
+    /// Everything 服务与 GUI 客户端共用可执行名，但服务恒在 Session 0，而 Flux 需要 IPC 的
+    /// GUI 客户端运行在用户会话。按名称匹配服务会让 Flux 认为客户端已在运行而永远跳过拉起。
+    #[test]
+    fn tasklist_line_ignores_the_service_in_session_zero() {
+        assert!(!is_everything_tasklist_line(
+            "\"Everything.exe\",\"7824\",\"Services\",\"0\",\"112 K\""
+        ));
+        assert!(is_everything_tasklist_line(
+            "\"Everything.exe\",\"32596\",\"Console\",\"1\",\"541,864 K\""
+        ));
+    }
+
+    /// 只认 Everything 的可执行名：其它进程行与 `tasklist` 的「无任务」提示都不是客户端。
+    #[test]
+    fn tasklist_line_matches_only_everything() {
+        assert!(!is_everything_tasklist_line(
+            "\"explorer.exe\",\"2600\",\"Console\",\"1\",\"92,112 K\""
+        ));
+        assert!(!is_everything_tasklist_line(
+            "INFO: No tasks are running which match the specified criteria."
+        ));
     }
 
     #[test]

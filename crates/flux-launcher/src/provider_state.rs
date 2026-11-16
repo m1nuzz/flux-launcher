@@ -25,7 +25,7 @@ pub(crate) struct ProviderChannelContext {
     pub(crate) provider_results: Rc<RefCell<ProviderResults>>,
     pub(crate) priorities: Signal<Vec<flux_core::PriorityEntry>>,
     pub(crate) plugin_actions: Rc<RefCell<HashMap<String, PluginAction>>>,
-    pub(crate) auto_enable_everything: Signal<bool>,
+    pub(crate) everything_enabled: Signal<bool>,
     pub(crate) everything_installed: Signal<bool>,
     pub(crate) everything_status: Signal<String>,
 }
@@ -112,12 +112,12 @@ fn register_everything_channel(
     let current_sequence = context.current_sequence;
     let provider_results = Rc::clone(&context.provider_results);
     let priorities = context.priorities;
-    let auto_enable_everything = context.auto_enable_everything;
+    let everything_enabled = context.everything_enabled;
     let everything_installed = context.everything_installed;
     let everything_status = context.everything_status;
     app.channel::<EverythingResponse>(move |_, response| {
-        if !auto_enable_everything.get() {
-            everything_status.set(t!("everything.auto_enable_disabled").into_owned());
+        if !everything_enabled.get() {
+            everything_status.set(t!("everything.search_disabled").into_owned());
             return;
         }
         if response.sequence != current_sequence.get()

@@ -173,7 +173,7 @@ $settingsPath = Join-Path $appData "FluxLauncher\settings.json"
 @'
 {
   "start_with_windows": false,
-  "auto_enable_everything": true,
+  "everything_enabled": true,
   "everything_install_prompt_seen": true,
   "update_checks_enabled": false,
   "clear_query_on_activation": true

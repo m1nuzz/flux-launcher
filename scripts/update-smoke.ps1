@@ -1,4 +1,4 @@
-﻿param(
+param(
     [Parameter(Mandatory = $true)]
     [string]$Executable,
     [Parameter(Mandatory = $true)]
@@ -175,7 +175,7 @@ Write-JsonFile -Path (Join-Path $settingsDirectory "settings.json") -Value @{
     last_update_check_unix = 0
     update_interval_hours = 24
     start_with_windows = $false
-    auto_enable_everything = $false
+    everything_enabled = $false
     everything_install_prompt_seen = $true
 }
 

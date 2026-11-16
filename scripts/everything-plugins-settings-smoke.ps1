@@ -113,9 +113,9 @@ function Invoke-PluginStateSmoke([string]$Name, [bool]$InstalledFixture, [string
     $configDirectory = Join-Path $appData "FluxLauncher"
     New-Item -ItemType Directory -Path $configDirectory -Force | Out-Null
     $settings = if ($InstalledFixture) {
-        '{"start_with_windows":false,"auto_enable_everything":false,"everything_install_prompt_seen":true,"update_checks_enabled":false}'
+        '{"start_with_windows":false,"everything_enabled":false,"everything_install_prompt_seen":true,"update_checks_enabled":false}'
     } else {
-        '{"start_with_windows":false,"auto_enable_everything":true,"everything_install_prompt_seen":true,"update_checks_enabled":false}'
+        '{"start_with_windows":false,"everything_enabled":true,"everything_install_prompt_seen":true,"update_checks_enabled":false}'
     }
     Set-Content -LiteralPath (Join-Path $configDirectory "settings.json") -Value $settings -Encoding utf8
 
@@ -192,7 +192,7 @@ function Invoke-PluginStateSmoke([string]$Name, [bool]$InstalledFixture, [string
         Save-DesktopScreenshot (Join-Path $Root "everything-plugins-$Name.png")
         Start-Sleep -Milliseconds 300
         $stderr = if (Test-Path $stderrPath) { Get-Content $stderrPath -Raw } else { "" }
-        $telemetry = [regex]::Match($stderr, "Everything Plugins UI: tab_visible=true everything_section=true auto_enable_checkbox=true status_label=true install_button_label=Install_Everything already_installed_label=Everything_is_already_installed auto_enable=(?<auto>true|false) installed=(?<installed>true|false) install_button_visible=(?<button>true|false) already_installed_visible=(?<already>true|false) status=(?<status>[^\r\n]+)")
+        $telemetry = [regex]::Match($stderr, "Everything Plugins UI: tab_visible=true everything_section=true everything_enabled_checkbox=true status_label=true install_button_label=Install_Everything already_installed_label=Everything_is_already_installed everything_enabled=(?<enabled>true|false) installed=(?<installed>true|false) install_button_visible=(?<button>true|false) already_installed_visible=(?<already>true|false) status=(?<status>[^\r\n]+)")
         $result.PluginsTelemetryProbe = $telemetry.Success
         $result.PluginsContentProbe = $telemetry.Success
         $result.EverythingSectionVisible = $telemetry.Success

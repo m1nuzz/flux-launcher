@@ -53,7 +53,7 @@ pub(crate) struct IntervalTickContext {
     pub(crate) selection_touched_for_interval: Signal<bool>,
     pub(crate) sequence_for_interval: Signal<u64>,
     pub(crate) scroll_request_for_interval: Signal<bool>,
-    pub(crate) auto_enable_everything_for_interval: Signal<bool>,
+    pub(crate) everything_enabled_for_interval: Signal<bool>,
     pub(crate) obsidian_enabled_for_interval: Signal<bool>,
     pub(crate) obsidian_alias_for_interval: Signal<String>,
     pub(crate) google_enabled_for_interval: Signal<bool>,
@@ -102,6 +102,7 @@ pub(crate) struct IntervalTickState {
     pub(crate) last_settings_visible: bool,
     pub(crate) last_everything_prompt_visible: bool,
     pub(crate) last_query: String,
+    pub(crate) last_everything_enabled: bool,
     pub(crate) default_icon_prewarm_done: bool,
     pub(crate) visual_preview_process: Option<crate::visual_preview::PreviewProcess>,
     pub(crate) last_visual_preview_request: Option<(u16, u16)>,
@@ -133,7 +134,7 @@ pub(crate) fn handle_interval_tick(
         selection_touched_for_interval,
         sequence_for_interval,
         scroll_request_for_interval,
-        auto_enable_everything_for_interval,
+        everything_enabled_for_interval,
         obsidian_enabled_for_interval,
         obsidian_alias_for_interval,
         google_enabled_for_interval,
@@ -173,6 +174,14 @@ pub(crate) fn handle_interval_tick(
     } = *context;
     let current_width = width_for_interval.get();
     let current_height = height_for_interval.get();
+    let everything_enabled = everything_enabled_for_interval.get();
+    if everything_enabled != tick_state.last_everything_enabled {
+        // 开关切换后立即丢弃旧的 Everything 结果，避免关闭搜索后旧结果继续留在界面。
+        providers_for_interval.borrow_mut().everything.clear();
+        results_for_interval.set(Vec::new());
+        tick_state.last_query.clear();
+        tick_state.last_everything_enabled = everything_enabled;
+    }
     let settings_is_visible = settings_visible_for_interval.get();
     let prompt_is_visible = everything_prompt_visible_for_interval.get();
     let visual_tab_is_visible = settings_tab_for_interval.get() == 1;
@@ -184,11 +193,11 @@ pub(crate) fn handle_interval_tick(
         && !tick_state.everything_plugins_smoke_reported
     {
         let installed = everything_installed_for_interval.get();
-        let auto_enable = auto_enable_everything_for_interval.get();
+        let everything_enabled = everything_enabled_for_interval.get();
         let status = everything_status_for_interval.get();
         eprintln!(
-                    "Everything Plugins UI: tab_visible=true everything_section=true auto_enable_checkbox=true status_label=true install_button_label=Install_Everything already_installed_label=Everything_is_already_installed auto_enable={} installed={} install_button_visible={} already_installed_visible={} status={}",
-                    auto_enable,
+                    "Everything Plugins UI: tab_visible=true everything_section=true everything_enabled_checkbox=true status_label=true install_button_label=Install_Everything already_installed_label=Everything_is_already_installed everything_enabled={} installed={} install_button_visible={} already_installed_visible={} status={}",
+                    everything_enabled,
                     installed,
                     !installed,
                     installed,
@@ -197,10 +206,10 @@ pub(crate) fn handle_interval_tick(
         tick_state.everything_plugins_smoke_reported = true;
     }
     if let Some(result) = everything_detection_for_interval.take_result() {
-        // Everything 自动启用检测在后台线程完成；此处仅在 UI 线程回填信号。
-        // 若用户在此期间关闭了自动启用，则以禁用文案为准，不回填陈旧检测结果。
-        if !auto_enable_everything_for_interval.get() {
-            everything_status_for_interval.set(t!("everything.auto_enable_disabled").into_owned());
+        // Everything 检测在后台线程完成；此处仅在 UI 线程回填信号。
+        // 若用户在此期间关闭了文件搜索，则以关闭文案为准，不回填陈旧检测结果。
+        if !everything_enabled_for_interval.get() {
+            everything_status_for_interval.set(t!("everything.search_disabled").into_owned());
         } else {
             match result {
                 Ok(outcome) => {
@@ -501,7 +510,7 @@ pub(crate) fn handle_interval_tick(
         &mut tick_state.sequence,
         &next_query,
         has_query,
-        auto_enable_everything_for_interval,
+        everything_enabled_for_interval,
         obsidian_enabled_for_interval,
         obsidian_alias_for_interval,
         google_enabled_for_interval,
