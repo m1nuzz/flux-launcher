@@ -20,7 +20,7 @@ everything:
   not_now: 暂不
   install_started: 已通过 winget 开始安装 Everything。
   install_started_toast: 已开始安装 Everything
-  auto_enable_disabled: 已在 Flux 设置中禁用 Everything 自动启用
+  search_disabled: 已在 Flux 设置中关闭 Everything 文件搜索
   detecting: 正在检测 Everything 安装状态…
   ipc_available: Everything IPC 可用
   ipc_unavailable: 已安装 Everything，但其本地 IPC 不可用
@@ -53,6 +53,13 @@ settings:
   startup_failed: "启动设置失败：%{error}"
   title: 设置
   apply_immediate: 更改立即生效并自动保存
+  discard_title: 放弃未保存的设置？
+  discard_message: 这些设置尚未应用。要放弃修改并返回搜索吗？
+  discard: 放弃并返回搜索
+  keep_editing: 继续编辑
+  apply_prompt: 已保留设置；点击“应用设置”后保存。
+  reset: 重置设置
+  reset_done: 设置已恢复默认值；点击“应用设置”后保存。
   tab:
     general: 常规
     visual: 外观
@@ -99,8 +106,8 @@ settings:
   auto_install_updates: 自动安装稳定更新
   install_now: 立即安装
   everything: Everything
-  everything_tab_desc: Everything 提供快速索引的文件与文件夹搜索。在此处与其它插件一同配置其自动使用。
-  everything_desc: 安装后自动启用 Everything
+  everything_tab_desc: Everything 提供快速索引的文件与文件夹搜索。在此处与其它插件一同配置是否显示其搜索结果。
+  everything_desc: 启用 Everything 文件搜索
   everything_command: '命令：winget install -e --id voidtools.Everything'
   lock_failed: 无法锁定 Flux 设置
   plugins:
@@ -132,10 +139,7 @@ settings:
     reset: 重置
     dip: DIP
     safe_range: "安全范围：%{min}–%{max} 逻辑像素（DIP）"
-    native_preview_hint: 原生预览使用请求的确切逻辑客户区尺寸。物理 GetClientRect 像素随预览显示器 DPI 缩放；应用会保存这些值。
-    apply: 应用尺寸
-    save_failed: 无法保存外观尺寸
-    applied: 已应用外观尺寸
+    native_preview_hint: 原生预览使用请求的确切逻辑客户区尺寸。物理 GetClientRect 像素随预览显示器 DPI 缩放；“应用设置”会保存这些值。
     client_area: "当前启动器客户区：%{width} × %{height} 逻辑像素（DIP）"
 updater:
   checking_github: 正在检查稳定的 GitHub 版本...

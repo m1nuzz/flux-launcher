@@ -44,6 +44,7 @@ mod visual_preview;
 mod window_lifecycle;
 mod window_state;
 
+use std::cell::RefCell;
 use std::rc::Rc;
 use std::sync::Arc;
 use std::time::Duration;
@@ -82,11 +83,15 @@ pub(crate) const RESULT_ROW_HEIGHT: i32 = 46;
 /// 把几十个 Everything 文件全部塞进唯一的图标提取线程。
 pub(crate) const EAGER_ICON_ROW_COUNT: usize =
     (RESULT_VIEWPORT_HEIGHT / RESULT_ROW_HEIGHT + 2) as usize;
-pub(crate) const SETTINGS_WINDOW_HEIGHT: i32 = 520;
+pub(crate) const SETTINGS_WINDOW_HEIGHT: i32 = 600;
 const LAUNCHER_FONT_FAMILY: &str = "Segoe UI Variable";
 const SEARCH_INTERVAL: Duration = Duration::from_millis(40);
 const EVERYTHING_MIN_QUERY_LEN: usize = 1;
 const PLUGIN_MIN_QUERY_LEN: usize = 2;
+type SettingsCallback = Rc<dyn Fn()>;
+type SettingsCallbackSlot = Rc<RefCell<Option<SettingsCallback>>>;
+type SettingsDirtyCallback = Rc<dyn Fn() -> bool>;
+type SettingsDirtyCallbackSlot = Rc<RefCell<Option<SettingsDirtyCallback>>>;
 
 fn run_launcher(setup: LauncherSetup, single_instance_disabled: bool) {
     // ========== 1. 解构状态 ==========
@@ -151,7 +156,7 @@ fn run_launcher(setup: LauncherSetup, single_instance_disabled: bool) {
         visual_preview_generation,
         clear_query_on_activation,
         start_with_windows,
-        auto_enable_everything,
+        everything_enabled,
         everything_detection,
         update_checks_enabled,
         update_interval_hours,
@@ -259,7 +264,7 @@ fn run_launcher(setup: LauncherSetup, single_instance_disabled: bool) {
             provider_results: Rc::clone(&provider_results),
             priorities,
             plugin_actions: Rc::clone(&plugin_actions),
-            auto_enable_everything,
+            everything_enabled,
             everything_installed,
             everything_status,
         },
@@ -276,6 +281,20 @@ fn run_launcher(setup: LauncherSetup, single_instance_disabled: bool) {
     );
 
     // ========== 6. 热键 ==========
+    let cancel_settings_slot: SettingsCallbackSlot = Rc::new(RefCell::new(None));
+    let settings_dirty_slot: SettingsDirtyCallbackSlot = Rc::new(RefCell::new(None));
+    let activation_cancel_settings = {
+        let slot = Rc::clone(&cancel_settings_slot);
+        Rc::new(move || {
+            if let Some(cancel) = slot.borrow().as_ref() {
+                cancel();
+            }
+        }) as Rc<dyn Fn()>
+    };
+    let activation_settings_dirty = {
+        let slot = Rc::clone(&settings_dirty_slot);
+        Rc::new(move || slot.borrow().as_ref().is_some_and(|dirty| dirty())) as Rc<dyn Fn() -> bool>
+    };
     let activation_state = ActivationHotkeyState {
         settings: Arc::clone(&shared_settings),
         position: window_position.clone(),
@@ -295,6 +314,9 @@ fn run_launcher(setup: LauncherSetup, single_instance_disabled: bool) {
         inline_completion,
         scroll_request: scroll_request_for_rows,
         settings_visible,
+        discard_confirmation: settings_ui.discard_confirmation,
+        cancel_settings: activation_cancel_settings,
+        settings_dirty: activation_settings_dirty,
         launcher_width,
         launcher_height,
     };
@@ -368,7 +390,7 @@ fn run_launcher(setup: LauncherSetup, single_instance_disabled: bool) {
     let activation_handle_for_record_button = activation_handle.clone();
     let activation_recording_for_apply = activation_recording;
     let activation_recording_for_record_button = activation_recording;
-    let auto_enable_everything_for_apply = auto_enable_everything;
+    let everything_enabled_for_apply = everything_enabled;
     let auto_install_updates_for_apply = auto_install_updates;
 
     let cancel_settings = {
@@ -379,6 +401,7 @@ fn run_launcher(setup: LauncherSetup, single_instance_disabled: bool) {
         let window_position = window_position.clone();
         let restore = settings_view::SettingsRestoreSignals {
             settings_visible,
+            discard_confirmation: settings_ui.discard_confirmation,
             language_preference,
             i18n_hub,
             activation_key,
@@ -393,6 +416,7 @@ fn run_launcher(setup: LauncherSetup, single_instance_disabled: bool) {
             game_mode,
             game_mode_status,
             smooth_caret,
+            caret_duration,
             switch_to_english_layout,
             use_system_accent,
             custom_selection_color,
@@ -406,7 +430,7 @@ fn run_launcher(setup: LauncherSetup, single_instance_disabled: bool) {
             launcher_preview_text,
             clear_query_on_activation,
             start_with_windows,
-            auto_enable_everything,
+            everything_enabled,
             update_checks_enabled,
             update_interval_hours,
             auto_install_updates,
@@ -419,12 +443,15 @@ fn run_launcher(setup: LauncherSetup, single_instance_disabled: bool) {
             everything_installed,
             everything_status,
         };
-        Rc::new(move || {
-            let Ok(saved) = settings.read() else {
+        let restore_for_reset = restore.clone();
+        let settings_for_cancel = Arc::clone(&settings);
+        let restore_for_cancel = restore.clone();
+        let cancel_settings = Rc::new(move || {
+            let Ok(saved) = settings_for_cancel.read() else {
                 return;
             };
             let saved = saved.clone();
-            settings_view::restore_saved_settings(&saved, &restore);
+            settings_view::restore_saved_settings(&saved, &restore_for_cancel);
 
             let target_height = if show_results.get() {
                 i32::from(saved.launcher_height)
@@ -438,8 +465,29 @@ fn run_launcher(setup: LauncherSetup, single_instance_disabled: bool) {
                 target_height,
             );
             window_size.set(i32::from(saved.launcher_width), target_height);
-        }) as Rc<dyn Fn()>
+        }) as Rc<dyn Fn()>;
+        let reset_settings = {
+            let settings = Arc::clone(&shared_settings);
+            Rc::new(move || {
+                let Ok(saved) = settings.read() else {
+                    return;
+                };
+                let defaults = saved.default_editable_template();
+                settings_view::apply_settings_to_signals(&defaults, &restore_for_reset, false);
+            }) as Rc<dyn Fn()>
+        };
+        *cancel_settings_slot.borrow_mut() = Some(Rc::clone(&cancel_settings));
+        let settings_for_dirty = Arc::clone(&settings);
+        let dirty_signals = restore.clone();
+        *settings_dirty_slot.borrow_mut() = Some(Rc::new(move || {
+            settings_for_dirty
+                .read()
+                .map(|saved| settings_view::settings_draft_is_dirty(&saved, &dirty_signals))
+                .unwrap_or(false)
+        }));
+        (cancel_settings, reset_settings)
     };
+    let (_cancel_settings, reset_settings) = cancel_settings;
 
     let everything_status_for_apply = everything_status;
     let game_mode_status_for_apply = game_mode_status;
@@ -494,11 +542,11 @@ fn run_launcher(setup: LauncherSetup, single_instance_disabled: bool) {
         activation_recording_for_apply,
         activation_recording_for_record_button,
         activation_shift,
-        auto_enable_everything,
-        auto_enable_everything_for_apply,
+        everything_enabled,
+        everything_enabled_for_apply,
         auto_install_updates,
         auto_install_updates_for_apply,
-        cancel_settings: cancel_settings.clone(),
+        reset_settings: reset_settings.clone(),
         caret_duration,
         clear_query_on_activation,
         custom_selection_color,
@@ -538,7 +586,6 @@ fn run_launcher(setup: LauncherSetup, single_instance_disabled: bool) {
         settings_for_apply: settings_for_apply.clone(),
         settings_for_clear_history: settings_for_clear_history.clone(),
         settings_tab,
-        settings_visible,
         settings_visible_for_apply,
         shared_settings: shared_settings.clone(),
         show_results,
@@ -568,8 +615,6 @@ fn run_launcher(setup: LauncherSetup, single_instance_disabled: bool) {
         use_system_accent,
         visual_preview_generation_for_height_reset,
         visual_preview_generation_for_width_reset,
-        window_position: window_position.clone(),
-        window_size: window_size.clone(),
     });
 
     // ========== 10. 页面和 tick ==========
@@ -577,7 +622,15 @@ fn run_launcher(setup: LauncherSetup, single_instance_disabled: bool) {
         .fill()
         .child(launcher_surface)
         .visible_when(move || !settings_visible.get());
-    let settings_page = settings_view::settings_page(settings_panel, settings_ui);
+    let settings_page = settings_view::settings_page(
+        settings_panel,
+        settings_ui,
+        Rc::clone(&cancel_settings_slot)
+            .borrow()
+            .as_ref()
+            .cloned()
+            .unwrap_or_else(|| Rc::new(|| {})),
+    );
     let content = Element::stack()
         .fill()
         .font_family(LAUNCHER_FONT_FAMILY)
@@ -606,7 +659,7 @@ fn run_launcher(setup: LauncherSetup, single_instance_disabled: bool) {
         selection_touched_for_interval: selection_touched,
         sequence_for_interval: current_sequence,
         scroll_request_for_interval: scroll_request_for_rows,
-        auto_enable_everything_for_interval: auto_enable_everything,
+        everything_enabled_for_interval: everything_enabled,
         obsidian_enabled_for_interval: obsidian_enabled,
         obsidian_alias_for_interval: obsidian_alias,
         google_enabled_for_interval: google_enabled,
@@ -655,6 +708,7 @@ fn run_launcher(setup: LauncherSetup, single_instance_disabled: bool) {
         last_settings_visible: settings_visible.get(),
         last_everything_prompt_visible: everything_prompt_visible.get(),
         last_query: String::new(),
+        last_everything_enabled: everything_enabled.get(),
         default_icon_prewarm_done: false,
         visual_preview_process: None,
         last_visual_preview_request: None,
@@ -675,8 +729,15 @@ fn run_launcher(setup: LauncherSetup, single_instance_disabled: bool) {
     app.tray(tray)
         .hide_on_close()
         .hide_on_deactivate()
-        .on_window_deactivated(|| {
-            launch::trace_launch_event("window-deactivated");
+        .should_hide_on_deactivate(|| true)
+        .on_window_deactivated({
+            let cancel_settings = Rc::clone(&_cancel_settings);
+            move || {
+                if settings_visible.get() {
+                    cancel_settings();
+                }
+                launch::trace_launch_event("window-deactivated");
+            }
         })
         .focus_first_control_on_show()
         // Keep the HWND background transparent so Acrylic/DWM remains visible
@@ -718,7 +779,7 @@ fn run_launcher(setup: LauncherSetup, single_instance_disabled: bool) {
             Arc::clone(&shared_settings),
             move || {
                 everything::refresh_everything_status_cheap(
-                    auto_enable_everything,
+                    everything_enabled,
                     everything_installed,
                     everything_status,
                 );
@@ -726,7 +787,6 @@ fn run_launcher(setup: LauncherSetup, single_instance_disabled: bool) {
         ))
         .on_window_hide(window_lifecycle::on_window_hide(
             Arc::clone(&shared_settings),
-            Rc::clone(&cancel_settings),
             settings_visible,
             clear_query_on_activation,
             query,

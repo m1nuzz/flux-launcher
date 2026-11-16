@@ -30,6 +30,7 @@ use windui::prelude::*;
 pub(crate) struct SettingsUiState {
     pub(crate) visible: Signal<bool>,
     pub(crate) tab: Signal<usize>,
+    pub(crate) discard_confirmation: Signal<bool>,
 }
 
 pub(crate) fn priority_list(
@@ -130,123 +131,10 @@ pub(crate) fn launcher_height_reset_button(
         })
 }
 
-pub(crate) struct VisualApplyContext {
-    pub(crate) i18n_hub: I18nHub,
-    pub(crate) settings: Arc<RwLock<Settings>>,
-    pub(crate) launcher_width: Signal<u16>,
-    pub(crate) launcher_height: Signal<u16>,
-    pub(crate) launcher_width_input: Signal<String>,
-    pub(crate) launcher_height_input: Signal<String>,
-    pub(crate) launcher_width_slider: Signal<f32>,
-    pub(crate) launcher_height_slider: Signal<f32>,
-    pub(crate) launcher_preview_text: Signal<String>,
-    pub(crate) smooth_caret: Signal<bool>,
-    pub(crate) caret_duration: Signal<String>,
-    pub(crate) settings_visible: Signal<bool>,
-    pub(crate) show_results: Signal<bool>,
-    pub(crate) window_size: WindowSizeHandle,
-    pub(crate) window_position: WindowPositionHandle,
-}
-
-pub(crate) fn visual_apply_button(context: VisualApplyContext) -> Element {
-    let VisualApplyContext {
-        i18n_hub,
-        settings,
-        launcher_width,
-        launcher_height,
-        launcher_width_input,
-        launcher_height_input,
-        launcher_width_slider,
-        launcher_height_slider,
-        launcher_preview_text,
-        smooth_caret,
-        caret_duration,
-        settings_visible,
-        show_results,
-        window_size,
-        window_position,
-    } = context;
-
-    Element::button(i18n_hub.tr(|| t!("settings.visual.apply").into_owned())).on_click(move |ctx| {
-        let mut width = parse_dimension_input(
-            &launcher_width_input.get(),
-            MIN_LAUNCHER_WIDTH,
-            MAX_LAUNCHER_WIDTH,
-        )
-        .unwrap_or(DEFAULT_LAUNCHER_WIDTH);
-        let mut height = parse_dimension_input(
-            &launcher_height_input.get(),
-            MIN_LAUNCHER_HEIGHT,
-            MAX_LAUNCHER_HEIGHT,
-        )
-        .unwrap_or(DEFAULT_LAUNCHER_HEIGHT);
-        let duration = caret_duration
-            .get()
-            .trim()
-            .parse::<u16>()
-            .unwrap_or(95)
-            .clamp(60, 160);
-        let Ok(mut settings) = settings.write() else {
-            ctx.toast_ok(t!("settings.lock_failed"));
-            return;
-        };
-        settings.launcher_width = width;
-        settings.launcher_height = height;
-        settings.smooth_caret = smooth_caret.get();
-        settings.smooth_caret_duration_ms = duration;
-        settings.normalize();
-        width = settings.launcher_width;
-        height = settings.launcher_height;
-        let preference = settings.monitor_preference;
-        if !save_settings(&settings) {
-            ctx.toast_ok(t!("settings.visual.save_failed"));
-            return;
-        }
-        launcher_width.set(width);
-        launcher_height.set(height);
-        launcher_width_input.set(width.to_string());
-        launcher_height_input.set(height.to_string());
-        launcher_width_slider.set(dimension_slider_fraction(
-            width,
-            MIN_LAUNCHER_WIDTH,
-            MAX_LAUNCHER_WIDTH,
-        ));
-        launcher_height_slider.set(dimension_slider_fraction(
-            height,
-            MIN_LAUNCHER_HEIGHT,
-            MAX_LAUNCHER_HEIGHT,
-        ));
-        launcher_preview_text.set(
-            t!(
-                "settings.visual.client_area",
-                width = width,
-                height = height
-            )
-            .into_owned(),
-        );
-        eprintln!("Visual Apply dimensions clicked: {}x{}", width, height);
-        settings_visible.set(false);
-        let target_height = if show_results.get() {
-            i32::from(height)
-        } else {
-            crate::COMPACT_WINDOW_HEIGHT
-        };
-        request_monitor_position(
-            &window_position,
-            preference,
-            i32::from(width),
-            target_height,
-        );
-        window_size.set(i32::from(width), target_height);
-        ctx.show_window();
-        ctx.toast_ok(t!("settings.visual.applied"));
-    })
-}
-
 pub(crate) struct EverythingSettingsContext {
     pub(crate) i18n_hub: I18nHub,
     pub(crate) settings: Arc<RwLock<Settings>>,
-    pub(crate) auto_enable: Signal<bool>,
+    pub(crate) everything_enabled: Signal<bool>,
     pub(crate) installed: Signal<bool>,
     pub(crate) status: Signal<String>,
     pub(crate) detection: Arc<EverythingDetectionSlot>,
@@ -261,7 +149,7 @@ pub(crate) fn everything_settings(context: EverythingSettingsContext) -> Element
     let EverythingSettingsContext {
         i18n_hub,
         settings,
-        auto_enable,
+        everything_enabled,
         installed,
         status,
         detection,
@@ -272,7 +160,7 @@ pub(crate) fn everything_settings(context: EverythingSettingsContext) -> Element
         system_commands_enabled,
     } = context;
     let settings_for_toggle = Arc::clone(&settings);
-    let auto_enable_for_toggle = auto_enable;
+    let everything_enabled_for_toggle = everything_enabled;
     let status_for_toggle = status;
     let installed_for_ui = installed;
     let status_for_install = status;
@@ -297,17 +185,19 @@ pub(crate) fn everything_settings(context: EverythingSettingsContext) -> Element
             i18n_hub.tr(|| t!("settings.everything").into_owned()),
             Element::checkbox(
                 i18n_hub.tr(|| t!("settings.everything_desc").into_owned()),
-                auto_enable,
+                everything_enabled,
             )
             .on_toggle(move |_| {
-                let enabled = auto_enable_for_toggle.get();
+                // `on_toggle` 使 windui 的复选框进入受控模式；必须由应用显式更新 Signal。
+                let enabled = !everything_enabled_for_toggle.get();
+                everything_enabled_for_toggle.set(enabled);
                 if let Ok(mut settings) = settings_for_toggle.write() {
-                    settings.auto_enable_everything = enabled;
+                    settings.everything_enabled = enabled;
                     settings.normalize();
                     let _ = save_settings(&settings);
                 }
                 if !enabled {
-                    status_for_toggle.set(t!("everything.auto_enable_disabled").into_owned());
+                    status_for_toggle.set(t!("everything.search_disabled").into_owned());
                     return;
                 }
                 // 立即给出反馈，检测放到后台线程；结果由 on_interval 轮询回填，
@@ -370,43 +260,73 @@ pub(crate) fn everything_settings(context: EverythingSettingsContext) -> Element
 
 impl SettingsUiState {
     pub(crate) fn new(visible: Signal<bool>, tab: Signal<usize>) -> Self {
-        Self { visible, tab }
+        Self {
+            visible,
+            tab,
+            discard_confirmation: signal(false),
+        }
     }
 }
 
 /// Wrap the Settings panel without changing its transparent Acrylic surface or
 /// its visibility binding. Page contents remain assembled by the launcher while
 /// their lifecycle callbacks are migrated incrementally.
-pub(crate) fn settings_page(panel: Element, state: SettingsUiState) -> Element {
-    Element::col()
+pub(crate) fn settings_page(
+    panel: Element,
+    state: SettingsUiState,
+    discard_settings: Rc<dyn Fn()>,
+) -> Element {
+    let discard_confirmation = state.discard_confirmation;
+    let discard_for_dialog = Rc::clone(&discard_settings);
+    let discard_button = {
+        Element::button(t!("settings.discard").into_owned()).on_click(move |ctx| {
+            discard_confirmation.set(false);
+            discard_for_dialog();
+            ctx.show_window();
+        })
+    };
+    let keep_confirmation = discard_confirmation;
+    let keep_button = Element::button(t!("settings.keep_editing").into_owned())
+        .neutral()
+        .on_click(move |ctx| {
+            keep_confirmation.set(false);
+            ctx.toast_ok(t!("settings.apply_prompt"));
+        });
+    let dialog = Element::dialog_panel(
+        discard_confirmation,
+        t!("settings.discard_title").into_owned(),
+        420,
+        move |_| discard_confirmation.set(false),
+        Element::label(t!("settings.discard_message").into_owned()).max_lines(3),
+        Element::row()
+            .width_match()
+            .spacing(10)
+            .child(Element::flex_spacer())
+            .child(keep_button)
+            .child(discard_button),
+    );
+    Element::stack()
         .fill()
-        .padding(18)
-        .child(panel)
-        .visible_signal(state.visible)
+        .child(
+            Element::col()
+                .fill()
+                .padding(18)
+                .child(panel)
+                .visible_signal(state.visible),
+        )
+        .child(dialog)
 }
 
 /// Build the Settings header while keeping tab state and the Back callback explicit.
-pub(crate) fn settings_header(
-    settings_tab: Signal<usize>,
-    i18n_hub: I18nHub,
-    cancel_settings: Rc<dyn Fn()>,
-) -> Element {
+pub(crate) fn settings_header(settings_tab: Signal<usize>, i18n_hub: I18nHub) -> Element {
     Element::row()
         .width_match()
         .child(
-            Element::col()
-                .weight(1.0)
-                .spacing(3)
-                .child(
-                    Element::label(i18n_hub.tr(|| t!("settings.title").into_owned()))
-                        .font_size(25.0)
-                        .fg(Color::WHITE),
-                )
-                .child(
-                    Element::label(i18n_hub.tr(|| t!("settings.apply_immediate").into_owned()))
-                        .font_size(12.0)
-                        .fg(Color::rgba(235, 241, 255, 180)),
-                ),
+            Element::col().weight(1.0).spacing(3).child(
+                Element::label(i18n_hub.tr(|| t!("settings.title").into_owned()))
+                    .font_size(25.0)
+                    .fg(Color::WHITE),
+            ),
         )
         .child(Element::segmented_signal(
             i18n_hub.tr_vec(|| {
@@ -419,17 +339,6 @@ pub(crate) fn settings_header(
             }),
             settings_tab,
         ))
-        .child(
-            Element::button(i18n_hub.tr(|| t!("settings.back").into_owned()))
-                .neutral()
-                .on_click({
-                    let cancel_settings = Rc::clone(&cancel_settings);
-                    move |ctx| {
-                        cancel_settings();
-                        ctx.show_window();
-                    }
-                }),
-        )
 }
 
 /// Build the native plugin configuration section.
@@ -535,11 +444,11 @@ pub(crate) struct SettingsPanelContext {
     pub(crate) activation_recording_for_apply: Signal<bool>,
     pub(crate) activation_recording_for_record_button: Signal<bool>,
     pub(crate) activation_shift: Signal<bool>,
-    pub(crate) auto_enable_everything: Signal<bool>,
-    pub(crate) auto_enable_everything_for_apply: Signal<bool>,
+    pub(crate) everything_enabled: Signal<bool>,
+    pub(crate) everything_enabled_for_apply: Signal<bool>,
     pub(crate) auto_install_updates: Signal<bool>,
     pub(crate) auto_install_updates_for_apply: Signal<bool>,
-    pub(crate) cancel_settings: Rc<dyn Fn()>,
+    pub(crate) reset_settings: Rc<dyn Fn()>,
     pub(crate) caret_duration: Signal<String>,
     pub(crate) clear_query_on_activation: Signal<bool>,
     pub(crate) custom_selection_color: Signal<String>,
@@ -579,7 +488,6 @@ pub(crate) struct SettingsPanelContext {
     pub(crate) settings_for_apply: Arc<RwLock<Settings>>,
     pub(crate) settings_for_clear_history: Arc<RwLock<Settings>>,
     pub(crate) settings_tab: Signal<usize>,
-    pub(crate) settings_visible: Signal<bool>,
     pub(crate) settings_visible_for_apply: Signal<bool>,
     pub(crate) shared_settings: Arc<RwLock<Settings>>,
     pub(crate) show_results: Signal<bool>,
@@ -609,8 +517,6 @@ pub(crate) struct SettingsPanelContext {
     pub(crate) use_system_accent: Signal<bool>,
     pub(crate) visual_preview_generation_for_height_reset: Signal<u64>,
     pub(crate) visual_preview_generation_for_width_reset: Signal<u64>,
-    pub(crate) window_position: WindowPositionHandle,
-    pub(crate) window_size: WindowSizeHandle,
 }
 
 /// Back/Cancel 时把已保存设置还原到各 UI 信号的信号集合。
@@ -618,8 +524,10 @@ pub(crate) struct SettingsPanelContext {
 /// windui 的 `Signal` 是 Copy 句柄，构造时按字段直拷即可；`I18nHub`、
 /// `HotkeyHandle` 为 Clone。还原逻辑集中在 [`restore_saved_settings`]，
 /// `main.rs` 的 cancel 闭包只负责读取共享设置并调用本函数，再处理窗口几何。
+#[derive(Clone)]
 pub(crate) struct SettingsRestoreSignals {
     pub(crate) settings_visible: Signal<bool>,
+    pub(crate) discard_confirmation: Signal<bool>,
     pub(crate) language_preference: Signal<usize>,
     pub(crate) i18n_hub: I18nHub,
     pub(crate) activation_key: Signal<String>,
@@ -634,6 +542,7 @@ pub(crate) struct SettingsRestoreSignals {
     pub(crate) game_mode: Signal<bool>,
     pub(crate) game_mode_status: Signal<String>,
     pub(crate) smooth_caret: Signal<bool>,
+    pub(crate) caret_duration: Signal<String>,
     pub(crate) switch_to_english_layout: Signal<bool>,
     pub(crate) use_system_accent: Signal<bool>,
     pub(crate) custom_selection_color: Signal<String>,
@@ -647,7 +556,7 @@ pub(crate) struct SettingsRestoreSignals {
     pub(crate) launcher_preview_text: Signal<String>,
     pub(crate) clear_query_on_activation: Signal<bool>,
     pub(crate) start_with_windows: Signal<bool>,
-    pub(crate) auto_enable_everything: Signal<bool>,
+    pub(crate) everything_enabled: Signal<bool>,
     pub(crate) update_checks_enabled: Signal<bool>,
     pub(crate) update_interval_hours: Signal<String>,
     pub(crate) auto_install_updates: Signal<bool>,
@@ -664,6 +573,80 @@ pub(crate) struct SettingsRestoreSignals {
 /// 按已保存设置还原全部设置页 UI 信号（不含窗口几何，几何由调用方处理）。
 pub(crate) fn restore_saved_settings(saved: &Settings, s: &SettingsRestoreSignals) {
     s.settings_visible.set(false);
+    s.discard_confirmation.set(false);
+    apply_settings_to_signals(saved, s, true);
+}
+
+/// 从设置页草稿信号构造可比较的设置快照；历史、优先级和内部状态沿用已保存值。
+pub(crate) fn settings_from_signals(saved: &Settings, s: &SettingsRestoreSignals) -> Settings {
+    let mut draft = saved.clone();
+    draft.activation_hotkey = hotkeys::sanitize_activation_config(&HotkeyConfig {
+        ctrl: s.activation_ctrl.get(),
+        alt: s.activation_alt.get(),
+        shift: s.activation_shift.get(),
+        meta: s.activation_meta.get(),
+        key: s.activation_key.get(),
+    });
+    draft.ignore_hotkeys_in_fullscreen = s.ignore_fullscreen.get();
+    draft.game_mode = s.game_mode.get();
+    draft.smooth_caret = s.smooth_caret.get();
+    draft.switch_to_english_layout = s.switch_to_english_layout.get();
+    draft.use_system_accent = s.use_system_accent.get();
+    draft.custom_selection_color = parse_selection_color(&s.custom_selection_color.get())
+        .unwrap_or(saved.custom_selection_color);
+    draft.launcher_width = parse_dimension_input(
+        &s.launcher_width_input.get(),
+        MIN_LAUNCHER_WIDTH,
+        MAX_LAUNCHER_WIDTH,
+    )
+    .unwrap_or(s.launcher_width.get());
+    draft.launcher_height = parse_dimension_input(
+        &s.launcher_height_input.get(),
+        MIN_LAUNCHER_HEIGHT,
+        MAX_LAUNCHER_HEIGHT,
+    )
+    .unwrap_or(s.launcher_height.get());
+    draft.clear_query_on_activation = s.clear_query_on_activation.get();
+    draft.start_with_windows = s.start_with_windows.get();
+    draft.everything_enabled = s.everything_enabled.get();
+    draft.update_checks_enabled = s.update_checks_enabled.get();
+    draft.update_interval_hours = s
+        .update_interval_hours
+        .get()
+        .trim()
+        .parse::<u32>()
+        .unwrap_or(saved.update_interval_hours)
+        .clamp(1, 168);
+    draft.auto_install_updates = s.auto_install_updates.get();
+    draft.obsidian_enabled = s.obsidian_enabled.get();
+    draft.obsidian_alias = s.obsidian_alias.get();
+    draft.google_enabled = s.google_enabled.get();
+    draft.google_alias = s.google_alias.get();
+    draft.system_commands_enabled = s.system_commands_enabled.get();
+    draft.monitor_preference = monitor_preference_from_index(s.monitor_preference.get());
+    draft.language = language_preference_from_index(s.language_preference.get());
+    draft.smooth_caret_duration_ms = s
+        .caret_duration
+        .get()
+        .trim()
+        .parse::<u16>()
+        .unwrap_or(saved.smooth_caret_duration_ms)
+        .clamp(60, 160);
+    draft.normalize();
+    draft
+}
+
+pub(crate) fn settings_draft_is_dirty(saved: &Settings, s: &SettingsRestoreSignals) -> bool {
+    settings_from_signals(saved, s) != *saved
+}
+
+/// 将设置模板同步到草稿信号；可选择是否同步真实热键注册。
+pub(crate) fn apply_settings_to_signals(
+    saved: &Settings,
+    s: &SettingsRestoreSignals,
+    apply_hotkey: bool,
+) {
+    s.discard_confirmation.set(false);
     s.language_preference
         .set(crate::i18n::language_preference_index(saved.language));
     apply_configured_locale(saved.language);
@@ -679,14 +662,18 @@ pub(crate) fn restore_saved_settings(saved: &Settings, s: &SettingsRestoreSignal
     s.activation_display
         .set(hotkeys::display_config(&activation));
     s.activation_recording.set(false);
-    s.activation_handle
-        .set(hotkeys::activation_hotkey(&activation));
-    s.activation_handle.set_enabled(true);
+    if apply_hotkey {
+        s.activation_handle
+            .set(hotkeys::activation_hotkey(&activation));
+        s.activation_handle.set_enabled(true);
+    }
 
     s.ignore_fullscreen.set(saved.ignore_hotkeys_in_fullscreen);
     s.game_mode.set(saved.game_mode);
     s.game_mode_status.set(game_mode_label(saved.game_mode));
     s.smooth_caret.set(saved.smooth_caret);
+    s.caret_duration
+        .set(saved.smooth_caret_duration_ms.to_string());
     s.switch_to_english_layout
         .set(saved.switch_to_english_layout);
     s.use_system_accent.set(saved.use_system_accent);
@@ -721,7 +708,7 @@ pub(crate) fn restore_saved_settings(saved: &Settings, s: &SettingsRestoreSignal
     s.clear_query_on_activation
         .set(saved.clear_query_on_activation);
     s.start_with_windows.set(saved.start_with_windows);
-    s.auto_enable_everything.set(saved.auto_enable_everything);
+    s.everything_enabled.set(saved.everything_enabled);
     s.update_checks_enabled.set(saved.update_checks_enabled);
     s.update_interval_hours
         .set(saved.update_interval_hours.to_string());
@@ -738,7 +725,7 @@ pub(crate) fn restore_saved_settings(saved: &Settings, s: &SettingsRestoreSignal
     // 设置变更（例如切换语言）后刷新状态文案；这里同样使用低成本刷新，
     // 如实反映 Everything 当前的安装与 IPC 状态。
     everything::refresh_everything_status_cheap(
-        s.auto_enable_everything,
+        s.everything_enabled,
         s.everything_installed,
         s.everything_status,
     );
@@ -757,11 +744,11 @@ pub(crate) fn settings_panel(context: SettingsPanelContext) -> Element {
         activation_recording_for_apply,
         activation_recording_for_record_button,
         activation_shift,
-        auto_enable_everything,
-        auto_enable_everything_for_apply,
+        everything_enabled,
+        everything_enabled_for_apply,
         auto_install_updates,
         auto_install_updates_for_apply,
-        cancel_settings,
+        reset_settings,
         caret_duration,
         clear_query_on_activation,
         custom_selection_color,
@@ -801,7 +788,6 @@ pub(crate) fn settings_panel(context: SettingsPanelContext) -> Element {
         settings_for_apply,
         settings_for_clear_history,
         settings_tab,
-        settings_visible,
         settings_visible_for_apply,
         shared_settings,
         show_results,
@@ -831,8 +817,6 @@ pub(crate) fn settings_panel(context: SettingsPanelContext) -> Element {
         use_system_accent,
         visual_preview_generation_for_height_reset,
         visual_preview_generation_for_width_reset,
-        window_position,
-        window_size,
     } = context;
 
     Element::col()
@@ -842,11 +826,7 @@ pub(crate) fn settings_panel(context: SettingsPanelContext) -> Element {
         .corner(20.0)
         .bg(Color::rgba(0, 0, 0, 0))
         .border(Color::rgba(0, 0, 0, 0), 0)
-        .child(settings_header(
-            settings_tab,
-            i18n_hub.clone(),
-            Rc::clone(&cancel_settings),
-        ))
+        .child(settings_header(settings_tab, i18n_hub.clone()))
         .child(
             Element::scroll()
                 .weight(1.0)
@@ -855,11 +835,17 @@ pub(crate) fn settings_panel(context: SettingsPanelContext) -> Element {
                     Element::col()
                         .width_match()
                         .spacing(12)
-                        .child(Element::field_signal(
-                            i18n_hub.tr(|| t!("settings.activation_key").into_owned()),
+                        .child(
                             Element::col()
                                 .width_match()
                                 .spacing(6)
+                                .child(
+                                    Element::label(
+                                        i18n_hub.tr(|| t!("settings.activation_key").into_owned()),
+                                    )
+                                    .font_size(14.0)
+                                    .fg(Color::WHITE),
+                                )
                                 .child(
                                     Element::row()
                                         .width_match()
@@ -906,7 +892,7 @@ pub(crate) fn settings_panel(context: SettingsPanelContext) -> Element {
                                     .font_size(11.0)
                                     .fg(Color::rgba(235, 241, 255, 170)),
                                 ),
-                        ))
+                        )
                         .child(
                             Element::row()
                                 .width_match()
@@ -987,10 +973,18 @@ pub(crate) fn settings_panel(context: SettingsPanelContext) -> Element {
                                 }
                             }),
                         ))
-                        .child(Element::field_signal(
-                            i18n_hub.tr(|| t!("settings.open_launcher_on").into_owned()),
+                        .child(
                             Element::col()
-                                .spacing(6)
+                                .width_match()
+                                .spacing(8)
+                                .child(
+                                    Element::label(
+                                        i18n_hub
+                                            .tr(|| t!("settings.open_launcher_on").into_owned()),
+                                    )
+                                    .font_size(14.0)
+                                    .fg(Color::WHITE),
+                                )
                                 .child(Element::radio(
                                     i18n_hub.tr(|| t!("settings.monitor.primary").into_owned()),
                                     monitor_preference,
@@ -1006,11 +1000,12 @@ pub(crate) fn settings_panel(context: SettingsPanelContext) -> Element {
                                     monitor_preference,
                                     2,
                                 )),
-                        ))
+                        )
                         .child(
                             Element::col()
                                 .width_match()
                                 .spacing(8)
+                                .padding_edges(0, 10, 0, 0)
                                 .child(Element::field_signal(
                                     i18n_hub.tr(|| t!("settings.updates").into_owned()),
                                     Element::checkbox(
@@ -1172,201 +1167,6 @@ pub(crate) fn settings_panel(context: SettingsPanelContext) -> Element {
                             )
                             .font_size(12.0)
                             .fg(Color::rgba(235, 241, 255, 160)),
-                        )
-                        .child(
-                            Element::button(i18n_hub.tr(|| t!("settings.apply").into_owned()))
-                                .on_click(move |ctx| {
-                                    let duration = caret_duration
-                                        .get()
-                                        .trim()
-                                        .parse::<u16>()
-                                        .unwrap_or(95)
-                                        .clamp(60, 160);
-                                    // 裸键配置回退为默认热键（Alt+Space），写入前规范化。
-                                    let configuration =
-                                        hotkeys::sanitize_activation_config(&HotkeyConfig {
-                                            ctrl: activation_ctrl.get(),
-                                            alt: activation_alt.get(),
-                                            shift: activation_shift.get(),
-                                            meta: activation_meta.get(),
-                                            key: activation_key.get(),
-                                        });
-                                    let custom_color =
-                                        parse_selection_color(&custom_selection_color.get())
-                                            .unwrap_or(0x4c8bf4);
-                                    let configured_width = parse_dimension_input(
-                                        &launcher_width_input.get(),
-                                        MIN_LAUNCHER_WIDTH,
-                                        MAX_LAUNCHER_WIDTH,
-                                    )
-                                    .unwrap_or(DEFAULT_LAUNCHER_WIDTH);
-                                    let configured_height = parse_dimension_input(
-                                        &launcher_height_input.get(),
-                                        MIN_LAUNCHER_HEIGHT,
-                                        MAX_LAUNCHER_HEIGHT,
-                                    )
-                                    .unwrap_or(DEFAULT_LAUNCHER_HEIGHT);
-                                    if let Ok(mut settings) = settings_for_apply.write() {
-                                        let previous_language = settings.language;
-                                        settings.activation_hotkey = configuration;
-                                        settings.ignore_hotkeys_in_fullscreen =
-                                            ignore_fullscreen.get();
-                                        settings.game_mode = game_mode.get();
-                                        settings.smooth_caret = smooth_caret.get();
-                                        settings.switch_to_english_layout =
-                                            switch_to_english_layout.get();
-                                        settings.use_system_accent = use_system_accent.get();
-                                        settings.custom_selection_color = custom_color;
-                                        settings.launcher_width = configured_width;
-                                        settings.launcher_height = configured_height;
-                                        settings.clear_query_on_activation =
-                                            clear_query_on_activation.get();
-                                        settings.start_with_windows =
-                                            start_with_windows_for_apply.get();
-                                        settings.update_checks_enabled =
-                                            update_checks_enabled_for_apply.get();
-                                        settings.update_interval_hours =
-                                            update_interval_hours_for_apply
-                                                .get()
-                                                .trim()
-                                                .parse::<u32>()
-                                                .unwrap_or(24)
-                                                .clamp(1, 168);
-                                        settings.auto_install_updates =
-                                            auto_install_updates_for_apply.get();
-                                        update_interval_hours_for_apply
-                                            .set(settings.update_interval_hours.to_string());
-                                        settings.auto_enable_everything =
-                                            auto_enable_everything_for_apply.get();
-                                        settings.obsidian_enabled =
-                                            obsidian_enabled_for_apply.get();
-                                        settings.obsidian_alias = obsidian_alias_for_apply.get();
-                                        settings.google_enabled = google_enabled_for_apply.get();
-                                        settings.google_alias = google_alias_for_apply.get();
-                                        settings.system_commands_enabled =
-                                            system_commands_enabled_for_apply.get();
-                                        settings.monitor_preference =
-                                            monitor_preference_from_index(monitor_preference.get());
-                                        settings.language = language_preference_from_index(
-                                            language_preference_for_apply.get(),
-                                        );
-                                        settings.smooth_caret_duration_ms = duration;
-                                        settings.normalize();
-                                        activation_recording_for_apply.set(false);
-                                        activation_display_for_apply.set(hotkeys::display_config(
-                                            &settings.activation_hotkey,
-                                        ));
-                                        // 裸键已回退为默认热键，同步勾选框与键名信号，
-                                        // 避免显示值与复选状态不一致。
-                                        activation_ctrl.set(settings.activation_hotkey.ctrl);
-                                        activation_alt.set(settings.activation_hotkey.alt);
-                                        activation_shift.set(settings.activation_hotkey.shift);
-                                        activation_meta.set(settings.activation_hotkey.meta);
-                                        activation_key.set(settings.activation_hotkey.key.clone());
-                                        selection_color
-                                            .set(selection_color_for_settings(&settings));
-                                        custom_selection_color.set(selection_color_hex(
-                                            settings.custom_selection_color,
-                                        ));
-                                        launcher_width.set(settings.launcher_width);
-                                        launcher_height.set(settings.launcher_height);
-                                        launcher_width_input
-                                            .set(settings.launcher_width.to_string());
-                                        launcher_height_input
-                                            .set(settings.launcher_height.to_string());
-                                        launcher_width_slider.set(dimension_slider_fraction(
-                                            settings.launcher_width,
-                                            MIN_LAUNCHER_WIDTH,
-                                            MAX_LAUNCHER_WIDTH,
-                                        ));
-                                        launcher_height_slider.set(dimension_slider_fraction(
-                                            settings.launcher_height,
-                                            MIN_LAUNCHER_HEIGHT,
-                                            MAX_LAUNCHER_HEIGHT,
-                                        ));
-                                        launcher_preview_text.set(
-                                            t!(
-                                                "settings.visual.client_area",
-                                                width = settings.launcher_width,
-                                                height = settings.launcher_height
-                                            )
-                                            .into_owned(),
-                                        );
-                                        activation_handle_for_apply.set(
-                                            hotkeys::activation_hotkey(&settings.activation_hotkey),
-                                        );
-                                        activation_handle_for_apply.set_enabled(true);
-                                        game_mode_status_for_apply
-                                            .set(game_mode_label(settings.game_mode));
-                                        if settings.auto_enable_everything {
-                                            match everything::start_background_if_installed() {
-                                                Ok(outcome) => {
-                                                    everything_installed
-                                                        .set(outcome.is_installed());
-                                                    everything_status_for_apply
-                                                        .set(outcome.status_message());
-                                                }
-                                                Err(error) => {
-                                                    everything_status_for_apply.set(error)
-                                                }
-                                            }
-                                        } else {
-                                            everything_status_for_apply.set(
-                                                t!("everything.auto_enable_disabled").into_owned(),
-                                            );
-                                        }
-                                        let _ = save_settings(&settings);
-                                        apply_configured_locale(settings.language);
-                                        if previous_language != settings.language {
-                                            launcher_preview_text.set(
-                                                t!(
-                                                    "settings.visual.client_area",
-                                                    width = launcher_width.get(),
-                                                    height = launcher_height.get()
-                                                )
-                                                .into_owned(),
-                                            );
-                                            i18n_hub_for_apply.refresh();
-                                        }
-                                        if let Err(error) =
-                                            startup::set_enabled(settings.start_with_windows)
-                                        {
-                                            ctx.toast_ok(t!(
-                                                "settings.startup_failed",
-                                                error = error
-                                            ));
-                                        }
-                                        if settings.update_checks_enabled
-                                            && update_check_due(&settings)
-                                        {
-                                            update_status_for_apply
-                                                .set(t!("updater.checking_github").into_owned());
-                                            request_update_check(
-                                                update_sender_for_apply.clone(),
-                                                &update_check_in_flight_for_apply,
-                                            );
-                                        }
-                                    }
-                                    settings_visible_for_apply.set(false);
-                                    let selected_preference =
-                                        monitor_preference_from_index(monitor_preference.get());
-                                    let applied_width = launcher_width.get() as i32;
-                                    let applied_height = launcher_height.get() as i32;
-                                    let target_height = if show_results.get() {
-                                        applied_height
-                                    } else {
-                                        crate::COMPACT_WINDOW_HEIGHT
-                                    };
-                                    request_monitor_position(
-                                        &position_for_apply,
-                                        selected_preference,
-                                        applied_width,
-                                        target_height,
-                                    );
-                                    size_for_apply.set(applied_width, target_height);
-                                    ctx.show_window();
-                                    ctx.toast_ok(t!("settings.applied"));
-                                }),
                         ),
                 ),
         )
@@ -1377,7 +1177,7 @@ pub(crate) fn settings_panel(context: SettingsPanelContext) -> Element {
                 .child(everything_settings(EverythingSettingsContext {
                     i18n_hub: i18n_hub.clone(),
                     settings: Arc::clone(&shared_settings),
-                    auto_enable: auto_enable_everything,
+                    everything_enabled,
                     installed: everything_installed,
                     status: everything_status,
                     detection: Arc::clone(&everything_detection),
@@ -1555,24 +1355,7 @@ pub(crate) fn settings_panel(context: SettingsPanelContext) -> Element {
                             .fg(Color::rgba(235, 241, 255, 175))
                             .max_lines(2)
                             .truncate(Truncate::End),
-                        )
-                        .child(visual_apply_button(VisualApplyContext {
-                            i18n_hub: i18n_hub.clone(),
-                            settings: Arc::clone(&shared_settings),
-                            launcher_width,
-                            launcher_height,
-                            launcher_width_input,
-                            launcher_height_input,
-                            launcher_width_slider,
-                            launcher_height_slider,
-                            launcher_preview_text,
-                            smooth_caret,
-                            caret_duration,
-                            settings_visible,
-                            show_results,
-                            window_size: window_size.clone(),
-                            window_position: window_position.clone(),
-                        })),
+                        ),
                 ),
         )
         .child(
@@ -1601,6 +1384,196 @@ pub(crate) fn settings_panel(context: SettingsPanelContext) -> Element {
                         )
                         .child(priorities_empty)
                         .child(priority_list),
+                ),
+        )
+        .child(
+            Element::row()
+                .width_match()
+                .spacing(10)
+                .child(Element::flex_spacer())
+                .child(
+                    Element::button(i18n_hub.tr(|| t!("settings.reset").into_owned()))
+                        .neutral()
+                        .on_click({
+                            let reset_settings = Rc::clone(&reset_settings);
+                            move |ctx| {
+                                reset_settings();
+                                ctx.toast_ok(t!("settings.reset_done"));
+                            }
+                        }),
+                )
+                .child(
+                    Element::button(i18n_hub.tr(|| t!("settings.apply").into_owned())).on_click(
+                        move |ctx| {
+                            let duration = caret_duration
+                                .get()
+                                .trim()
+                                .parse::<u16>()
+                                .unwrap_or(95)
+                                .clamp(60, 160);
+                            // 裸键配置回退为默认热键（Alt+Space），写入前规范化。
+                            let configuration =
+                                hotkeys::sanitize_activation_config(&HotkeyConfig {
+                                    ctrl: activation_ctrl.get(),
+                                    alt: activation_alt.get(),
+                                    shift: activation_shift.get(),
+                                    meta: activation_meta.get(),
+                                    key: activation_key.get(),
+                                });
+                            let custom_color = parse_selection_color(&custom_selection_color.get())
+                                .unwrap_or(0x4c8bf4);
+                            let configured_width = parse_dimension_input(
+                                &launcher_width_input.get(),
+                                MIN_LAUNCHER_WIDTH,
+                                MAX_LAUNCHER_WIDTH,
+                            )
+                            .unwrap_or(DEFAULT_LAUNCHER_WIDTH);
+                            let configured_height = parse_dimension_input(
+                                &launcher_height_input.get(),
+                                MIN_LAUNCHER_HEIGHT,
+                                MAX_LAUNCHER_HEIGHT,
+                            )
+                            .unwrap_or(DEFAULT_LAUNCHER_HEIGHT);
+                            if let Ok(mut settings) = settings_for_apply.write() {
+                                let previous_language = settings.language;
+                                settings.activation_hotkey = configuration;
+                                settings.ignore_hotkeys_in_fullscreen = ignore_fullscreen.get();
+                                settings.game_mode = game_mode.get();
+                                settings.smooth_caret = smooth_caret.get();
+                                settings.switch_to_english_layout = switch_to_english_layout.get();
+                                settings.use_system_accent = use_system_accent.get();
+                                settings.custom_selection_color = custom_color;
+                                settings.launcher_width = configured_width;
+                                settings.launcher_height = configured_height;
+                                settings.clear_query_on_activation =
+                                    clear_query_on_activation.get();
+                                settings.start_with_windows = start_with_windows_for_apply.get();
+                                settings.update_checks_enabled =
+                                    update_checks_enabled_for_apply.get();
+                                settings.update_interval_hours = update_interval_hours_for_apply
+                                    .get()
+                                    .trim()
+                                    .parse::<u32>()
+                                    .unwrap_or(24)
+                                    .clamp(1, 168);
+                                settings.auto_install_updates =
+                                    auto_install_updates_for_apply.get();
+                                update_interval_hours_for_apply
+                                    .set(settings.update_interval_hours.to_string());
+                                settings.everything_enabled = everything_enabled_for_apply.get();
+                                settings.obsidian_enabled = obsidian_enabled_for_apply.get();
+                                settings.obsidian_alias = obsidian_alias_for_apply.get();
+                                settings.google_enabled = google_enabled_for_apply.get();
+                                settings.google_alias = google_alias_for_apply.get();
+                                settings.system_commands_enabled =
+                                    system_commands_enabled_for_apply.get();
+                                settings.monitor_preference =
+                                    monitor_preference_from_index(monitor_preference.get());
+                                settings.language = language_preference_from_index(
+                                    language_preference_for_apply.get(),
+                                );
+                                settings.smooth_caret_duration_ms = duration;
+                                settings.normalize();
+                                activation_recording_for_apply.set(false);
+                                activation_display_for_apply
+                                    .set(hotkeys::display_config(&settings.activation_hotkey));
+                                // 裸键已回退为默认热键，同步勾选框与键名信号，
+                                // 避免显示值与复选状态不一致。
+                                activation_ctrl.set(settings.activation_hotkey.ctrl);
+                                activation_alt.set(settings.activation_hotkey.alt);
+                                activation_shift.set(settings.activation_hotkey.shift);
+                                activation_meta.set(settings.activation_hotkey.meta);
+                                activation_key.set(settings.activation_hotkey.key.clone());
+                                selection_color.set(selection_color_for_settings(&settings));
+                                custom_selection_color
+                                    .set(selection_color_hex(settings.custom_selection_color));
+                                launcher_width.set(settings.launcher_width);
+                                launcher_height.set(settings.launcher_height);
+                                launcher_width_input.set(settings.launcher_width.to_string());
+                                launcher_height_input.set(settings.launcher_height.to_string());
+                                launcher_width_slider.set(dimension_slider_fraction(
+                                    settings.launcher_width,
+                                    MIN_LAUNCHER_WIDTH,
+                                    MAX_LAUNCHER_WIDTH,
+                                ));
+                                launcher_height_slider.set(dimension_slider_fraction(
+                                    settings.launcher_height,
+                                    MIN_LAUNCHER_HEIGHT,
+                                    MAX_LAUNCHER_HEIGHT,
+                                ));
+                                launcher_preview_text.set(
+                                    t!(
+                                        "settings.visual.client_area",
+                                        width = settings.launcher_width,
+                                        height = settings.launcher_height
+                                    )
+                                    .into_owned(),
+                                );
+                                activation_handle_for_apply
+                                    .set(hotkeys::activation_hotkey(&settings.activation_hotkey));
+                                activation_handle_for_apply.set_enabled(true);
+                                game_mode_status_for_apply.set(game_mode_label(settings.game_mode));
+                                if settings.everything_enabled {
+                                    match everything::start_background_if_installed() {
+                                        Ok(outcome) => {
+                                            everything_installed.set(outcome.is_installed());
+                                            everything_status_for_apply
+                                                .set(outcome.status_message());
+                                        }
+                                        Err(error) => everything_status_for_apply.set(error),
+                                    }
+                                } else {
+                                    everything_status_for_apply
+                                        .set(t!("everything.search_disabled").into_owned());
+                                }
+                                let _ = save_settings(&settings);
+                                apply_configured_locale(settings.language);
+                                if previous_language != settings.language {
+                                    launcher_preview_text.set(
+                                        t!(
+                                            "settings.visual.client_area",
+                                            width = launcher_width.get(),
+                                            height = launcher_height.get()
+                                        )
+                                        .into_owned(),
+                                    );
+                                    i18n_hub_for_apply.refresh();
+                                }
+                                if let Err(error) =
+                                    startup::set_enabled(settings.start_with_windows)
+                                {
+                                    ctx.toast_ok(t!("settings.startup_failed", error = error));
+                                }
+                                if settings.update_checks_enabled && update_check_due(&settings) {
+                                    update_status_for_apply
+                                        .set(t!("updater.checking_github").into_owned());
+                                    request_update_check(
+                                        update_sender_for_apply.clone(),
+                                        &update_check_in_flight_for_apply,
+                                    );
+                                }
+                            }
+                            settings_visible_for_apply.set(false);
+                            let selected_preference =
+                                monitor_preference_from_index(monitor_preference.get());
+                            let applied_width = launcher_width.get() as i32;
+                            let applied_height = launcher_height.get() as i32;
+                            let target_height = if show_results.get() {
+                                applied_height
+                            } else {
+                                crate::COMPACT_WINDOW_HEIGHT
+                            };
+                            request_monitor_position(
+                                &position_for_apply,
+                                selected_preference,
+                                applied_width,
+                                target_height,
+                            );
+                            size_for_apply.set(applied_width, target_height);
+                            ctx.show_window();
+                            ctx.toast_ok(t!("settings.applied"));
+                        },
+                    ),
                 ),
         )
 }

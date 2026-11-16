@@ -2978,9 +2978,8 @@ try {
                 throw "Visual Settings reset smoke failed: the native preview did not report logical 420 width and 382 height after Reset callbacks."
             }
 
-            # The Visual page owns an explicit Apply dimensions action. Scroll the
-            # Visual form to its lower action area, then locate the button by observing
-            # the app's own callback marker instead of assuming a focus order that can
+            # The shared Apply settings action is at the bottom of the settings form.
+            # Scroll to its action area instead of assuming a focus order that can
             # vary when the native scroll viewport changes.
             [FluxWallpaper]::SetForegroundWindow($settingsHwnd) | Out-Null
             $shell.AppActivate($settingsProcess.Id) | Out-Null
@@ -2989,28 +2988,24 @@ try {
             [FluxWallpaper]::SetCursorPos($scrollX, $scrollY) | Out-Null
             [FluxWallpaper]::mouse_event(0x0800, 0, 0, [uint32]4294965376, [UIntPtr]::Zero)
             Start-Sleep -Milliseconds 450
-            Save-Screenshot "settings-visual-apply.png"
+            Save-Screenshot "settings-shared-apply.png"
             $applyX = $settingsRect.Left + [int][Math]::Round(118 * $settingsScale)
             $applyY = $settingsRect.Top + [int][Math]::Round(463 * $settingsScale)
             $applyPointClass = [FluxWallpaper]::WindowClassAtPoint($applyX, $applyY)
-            Write-Host "Visual Apply direct probe: x=$applyX y=$applyY windowClass=$applyPointClass"
+            Write-Host "Shared settings Apply direct probe: x=$applyX y=$applyY windowClass=$applyPointClass"
             [FluxWallpaper]::SetCursorPos($applyX, $applyY) | Out-Null
             [FluxWallpaper]::mouse_event(0x0002, 0, 0, 0, [UIntPtr]::Zero)
             [FluxWallpaper]::mouse_event(0x0004, 0, 0, 0, [UIntPtr]::Zero)
             Start-Sleep -Milliseconds 800
-            $applyLog = Get-Content $settingsStderrPath -Raw
-            if ($applyLog -notmatch "Visual Apply dimensions clicked: 420x382") {
-                Save-Screenshot "settings-visual-apply-failed.png"
-                throw "Visual Apply smoke could not activate the Apply dimensions button at x=$applyX y=$applyY (windowClass=$applyPointClass)."
-            }
             Start-Sleep -Milliseconds 1200
             $settingsPath = Join-Path $env:APPDATA "FluxLauncher\settings.json"
             if (!(Test-Path $settingsPath)) {
-                throw "Visual Apply smoke could not find the persisted settings file at $settingsPath."
+                throw "Shared settings Apply smoke could not find the persisted settings file at $settingsPath."
             }
             $persistedSettings = Get-Content $settingsPath -Raw | ConvertFrom-Json
             if ($persistedSettings.launcher_width -ne 420 -or $persistedSettings.launcher_height -ne 382) {
-                throw "Visual Apply smoke persisted unexpected dimensions: $($persistedSettings.launcher_width)x$($persistedSettings.launcher_height)."
+                Save-Screenshot "settings-shared-apply-failed.png"
+                throw "Shared settings Apply smoke persisted unexpected dimensions: $($persistedSettings.launcher_width)x$($persistedSettings.launcher_height)."
             }
             $visualPreviewPersistenceProbe = $true
             $previewStillAlive = $false

@@ -133,7 +133,7 @@ pub struct Settings {
     #[serde(default = "enabled_by_default")]
     pub start_with_windows: bool,
     #[serde(default = "enabled_by_default")]
-    pub auto_enable_everything: bool,
+    pub everything_enabled: bool,
     #[serde(default)]
     pub everything_install_prompt_seen: bool,
     #[serde(default = "enabled_by_default")]
@@ -181,7 +181,7 @@ impl Default for Settings {
             launcher_height: DEFAULT_LAUNCHER_HEIGHT,
             clear_query_on_activation: true,
             start_with_windows: true,
-            auto_enable_everything: true,
+            everything_enabled: true,
             everything_install_prompt_seen: false,
             update_checks_enabled: true,
             update_interval_hours: DEFAULT_UPDATE_INTERVAL_HOURS,
@@ -202,6 +202,18 @@ impl Default for Settings {
 }
 
 impl Settings {
+    /// 基于集中定义的默认模板恢复可编辑设置，同时保留用户积累的数据。
+    pub fn default_editable_template(&self) -> Self {
+        Self {
+            query_history: self.query_history.clone(),
+            priority_entries: self.priority_entries.clone(),
+            everything_install_prompt_seen: self.everything_install_prompt_seen,
+            last_update_check_unix: self.last_update_check_unix,
+            keyboard_layout_default_migrated: self.keyboard_layout_default_migrated,
+            ..Self::default()
+        }
+    }
+
     pub fn normalize(&mut self) {
         self.smooth_caret_duration_ms = self
             .smooth_caret_duration_ms
@@ -412,7 +424,7 @@ mod tests {
         assert_eq!(settings.launcher_height, DEFAULT_LAUNCHER_HEIGHT);
         assert!(settings.clear_query_on_activation);
         assert!(settings.start_with_windows);
-        assert!(settings.auto_enable_everything);
+        assert!(settings.everything_enabled);
         assert!(!settings.everything_install_prompt_seen);
         assert!(settings.update_checks_enabled);
         assert_eq!(
@@ -452,7 +464,7 @@ mod tests {
             launcher_height: 520,
             clear_query_on_activation: false,
             start_with_windows: false,
-            auto_enable_everything: false,
+            everything_enabled: false,
             everything_install_prompt_seen: true,
             update_checks_enabled: false,
             update_interval_hours: 6,
@@ -644,6 +656,38 @@ mod tests {
             io::ErrorKind::InvalidData
         );
         fs::remove_file(path).unwrap();
+    }
+
+    #[test]
+    fn default_editable_template_resets_preferences_but_preserves_user_data() {
+        let settings = Settings {
+            activation_hotkey: HotkeyConfig {
+                ctrl: true,
+                alt: false,
+                shift: true,
+                meta: false,
+                key: String::from("K"),
+            },
+            query_history: vec![String::from("steam")],
+            priority_entries: vec![PriorityEntry {
+                id: String::from("application:steam"),
+                title: String::from("Steam"),
+                target: String::from("steam.exe"),
+            }],
+            everything_install_prompt_seen: true,
+            last_update_check_unix: 42,
+            keyboard_layout_default_migrated: true,
+            ..Settings::default()
+        };
+
+        let reset = settings.default_editable_template();
+
+        assert_eq!(reset.activation_hotkey, HotkeyConfig::default());
+        assert_eq!(reset.query_history, settings.query_history);
+        assert_eq!(reset.priority_entries, settings.priority_entries);
+        assert!(reset.everything_install_prompt_seen);
+        assert_eq!(reset.last_update_check_unix, 42);
+        assert!(reset.keyboard_layout_default_migrated);
     }
 
     #[test]

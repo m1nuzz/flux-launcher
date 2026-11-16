@@ -1,4 +1,3 @@
-use std::rc::Rc;
 use std::sync::{Arc, RwLock};
 
 use flux_core::{SearchResult, Settings};
@@ -54,7 +53,6 @@ pub(crate) fn on_window_activated(
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn on_window_hide(
     settings: Arc<RwLock<Settings>>,
-    cancel_settings: Rc<dyn Fn()>,
     settings_visible: Signal<bool>,
     clear_query_on_activation: Signal<bool>,
     query: Signal<String>,
@@ -75,10 +73,6 @@ pub(crate) fn on_window_hide(
     window_size: WindowSizeHandle,
 ) -> impl FnMut() + 'static {
     move || {
-        let was_settings_visible = settings_visible.get();
-        if was_settings_visible {
-            cancel_settings();
-        }
         let (enabled, clear_query) = settings
             .read()
             .map(|settings| {

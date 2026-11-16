@@ -20,7 +20,7 @@ everything:
   not_now: Not now
   install_started: Everything installation started with winget.
   install_started_toast: Everything installation started
-  auto_enable_disabled: Everything auto-enable is disabled in Flux settings
+  search_disabled: Everything file search is disabled in Flux settings
   detecting: Detecting Everything installation…
   ipc_available: Everything IPC is available
   ipc_unavailable: Everything is installed but its local IPC is unavailable
@@ -53,6 +53,13 @@ settings:
   startup_failed: "Startup setting failed: %{error}"
   title: Settings
   apply_immediate: Changes apply immediately and are saved atomically
+  discard_title: Discard unsaved settings?
+  discard_message: These settings have not been applied. Discard them and return to search?
+  discard: Discard and return to search
+  keep_editing: Keep editing
+  apply_prompt: Settings kept. Click Apply settings to save them.
+  reset: Reset settings
+  reset_done: Settings reset to defaults; click Apply to save them.
   tab:
     general: General
     visual: Visual
@@ -99,8 +106,8 @@ settings:
   auto_install_updates: Install stable updates automatically
   install_now: Install now
   everything: Everything
-  everything_tab_desc: Everything provides fast indexed file and folder search. Configure its automatic use here, alongside the other plugins.
-  everything_desc: Auto-enable Everything when installed
+  everything_tab_desc: Everything provides fast indexed file and folder search. Enable or disable its results here, alongside the other plugins.
+  everything_desc: Enable Everything file search
   everything_command: 'Command: winget install -e --id voidtools.Everything'
   lock_failed: Could not lock Flux settings
   plugins:
@@ -132,10 +139,7 @@ settings:
     reset: Reset
     dip: DIP
     safe_range: "Safe range: %{min}–%{max} logical px (DIP)"
-    native_preview_hint: The native preview uses the exact requested logical client dimensions. Physical GetClientRect pixels scale with the preview monitor DPI; Apply saves the values.
-    apply: Apply dimensions
-    save_failed: Could not save visual dimensions
-    applied: Visual dimensions applied
+    native_preview_hint: The native preview uses the exact requested logical client dimensions. Physical GetClientRect pixels scale with the preview monitor DPI; Apply settings saves the values.
     client_area: "Current launcher client area: %{width} × %{height} logical px (DIP)"
 updater:
   checking_github: Checking stable GitHub releases...

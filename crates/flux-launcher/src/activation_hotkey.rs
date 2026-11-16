@@ -4,6 +4,7 @@ use crate::window_state::{
     launcher_window_geometry_with_sizes, request_monitor_position, should_show_launcher,
 };
 use flux_core::{should_suppress_activation, SearchResult, Settings};
+use std::rc::Rc;
 use std::sync::{Arc, RwLock};
 /// 全局激活热键回调所需的句柄集合：窗口操作句柄 + 需要重置/读取的 launcher 状态。
 /// 回调本身不放 hwnd（见 vendor/windui 的借用纪律），只声明窗口操作意图。
@@ -29,6 +30,9 @@ pub(crate) struct ActivationHotkeyState {
     pub(crate) inline_completion: Signal<String>,
     pub(crate) scroll_request: Signal<bool>,
     pub(crate) settings_visible: Signal<bool>,
+    pub(crate) discard_confirmation: Signal<bool>,
+    pub(crate) cancel_settings: Rc<dyn Fn()>,
+    pub(crate) settings_dirty: Rc<dyn Fn() -> bool>,
     pub(crate) launcher_width: Signal<u16>,
     pub(crate) launcher_height: Signal<u16>,
 }
@@ -42,6 +46,16 @@ pub(crate) fn handle_activation_hotkey(ctx: &mut HotkeyCtx, state: &ActivationHo
         .map(|settings| settings.clone())
         .unwrap_or_default();
     if should_suppress_activation(&settings, fullscreen::foreground_is_fullscreen()) {
+        return;
+    }
+    if state.settings_visible.get() {
+        if (state.settings_dirty)() {
+            state.discard_confirmation.set(true);
+        } else {
+            (state.cancel_settings)();
+            state.cursor_visibility.show();
+            ctx.show_window();
+        }
         return;
     }
     // Clear before toggling visibility. The previous implementation did

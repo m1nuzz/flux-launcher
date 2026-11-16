@@ -68,7 +68,7 @@ pub(crate) struct LauncherState {
     pub visual_preview_generation: Signal<u64>,
     pub clear_query_on_activation: Signal<bool>,
     pub start_with_windows: Signal<bool>,
-    pub auto_enable_everything: Signal<bool>,
+    pub everything_enabled: Signal<bool>,
     pub everything_detection: Arc<everything::EverythingDetectionSlot>,
     pub update_checks_enabled: Signal<bool>,
     pub update_interval_hours: Signal<String>,
@@ -155,7 +155,7 @@ pub(crate) fn init_launcher_state(
     let visual_preview_generation = signal(0_u64);
     let clear_query_on_activation = signal(settings.clear_query_on_activation);
     let start_with_windows = signal(settings.start_with_windows);
-    let auto_enable_everything = signal(settings.auto_enable_everything);
+    let everything_enabled = signal(settings.everything_enabled);
     let everything_detection = Arc::new(everything::EverythingDetectionSlot::default());
     let update_checks_enabled = signal(settings.update_checks_enabled);
     let update_interval_hours = signal(settings.update_interval_hours.to_string());
@@ -230,7 +230,7 @@ pub(crate) fn init_launcher_state(
         visual_preview_generation,
         clear_query_on_activation,
         start_with_windows,
-        auto_enable_everything,
+        everything_enabled,
         everything_detection,
         update_checks_enabled,
         update_interval_hours,
