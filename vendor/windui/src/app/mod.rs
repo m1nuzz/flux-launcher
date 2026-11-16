@@ -120,6 +120,7 @@ type AppCallback = Box<dyn FnMut(&mut EventCtx)>;
 type CloseHandler = Box<dyn FnMut(&mut EventCtx) -> bool>;
 type KeyHandler = Box<dyn FnMut(KeyEvent) -> bool>;
 type VisibilityHandler = Box<dyn FnMut()>;
+type DeactivationHideHandler = Box<dyn FnMut() -> bool>;
 
 /// 应用构建器。命令式 API 的根入口。
 /// 运行期主题句柄：克隆到控件回调中，`set` 即可热切换主题（下一帧生效）。
@@ -305,6 +306,7 @@ pub struct App {
     show_handler: Option<VisibilityHandler>,
     activated_handler: Option<VisibilityHandler>,
     deactivated_handler: Option<VisibilityHandler>,
+    deactivation_hide_handler: Option<DeactivationHideHandler>,
     hide_handler: Option<VisibilityHandler>,
     /// Hide the native window whenever another top-level window becomes foreground.
     hide_on_deactivate: bool,
@@ -370,6 +372,7 @@ impl App {
             show_handler: None,
             activated_handler: None,
             deactivated_handler: None,
+            deactivation_hide_handler: None,
             hide_handler: None,
             hide_on_deactivate: false,
             focus_first_control_on_show: false,
@@ -907,6 +910,11 @@ impl App {
         self.deactivated_handler = Some(Box::new(f));
         self
     }
+    /// Override whether a configured hide-on-deactivate window should hide at runtime.
+    pub fn should_hide_on_deactivate(mut self, f: impl FnMut() -> bool + 'static) -> Self {
+        self.deactivation_hide_handler = Some(Box::new(f));
+        self
+    }
     /// Run a callback immediately before the native window is hidden.
     pub fn on_window_hide(mut self, f: impl FnMut() + 'static) -> Self {
         self.hide_handler = Some(Box::new(f));
@@ -948,6 +956,7 @@ impl App {
                 self.show_handler,
                 self.activated_handler,
                 self.deactivated_handler,
+                self.deactivation_hide_handler,
                 self.hide_handler,
                 self.hide_on_deactivate,
                 self.focus_first_control_on_show,
@@ -984,6 +993,7 @@ impl App {
             self.show_handler,
             self.activated_handler,
             self.deactivated_handler,
+            self.deactivation_hide_handler,
             self.hide_handler,
             self.hide_on_deactivate,
             self.focus_first_control_on_show,
@@ -1141,6 +1151,7 @@ struct UiHost {
     show_handler: Option<VisibilityHandler>,
     activated_handler: Option<VisibilityHandler>,
     deactivated_handler: Option<VisibilityHandler>,
+    deactivation_hide_handler: Option<DeactivationHideHandler>,
     hide_handler: Option<VisibilityHandler>,
     /// Hide the native window when another top-level window becomes foreground.
     hide_on_deactivate: bool,
@@ -1268,6 +1279,7 @@ impl UiHost {
         show_handler: Option<VisibilityHandler>,
         activated_handler: Option<VisibilityHandler>,
         deactivated_handler: Option<VisibilityHandler>,
+        deactivation_hide_handler: Option<DeactivationHideHandler>,
         hide_handler: Option<VisibilityHandler>,
         hide_on_deactivate: bool,
         focus_first_control_on_show: bool,
@@ -1317,6 +1329,7 @@ impl UiHost {
             show_handler,
             activated_handler,
             deactivated_handler,
+            deactivation_hide_handler,
             hide_handler,
             hide_on_deactivate,
             focus_first_control_on_show,
@@ -1827,6 +1840,14 @@ impl AppHandler for UiHost {
             handler();
         }
     }
+
+    fn should_hide_on_deactivate(&mut self) -> bool {
+        if let Some(handler) = self.deactivation_hide_handler.as_mut() {
+            handler()
+        } else {
+            self.hide_on_deactivate
+        }
+    }
     fn hide_on_deactivate(&self) -> bool {
         self.hide_on_deactivate
     }
@@ -2113,16 +2134,25 @@ mod tests {
         use std::cell::Cell as StdCell;
 
         let deactivated = Rc::new(StdCell::new(false));
+        let settings_visible = Rc::new(StdCell::new(false));
+        let settings_visible_for_policy = settings_visible.clone();
         let deactivated_for_callback = deactivated.clone();
         let mut host = App::new("t", 100, 100)
             .hide_on_deactivate()
+            .should_hide_on_deactivate(move || !settings_visible_for_policy.get())
             .on_window_deactivated(move || deactivated_for_callback.set(true))
             .content(Element::col())
             .into_handler_for_test();
 
-        assert!(host.hide_on_deactivate());
+        assert!(host.should_hide_on_deactivate());
         host.on_window_deactivated();
         assert!(deactivated.get());
+
+        settings_visible.set(true);
+        assert!(
+            !host.should_hide_on_deactivate(),
+            "运行时策略在设置页可见时必须禁止失焦隐藏"
+        );
     }
 
     /// 默认（未开 hide_on_close）：关闭请求获准 → 真关，不留窗口操作。

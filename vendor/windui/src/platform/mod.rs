@@ -435,6 +435,11 @@ pub trait AppHandler {
     fn hide_on_deactivate(&self) -> bool {
         false
     }
+    /// Runtime override for the deactivation-hide decision. The default preserves
+    /// the static `hide_on_deactivate` behavior.
+    fn should_hide_on_deactivate(&mut self) -> bool {
+        self.hide_on_deactivate()
+    }
     /// Called immediately after the native window is hidden.
     fn on_window_hide(&mut self) {}
     /// 当前是否处于指针捕获态。平台据此调用 OS 的 SetCapture/ReleaseCapture，

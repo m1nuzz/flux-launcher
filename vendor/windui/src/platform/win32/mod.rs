@@ -1367,7 +1367,7 @@ unsafe extern "system" fn wnd_proc(
                 && IsWindowVisible(hwnd).as_bool()
                 && state_from(hwnd)
                     .map(|state| {
-                        state.handler.hide_on_deactivate()
+                        state.handler.should_hide_on_deactivate()
                             && !state.suppress_deactivation_hide
                             && !state.tray_menu_active
                             && state
@@ -1398,7 +1398,7 @@ unsafe extern "system" fn wnd_proc(
                 && state_from(hwnd)
                     .map(|state| {
                         state.deactivation_generation == check_generation
-                            && state.handler.hide_on_deactivate()
+                            && state.handler.should_hide_on_deactivate()
                             && !state.suppress_deactivation_hide
                             && !state.tray_menu_active
                             && state
