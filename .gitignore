@@ -9,4 +9,7 @@ coverage/
 doc/
 .serena/
 .vscode/
+.clinerules/
+.mcptoon.json
+.mcptoon/
 temp/
