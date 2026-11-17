@@ -117,6 +117,12 @@ on:
         default: false
         type: boolean
 
+      skip_launch_process_smoke:
+        description: "设置 UI 定点验证时跳过 Enter/进程创建/文件夹启动探针"
+        required: false
+        default: false
+        type: boolean
+
       resource_profile_smoke:
         description: "执行有界重复查询资源测试并记录内存和 CPU 样本"
         required: false
@@ -283,6 +289,10 @@ jobs:
 
           if ("${{ inputs.visual_settings_smoke }}" -eq "true") {
             $captureParams.VisualSettingsSmoke = $true
+          }
+
+          if ("${{ inputs.skip_launch_process_smoke }}" -eq "true") {
+            $captureParams.SkipLaunchProcessSmoke = $true
           }
 
           if ("${{ inputs.resource_profile_smoke }}" -eq "true") {

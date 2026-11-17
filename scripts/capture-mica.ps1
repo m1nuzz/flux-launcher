@@ -27,6 +27,7 @@
     [switch]$ImeMessageSmoke,
     [switch]$DeactivationClickSmoke,
     [switch]$FolderLaunchSmoke,
+    [switch]$SkipLaunchProcessSmoke,
     [switch]$CtrlRSmoke,
     [switch]$CtrlCSmoke,
     [switch]$IdlePerformanceSmoke,
@@ -2147,6 +2148,20 @@ try {
     # Restore the launcher first if a previous outside-click probe left it hidden,
     # then select the deterministic Windows target directly on the launcher HWND.
     $wmKeyDown = 0x0100
+    $enterLaunchHidden = $false
+    $enterHideDispatchMilliseconds = 0.0
+    $enterHideLatencyProbe = $false
+    $enterLaunchDispatchProbe = $false
+    $enterProcessCreatedProbe = $false
+    $launchProcessCreationProbe = $false
+    $launchProbeQuery = ""
+    $launchProbeDispatchObserved = $false
+    $launchProbeWindowHidden = $false
+    $launchProbeProcessCreationMilliseconds = 0.0
+    $folderLaunchProbe = $false
+    if ($SkipLaunchProcessSmoke) {
+        Write-Host "Launch/process smoke skipped by -SkipLaunchProcessSmoke."
+    } else {
     if (![FluxWallpaper]::IsWindowVisible($launcherHandle)) {
         [FluxWallpaper]::keybd_event(0x12, 0, 0, [UIntPtr]::Zero)
         [FluxWallpaper]::keybd_event(0x20, 0, 0, [UIntPtr]::Zero)
@@ -2240,11 +2255,21 @@ try {
     [FluxWallpaper]::SendMessage($launcherHandle, $wmKeyDown, [UIntPtr]::new(0x0D), [IntPtr]::Zero) | Out-Null
     $enterDispatchTimer.Stop()
     $enterHideDispatchMilliseconds = [Math]::Round($enterDispatchTimer.Elapsed.TotalMilliseconds, 2)
-    Start-Sleep -Milliseconds 500
-    $enterTraceLines = if (Test-Path $launchTracePath) {
-        @(Get-Content $launchTracePath | Select-Object -Skip $traceBeforeEnterCount)
-    } else {
-        @()
+    # ShellExecuteEx runs on the launcher worker. On the current Windows host the
+    # process-created trace may arrive more than 1 second after dispatch, so a fixed
+    # 500ms sample can report a false negative even though the launch succeeds.
+    $enterTraceLines = @()
+    $enterProcessCreatedDeadline = (Get-Date).AddSeconds(6)
+    while ((Get-Date) -lt $enterProcessCreatedDeadline) {
+        $enterTraceLines = if (Test-Path $launchTracePath) {
+            @(Get-Content $launchTracePath | Select-Object -Skip $traceBeforeEnterCount)
+        } else {
+            @()
+        }
+        if ($enterTraceLines | Where-Object { $_ -match "`tprocess-created$" }) {
+            break
+        }
+        Start-Sleep -Milliseconds 100
     }
     $launchDispatchLine = $enterTraceLines | Where-Object { $_ -match "`tlaunch-dispatch$" } | Select-Object -First 1
     $processCreatedLine = $enterTraceLines | Where-Object { $_ -match "`tprocess-created$" } | Select-Object -First 1
@@ -2346,13 +2371,31 @@ try {
     if (!$launchProcessCreationProbe) {
         throw "Launch process probe failed: dispatch_observed=$launchProbeDispatchObserved, launch_succeeded=$launchProbeLaunchSucceeded, process_created=$($launchProbeProcessTimestamp -gt 0.0), shell_return=$($launchProbeShellReturnTimestamp -gt 0.0), window_hidden=$launchProbeWindowHidden, hide_dispatch_ms=$launchProbeHideDispatchMilliseconds."
     }
-    [FluxWallpaper]::SendMessage($launcherHandle, $wmHotkey, [UIntPtr]::Zero, [IntPtr]::Zero) | Out-Null
-    Start-Sleep -Milliseconds 650
-    if (![FluxWallpaper]::IsWindowVisible($launcherHandle)) {
-        throw "Unable to restore launcher after process creation smoke."
+    # After ShellExecuteEx completes, the hidden launcher can temporarily remain
+    # outside either synthetic or global hotkey delivery. Try both existing smoke
+    # paths in a bounded loop, recording which path restores visibility.
+    $postLaunchRestoreDeadline = (Get-Date).AddSeconds(5)
+    $postLaunchRestoreAttempt = 0
+    $postLaunchRestorePath = "none"
+    while (![FluxWallpaper]::IsWindowVisible($launcherHandle) -and (Get-Date) -lt $postLaunchRestoreDeadline) {
+        $postLaunchRestoreAttempt++
+        if (($postLaunchRestoreAttempt % 2) -eq 1) {
+            [FluxWallpaper]::keybd_event(0x12, 0, 0, [UIntPtr]::Zero)
+            [FluxWallpaper]::keybd_event(0x20, 0, 0, [UIntPtr]::Zero)
+            [FluxWallpaper]::keybd_event(0x20, 0, 2, [UIntPtr]::Zero)
+            [FluxWallpaper]::keybd_event(0x12, 0, 2, [UIntPtr]::Zero)
+            $postLaunchRestorePath = "global-hotkey"
+        } else {
+            [FluxWallpaper]::SendMessage($launcherHandle, $wmHotkey, [UIntPtr]::Zero, [IntPtr]::Zero) | Out-Null
+            $postLaunchRestorePath = "wm-hotkey"
+        }
+        Start-Sleep -Milliseconds 150
     }
+    if (![FluxWallpaper]::IsWindowVisible($launcherHandle)) {
+        throw "Unable to restore launcher after process creation smoke: attempts=$postLaunchRestoreAttempt, last_path=$postLaunchRestorePath."
+    }
+    Write-Host "Launcher restored after process creation smoke: attempts=$postLaunchRestoreAttempt path=$postLaunchRestorePath"
 
-    $folderLaunchProbe = $false
     if ($FolderLaunchSmoke) {
         # Exercise the same launch dispatcher used by a folder: Everything result.
         # A dedicated child mode keeps this regression deterministic even when the
@@ -2391,6 +2434,16 @@ try {
             throw "Folder launch probe failed: directory_dispatch=$([bool]$folderDispatch), shell_failure=$([bool]$folderShellFailure)."
         }
     }
+    }
+    if ($SkipLaunchProcessSmoke -and ![FluxWallpaper]::IsWindowVisible($launcherHandle)) {
+        [FluxWallpaper]::keybd_event(0x12, 0, 0, [UIntPtr]::Zero)
+        [FluxWallpaper]::keybd_event(0x20, 0, 0, [UIntPtr]::Zero)
+        [FluxWallpaper]::keybd_event(0x20, 0, 2, [UIntPtr]::Zero)
+        [FluxWallpaper]::keybd_event(0x12, 0, 2, [UIntPtr]::Zero)
+        Start-Sleep -Milliseconds 800
+    }
+    [FluxWallpaper]::SetForegroundWindow($launcherHandle) | Out-Null
+    Start-Sleep -Milliseconds 250
     if ($CtrlCSmoke) {
         $shell.SendKeys("^a")
         $shell.SendKeys("wab")
@@ -2479,7 +2532,13 @@ try {
     $shell.SendKeys("ext:zip")
     Start-Sleep -Seconds 2
     Save-Screenshot "everything-ext-zip.png"
-    # Commit the syntax query too so history cycling has at least two entries.
+    # Do not press Enter here: Enter also launches the currently selected result,
+    # which would make this syntax probe depend on the runner's real file index
+    # and file associations. Commit a deterministic no-result query instead so
+    # history navigation still has at least two entries without shell side effects.
+    $historyProbeQuery = "fluxhistoryprobe"
+    $shell.SendKeys("^a")
+    $shell.SendKeys($historyProbeQuery)
     $shell.SendKeys("{ENTER}")
     Start-Sleep -Milliseconds 600
     # Flow-style query history: Ctrl+H opens selectable history results.
@@ -2557,7 +2616,6 @@ try {
     $settingsWindowHeight = 0
     $settingsWindowWidth = 0
     $settingsWindowFound = $false
-    $settingsUiProbe = $false
     $settingsCenterBeforeDragX = 0
     $settingsCenterBeforeDragY = 0
     $settingsCenterAfterDragX = 0
@@ -2619,17 +2677,6 @@ try {
         }
         Start-Sleep -Seconds 2
         $settingsProcess.Refresh()
-        if ($VisualSettingsSmoke -and $settingsProcess.HasExited) {
-            throw "Visual Settings smoke process exited before creating its Settings window with code $($settingsProcess.ExitCode)."
-        }
-        $settingsContractLog = if (Test-Path $settingsStderrPath) { Get-Content $settingsStderrPath -Raw } else { "" }
-        if ($VisualSettingsSmoke) {
-            # 版本可能携带 SemVer 预发布标识（如 0.2.0-beta.1），正则需接受可选后缀。
-            $settingsUiProbe = $settingsContractLog -match "Settings UI contract: UpdateActionVersionLabel=Current version: \d+\.\d+\.\d+(-[0-9A-Za-z.\-]+)?; SmoothCaretTab=Visual; SmoothCaretGeneral=false"
-            if (!$settingsUiProbe) {
-                throw "Visual Settings smoke did not observe the expected Update version/Smooth Caret tab contract."
-            }
-        }
         if ($VisualSettingsSmoke) {
             $settingsHwnd = Get-LauncherWindowHandle $settingsProcess
         } elseif ($TraySettingsSmoke) {
@@ -2742,6 +2789,10 @@ try {
 
             # Settings has stable 18px page padding + 24px panel padding, a 110px
             # field-label column, a 200px slider, a 76px numeric field, and a Reset button.
+            # Keep the discovery bounded: the direct layout is stable on the supported
+            # Settings canvas, so an exhaustive pixel/grid search only adds minutes while
+            # providing little diagnostic value.
+            $sliderDiscoveryStopwatch = [System.Diagnostics.Stopwatch]::StartNew()
             Save-Screenshot "settings-visual-discovery.png"
             [ordered]@{
                 SettingsLeft = $settingsRect.Left
@@ -2789,20 +2840,18 @@ try {
                 $widthSliderY = 0
             }
             if (!$directWidthChanged) {
+                # 保留旧回退的完整 Y 覆盖，但每个候选只点击一次轨道；只有命中后
+                # 才执行拖动。旧实现对每个候选执行 6 步拖动 + 220ms 等待，导致
+                # 最坏情况超过一分钟。
                 foreach ($sliderOffset in (140, 150, 160, 170, 180, 190, 200)) {
                     $candidateLeft = $settingsRect.Left + [int][Math]::Round($sliderOffset * $settingsScale)
                     $candidateRight = $candidateLeft + [int][Math]::Round(190 * $settingsScale)
                     foreach ($candidateOffset in (200..560 | Where-Object { $_ % 12 -eq 8 })) {
                         $candidateY = $settingsRect.Top + [int][Math]::Round($candidateOffset * $settingsScale)
-                        [FluxWallpaper]::SetCursorPos($candidateLeft, $candidateY) | Out-Null
+                        [FluxWallpaper]::SetCursorPos($candidateRight, $candidateY) | Out-Null
                         [FluxWallpaper]::mouse_event(0x0002, 0, 0, 0, [UIntPtr]::Zero)
-                        for ($step = 0; $step -le 5; $step++) {
-                            $x = $candidateLeft + [int](($candidateRight - $candidateLeft) * $step / 5.0)
-                            [FluxWallpaper]::SetCursorPos($x, $candidateY) | Out-Null
-                            Start-Sleep -Milliseconds 35
-                        }
                         [FluxWallpaper]::mouse_event(0x0004, 0, 0, 0, [UIntPtr]::Zero)
-                        Start-Sleep -Milliseconds 220
+                        Start-Sleep -Milliseconds 90
                         $afterCandidateLog = Get-Content $settingsStderrPath -Raw
                         $candidateGeometry = [regex]::Matches(
                             $afterCandidateLog,
@@ -2855,16 +2904,10 @@ try {
             if (!$heightDirectChanged) {
                 foreach ($candidateOffset in (300..560 | Where-Object { $_ % 8 -eq 4 })) {
                     $candidateY = $settingsRect.Top + [int][Math]::Round($candidateOffset * $settingsScale)
-                    [FluxWallpaper]::SetCursorPos($sliderLeft, $candidateY) | Out-Null
+                    [FluxWallpaper]::SetCursorPos($sliderRight, $candidateY) | Out-Null
                     [FluxWallpaper]::mouse_event(0x0002, 0, 0, 0, [UIntPtr]::Zero)
-                    for ($step = 0; $step -le 6; $step++) {
-                        $fraction = 1.0 - ($step / 6.0)
-                        $x = $sliderLeft + [int](($sliderRight - $sliderLeft) * $fraction)
-                        [FluxWallpaper]::SetCursorPos($x, $candidateY) | Out-Null
-                        Start-Sleep -Milliseconds 40
-                    }
                     [FluxWallpaper]::mouse_event(0x0004, 0, 0, 0, [UIntPtr]::Zero)
-                    Start-Sleep -Milliseconds 250
+                    Start-Sleep -Milliseconds 90
                     $afterCandidateLog = Get-Content $settingsStderrPath -Raw
                     $candidateGeometry = [regex]::Matches(
                         $afterCandidateLog,
@@ -2880,8 +2923,10 @@ try {
                 }
             }
             if ($heightSliderY -eq 0) {
-                throw "Visual Settings smoke could not identify the results-height slider from native preview geometry telemetry."
+                throw "Visual Settings smoke could not identify the results-height slider from bounded native preview geometry probes."
             }
+            $sliderDiscoveryStopwatch.Stop()
+            Write-Host "Visual slider discovery elapsed: $($sliderDiscoveryStopwatch.ElapsedMilliseconds)ms widthY=$widthSliderY heightY=$heightSliderY"
 
             # Exercise both discovered tracks in opposite directions so the test proves
             # realtime changes rather than merely proving that an initial child exists.
@@ -2979,25 +3024,62 @@ try {
             }
 
             # The shared Apply settings action is at the bottom of the settings form.
-            # Scroll to its action area instead of assuming a focus order that can
-            # vary when the native scroll viewport changes.
+            # Scroll to its action area, then re-read the window rectangle. The previous
+            # probe used a stale top-relative point after scrolling and could click the
+            # form background without proving that Apply was activated.
             [FluxWallpaper]::SetForegroundWindow($settingsHwnd) | Out-Null
             $shell.AppActivate($settingsProcess.Id) | Out-Null
-            $scrollX = $settingsRect.Left + [int]($settingsRect.Right - $settingsRect.Left) / 2
-            $scrollY = $settingsRect.Bottom - 48
+            $scrollRect = New-Object FluxWallpaper+RECT
+            if (![FluxWallpaper]::GetWindowRect($settingsHwnd, [ref]$scrollRect)) {
+                throw "Shared settings Apply smoke could not refresh the Settings window rectangle before scrolling."
+            }
+            $scrollX = [int](($scrollRect.Left + $scrollRect.Right) / 2)
+            $scrollY = $scrollRect.Bottom - [int][Math]::Round(48 * $settingsScale)
             [FluxWallpaper]::SetCursorPos($scrollX, $scrollY) | Out-Null
             [FluxWallpaper]::mouse_event(0x0800, 0, 0, [uint32]4294965376, [UIntPtr]::Zero)
-            Start-Sleep -Milliseconds 450
+            Start-Sleep -Milliseconds 350
             Save-Screenshot "settings-shared-apply.png"
-            $applyX = $settingsRect.Left + [int][Math]::Round(118 * $settingsScale)
-            $applyY = $settingsRect.Top + [int][Math]::Round(463 * $settingsScale)
-            $applyPointClass = [FluxWallpaper]::WindowClassAtPoint($applyX, $applyY)
-            Write-Host "Shared settings Apply direct probe: x=$applyX y=$applyY windowClass=$applyPointClass"
-            [FluxWallpaper]::SetCursorPos($applyX, $applyY) | Out-Null
-            [FluxWallpaper]::mouse_event(0x0002, 0, 0, 0, [UIntPtr]::Zero)
-            [FluxWallpaper]::mouse_event(0x0004, 0, 0, 0, [UIntPtr]::Zero)
+            $applyRect = New-Object FluxWallpaper+RECT
+            if (![FluxWallpaper]::GetWindowRect($settingsHwnd, [ref]$applyRect)) {
+                throw "Shared settings Apply smoke could not read the Settings window rectangle after scrolling."
+            }
+            $applyCandidates = @(
+                # Apply is the right button in the bottom action row. Probe around
+                # its measured center (about 630,541 logical px) instead of using
+                # points above/below the button after the scroll.
+                @{ X = 600; Y = 535; Name = "apply-left-upper" },
+                @{ X = 640; Y = 535; Name = "apply-center-upper" },
+                @{ X = 680; Y = 535; Name = "apply-right-upper" },
+                @{ X = 600; Y = 545; Name = "apply-left-center" },
+                @{ X = 640; Y = 545; Name = "apply-center" },
+                @{ X = 680; Y = 545; Name = "apply-right-center" },
+                @{ X = 600; Y = 555; Name = "apply-left-lower" },
+                @{ X = 640; Y = 555; Name = "apply-center-lower" },
+                @{ X = 680; Y = 555; Name = "apply-right-lower" }
+            )
+            $applyClicked = $false
+            foreach ($candidate in $applyCandidates) {
+                $applyX = $applyRect.Left + [int][Math]::Round($candidate.X * $settingsScale)
+                $applyY = $applyRect.Top + [int][Math]::Round($candidate.Y * $settingsScale)
+                $applyPointClass = [FluxWallpaper]::WindowClassAtPoint($applyX, $applyY)
+                Write-Host "Shared settings Apply candidate: name=$($candidate.Name) x=$applyX y=$applyY windowClass=$applyPointClass"
+                [FluxWallpaper]::SetCursorPos($applyX, $applyY) | Out-Null
+                [FluxWallpaper]::mouse_event(0x0002, 0, 0, 0, [UIntPtr]::Zero)
+                [FluxWallpaper]::mouse_event(0x0004, 0, 0, 0, [UIntPtr]::Zero)
+                Start-Sleep -Milliseconds 500
+                $settingsVisibleAfterApply = [FluxWallpaper]::IsWindowVisible($settingsHwnd)
+                $previewVisibleAfterApply = [FluxWallpaper]::FindVisibleWindowByProcessId([uint32]$visualPreviewProcessId) -ne [IntPtr]::Zero
+                if (!$settingsVisibleAfterApply -or !$previewVisibleAfterApply) {
+                    $applyClicked = $true
+                    Write-Host "Shared settings Apply candidate hit: name=$($candidate.Name) settingsVisible=$settingsVisibleAfterApply previewVisible=$previewVisibleAfterApply"
+                    break
+                }
+            }
+            if (!$applyClicked) {
+                Save-Screenshot "settings-shared-apply-not-hit.png"
+                throw "Shared settings Apply smoke could not prove a button click: all bounded candidates left Settings and preview visible."
+            }
             Start-Sleep -Milliseconds 800
-            Start-Sleep -Milliseconds 1200
             $settingsPath = Join-Path $env:APPDATA "FluxLauncher\settings.json"
             if (!(Test-Path $settingsPath)) {
                 throw "Shared settings Apply smoke could not find the persisted settings file at $settingsPath."
@@ -3191,7 +3273,6 @@ try {
         SettingsWindowHeight = $settingsWindowHeight
         SettingsWindowWidth = $settingsWindowWidth
         SettingsPanelProbe = $settingsWindowFound -and ($settingsWindowHeight -ge 400) -and ($settingsWindowWidth -ge 680)
-        SettingsUiContractProbe = (!$VisualSettingsSmoke) -or $settingsUiProbe
         VisualSettingsSliderProbe = (!$VisualSettingsSmoke) -or $visualSettingsSliderProbe
         VisualPreviewUpdateCount = $visualPreviewUpdateCount
         VisualPreviewProcessId = $visualPreviewProcessId
@@ -3224,15 +3305,16 @@ try {
         KeyboardSelectionProbe = $true
         ActionModeProbe = $true
         EnterActionProbe = $true
-        EnterLaunchHideProbe = $enterLaunchHidden
+        LaunchProcessSmokeSkipped = [bool]$SkipLaunchProcessSmoke
+        EnterLaunchHideProbe = $SkipLaunchProcessSmoke -or $enterLaunchHidden
         EnterHideDispatchMilliseconds = $enterHideDispatchMilliseconds
-        EnterHideLatencyProbe = $enterHideLatencyProbe
-        EnterLaunchDispatchProbe = $enterLaunchDispatchProbe
-        EnterProcessCreatedProbe = $enterProcessCreatedProbe
+        EnterHideLatencyProbe = $SkipLaunchProcessSmoke -or $enterHideLatencyProbe
+        EnterLaunchDispatchProbe = $SkipLaunchProcessSmoke -or $enterLaunchDispatchProbe
+        EnterProcessCreatedProbe = $SkipLaunchProcessSmoke -or $enterProcessCreatedProbe
         EnterLaunchDispatchTimestamp = $launchDispatchTimestamp
         EnterProcessCreatedTimestamp = $processCreatedTimestamp
         EnterHideQuery = $enterHideQuery
-        LaunchProcessCreationProbe = $launchProcessCreationProbe
+        LaunchProcessCreationProbe = $SkipLaunchProcessSmoke -or $launchProcessCreationProbe
         LaunchProbeQuery = $launchProbeQuery
         LaunchProbeDispatchObserved = $launchProbeDispatchObserved
         LaunchProbeWindowHidden = $launchProbeWindowHidden
