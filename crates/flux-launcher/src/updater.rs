@@ -213,6 +213,7 @@ fn spawn_installer_handoff(installer_path: &Path, relaunch_mode: RelaunchMode) -
     );
 
     Command::new("powershell.exe")
+        .env_remove("FLUX_OPEN_SETTINGS")
         .args([
             "-NoLogo",
             "-NoProfile",

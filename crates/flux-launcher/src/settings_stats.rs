@@ -22,9 +22,11 @@ pub(crate) const MAX_TOP_QUERIES: usize = 5;
 /// queries, while `total` counts every committed search since install.
 pub(crate) fn usage_summary(total: u64) -> String {
     if total == 0 {
-        return String::from("No committed searches yet. Run a search to see stats here.");
+        return String::from(crate::i18n::tr(
+            "No committed searches yet. Run a search to see stats here.",
+        ));
     }
-    format!("Queries run: {total}")
+    crate::i18n::format("Queries run: {total}", &[("total", total.to_string())])
 }
 
 /// Usage and top-opened texts from one snapshot.
@@ -51,7 +53,7 @@ pub(crate) fn top_launches(
 pub(crate) fn top_launches_block(launches: &HashMap<String, LaunchCount>) -> String {
     let top = top_launches(launches, MAX_TOP_QUERIES);
     if top.is_empty() {
-        return String::from("No data yet.");
+        return String::from(crate::i18n::tr("No data yet."));
     }
     top.iter()
         .enumerate()
@@ -65,7 +67,10 @@ pub(crate) fn top_launches_block(launches: &HashMap<String, LaunchCount>) -> Str
 /// (The share *card* does list top queries, but only because the user
 /// explicitly asked for it when pressing Share.)
 pub(crate) fn share_stats_text(total: u64) -> String {
-    format!("My Flux Launcher stats: {total} queries run. https://github.com/m1nuzz/flux-launcher")
+    crate::i18n::format(
+        "My Flux Launcher stats: {total} queries run. https://github.com/m1nuzz/flux-launcher",
+        &[("total", total.to_string())],
+    )
 }
 
 /// Clear remembered queries and launch counts, then refresh the Stats
@@ -121,57 +126,69 @@ pub(crate) fn build_stats_tab(ui: &SettingsUi) -> Element {
                         .weight(1.0)
                         .spacing(16)
                         .child(settings_group(
-                            "Usage",
+                            crate::i18n::tr("Usage"),
                             vec![Element::label_signal(usage).font_size(13.0).width_match()],
                         ))
                         .child(settings_group(
-                            "Top opened",
+                            crate::i18n::tr("Top opened"),
                             vec![Element::label_signal(top).font_size(13.0).width_match()],
                         ))
                         .child(settings_group(
-                            "Data",
+                            crate::i18n::tr("Data"),
                             vec![
                                 Element::setting_row_desc(
-                                    "History and counters",
-                                    "Forget remembered queries and top counts",
-                                    Element::button("Clear history").small().on_click(move |_| {
-                                        clear_confirm.set(true);
-                                    }),
+                                    crate::i18n::tr("History and counters"),
+                                    crate::i18n::tr("Forget remembered queries and top counts"),
+                                    Element::button(crate::i18n::tr("Clear history"))
+                                        .small()
+                                        .on_click(move |_| {
+                                            clear_confirm.set(true);
+                                        }),
                                 ),
                                 Element::setting_row_desc(
-                                    "Share card",
-                                    "Copy a stats card image plus a short summary",
-                                    Element::button("Share stats").small().on_click(move |ctx| {
-                                        let snapshot = settings_for_share
-                                            .read()
-                                            .map(|settings| {
-                                                (
-                                                    settings.total_queries_committed,
-                                                    settings.launch_counts.clone(),
-                                                )
-                                            })
-                                            .ok();
-                                        let Some((total, launches)) = snapshot else {
-                                            ctx.toast_ok("Could not lock Flux settings");
-                                            return;
-                                        };
-                                        let text = share_stats_text(total);
-                                        let top = top_launches(&launches, MAX_TOP_QUERIES);
-                                        #[cfg(windows)]
-                                        {
-                                            if let Some((width, height, rgba)) =
-                                                render_share_card_rgba(total, CURRENT_VERSION, &top)
-                                            {
-                                                ctx.clipboard_set_text_and_image(
-                                                    &text, width, height, &rgba,
-                                                );
-                                                ctx.toast_ok("Stats card copied to clipboard");
+                                    crate::i18n::tr("Share card"),
+                                    crate::i18n::tr("Copy a stats card image plus a short summary"),
+                                    Element::button(crate::i18n::tr("Share stats"))
+                                        .small()
+                                        .on_click(move |ctx| {
+                                            let snapshot = settings_for_share
+                                                .read()
+                                                .map(|settings| {
+                                                    (
+                                                        settings.total_queries_committed,
+                                                        settings.launch_counts.clone(),
+                                                    )
+                                                })
+                                                .ok();
+                                            let Some((total, launches)) = snapshot else {
+                                                ctx.toast_ok(crate::i18n::tr(
+                                                    "Could not lock Flux settings",
+                                                ));
                                                 return;
+                                            };
+                                            let text = share_stats_text(total);
+                                            let top = top_launches(&launches, MAX_TOP_QUERIES);
+                                            #[cfg(windows)]
+                                            {
+                                                if let Some((width, height, rgba)) =
+                                                    render_share_card_rgba(
+                                                        total,
+                                                        CURRENT_VERSION,
+                                                        &top,
+                                                    )
+                                                {
+                                                    ctx.clipboard_set_text_and_image(
+                                                        &text, width, height, &rgba,
+                                                    );
+                                                    ctx.toast_ok(crate::i18n::tr(
+                                                        "Stats card copied to clipboard",
+                                                    ));
+                                                    return;
+                                                }
                                             }
-                                        }
-                                        ctx.clipboard_set(&text);
-                                        ctx.toast_ok("Stats copied as text");
-                                    }),
+                                            ctx.clipboard_set(&text);
+                                            ctx.toast_ok(crate::i18n::tr("Stats copied as text"));
+                                        }),
                                 ),
                             ],
                         )),
@@ -327,7 +344,7 @@ pub(crate) fn build_share_card(total: u64, version: &str, top: &[(String, u64)])
     let mut list = Element::col().width(560).spacing(18);
     if top.is_empty() {
         list = list.child(
-            Element::label("No data yet.")
+            Element::label(crate::i18n::tr("No data yet."))
                 .font_size(28.0)
                 .fg(Color::rgb(180, 195, 230)),
         );
@@ -399,7 +416,7 @@ pub(crate) fn build_share_card(total: u64, version: &str, top: &[(String, u64)])
                         .weight(1.0)
                         .spacing(10)
                         .child(
-                            Element::label("TOTAL SEARCHES")
+                            Element::label(crate::i18n::tr("TOTAL SEARCHES"))
                                 .font_size(22.0)
                                 .font_weight(700)
                                 .fg(Color::rgb(180, 195, 230)),

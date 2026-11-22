@@ -5,6 +5,13 @@ use super::shell_icon_cache::shortcut_icon_smoke;
 use super::ui_constants::SINGLE_INSTANCE_ID;
 use super::visual_preview;
 
+/// Consume this one-shot launch request before any worker threads or children start.
+pub(crate) fn take_open_settings() -> bool {
+    let requested = std::env::var_os("FLUX_OPEN_SETTINGS").is_some();
+    std::env::remove_var("FLUX_OPEN_SETTINGS");
+    requested
+}
+
 pub(crate) fn should_claim_single_instance(mode: Option<&std::ffi::OsStr>) -> bool {
     !matches!(
         mode,
@@ -124,6 +131,39 @@ pub(crate) fn handle_cli_modes() -> StartupAction {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn open_settings_is_consumed_before_spawning_descendants() {
+        let status = std::process::Command::new(std::env::current_exe().unwrap())
+            .args([
+                "--exact",
+                "cli::tests::open_settings_environment_fixture",
+                "--nocapture",
+            ])
+            .env("FLUX_OPEN_SETTINGS", "1")
+            .env("FLUX_ENV_TEST_MODE", "consume")
+            .status()
+            .unwrap();
+        assert!(status.success());
+    }
+
+    #[test]
+    fn open_settings_environment_fixture() {
+        match std::env::var("FLUX_ENV_TEST_MODE").as_deref() {
+            Ok("consume") => {
+                assert!(take_open_settings());
+                assert!(!take_open_settings());
+                let status = std::process::Command::new(std::env::current_exe().unwrap())
+                    .args(["--exact", "cli::tests::open_settings_environment_fixture"])
+                    .env("FLUX_ENV_TEST_MODE", "descendant")
+                    .status()
+                    .unwrap();
+                assert!(status.success());
+            }
+            Ok("descendant") => assert!(std::env::var_os("FLUX_OPEN_SETTINGS").is_none()),
+            _ => {}
+        }
+    }
 
     #[test]
     fn plugin_host_mode_bypasses_main_single_instance_guard() {

@@ -1,5 +1,7 @@
 #![cfg_attr(windows, windows_subsystem = "windows")]
 mod accent;
+mod i18n;
+mod relaunch;
 
 mod activation_clear;
 mod app_hotkeys;
@@ -49,6 +51,7 @@ mod settings_visual;
 mod shell_icon_cache;
 mod shell_icon_extract;
 mod startup;
+mod system_locale;
 mod theme_text;
 mod tray_menu;
 mod ui_constants;
@@ -97,6 +100,10 @@ pub(crate) use theme_text::*;
 pub(crate) use update_tasks::*;
 
 fn main() {
+    let open_settings = cli::take_open_settings();
+    if !relaunch::wait_for_parent() {
+        return;
+    }
     let (startup_launch, single_instance_disabled) = match cli::handle_cli_modes() {
         cli::StartupAction::Exit => return,
         cli::StartupAction::Launch {
@@ -105,7 +112,9 @@ fn main() {
         } => (startup, single_instance_disabled),
     };
 
-    let (settings, settings_load) = Settings::load_or_default_from(&Settings::config_path());
+    let (mut settings, settings_load) = Settings::load_or_default_from(&Settings::config_path());
+    system_locale::resolve(&mut settings);
+    i18n::init(settings.language);
     match settings_load {
         SettingsLoadOutcome::Loaded => {}
         SettingsLoadOutcome::MovedAside(backup) => eprintln!(
@@ -141,15 +150,17 @@ fn main() {
     let clear_history_confirm = signal(false);
     let action_items = signal(Vec::<ActionItem>::new());
     let action_window_slot = Rc::new(RefCell::new(None::<WindowSizeHandle>));
-    let status = signal(String::from("Ready"));
-    let update_status = signal(String::from("Stable updates are checked automatically"));
+    let status = signal(String::from(crate::i18n::tr("Ready")));
+    let update_status = signal(String::from(crate::i18n::tr(
+        "Stable updates are checked automatically",
+    )));
     let update_available = signal(None::<updater::StableUpdate>);
     let update_install_progress = signal(None::<(String, updater::DownloadProgress)>);
     let update_installing = signal(false);
     let current_sequence = signal(0_u64);
     let game_mode = signal(settings.game_mode);
     let game_mode_status = signal(game_mode_label(settings.game_mode));
-    let settings_visible = signal(std::env::var_os("FLUX_OPEN_SETTINGS").is_some());
+    let settings_visible = signal(open_settings);
     // The title strip's close control cannot hide the HWND itself: the interval
     // timers stop with the window, and they own the visual preview child that
     // has to be dropped first. The click asks for a hide, the tick performs it.
@@ -207,9 +218,12 @@ fn main() {
         MIN_LAUNCHER_HEIGHT,
         MAX_LAUNCHER_HEIGHT,
     ));
-    let launcher_preview_text = signal(format!(
-        "Current launcher client area: {} × {} logical px (DIP)",
-        settings.launcher_width, settings.launcher_height
+    let launcher_preview_text = signal(crate::i18n::format(
+        "Current launcher client area: {width} × {height} logical px (DIP)",
+        &[
+            ("width", settings.launcher_width.to_string()),
+            ("height", settings.launcher_height.to_string()),
+        ],
     ));
     let visual_preview_generation = signal(0_u64);
     let clear_query_on_activation = signal(settings.clear_query_on_activation);
@@ -246,9 +260,13 @@ fn main() {
     );
     let everything_prompt_visible = signal(everything_prompt_visible_at_start);
     let everything_status = signal(if everything_installed.get() {
-        String::from("Everything is already installed; Flux will enable IPC automatically")
+        String::from(crate::i18n::tr(
+            "Everything is already installed; Flux will enable IPC automatically",
+        ))
     } else {
-        String::from("Everything is not installed. Install it with winget to enable file search.")
+        String::from(crate::i18n::tr(
+            "Everything is not installed. Install it with winget to enable file search.",
+        ))
     });
     let selection_color = signal(selection_color_for_settings(&settings));
     let caret_duration = signal(settings.smooth_caret_duration_ms.to_string());
@@ -616,7 +634,18 @@ fn main() {
     // Settings shares the same continuous Acrylic surface as the launcher.
     // Do not add a dark card here: it hides the blur and creates the old opaque
     // search-style slab inside the transparent window.
+    // Owned here so the window's hide handler can drop it too: the interval
+    // timers stop with the window, so a tick-only owner would leave the preview
+    // floating after Settings loses focus.
+    let visual_preview_slot: Rc<RefCell<Option<visual_preview::PreviewProcess>>> =
+        Rc::new(RefCell::new(None));
     let settings_ui = settings_ui::SettingsUi {
+        visual_preview: Rc::clone(&visual_preview_slot),
+        language: signal(if settings.language_explicit {
+            settings.language.index() + 1
+        } else {
+            0
+        }),
         shared_settings: Arc::clone(&shared_settings),
         query_history: Rc::clone(&query_history),
         stats_usage,
@@ -715,11 +744,6 @@ fn main() {
         clear_history_dialog,
     );
 
-    // Owned here so the window's hide handler can drop it too: the interval
-    // timers stop with the window, so a tick-only owner would leave the preview
-    // floating after Settings loses focus.
-    let visual_preview_slot: Rc<RefCell<Option<visual_preview::PreviewProcess>>> =
-        Rc::new(RefCell::new(None));
     let app = interval_tick::register_interval(
         app,
         query,

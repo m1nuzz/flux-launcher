@@ -435,7 +435,7 @@ pub(crate) fn build_color_picker(
         .width_match()
         .spacing(8)
         .child(
-            Element::label("Custom color picker")
+            Element::label(crate::i18n::tr("Custom color picker"))
                 .font_size(13.0)
                 .fg(Color::WHITE),
         )
@@ -485,7 +485,7 @@ pub(crate) fn build_color_picker(
                                 .reactive()
                                 .width(PREVIEW_SWATCH)
                                 .height(PREVIEW_SWATCH)
-                                .tooltip("Current selection color"),
+                                .tooltip(crate::i18n::tr("Current selection color")),
                         )
                         .child(
                             Element::label_signal(custom_selection_color)

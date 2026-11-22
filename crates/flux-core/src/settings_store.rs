@@ -47,8 +47,15 @@ impl Settings {
 
     pub fn load_from(path: &Path) -> io::Result<Self> {
         let contents = fs::read_to_string(path)?;
-        let mut settings: Self = serde_json::from_str(&contents)
+        let value: serde_json::Value = serde_json::from_str(&contents)
             .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?;
+        let legacy_choice =
+            value.get("language").is_some() && value.get("language_explicit").is_none();
+        let mut settings: Self = serde_json::from_value(value)
+            .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?;
+        if legacy_choice {
+            settings.language_explicit = true;
+        }
         settings.normalize();
         Ok(settings)
     }
@@ -109,6 +116,8 @@ mod tests {
     fn round_trip_preserves_preferences() {
         let path = temporary_path("settings-round-trip");
         let expected = Settings {
+            language: crate::Locale::Japanese,
+            language_explicit: true,
             activation_hotkey: HotkeyConfig {
                 ctrl: true,
                 alt: false,
@@ -168,6 +177,31 @@ mod tests {
 
         expected.save_to(&path).unwrap();
         assert_eq!(Settings::load_from(&path).unwrap(), expected);
+        fs::remove_file(path).unwrap();
+    }
+
+    #[test]
+    fn legacy_language_choices_stay_explicit_and_system_choice_survives_reload() {
+        let path = temporary_path("language-migration");
+        for code in ["en-US", "zh-CN", "unknown-future-code"] {
+            fs::write(
+                &path,
+                format!(r#"{{"language":"{code}","google_alias":"web"}}"#),
+            )
+            .unwrap();
+            let settings = Settings::load_from(&path).unwrap();
+            assert!(settings.language_explicit);
+            assert_eq!(settings.google_alias, "web");
+        }
+        let automatic = Settings {
+            language: crate::Locale::Japanese,
+            language_explicit: false,
+            ..Settings::default()
+        };
+        automatic.save_to(&path).unwrap();
+        let loaded = Settings::load_from(&path).unwrap();
+        assert!(!loaded.language_explicit);
+        assert_eq!(loaded.language, crate::Locale::Japanese);
         fs::remove_file(path).unwrap();
     }
 

@@ -55,18 +55,31 @@ pub(crate) fn register_update_channels(
                 update_install_in_flight_for_channel.set(false);
                 update_installing_for_channel.set(false);
                 update_install_progress_for_channel.set(None);
-                update_status_for_channel.set(format!(
-                    "Installing stable {version}; Flux Launcher is restarting"
+                update_status_for_channel.set(crate::i18n::format(
+                    "Installing stable {version}; Flux Launcher is restarting",
+                    &[("version", version.to_string())],
                 ));
-                ctx.toast_ok(format!("Installing stable {version}"));
+                ctx.toast_ok(crate::i18n::format(
+                    "Installing stable {version}",
+                    &[("version", version.to_string())],
+                ));
                 ctx.quit();
             }
             UpdateInstallResponse::Failed { version, error } => {
                 update_install_in_flight_for_channel.set(false);
                 update_installing_for_channel.set(false);
                 update_install_progress_for_channel.set(None);
-                update_status_for_channel.set(format!("Stable {version} update failed: {error}"));
-                ctx.toast_ok(format!("Update install failed: {error}"));
+                update_status_for_channel.set(crate::i18n::format(
+                    "Stable {version} update failed: {error}",
+                    &[
+                        ("version", version.to_string()),
+                        ("error", error.to_string()),
+                    ],
+                ));
+                ctx.toast_ok(crate::i18n::format(
+                    "Update install failed: {error}",
+                    &[("error", error.to_string())],
+                ));
             }
         });
     let update_install_sender_for_channel = update_install_sender.clone();
@@ -82,7 +95,10 @@ pub(crate) fn register_update_channels(
         }
         match response.result {
             Ok(Some(update)) => {
-                let message = format!("Stable {} is available", update.version);
+                let message = crate::i18n::format(
+                    "Stable {version} is available",
+                    &[("version", update.version.to_string())],
+                );
                 update_status_for_channel.set(message.clone());
                 update_available_for_channel.set(Some(update.clone()));
                 let auto_install = settings_for_update_channel
@@ -92,9 +108,9 @@ pub(crate) fn register_update_channels(
                 if auto_install {
                     let relaunch_mode = relaunch_mode_for_auto_install();
                     update_installing_for_channel.set(true);
-                    update_status_for_channel.set(format!(
-                        "Preparing stable {} for installation...",
-                        update.version
+                    update_status_for_channel.set(crate::i18n::format(
+                        "Preparing stable {version} for installation...",
+                        &[("version", update.version.to_string())],
                     ));
                     if !request_update_install(
                         update,
@@ -103,8 +119,9 @@ pub(crate) fn register_update_channels(
                         relaunch_mode,
                     ) {
                         update_installing_for_channel.set(false);
-                        update_status_for_channel
-                            .set(String::from("An update is already being installed"));
+                        update_status_for_channel.set(String::from(crate::i18n::tr(
+                            "An update is already being installed",
+                        )));
                     }
                 } else {
                     ctx.toast_ok(message);
@@ -112,10 +129,16 @@ pub(crate) fn register_update_channels(
             }
             Ok(None) => {
                 update_available_for_channel.set(None);
-                update_status_for_channel.set(format!("Flux {CURRENT_VERSION} is up to date"));
+                update_status_for_channel.set(crate::i18n::format(
+                    "Flux {version} is up to date",
+                    &[("version", CURRENT_VERSION.to_string())],
+                ));
             }
             Err(error) => {
-                update_status_for_channel.set(format!("Stable update check failed: {error}"));
+                update_status_for_channel.set(crate::i18n::format(
+                    "Stable update check failed: {error}",
+                    &[("error", error.to_string())],
+                ));
             }
         }
     });
@@ -246,9 +269,9 @@ pub(crate) fn spawn_everything_pipeline(
             &format!("query={} seq={}", response.query, response.sequence),
         );
         if !auto_enable_everything_for_response.get() {
-            everything_status_for_response.set(String::from(
+            everything_status_for_response.set(String::from(crate::i18n::tr(
                 "Everything auto-enable is disabled in Flux settings",
-            ));
+            )));
             return;
         }
         if response.sequence != sequence_for_everything.get()
@@ -263,16 +286,17 @@ pub(crate) fn spawn_everything_pipeline(
         providers.everything_ready = true;
         if response.available {
             everything_installed_for_response.set(true);
-            everything_status_for_response.set(String::from("Everything IPC is available"));
+            everything_status_for_response
+                .set(String::from(crate::i18n::tr("Everything IPC is available")));
             providers.everything = response.results;
         } else if everything_installed_for_response.get() {
-            everything_status_for_response.set(String::from(
+            everything_status_for_response.set(String::from(crate::i18n::tr(
                 "Everything is installed but its local IPC is unavailable",
-            ));
+            )));
         } else {
-            everything_status_for_response.set(String::from(
+            everything_status_for_response.set(String::from(crate::i18n::tr(
                 "Everything is not installed. Install it with winget to enable file search.",
-            ));
+            )));
         }
         if providers.core_ready() {
             super::paint_trace::note(
@@ -320,9 +344,9 @@ pub(crate) fn spawn_everything_pipeline(
             eprintln!("Could not start Everything in the background: {error}");
         }
     } else {
-        everything_status.set(String::from(
+        everything_status.set(String::from(crate::i18n::tr(
             "Everything auto-enable is disabled in Flux settings",
-        ));
+        )));
     }
     worker
 }

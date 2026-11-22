@@ -16,6 +16,21 @@ const TAB_NAMES: [&str; 5] = ["General", "Visual", "Priorities", "Plugins", "Sta
 /// ships with Windows 11 and is already used for the Recycle Bin rows.
 const TAB_GLYPHS: [&str; 5] = ["\u{e713}", "\u{e790}", "\u{e8cb}", "\u{ea86}", "\u{e9d2}"];
 const ICON_FONT: &str = "Segoe Fluent Icons";
+
+fn navigation_text_style(language: flux_core::Locale) -> windui::text::TextStyle<'static> {
+    let size = if matches!(
+        language,
+        flux_core::Locale::Russian | flux_core::Locale::Ukrainian | flux_core::Locale::Serbian
+    ) {
+        13.0
+    } else {
+        14.0
+    };
+    windui::text::TextStyle {
+        family: Some(super::ui_constants::LAUNCHER_FONT_FAMILY),
+        ..windui::text::TextStyle::new(size)
+    }
+}
 const TAB_DESCRIPTIONS: [&str; 5] = [
     "Startup, activation and update behavior.",
     "Caret, selection color and launcher size.",
@@ -80,6 +95,50 @@ pub(crate) fn settings_scroll_gutter() -> Element {
     Element::leaf().size(14, 1)
 }
 
+#[cfg(all(test, windows))]
+mod locale_layout_tests {
+    use super::{navigation_text_style, TAB_NAMES};
+    use crate::ui_constants::SETTINGS_SIDEBAR_WIDTH;
+    use windui::text::{DWriteEngine, TextEngine};
+
+    #[test]
+    fn translated_navigation_labels_fit_a_single_native_text_line() {
+        struct RestoreLocale(String);
+        impl Drop for RestoreLocale {
+            fn drop(&mut self) {
+                windui::text::set_ui_locale(&self.0);
+            }
+        }
+        let _restore = RestoreLocale(windui::text::ui_locale());
+        // Sidebar padding is 14 + 12 DIP. Reserve 18 DIP for ListRow's
+        // 16-DIP pill inset plus a 2-DIP margin, then its 20-DIP glyph,
+        // 8-DIP gap, and 12-DIP trailing pad.
+        let available = SETTINGS_SIDEBAR_WIDTH - 14 - 12 - 18 - 20 - 8 - 12;
+        let mut engine = DWriteEngine::new();
+        for language in flux_core::Locale::ALL {
+            windui::text::set_ui_locale(language.code());
+            let style = navigation_text_style(language);
+            for key in TAB_NAMES {
+                let label = crate::i18n::translate(language, key);
+                let unwrapped = engine.measure(label, &style, None);
+                let width = unwrapped.w;
+                assert!(
+                    width <= available,
+                    "{} navigation label {label:?} needs {width} DIP, available {available}",
+                    language.code()
+                );
+                let constrained = engine.measure(label, &style, Some(available as f32));
+                assert_eq!(
+                    constrained.h,
+                    unwrapped.h,
+                    "{} navigation label {label:?} must not wrap in its rendered font",
+                    language.code()
+                );
+            }
+        }
+    }
+}
+
 pub(crate) fn build_settings_panel(
     ui: &SettingsUi,
     tab_general: Element,
@@ -102,14 +161,14 @@ pub(crate) fn build_settings_panel(
     for index in 0..TAB_NAMES.len() {
         heading = heading
             .child(
-                Element::label(TAB_NAMES[index])
+                Element::label(crate::i18n::tr(TAB_NAMES[index]))
                     .font_size(24.0)
                     .font_weight(600)
                     .fg(Color::WHITE)
                     .visible_when(move || settings_tab.get() == index),
             )
             .child(
-                Element::label(TAB_DESCRIPTIONS[index])
+                Element::label(crate::i18n::tr(TAB_DESCRIPTIONS[index]))
                     .font_size(12.0)
                     .fg(Color::rgba(235, 241, 255, 235))
                     .visible_when(move || settings_tab.get() == index),
@@ -129,30 +188,36 @@ pub(crate) fn build_settings_panel(
         .spacing(10)
         .cross(Align::Center)
         .child(
-            Element::label("Changes are written when you press Apply settings.")
-                .font_size(11.0)
-                .fg(Color::rgba(235, 241, 255, 210))
-                .weight(1.0)
-                .visible_when(move || has_unsaved_changes(&ui_for_hint)),
+            Element::label(crate::i18n::tr(
+                "Changes are written when you press Apply settings.",
+            ))
+            .font_size(11.0)
+            .fg(Color::rgba(235, 241, 255, 210))
+            .weight(1.0)
+            .visible_when(move || has_unsaved_changes(&ui_for_hint)),
         )
         .child(
-            Element::button("Revert")
+            Element::button(crate::i18n::tr("Revert"))
                 .neutral()
                 .visible_when(move || has_unsaved_changes(&ui_for_revert_visible))
-                .tooltip("Discard unsaved changes and restore the saved values.")
+                .tooltip(crate::i18n::tr(
+                    "Discard unsaved changes and restore the saved values.",
+                ))
                 .on_click(move |ctx| revert_settings(&ui_for_revert, ctx)),
         )
         .child(
-            Element::button("\u{2713} Apply settings")
+            Element::button(crate::i18n::tr("\u{2713} Apply settings"))
                 .visible_when(move || has_unsaved_changes(&ui_for_apply_visible))
                 .on_click(move |ctx| apply_settings(&ui_for_apply, ctx)),
         );
 
-    let reset = Element::button("Reset tab defaults")
+    let reset = Element::button(crate::i18n::tr("Reset tab defaults"))
         .small()
         .neutral()
         .width_match()
-        .tooltip("Restore this tab's defaults. Nothing is saved until you press Apply settings.")
+        .tooltip(crate::i18n::tr(
+            "Restore this tab's defaults. Nothing is saved until you press Apply settings.",
+        ))
         .visible_when(move || tab_is_resettable(settings_tab.get()))
         .on_click(move |ctx| reset_active_tab(&ui_for_reset, ctx));
 
@@ -164,16 +229,32 @@ pub(crate) fn build_settings_panel(
         .padding_edges(14, 12, 12, 14)
         .spacing(14)
         .child(
-            Element::list_pill_glyphs(
-                TAB_NAMES
-                    .iter()
-                    .zip(TAB_GLYPHS)
-                    .map(|(name, glyph)| ((*name).to_string(), glyph.to_string()))
-                    .collect(),
-                settings_tab,
-                ICON_FONT,
-            )
-            .weight(1.0),
+            Element::scroll()
+                .fill()
+                .children(TAB_NAMES.iter().zip(TAB_GLYPHS).enumerate().map(
+                    |(index, (name, glyph))| {
+                        let style = navigation_text_style(crate::i18n::current());
+                        let row = Element::leaf()
+                            .widget(
+                                windui::ui::list::ListRow::new(
+                                    crate::i18n::tr(name).to_string(),
+                                    settings_tab,
+                                    index,
+                                )
+                                .glyph(glyph, ICON_FONT)
+                                .pill(),
+                            )
+                            .width_match()
+                            .height(windui::ui::list::ROW_H)
+                            .font_size(style.size);
+                        if let Some(family) = style.family {
+                            row.font_family(family)
+                        } else {
+                            row
+                        }
+                    },
+                ))
+                .weight(1.0),
         )
         .child(reset);
 
@@ -212,7 +293,7 @@ pub(crate) fn build_settings_panel(
             Element::icon_button("\u{e8bb}")
                 .font_family(ICON_FONT)
                 .font_size(12.0)
-                .tooltip("Hide Flux Launcher")
+                .tooltip(crate::i18n::tr("Hide Flux Launcher"))
                 .on_click(move |_| close_settings(&ui_for_close)),
         );
 

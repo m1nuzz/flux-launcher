@@ -135,7 +135,7 @@ pub(crate) fn build_tray(
             ctx.show_window();
         })
         .menu(vec![
-            TrayMenuItem::item("Show launcher", move |ctx| {
+            TrayMenuItem::item(crate::i18n::tr("Show launcher"), move |ctx| {
                 settings_visible_for_tray.set(false);
                 // Same clear-before-show contract as the activation hotkey.
                 let clear_query = settings_for_tray_position
@@ -180,7 +180,7 @@ pub(crate) fn build_tray(
                 size_for_tray.set(launcher_width.get() as i32, height);
                 ctx.show_window();
             }),
-            TrayMenuItem::item("Settings", move |ctx| {
+            TrayMenuItem::item(crate::i18n::tr("Settings"), move |ctx| {
                 settings_visible.set(true);
                 if let Ok(settings) = settings_for_settings_position.read() {
                     request_monitor_position(
@@ -199,7 +199,7 @@ pub(crate) fn build_tray(
                 size_for_settings.set(SETTINGS_WINDOW_WIDTH, SETTINGS_WINDOW_HEIGHT);
             }),
             TrayMenuItem::separator(),
-            TrayMenuItem::check("Game Mode", game_mode, move |_| {
+            TrayMenuItem::check(crate::i18n::tr("Game Mode"), game_mode, move |_| {
                 let enabled = !game_mode_for_tray.get();
                 set_game_mode(
                     &settings_for_tray_toggle,
@@ -209,6 +209,6 @@ pub(crate) fn build_tray(
                 );
             }),
             TrayMenuItem::separator(),
-            TrayMenuItem::item("Exit", |ctx| ctx.quit()),
+            TrayMenuItem::item(crate::i18n::tr("Exit"), |ctx| ctx.quit()),
         ])
 }

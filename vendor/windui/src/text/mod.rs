@@ -3,7 +3,7 @@
 #[cfg(windows)]
 pub mod dwrite;
 #[cfg(windows)]
-pub use dwrite::{register_private_use_font, DWriteEngine};
+pub use dwrite::{register_private_use_font, set_ui_locale, ui_locale, DWriteEngine};
 
 #[cfg(target_os = "macos")]
 pub mod coretext;

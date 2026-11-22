@@ -161,16 +161,19 @@ pub(crate) fn format_update_progress(
             let received = progress.received_bytes.min(total);
             let percent = received.saturating_mul(100) / total;
             let remaining = total.saturating_sub(received);
-            format!(
-                "Downloading stable {version}: {percent}% — {} / {} ({} remaining)",
-                format_bytes(received),
-                format_bytes(total),
-                format_bytes(remaining)
+            crate::i18n::format(
+                "Downloading stable {version}: {percent}% — {received} / {total} ({remaining} remaining)",
+                &[("version", version.to_string()), ("percent", percent.to_string()),
+                  ("received", format_bytes(received)), ("total", format_bytes(total)),
+                  ("remaining", format_bytes(remaining))],
             )
         }
-        None => format!(
-            "Downloading stable {version}: {} received",
-            format_bytes(progress.received_bytes)
+        None => crate::i18n::format(
+            "Downloading stable {version}: {received} received",
+            &[
+                ("version", version.to_string()),
+                ("received", format_bytes(progress.received_bytes)),
+            ],
         ),
     }
 }

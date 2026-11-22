@@ -337,7 +337,10 @@ fn create_note_results(note_name: &str, vaults: &[Vault]) -> Vec<BuiltinResult> 
         .map(|vault| BuiltinResult {
             result: SearchResult {
                 id: format!("builtin:obsidian:create:{}", vault.id),
-                title: format!("Create note: {note_name}"),
+                title: crate::i18n::format(
+                    "Create note: {note_name}",
+                    &[("note_name", note_name.to_string())],
+                ),
                 subtitle: format!("Obsidian • {}", vault.name),
                 kind: ResultKind::Placeholder,
                 source: ResultSource::Plugin,
