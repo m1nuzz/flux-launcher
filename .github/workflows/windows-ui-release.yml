@@ -37,7 +37,7 @@ jobs:
         uses: actions/checkout@v4
 
       - name: Install stable toolchain
-        uses: dtolnay/rust-toolchain@stable
+        uses: dtolnay/rust-toolchain@39008827e6b4319a349e9a42dfc90579dd25f1ca # stable
         with:
           targets: x86_64-pc-windows-msvc
 
@@ -188,7 +188,7 @@ jobs:
 
       - name: Publish user-facing UI release
         if: inputs.publish_release
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65 # v2.6.2
         with:
           tag_name: ${{ inputs.release_tag }}
           name: Flux Launcher ${{ inputs.release_tag }}
