@@ -23,7 +23,8 @@ public static class FluxUpdateSmokeNative {
 $workRoot = (New-Item -ItemType Directory -Force -Path $WorkDirectory).FullName
 $fixtureRoot = Join-Path $workRoot "fixture"
 $appDataRoot = Join-Path $workRoot "appdata"
-$installRoot = Join-Path $workRoot "updated-install"
+# Keep a space here so the update handoff exercises /DIR quoting.
+$installRoot = Join-Path $workRoot "updated install"
 $tracePath = Join-Path $workRoot "update-trace.log"
 $transitionPath = Join-Path $workRoot "first-release-requested.marker"
 $serverScript = Join-Path $PSScriptRoot "update-fixture-server.ps1"
