@@ -204,7 +204,7 @@ fn spawn_installer_handoff(installer_path: &Path, relaunch_mode: RelaunchMode) -
          $relaunchApplication = {application}; \
          $arguments = @('/VERYSILENT','/SUPPRESSMSGBOXES','/NORESTART','/NOCANCEL','/CLOSEAPPLICATIONS'); \
          if ($env:FLUX_UPDATE_INSTALL_DIR) {{ \
-             $arguments += '/DIR=' + $env:FLUX_UPDATE_INSTALL_DIR; \
+             $arguments += '/DIR=\"' + $env:FLUX_UPDATE_INSTALL_DIR + '\"'; \
              $relaunchApplication = Join-Path $env:FLUX_UPDATE_INSTALL_DIR (Split-Path -Leaf $relaunchApplication) \
          }}; \
          $setup = Start-Process -FilePath {installer} -ArgumentList $arguments -Wait -PassThru; \
